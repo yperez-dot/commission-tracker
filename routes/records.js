@@ -51,33 +51,73 @@ router.get('/', requireAuth, async (req, res) => {
 router.get('/summary', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
-    const isAdmin = req.user.role === 'admin';
-    const agentFilter = isAdmin ? '' : `WHERE agent_name ILIKE '%${req.user.name}%'`;
+    const { agents, carriers, periods, classifications, agentName } = req.query;
 
-    const totalCommission = await pool.query(`SELECT COALESCE(SUM(commission),0) as total FROM commission_records ${agentFilter}`);
-    const totalRecords = await pool.query(`SELECT COUNT(*) as count FROM commission_records ${agentFilter}`);
-    const agents = await pool.query(`SELECT DISTINCT agent_name FROM commission_records ${agentFilter} ORDER BY agent_name`);
-    const carriers = await pool.query(`SELECT DISTINCT carrier FROM commission_records ${agentFilter} ORDER BY carrier`);
-    const periods = await pool.query(`SELECT DISTINCT payment_period FROM commission_records ${agentFilter} ORDER BY payment_period DESC`);
+    let where = [];
+    let params = [];
+    let idx = 1;
+
+    // Role-based filtering
+    if (req.user.role === 'agent') {
+      where.push(`agent_name ILIKE $${idx++}`);
+      params.push(`%${req.user.name}%`);
+    }
+
+    // Dashboard filter params (comma-separated lists)
+    if (agents) {
+      const agentList = agents.split(',').map(a => a.trim()).filter(Boolean);
+      if (agentList.length) {
+        where.push(`agent_name = ANY($${idx++})`);
+        params.push(agentList);
+      }
+    }
+    if (carriers) {
+      const carrierList = carriers.split(',').map(c => c.trim()).filter(Boolean);
+      if (carrierList.length) {
+        where.push(`carrier = ANY($${idx++})`);
+        params.push(carrierList);
+      }
+    }
+    if (periods) {
+      const periodList = periods.split(',').map(p => p.trim()).filter(Boolean);
+      if (periodList.length) {
+        where.push(`payment_period = ANY($${idx++})`);
+        params.push(periodList);
+      }
+    }
+    if (classifications) {
+      const classList = classifications.split(',').map(c => c.trim()).filter(Boolean);
+      if (classList.length) {
+        where.push(`classification = ANY($${idx++})`);
+        params.push(classList);
+      }
+    }
+
+    const whereClause = where.length ? 'WHERE ' + where.join(' AND ') : '';
+
+    const totalCommission = await pool.query(`SELECT COALESCE(SUM(commission),0) as total FROM commission_records ${whereClause}`, params);
+    const totalRecords = await pool.query(`SELECT COUNT(*) as count FROM commission_records ${whereClause}`, params);
+    const agentCount = await pool.query(`SELECT COUNT(DISTINCT agent_name) as count FROM commission_records ${whereClause}`, params);
+    const carrierCount = await pool.query(`SELECT COUNT(DISTINCT carrier) as count FROM commission_records ${whereClause}`, params);
 
     const byAgent = await pool.query(
-      `SELECT agent_name, SUM(commission) as total, COUNT(*) as count FROM commission_records ${agentFilter} GROUP BY agent_name ORDER BY total DESC`
+      `SELECT agent_name, SUM(commission) as total, COUNT(*) as count FROM commission_records ${whereClause} GROUP BY agent_name ORDER BY total DESC`,
+      params
     );
     const byCarrier = await pool.query(
-      `SELECT carrier, SUM(commission) as total, COUNT(*) as count FROM commission_records ${agentFilter} GROUP BY carrier ORDER BY total DESC`
+      `SELECT carrier, SUM(commission) as total, COUNT(*) as count FROM commission_records ${whereClause} GROUP BY carrier ORDER BY total DESC`,
+      params
     );
     const byPeriod = await pool.query(
-      `SELECT payment_period, SUM(commission) as total, COUNT(*) as count FROM commission_records ${agentFilter} GROUP BY payment_period ORDER BY payment_period DESC LIMIT 12`
+      `SELECT payment_period, SUM(commission) as total, COUNT(*) as count FROM commission_records ${whereClause} GROUP BY payment_period ORDER BY payment_period DESC LIMIT 12`,
+      params
     );
 
     res.json({
       totalCommission: parseFloat(totalCommission.rows[0].total),
       totalRecords: parseInt(totalRecords.rows[0].count),
-      agentCount: agents.rows.length,
-      carrierCount: carriers.rows.length,
-      agents: agents.rows.map(a => a.agent_name).filter(Boolean),
-      carriers: carriers.rows.map(c => c.carrier).filter(Boolean),
-      periods: periods.rows.map(p => p.payment_period).filter(Boolean),
+      agentCount: parseInt(agentCount.rows[0].count),
+      carrierCount: parseInt(carrierCount.rows[0].count),
       byAgent: byAgent.rows,
       byCarrier: byCarrier.rows,
       byPeriod: byPeriod.rows
@@ -155,7 +195,6 @@ router.get('/filters', requireAuth, async (req, res) => {
   }
 });
 
-// Normalize all existing agent names in the database
 router.post('/normalize-agents', requireAuth, requireAdmin, async (req, res) => {
   try {
     const pool = getPool();
