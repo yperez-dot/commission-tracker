@@ -2,6 +2,12 @@ const express = require('express');
 const router = express.Router();
 const { getPool } = require('../db/database');
 const { requireAuth } = require('./auth');
+const { normalizeAgentName, normalizeAllRecords } = require('../normalize');
+
+function requireAdmin(req, res, next) {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
+  next();
+}
 
 router.get('/', requireAuth, async (req, res) => {
   try {
@@ -145,6 +151,18 @@ router.get('/filters', requireAuth, async (req, res) => {
       periods: periods.rows.map(p => p.payment_period).filter(Boolean)
     });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Normalize all existing agent names in the database
+router.post('/normalize-agents', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const pool = getPool();
+    const updated = await normalizeAllRecords(pool);
+    res.json({ success: true, updated, message: `Normalized ${updated} records` });
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ error: err.message });
   }
 });
