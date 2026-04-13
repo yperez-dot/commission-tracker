@@ -2,53 +2,65 @@ const express = require('express');
 const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { getDb } = require('../db/database');
+const { getPool } = require('../db/database');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'healthexperts-secret-change-in-production';
 
-router.post('/login', (req, res) => {
+router.post('/login', async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
 
-  const db = getDb();
-  const user = db.prepare('SELECT * FROM users WHERE email = ?').get(email.toLowerCase().trim());
-  if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+  try {
+    const pool = getPool();
+    const result = await pool.query('SELECT * FROM users WHERE email = $1', [email.toLowerCase().trim()]);
+    const user = result.rows[0];
+    if (!user) return res.status(401).json({ error: 'Invalid credentials' });
 
-  const valid = bcrypt.compareSync(password, user.password_hash);
-  if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+    const valid = bcrypt.compareSync(password, user.password_hash);
+    if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
 
-  const token = jwt.sign(
-    { id: user.id, name: user.name, email: user.email, role: user.role },
-    JWT_SECRET,
-    { expiresIn: '7d' }
-  );
+    const token = jwt.sign(
+      { id: user.id, name: user.name, email: user.email, role: user.role },
+      JWT_SECRET,
+      { expiresIn: '7d' }
+    );
 
-  res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role } });
+    res.json({ token, user: { id: user.id, name: user.name, email: user.email, role: user.role } });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Server error' });
+  }
 });
 
 router.get('/me', requireAuth, (req, res) => {
   res.json({ user: req.user });
 });
 
-router.get('/agents', requireAuth, requireAdmin, (req, res) => {
-  const db = getDb();
-  const agents = db.prepare('SELECT id, name, email, role, created_at FROM users ORDER BY name').all();
-  res.json(agents);
+router.get('/agents', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const pool = getPool();
+    const result = await pool.query('SELECT id, name, email, role, created_at FROM users ORDER BY name');
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-router.post('/agents', requireAuth, requireAdmin, (req, res) => {
+router.post('/agents', requireAuth, requireAdmin, async (req, res) => {
   const { name, email, password, role } = req.body;
   if (!name || !email || !password) return res.status(400).json({ error: 'Name, email, password required' });
-  const db = getDb();
-  const hash = bcrypt.hashSync(password, 10);
+
   try {
-    const result = db.prepare('INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)').run(
-      name, email.toLowerCase().trim(), hash, role || 'agent'
+    const pool = getPool();
+    const hash = bcrypt.hashSync(password, 10);
+    const result = await pool.query(
+      'INSERT INTO users (name, email, password_hash, role) VALUES ($1, $2, $3, $4) RETURNING id, name, email, role',
+      [name, email.toLowerCase().trim(), hash, role || 'agent']
     );
-    res.json({ id: result.lastInsertRowid, name, email, role: role || 'agent' });
-  } catch (e) {
-    if (e.message.includes('UNIQUE')) return res.status(409).json({ error: 'Email already exists' });
-    throw e;
+    res.json(result.rows[0]);
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: 'Email already exists' });
+    res.status(500).json({ error: err.message });
   }
 });
 
