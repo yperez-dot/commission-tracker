@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../api';
 
-function fmt(n) { return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function fmt(n) {
+  return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
 
 const SPLIT_START_DATE = new Date('2025-08-01');
 
@@ -37,8 +39,8 @@ export default function Reconciliation({ user }) {
     setLoading(true);
     try {
       const [nhpData, bsiData] = await Promise.all([
-        apiFetch(`/records?carrier=NHP&limit=500`),
-        apiFetch(`/records?carrier=BSI&limit=500`)
+        apiFetch('/records?carrier=NHP&limit=500'),
+        apiFetch('/records?carrier=BSI&limit=500')
       ]);
       setNhpRecords(nhpData.records || []);
       setBsiRecords(bsiData.records || []);
@@ -53,31 +55,27 @@ export default function Reconciliation({ user }) {
     if (selectedPeriod) loadReconciliation();
   }, [selectedPeriod]);
 
-  const nhpAll = nhpRecords;
-  const nhpPreSplit = nhpAll.filter(r => !isSplitEligible(r.effective_date));
-  const nhpSplitEligible = nhpAll.filter(r => isSplitEligible(r.effective_date));
+  const nhpPreSplit = nhpRecords.filter(r => !isSplitEligible(r.effective_date));
+  const nhpSplitEligible = nhpRecords.filter(r => isSplitEligible(r.effective_date));
 
-  const nhpGross = nhpAll.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0);
+  const nhpGross = nhpRecords.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0);
   const nhpPreSplitTotal = nhpPreSplit.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0);
   const nhpSplitTotal = nhpSplitEligible.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0);
   const owedToBSI = nhpSplitTotal * 0.5;
   const yourNHPShare = nhpPreSplitTotal + (nhpSplitTotal * 0.5);
-
   const bsiTotal = bsiRecords.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0);
   const difference = bsiTotal - owedToBSI;
   const diffPct = owedToBSI > 0 ? ((difference / owedToBSI) * 100).toFixed(1) : 0;
-
   const statusColor = Math.abs(difference) < 10 ? 'green' : difference > 0 ? 'blue' : 'red';
-  const statusLabel = Math.abs(difference) < 10 ? 'Balanced ✓' : difference > 0 ? 'BSI paid more' : 'BSI paid less';
+  const statusLabel = Math.abs(difference) < 10 ? 'Balanced' : difference > 0 ? 'BSI paid more' : 'BSI paid less';
 
   return (
-    <>
+    <React.Fragment>
       <div className="page-header">
         <div className="page-title">NHP / BSI reconciliation</div>
-        <div className="page-sub">Cross-check your NHP overrides against BSI payments — partnership started 08/01/2025</div>
+        <div className="page-sub">Cross-check NHP overrides vs BSI payments — partnership started 08/01/2025</div>
       </div>
       <div className="page-body">
-
         <div className="card" style={{marginBottom:14}}>
           <div style={{display:'flex', alignItems:'flex-end', gap:12, flexWrap:'wrap'}}>
             <div>
@@ -88,7 +86,7 @@ export default function Reconciliation({ user }) {
               </select>
             </div>
             <button className="btn btn-primary" onClick={loadReconciliation} disabled={loading}>
-              {loading ? <><span className="spinner"></span> Loading...</> : 'Refresh →'}
+              {loading ? <React.Fragment><span className="spinner"></span> Loading...</React.Fragment> : 'Refresh'}
             </button>
           </div>
         </div>
@@ -98,11 +96,11 @@ export default function Reconciliation({ user }) {
             <div className="empty-state">
               <div className="empty-icon">🔍</div>
               <div className="empty-title">No NHP or BSI data found</div>
-              <div className="empty-sub">Upload your NHP and BSI statements first, then select a period to reconcile</div>
+              <div className="empty-sub">Upload your NHP and BSI statements first</div>
             </div>
           </div>
         ) : (
-          <>
+          <React.Fragment>
             <div className="kpi-grid" style={{marginBottom:14}}>
               <div className="kpi-card">
                 <div className="kpi-label">NHP gross received</div>
@@ -128,12 +126,12 @@ export default function Reconciliation({ user }) {
                 <div style={{background:'var(--gray-100)', borderRadius:'var(--radius)', padding:'14px 16px'}}>
                   <div style={{fontSize:12, color:'var(--text-muted)', marginBottom:4}}>Pre-partnership records</div>
                   <div style={{fontSize:18, fontWeight:600}}>{fmt(nhpPreSplitTotal)}</div>
-                  <div style={{fontSize:11, color:'var(--text-muted)', marginTop:2}}>Effective before 08/01/2025 — 100% yours</div>
+                  <div style={{fontSize:11, color:'var(--text-muted)', marginTop:2}}>Before 08/01/2025 — 100% yours</div>
                 </div>
                 <div style={{background:'var(--gray-100)', borderRadius:'var(--radius)', padding:'14px 16px'}}>
                   <div style={{fontSize:12, color:'var(--text-muted)', marginBottom:4}}>Split-eligible records</div>
                   <div style={{fontSize:18, fontWeight:600}}>{fmt(nhpSplitTotal)}</div>
-                  <div style={{fontSize:11, color:'var(--text-muted)', marginTop:2}}>Effective 08/01/2025+ — 50/50 split</div>
+                  <div style={{fontSize:11, color:'var(--text-muted)', marginTop:2}}>08/01/2025 or later — 50/50 split</div>
                 </div>
                 <div style={{
                   background: statusColor === 'green' ? 'var(--green-light)' : statusColor === 'red' ? 'var(--red-light)' : 'var(--blue-light)',
@@ -143,24 +141,25 @@ export default function Reconciliation({ user }) {
                   <div style={{fontSize:18, fontWeight:600, color: statusColor === 'green' ? 'var(--green)' : statusColor === 'red' ? 'var(--red)' : 'var(--blue)'}}>
                     {difference >= 0 ? '+' : ''}{fmt(difference)}
                   </div>
-                  <div style={{fontSize:11, marginTop:2, color: statusColor === 'green' ? '#3B6D11' : statusColor === 'red' ? '#A32D2D' : 'var(--blue-dark)'}}>
-                    {statusLabel} {Math.abs(diffPct) > 0 ? `(${diffPct}%)` : ''}
+                  <div style={{fontSize:11, marginTop:2}}>
+                    {statusLabel} {Math.abs(diffPct) > 0 ? '(' + diffPct + '%)' : ''}
                   </div>
                 </div>
               </div>
             </div>
 
-            <div style={{display:'flex', gap:8, marginBottom:12, borderBottom:'1px solid var(--border)', paddingBottom:0}}>
+            <div style={{display:'flex', gap:8, marginBottom:12, borderBottom:'1px solid var(--border)'}}>
               {[
-                { id: 'summary', label: 'Split breakdown' },
-                { id: 'nhp', label: `NHP records (${nhpRecords.length})` },
-                { id: 'bsi', label: `BSI records (${bsiRecords.length})` }
+                {id:'summary', label:'Split breakdown'},
+                {id:'nhp', label:'NHP records (' + nhpRecords.length + ')'},
+                {id:'bsi', label:'BSI records (' + bsiRecords.length + ')'}
               ].map(t => (
-                <button key={t.id} onClick={() => setTab(t.id)}
-                  style={{padding:'7px 14px', border:'none', background:'none', fontSize:13, cursor:'pointer',
-                    borderBottom: tab === t.id ? '2px solid var(--blue)' : '2px solid transparent',
-                    color: tab === t.id ? 'var(--blue)' : 'var(--text-muted)',
-                    fontWeight: tab === t.id ? 600 : 400, marginBottom:-1}}>
+                <button key={t.id} onClick={() => setTab(t.id)} style={{
+                  padding:'7px 14px', border:'none', background:'none', fontSize:13, cursor:'pointer',
+                  borderBottom: tab === t.id ? '2px solid var(--blue)' : '2px solid transparent',
+                  color: tab === t.id ? 'var(--blue)' : 'var(--text-muted)',
+                  fontWeight: tab === t.id ? 600 : 400, marginBottom:-1
+                }}>
                   {t.label}
                 </button>
               ))}
@@ -171,13 +170,19 @@ export default function Reconciliation({ user }) {
                 <div className="table-wrap">
                   <table>
                     <thead>
-                      <tr><th>Category</th><th>Records</th><th>Total</th><th>Your share</th><th>BSI share</th></tr>
+                      <tr>
+                        <th>Category</th>
+                        <th>Records</th>
+                        <th>Total</th>
+                        <th>Your share</th>
+                        <th>BSI share</th>
+                      </tr>
                     </thead>
                     <tbody>
                       <tr>
                         <td>
                           <div style={{fontWeight:500}}>Pre-partnership</div>
-                          <div style={{fontSize:11, color:'var(--text-muted)'}}>Effective before 08/01/2025</div>
+                          <div style={{fontSize:11, color:'var(--text-muted)'}}>Before 08/01/2025</div>
                         </td>
                         <td>{nhpPreSplit.length}</td>
                         <td>{fmt(nhpPreSplitTotal)}</td>
@@ -187,7 +192,7 @@ export default function Reconciliation({ user }) {
                       <tr>
                         <td>
                           <div style={{fontWeight:500}}>Split-eligible</div>
-                          <div style={{fontSize:11, color:'var(--text-muted)'}}>Effective 08/01/2025 or later</div>
+                          <div style={{fontSize:11, color:'var(--text-muted)'}}>08/01/2025 or later</div>
                         </td>
                         <td>{nhpSplitEligible.length}</td>
                         <td>{fmt(nhpSplitTotal)}</td>
@@ -196,7 +201,7 @@ export default function Reconciliation({ user }) {
                       </tr>
                       <tr style={{background:'var(--gray-50)'}}>
                         <td style={{fontWeight:600}}>Total NHP</td>
-                        <td style={{fontWeight:600}}>{nhpAll.length}</td>
+                        <td style={{fontWeight:600}}>{nhpRecords.length}</td>
                         <td style={{fontWeight:600}}>{fmt(nhpGross)}</td>
                         <td style={{fontWeight:600, color:'var(--green)'}}>{fmt(yourNHPShare)}</td>
                         <td style={{fontWeight:600, color:'var(--amber)'}}>{fmt(owedToBSI)}</td>
@@ -221,7 +226,16 @@ export default function Reconciliation({ user }) {
                 <div className="table-wrap">
                   <table>
                     <thead>
-                      <tr><th>#</th><th>Agent</th><th>Carrier</th><th>Client</th><th>Effective</th><th>Commission</th><th>Split eligible</th><th>Your share</th></tr>
+                      <tr>
+                        <th>#</th>
+                        <th>Agent</th>
+                        <th>Carrier</th>
+                        <th>Client</th>
+                        <th>Effective</th>
+                        <th>Commission</th>
+                        <th>Split eligible</th>
+                        <th>Your share</th>
+                      </tr>
                     </thead>
                     <tbody>
                       {nhpRecords.map((r, i) => {
@@ -230,6 +244,64 @@ export default function Reconciliation({ user }) {
                         const share = eligible ? comm * 0.5 : comm;
                         return (
                           <tr key={r.id}>
-                            <td style={{color:'var(--text-muted)', fontSize:11}}>{i+1}</td>
+                            <td style={{color:'var(--text-muted)', fontSize:11}}>{i + 1}</td>
                             <td style={{fontWeight:500}}>{r.agent_name}</td>
-                            <td style={{fontSize:12}}>{r.carrier}</t
+                            <td style={{fontSize:12}}>{r.carrier}</td>
+                            <td>{r.client_full_name || '—'}</td>
+                            <td style={{fontSize:12, color:'var(--text-muted)'}}>{r.effective_date || '—'}</td>
+                            <td style={{fontWeight:600}}>{fmt(comm)}</td>
+                            <td>
+                              {eligible
+                                ? <span className="badge badge-amber">Yes (50/50)</span>
+                                : <span className="badge badge-green">No (100% yours)</span>}
+                            </td>
+                            <td style={{fontWeight:600, color:'var(--green)'}}>{fmt(share)}</td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {tab === 'bsi' && (
+              <div className="card" style={{padding:0}}>
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>#</th>
+                        <th>Agent</th>
+                        <th>Carrier</th>
+                        <th>Client</th>
+                        <th>Effective</th>
+                        <th>Commission</th>
+                        <th>Type</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {bsiRecords.map((r, i) => (
+                        <tr key={r.id}>
+                          <td style={{color:'var(--text-muted)', fontSize:11}}>{i + 1}</td>
+                          <td style={{fontWeight:500}}>{r.agent_name}</td>
+                          <td style={{fontSize:12}}>{r.carrier}</td>
+                          <td>{r.client_full_name || '—'}</td>
+                          <td style={{fontSize:12, color:'var(--text-muted)'}}>{r.effective_date || '—'}</td>
+                          <td style={{fontWeight:600, color: parseFloat(r.commission) < 0 ? 'var(--red)' : 'var(--green)'}}>
+                            {fmt(r.commission)}
+                          </td>
+                          <td><span className="badge badge-blue">{r.classification || 'Override'}</span></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </React.Fragment>
+        )}
+      </div>
+    </React.Fragment>
+  );
+}
