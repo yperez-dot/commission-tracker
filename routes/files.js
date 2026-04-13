@@ -5,10 +5,10 @@ const XLSX = require('xlsx');
 const path = require('path');
 const fs = require('fs');
 const Anthropic = require('@anthropic-ai/sdk');
-const { getDb } = require('../db/database');
+const { getPool } = require('../db/database');
 const { requireAuth } = require('./auth');
 
-const UPLOADS_DIR = path.join(__dirname, '..', 'uploads');
+const UPLOADS_DIR = path.join('/tmp', 'uploads');
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
 const storage = multer.diskStorage({
@@ -69,34 +69,29 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
 
     const headers = Object.keys(rows[0]);
     const sample = rows.slice(0, 3);
-
     const mapping = await mapColumnsWithAI(headers, sample);
     const records = parseRows(rows, mapping, req.file.originalname);
 
-    const db = getDb();
+    const pool = getPool();
     const commissionSum = records.reduce((s, r) => s + (r.commission || 0), 0);
     const carriers = [...new Set(records.map(r => r.carrier).filter(Boolean))];
 
-    const uploadResult = db.prepare(`
-      INSERT INTO uploads (filename, original_name, carrier, row_count, commission_sum, uploaded_by)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(req.file.filename, req.file.originalname, carriers.join(', '), records.length, commissionSum, req.user.id);
+    const uploadResult = await pool.query(
+      'INSERT INTO uploads (filename, original_name, carrier, row_count, commission_sum, uploaded_by) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
+      [req.file.filename, req.file.originalname, carriers.join(', '), records.length, commissionSum, req.user.id]
+    );
+    const uploadId = uploadResult.rows[0].id;
 
-    const uploadId = uploadResult.lastInsertRowid;
-    const insertRecord = db.prepare(`
-      INSERT INTO commission_records
-        (upload_id, agent_name, carrier, client_full_name, effective_date, premium, commission, classification, payment_period, policy_number, raw_data)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
+    for (const r of records) {
+      await pool.query(
+        `INSERT INTO commission_records
+          (upload_id, agent_name, carrier, client_full_name, effective_date, premium, commission, classification, payment_period, policy_number, raw_data)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [uploadId, r.agent, r.carrier, r.client, r.effectiveDate, r.premium || 0, r.commission || 0, r.classification, r.period, r.policyNumber, JSON.stringify(r.raw)]
+      );
+    }
 
-    const insertMany = db.transaction((recs) => {
-      recs.forEach(r => insertRecord.run(
-        uploadId, r.agent, r.carrier, r.client, r.effectiveDate,
-        r.premium || 0, r.commission || 0, r.classification, r.period, r.policyNumber,
-        JSON.stringify(r.raw)
-      ));
-    });
-    insertMany(records);
+    try { fs.unlinkSync(req.file.path); } catch (e) {}
 
     res.json({
       uploadId,
@@ -114,27 +109,29 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
   }
 });
 
-router.get('/uploads', requireAuth, (req, res) => {
-  const db = getDb();
-  const uploads = db.prepare(`
-    SELECT u.*, usr.name as uploaded_by_name
-    FROM uploads u
-    LEFT JOIN users usr ON u.uploaded_by = usr.id
-    ORDER BY u.uploaded_at DESC
-  `).all();
-  res.json(uploads);
+router.get('/uploads', requireAuth, async (req, res) => {
+  try {
+    const pool = getPool();
+    const result = await pool.query(`
+      SELECT u.*, usr.name as uploaded_by_name
+      FROM uploads u
+      LEFT JOIN users usr ON u.uploaded_by = usr.id
+      ORDER BY u.uploaded_at DESC
+    `);
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
-router.delete('/uploads/:id', requireAuth, (req, res) => {
-  const db = getDb();
-  const upload = db.prepare('SELECT * FROM uploads WHERE id = ?').get(req.params.id);
-  if (!upload) return res.status(404).json({ error: 'Not found' });
-
-  db.prepare('DELETE FROM uploads WHERE id = ?').run(req.params.id);
-  const filePath = path.join(UPLOADS_DIR, upload.filename);
-  if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
-
-  res.json({ success: true });
+router.delete('/uploads/:id', requireAuth, async (req, res) => {
+  try {
+    const pool = getPool();
+    await pool.query('DELETE FROM uploads WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 async function mapColumnsWithAI(headers, sample) {
