@@ -20,7 +20,7 @@ const upload = multer({ storage, limits: { fileSize: 20 * 1024 * 1024 } });
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 function detectCarrierFromFilename(filename) {
-  const f = filename.toLowerCase();
+  const f = filename.toLowerCase().replace(/\s+/g, '_');
   if (f.includes('commission_statement_2737247') || f.includes('uhc') || f.includes('united')) return 'UnitedHealthcare';
   if (f.includes('producerstatementreport')) return 'Aetna';
   if (f.includes('16326554') || f.includes('devoted')) return 'Devoted';
@@ -35,7 +35,7 @@ function detectCarrierFromFilename(filename) {
   if (f.includes('sunshine')) return 'Sunshine Health';
   if (f.includes('molina')) return 'Molina';
   if (f.includes('ambetter')) return 'Ambetter';
-  if (f.includes('florida blue') || f.includes('bcbs') || f.includes('floridablue')) return 'Florida Blue';
+  if (f.includes('florida_blue') || f.includes('bcbs') || f.includes('floridablue')) return 'Florida Blue';
   if (f.includes('oscar')) return 'Oscar Health';
   return 'Unknown';
 }
@@ -95,12 +95,12 @@ function formatDate(value) {
 }
 
 function isBSIFile(filename) {
-  const f = filename.toLowerCase();
+  const f = filename.toLowerCase().replace(/\s+/g, '_');
   return f.includes('statement-health_experts') || f.includes('statement_health_experts');
 }
 
 function isNHPFile(filename) {
-  const f = filename.toLowerCase();
+  const f = filename.toLowerCase().replace(/\s+/g, '_');
   return f.includes('the_health_experts_insurance_statement');
 }
 
@@ -140,42 +140,38 @@ function parseBSIRows(rows) {
   return records;
 }
 
-function parseNHPRows(rows) {
+function parseNHPRows(wb) {
   const records = [];
-  let dataStarted = false;
-  let colMap = {};
+  const ws = wb.Sheets[wb.SheetNames[0]];
+
+  // Find header row by scanning for 'Override' column
+  const range = XLSX.utils.decode_range(ws['!ref']);
+  let headerRow = -1;
+  for (let r = range.s.r; r <= Math.min(range.s.r + 20, range.e.r); r++) {
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const cell = ws[XLSX.utils.encode_cell({ r, c })];
+      if (cell && String(cell.v || '').toLowerCase().trim() === 'override') {
+        headerRow = r;
+        break;
+      }
+    }
+    if (headerRow >= 0) break;
+  }
+
+  if (headerRow < 0) return records;
+
+  // Read using that header row
+  const rows = XLSX.utils.sheet_to_json(ws, { raw: true, defval: '', range: headerRow });
 
   for (const row of rows) {
-    const vals = Object.values(row);
-    if (!dataStarted) {
-      const str = vals.map(v => String(v || '').toLowerCase()).join('|');
-      if (str.includes('agent') && str.includes('subscriber') && str.includes('override')) {
-        // Map column indices from header row
-        vals.forEach((v, i) => {
-          const key = String(v || '').toLowerCase().trim();
-          if (key === 'agent') colMap.agent = i;
-          if (key === 'carrier-statement month') colMap.carrier = i;
-          if (key === 'subscriber name') colMap.client = i;
-          if (key === 'policy number') colMap.policyNumber = i;
-          if (key === 'policy effective date') colMap.effectiveDate = i;
-          if (key === 'commission month') colMap.period = i;
-          if (key === 'status') colMap.status = i;
-          if (key === 'override') colMap.commission = i;
-        });
-        dataStarted = true;
-        continue;
-      }
-      continue;
-    }
-
-    const agent = String(vals[colMap.agent] || '').trim();
-    const carrierRaw = String(vals[colMap.carrier] || '').trim();
-    const client = String(vals[colMap.client] || '').trim();
-    const policyNumber = String(vals[colMap.policyNumber] || '').trim();
-    const effectiveDate = formatDate(vals[colMap.effectiveDate]);
-    const period = formatDate(vals[colMap.period]);
-    const status = String(vals[colMap.status] || '').trim();
-    const commission = parseFloat(vals[colMap.commission]) || 0;
+    const agent = String(row['Agent'] || '').trim();
+    const carrierRaw = String(row['Carrier-Statement Month'] || '').trim();
+    const client = String(row['Subscriber Name'] || '').trim();
+    const policyNumber = String(row['Policy Number'] || '').trim();
+    const effectiveDate = formatDate(row['Policy Effective Date']);
+    const period = formatDate(row['Commission Month']);
+    const status = String(row['Status'] || '').trim();
+    const commission = parseFloat(row['Override']) || 0;
 
     if (!client || commission === 0) continue;
 
@@ -214,21 +210,23 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
 
     const wb = XLSX.readFile(req.file.path);
     const ws = wb.Sheets[wb.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
-
-    if (!rows.length) return res.status(400).json({ error: 'File is empty' });
 
     let records;
     if (isBSIFile(req.file.originalname)) {
+      const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
       records = parseBSIRows(rows);
     } else if (isNHPFile(req.file.originalname)) {
-      records = parseNHPRows(rows);
+      records = parseNHPRows(wb);
     } else {
+      const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
+      if (!rows.length) return res.status(400).json({ error: 'File is empty' });
       const headers = Object.keys(rows[0]);
       const sample = rows.slice(0, 3);
       const mapping = await mapColumnsWithAI(headers, sample);
       records = parseRows(rows, mapping, req.file.originalname);
     }
+
+    if (!records.length) return res.status(400).json({ error: 'No records found in file' });
 
     const commissionSum = records.reduce((s, r) => s + (r.commission || 0), 0);
     const carriers = [...new Set(records.map(r => r.carrier).filter(Boolean))];
