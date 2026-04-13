@@ -6,41 +6,41 @@ function fmt(n) {
 }
 
 const MY_AGENTS = [
-  'Gina Berenguer',
-  'Jill Taylor',
-  'Katy Robles',
-  'Osmary Orozco',
-  'Sabri Perez',
-  'The Health Experts Insurance',
-  'Yahoska Perez',
+  'Gina Berenguer','Jill Taylor','Katy Robles','Osmary Orozco',
+  'Sabri Perez','The Health Experts Insurance','Yahoska Perez',
 ];
 
-const CLASSIFICATION_TYPES = [
-  'Agent Commission',
-  'Agency Override',
-  'Chargeback',
-  'Renewal',
-  'Override',
-];
+const CLASSIFICATION_TYPES = ['Agent Commission','Agency Override','Chargeback','Renewal','Override'];
 
-function BarChart({ data, valueKey = 'total', labelKey = 'name', color = '#185FA5' }) {
-  if (!data || !data.length) return <div style={{color:'var(--text-muted)', fontSize:12, padding:'20px 0'}}>No data</div>;
-  const max = Math.max(...data.map(d => Math.abs(parseFloat(d[valueKey]) || 0)));
+function formatPeriod(p) {
+  if (!p || p === 'Unknown') return null;
+  const s = String(p).trim();
+  // YYYYMM → MM/YYYY
+  if (s.match(/^\d{6}$/)) return s.slice(4,6) + '/' + s.slice(0,4);
+  // MM/DD/YYYY → MM/YYYY
+  if (s.match(/^\d{2}\/\d{2}\/\d{4}$/)) return s.slice(0,2) + '/' + s.slice(6,10);
+  // Already looks like a period label
+  if (s.match(/^\d{2}\/\d{4}$/)) return s;
+  return null; // skip garbage
+}
+
+function BarChart({ data, color }) {
+  if (!data || !data.length) return <div style={{color:'var(--text-muted)',fontSize:12,padding:16,textAlign:'center'}}>No data</div>;
+  const max = Math.max(...data.map(d => Math.abs(parseFloat(d.total)||0)));
   return (
-    <div style={{display:'flex', flexDirection:'column', gap:6}}>
-      {data.slice(0, 8).map((d, i) => {
-        const val = parseFloat(d[valueKey]) || 0;
-        const pct = max > 0 ? (Math.abs(val) / max) * 100 : 0;
+    <div style={{display:'flex',flexDirection:'column',gap:8}}>
+      {data.slice(0,8).map((d,i) => {
+        const val = parseFloat(d.total)||0;
+        const pct = max>0 ? (Math.abs(val)/max)*100 : 0;
+        const name = d.agent_name || d.carrier || d.name || '';
         return (
-          <div key={i} style={{display:'flex', alignItems:'center', gap:8}}>
-            <div style={{width:120, fontSize:11, color:'var(--text-muted)', textAlign:'right', flexShrink:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap'}} title={d[labelKey]}>
-              {d[labelKey]}
+          <div key={i}>
+            <div style={{display:'flex',justifyContent:'space-between',marginBottom:3}}>
+              <span style={{fontSize:11,color:'var(--text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'60%'}} title={name}>{name}</span>
+              <span style={{fontSize:11,fontWeight:600,color:val<0?'#E24B4A':color}}>{fmt(val)}</span>
             </div>
-            <div style={{flex:1, background:'var(--gray-100)', borderRadius:3, height:20, overflow:'hidden'}}>
-              <div style={{width:`${pct}%`, background: val < 0 ? '#E24B4A' : color, height:'100%', borderRadius:3, transition:'width 0.3s ease'}}></div>
-            </div>
-            <div style={{width:80, fontSize:11, fontWeight:600, flexShrink:0, color: val < 0 ? 'var(--red)' : 'inherit'}}>
-              {fmt(val)}
+            <div style={{background:'var(--gray-100)',borderRadius:4,height:6,overflow:'hidden'}}>
+              <div style={{width:`${pct}%`,background:val<0?'#E24B4A':color,height:'100%',borderRadius:4,transition:'width 0.4s ease'}}/>
             </div>
           </div>
         );
@@ -49,20 +49,53 @@ function BarChart({ data, valueKey = 'total', labelKey = 'name', color = '#185FA
   );
 }
 
+function FilterGroup({ title, items, selected, onToggle, onToggleAll, format }) {
+  const allSel = items.length > 0 && selected.length === items.length;
+  return (
+    <div style={{marginBottom:16}}>
+      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}>
+        <span style={{fontSize:11,fontWeight:700,textTransform:'uppercase',letterSpacing:'0.6px',color:'var(--text-muted)'}}>{title}</span>
+        <button onClick={()=>onToggleAll(items)} style={{fontSize:10,color:'#185FA5',background:'none',border:'none',cursor:'pointer',padding:0,fontWeight:600}}>
+          {allSel?'Clear all':'Select all'}
+        </button>
+      </div>
+      <div style={{display:'flex',flexDirection:'column',gap:1}}>
+        {items.map(item => {
+          const label = format ? format(item) : item;
+          const isSel = selected.includes(item);
+          return (
+            <button key={item} onClick={()=>onToggle(item)} style={{
+              display:'flex',alignItems:'center',gap:8,padding:'5px 8px',borderRadius:6,
+              border:'none',background:isSel?'var(--blue-light)':'transparent',
+              cursor:'pointer',textAlign:'left',width:'100%',
+              color:isSel?'#0C447C':'var(--text)',transition:'background 0.15s'
+            }}>
+              <span style={{
+                width:14,height:14,borderRadius:3,flexShrink:0,border:isSel?'none':'1.5px solid var(--border)',
+                background:isSel?'#185FA5':'transparent',display:'flex',alignItems:'center',justifyContent:'center'
+              }}>
+                {isSel && <span style={{color:'#fff',fontSize:9,lineHeight:1}}>✓</span>}
+              </span>
+              <span style={{fontSize:12,fontWeight:isSel?600:400,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{label}</span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard({ user }) {
   const [summary, setSummary] = useState(null);
-  const [filters, setFilters] = useState({ agents: [], carriers: [], periods: [] });
+  const [allFilters, setAllFilters] = useState({ agents:[], carriers:[], periods:[] });
   const [loading, setLoading] = useState(false);
-
-  // Filter state
   const [selAgents, setSelAgents] = useState([]);
   const [selCarriers, setSelCarriers] = useState([]);
   const [selPeriods, setSelPeriods] = useState([]);
-  const [selClassifications, setSelClassifications] = useState([]);
-  const [filtersOpen, setFiltersOpen] = useState(true);
+  const [selTypes, setSelTypes] = useState([]);
 
   useEffect(() => {
-    apiFetch('/records/filters').then(d => setFilters(d)).catch(console.error);
+    apiFetch('/records/filters').then(d => setAllFilters(d)).catch(console.error);
   }, []);
 
   const loadSummary = useCallback(async () => {
@@ -72,66 +105,37 @@ export default function Dashboard({ user }) {
       if (selAgents.length) params.set('agents', selAgents.join(','));
       if (selCarriers.length) params.set('carriers', selCarriers.join(','));
       if (selPeriods.length) params.set('periods', selPeriods.join(','));
-      if (selClassifications.length) params.set('classifications', selClassifications.join(','));
-      if (user.role === 'agent') params.set('agentName', user.name);
+      if (selTypes.length) params.set('classifications', selTypes.join(','));
       const data = await apiFetch(`/records/summary?${params}`);
       setSummary(data);
-    } catch (e) { console.error(e); }
+    } catch(e){ console.error(e); }
     finally { setLoading(false); }
-  }, [selAgents, selCarriers, selPeriods, selClassifications, user]);
+  }, [selAgents, selCarriers, selPeriods, selTypes]);
 
   useEffect(() => { loadSummary(); }, [loadSummary]);
 
-  function toggleItem(list, setList, item) {
-    setList(prev => prev.includes(item) ? prev.filter(x => x !== item) : [...prev, item]);
+  function toggle(list, setList, item) {
+    setList(p => p.includes(item) ? p.filter(x=>x!==item) : [...p, item]);
   }
-
-  function toggleAll(list, setList, allItems) {
-    setList(prev => prev.length === allItems.length ? [] : [...allItems]);
+  function toggleAll(list, setList, items) {
+    setList(p => p.length===items.length ? [] : [...items]);
   }
-
   function clearAll() {
-    setSelAgents([]);
-    setSelCarriers([]);
-    setSelPeriods([]);
-    setSelClassifications([]);
+    setSelAgents([]); setSelCarriers([]); setSelPeriods([]); setSelTypes([]);
   }
 
-  const hasFilters = selAgents.length || selCarriers.length || selPeriods.length || selClassifications.length;
+  // Clean periods — deduplicate by formatted label, skip garbage
+  const cleanPeriods = [];
+  const seen = new Set();
+  (allFilters.periods || []).forEach(p => {
+    const label = formatPeriod(p);
+    if (label && !seen.has(label)) { seen.add(label); cleanPeriods.push(p); }
+  });
 
-  const byAgentData = (summary?.byAgent || []).map(a => ({ name: a.agent_name, total: a.total }));
-  const byCarrierData = (summary?.byCarrier || []).map(c => ({ name: c.carrier, total: c.total }));
-
-  function FilterSection({ title, items, selected, onToggle, onToggleAll }) {
-    const allSelected = selected.length === items.length && items.length > 0;
-    return (
-      <div style={{marginBottom:12}}>
-        <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:6}}>
-          <div style={{fontSize:11, fontWeight:600, color:'var(--text-muted)', textTransform:'uppercase', letterSpacing:'0.5px'}}>{title}</div>
-          <button onClick={() => onToggleAll(items)} style={{fontSize:10, color:'var(--blue)', background:'none', border:'none', cursor:'pointer', padding:0}}>
-            {allSelected ? 'Clear' : 'Select all'}
-          </button>
-        </div>
-        <div style={{display:'flex', flexWrap:'wrap', gap:4}}>
-          {items.map(item => (
-            <button
-              key={item}
-              onClick={() => onToggle(item)}
-              style={{
-                padding:'3px 9px', borderRadius:99, fontSize:11, cursor:'pointer',
-                border: selected.includes(item) ? '1.5px solid var(--blue)' : '1px solid var(--border)',
-                background: selected.includes(item) ? 'var(--blue-light)' : 'var(--gray-50)',
-                color: selected.includes(item) ? '#0C447C' : 'var(--text)',
-                fontWeight: selected.includes(item) ? 600 : 400,
-              }}
-            >
-              {item}
-            </button>
-          ))}
-        </div>
-      </div>
-    );
-  }
+  const hasFilters = selAgents.length || selCarriers.length || selPeriods.length || selTypes.length;
+  const agentList = user.role === 'admin'
+    ? MY_AGENTS.filter(a => allFilters.agents.includes(a))
+    : [user.name];
 
   return (
     <>
@@ -139,139 +143,142 @@ export default function Dashboard({ user }) {
         <div className="page-title">Dashboard</div>
         <div className="page-sub">Welcome back, {user.name.split(' ')[0]} — here's your commission overview</div>
       </div>
-      <div className="page-body">
 
-        {/* Filter Panel */}
-        <div className="card" style={{marginBottom:14}}>
-          <div style={{display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom: filtersOpen ? 14 : 0}}>
-            <div style={{display:'flex', alignItems:'center', gap:8}}>
-              <span style={{fontSize:13, fontWeight:600}}>Filters</span>
-              {hasFilters ? (
-                <span style={{background:'#185FA5', color:'#fff', borderRadius:99, fontSize:10, padding:'1px 7px', fontWeight:600}}>
-                  {[selAgents, selCarriers, selPeriods, selClassifications].filter(a => a.length).length} active
-                </span>
-              ) : null}
-            </div>
-            <div style={{display:'flex', gap:8}}>
-              {hasFilters && (
-                <button onClick={clearAll} style={{fontSize:11, color:'var(--red)', background:'none', border:'none', cursor:'pointer'}}>
-                  Clear all
-                </button>
-              )}
-              <button
-                onClick={() => setFiltersOpen(p => !p)}
-                style={{fontSize:11, color:'var(--text-muted)', background:'none', border:'none', cursor:'pointer'}}
-              >
-                {filtersOpen ? '▲ Hide' : '▼ Show'}
+      <div style={{display:'flex',gap:0,height:'calc(100vh - 100px)',overflow:'hidden'}}>
+
+        {/* Left filter sidebar */}
+        <div style={{
+          width:220,minWidth:220,background:'var(--gray-50)',borderRight:'1px solid var(--border)',
+          overflowY:'auto',padding:'16px 12px',flexShrink:0
+        }}>
+          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14}}>
+            <span style={{fontSize:13,fontWeight:700}}>Filters</span>
+            {hasFilters && (
+              <button onClick={clearAll} style={{fontSize:11,color:'#E24B4A',background:'none',border:'none',cursor:'pointer',fontWeight:600,padding:0}}>
+                Clear
               </button>
-            </div>
+            )}
           </div>
 
-          {filtersOpen && (
-            <div>
-              <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 24px'}}>
-                <FilterSection
-                  title="Agent"
-                  items={user.role === 'admin' ? MY_AGENTS.filter(a => filters.agents.includes(a)) : [user.name]}
-                  selected={selAgents}
-                  onToggle={item => toggleItem(selAgents, setSelAgents, item)}
-                  onToggleAll={items => toggleAll(selAgents, setSelAgents, items)}
-                />
-                <FilterSection
-                  title="Carrier"
-                  items={filters.carriers}
-                  selected={selCarriers}
-                  onToggle={item => toggleItem(selCarriers, setSelCarriers, item)}
-                  onToggleAll={items => toggleAll(selCarriers, setSelCarriers, items)}
-                />
-              </div>
-              <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:'0 24px'}}>
-                <FilterSection
-                  title="Period"
-                  items={filters.periods.slice(0, 12)}
-                  selected={selPeriods}
-                  onToggle={item => toggleItem(selPeriods, setSelPeriods, item)}
-                  onToggleAll={items => toggleAll(selPeriods, setSelPeriods, items)}
-                />
-                <FilterSection
-                  title="Type"
-                  items={CLASSIFICATION_TYPES}
-                  selected={selClassifications}
-                  onToggle={item => toggleItem(selClassifications, setSelClassifications, item)}
-                  onToggleAll={items => toggleAll(selClassifications, setSelClassifications, items)}
-                />
-              </div>
+          {hasFilters && (
+            <div style={{background:'#E6F1FB',borderRadius:6,padding:'6px 8px',marginBottom:12,fontSize:11,color:'#0C447C',fontWeight:600}}>
+              {[selAgents,selCarriers,selPeriods,selTypes].reduce((s,a)=>s+a.length,0)} filter{[selAgents,selCarriers,selPeriods,selTypes].reduce((s,a)=>s+a.length,0)!==1?'s':''} active
             </div>
           )}
+
+          <FilterGroup
+            title="Agent"
+            items={agentList}
+            selected={selAgents}
+            onToggle={item=>toggle(selAgents,setSelAgents,item)}
+            onToggleAll={items=>toggleAll(selAgents,setSelAgents,items)}
+          />
+
+          <div style={{borderTop:'1px solid var(--border)',marginBottom:16}}/>
+
+          <FilterGroup
+            title="Carrier"
+            items={allFilters.carriers||[]}
+            selected={selCarriers}
+            onToggle={item=>toggle(selCarriers,setSelCarriers,item)}
+            onToggleAll={items=>toggleAll(selCarriers,setSelCarriers,items)}
+          />
+
+          <div style={{borderTop:'1px solid var(--border)',marginBottom:16}}/>
+
+          <FilterGroup
+            title="Period"
+            items={cleanPeriods}
+            selected={selPeriods}
+            onToggle={item=>toggle(selPeriods,setSelPeriods,item)}
+            onToggleAll={items=>toggleAll(selPeriods,setSelPeriods,items)}
+            format={formatPeriod}
+          />
+
+          <div style={{borderTop:'1px solid var(--border)',marginBottom:16}}/>
+
+          <FilterGroup
+            title="Type"
+            items={CLASSIFICATION_TYPES}
+            selected={selTypes}
+            onToggle={item=>toggle(selTypes,setSelTypes,item)}
+            onToggleAll={items=>toggleAll(selTypes,setSelTypes,items)}
+          />
         </div>
 
-        {/* KPI Cards */}
-        <div className="kpi-grid" style={{marginBottom:14}}>
-          <div className="kpi-card">
-            <div className="kpi-label">Total commissions</div>
-            <div className="kpi-value green">{loading ? '...' : fmt(summary?.totalCommission)}</div>
-          </div>
-          <div className="kpi-card">
-            <div className="kpi-label">Total records</div>
-            <div className="kpi-value blue">{loading ? '...' : (summary?.totalRecords || 0).toLocaleString()}</div>
-          </div>
-          <div className="kpi-card">
-            <div className="kpi-label">Agents</div>
-            <div className="kpi-value">{loading ? '...' : summary?.agentCount || 0}</div>
-          </div>
-          <div className="kpi-card">
-            <div className="kpi-label">Carriers</div>
-            <div className="kpi-value">{loading ? '...' : summary?.carrierCount || 0}</div>
-          </div>
-        </div>
+        {/* Main content */}
+        <div style={{flex:1,overflowY:'auto',padding:'16px 20px'}}>
 
-        {/* Charts */}
-        <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:14, marginBottom:14}}>
-          <div className="card">
-            <div className="card-title">By agent</div>
-            <BarChart data={byAgentData} color="#185FA5" />
+          {/* KPI cards */}
+          <div className="kpi-grid" style={{marginBottom:16}}>
+            <div className="kpi-card">
+              <div className="kpi-label">Total commissions</div>
+              <div className="kpi-value green">{loading?'...':fmt(summary?.totalCommission)}</div>
+            </div>
+            <div className="kpi-card">
+              <div className="kpi-label">Total records</div>
+              <div className="kpi-value blue">{loading?'...':(summary?.totalRecords||0).toLocaleString()}</div>
+            </div>
+            <div className="kpi-card">
+              <div className="kpi-label">Agents</div>
+              <div className="kpi-value">{loading?'...':summary?.agentCount||0}</div>
+            </div>
+            <div className="kpi-card">
+              <div className="kpi-label">Carriers</div>
+              <div className="kpi-value">{loading?'...':summary?.carrierCount||0}</div>
+            </div>
           </div>
-          <div className="card">
-            <div className="card-title">By carrier</div>
-            <BarChart data={byCarrierData} color="#1D9E75" />
-          </div>
-        </div>
 
-        {/* Agent Breakdown Table */}
-        <div className="card" style={{padding:0}}>
-          <div className="card-title" style={{padding:'12px 14px', borderBottom:'1px solid var(--border)'}}>Agent breakdown</div>
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Agent</th>
-                  <th>Total commission</th>
-                  <th>Records</th>
-                </tr>
-              </thead>
-              <tbody>
-                {loading ? (
-                  <tr><td colSpan={4} style={{textAlign:'center', padding:20, color:'var(--text-muted)'}}>Loading...</td></tr>
-                ) : (summary?.byAgent || []).map((a, i) => (
-                  <tr key={i}>
-                    <td style={{color:'var(--text-muted)', fontSize:11}}>{i + 1}</td>
-                    <td style={{fontWeight:500}}>{a.agent_name}</td>
-                    <td style={{fontWeight:600, color: parseFloat(a.total) < 0 ? 'var(--red)' : 'var(--green)'}}>{fmt(a.total)}</td>
-                    <td style={{color:'var(--text-muted)'}}>{a.count}</td>
+          {/* Charts */}
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14,marginBottom:16}}>
+            <div className="card">
+              <div className="card-title" style={{marginBottom:14}}>By agent</div>
+              <BarChart data={summary?.byAgent||[]} color="#185FA5"/>
+            </div>
+            <div className="card">
+              <div className="card-title" style={{marginBottom:14}}>By carrier</div>
+              <BarChart data={summary?.byCarrier||[]} color="#1D9E75"/>
+            </div>
+          </div>
+
+          {/* Agent breakdown table */}
+          <div className="card" style={{padding:0}}>
+            <div style={{padding:'12px 16px',borderBottom:'1px solid var(--border)',fontSize:13,fontWeight:600}}>
+              Agent breakdown
+            </div>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Agent</th>
+                    <th>Total commission</th>
+                    <th>Records</th>
                   </tr>
-                ))}
-              </tbody>
-              {summary && (
-                <tfoot>
-                  <tr style={{background:'var(--gray-50)', fontWeight:700}}>
-                    <td colSpan={2} style={{padding:'10px 12px'}}>Total</td>
-                    <td style={{padding:'10px 12px', color:'var(--green)'}}>{fmt(summary.totalCommission)}</td>
-                    <td style={{padding:'10px 12px', color:'var(--text-muted)'}}>{summary.totalRecords}</td>
-                  </tr>
-                </tfoot>
-              )}
-            </table>
+                </thead>
+                <tbody>
+                  {loading ? (
+                    <tr><td colSpan={4} style={{textAlign:'center',padding:24,color:'var(--text-muted)'}}>Loading...</td></tr>
+                  ) : (summary?.byAgent||[]).map((a,i) => (
+                    <tr key={i}>
+                      <td style={{color:'var(--text-muted)',fontSize:11}}>{i+1}</td>
+                      <td style={{fontWeight:500}}>{a.agent_name}</td>
+                      <td style={{fontWeight:600,color:parseFloat(a.total)<0?'var(--red)':'var(--green)'}}>{fmt(a.total)}</td>
+                      <td style={{color:'var(--text-muted)'}}>{a.count}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                {summary && (
+                  <tfoot>
+                    <tr style={{background:'var(--gray-50)',fontWeight:700}}>
+                      <td colSpan={2} style={{padding:'10px 12px',fontSize:13}}>Total</td>
+                      <td style={{padding:'10px 12px',color:'var(--green)'}}>{fmt(summary.totalCommission)}</td>
+                      <td style={{padding:'10px 12px',color:'var(--text-muted)'}}>{summary.totalRecords}</td>
+                    </tr>
+                  </tfoot>
+                )}
+              </table>
+            </div>
           </div>
         </div>
       </div>
