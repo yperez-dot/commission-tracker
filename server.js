@@ -1,7 +1,6 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -13,8 +12,13 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-const { getDb } = require('./db/database');
-getDb();
+const { initSchema } = require('./db/database');
+
+initSchema().then(() => {
+  console.log('✅ Database ready');
+}).catch(err => {
+  console.error('❌ Database init failed:', err.message);
+});
 
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/files', require('./routes/files'));
