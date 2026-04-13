@@ -7,6 +7,7 @@ const fs = require('fs');
 const Anthropic = require('@anthropic-ai/sdk');
 const { getPool } = require('../db/database');
 const { requireAuth } = require('./auth');
+const { normalizeAgentName } = require('../normalize');
 
 const UPLOADS_DIR = path.join('/tmp', 'uploads');
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
@@ -38,6 +39,26 @@ function detectCarrierFromFilename(filename) {
   if (f.includes('florida_blue') || f.includes('bcbs') || f.includes('floridablue')) return 'Florida Blue';
   if (f.includes('oscar')) return 'Oscar Health';
   return 'Unknown';
+}
+
+function isUHCFile(filename) {
+  const f = filename.toLowerCase().replace(/\s+/g, '_');
+  return f.includes('commission_statement_2737247');
+}
+
+function isBSIFile(filename) {
+  const f = filename.toLowerCase().replace(/\s+/g, '_');
+  return f.includes('statement-health_experts') || f.includes('statement_health_experts');
+}
+
+function isNHPFile(filename) {
+  const f = filename.toLowerCase().replace(/\s+/g, '_');
+  return f.includes('the_health_experts_insurance_statement');
+}
+
+function isAgencyName(name) {
+  const n = String(name || '').toLowerCase().trim();
+  return n.includes('the health experts') || n.includes('health experts insurance');
 }
 
 function normalizeBSICarrier(company) {
@@ -84,6 +105,9 @@ function formatDate(value) {
     return value;
   }
   if (typeof value === 'number') {
+    const s = String(value);
+    // Payment period like 202603
+    if (s.match(/^\d{6}$/)) return s;
     const date = new Date((value - 25569) * 86400 * 1000);
     if (isNaN(date.getTime())) return String(value);
     const m = String(date.getUTCMonth() + 1).padStart(2, '0');
@@ -94,14 +118,48 @@ function formatDate(value) {
   return String(value);
 }
 
-function isBSIFile(filename) {
-  const f = filename.toLowerCase().replace(/\s+/g, '_');
-  return f.includes('statement-health_experts') || f.includes('statement_health_experts');
-}
+// UHC-specific parser using Writing Agent Name to determine type
+function parseUHCRows(wb) {
+  const records = [];
+  // UHC uses 'Commission Transactions' sheet
+  const sheetName = wb.SheetNames.find(s => s.toLowerCase().includes('commission trans')) || wb.SheetNames[0];
+  const ws = wb.Sheets[sheetName];
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
 
-function isNHPFile(filename) {
-  const f = filename.toLowerCase().replace(/\s+/g, '_');
-  return f.includes('the_health_experts_insurance_statement');
+  for (const row of rows) {
+    const writingAgentRaw = String(row['Writing Agent Name'] || '').trim();
+    const client = String(row['Member Name'] || '').trim();
+    const commission = parseFloat(row['Commission']) || 0;
+    const policyNumber = String(row['Policy Number'] || '').trim();
+    const effectiveDate = formatDate(row['Original Effective Date']);
+    const period = String(row['Payment Period'] || '').trim();
+    const commAction = String(row['Commission Action'] || '').trim();
+    const planType = String(row['Plan Type'] || '').trim();
+
+    if (!client || commission === 0) continue;
+
+    // Key rule: Writing Agent = agency name → Agent Commission (you wrote it)
+    // Writing Agent = real person → Agency Override (they wrote it, you get override)
+    const isAgency = isAgencyName(writingAgentRaw);
+    const recordType = isAgency ? 'Agent Commission' : 'Agency Override';
+    const agentName = isAgency
+      ? 'The Health Experts Insurance'
+      : normalizeAgentName(writingAgentRaw);
+
+    records.push({
+      agent: agentName,
+      carrier: 'UnitedHealthcare',
+      client,
+      effectiveDate,
+      premium: parseFloat(row['Prem Amount']) || 0,
+      commission,
+      classification: commission < 0 ? 'Chargeback' : recordType,
+      period: String(period),
+      policyNumber,
+      raw: row
+    });
+  }
+  return records;
 }
 
 function parseBSIRows(rows) {
@@ -117,7 +175,7 @@ function parseBSIRows(rows) {
       }
       continue;
     }
-    const agent = String(vals[1] || '').trim();
+    const agent = normalizeAgentName(String(vals[1] || '').trim());
     const company = String(vals[2] || '').trim();
     const policyNumber = String(vals[3] || '').trim();
     const client = String(vals[4] || '').trim();
@@ -131,7 +189,7 @@ function parseBSIRows(rows) {
       effectiveDate,
       premium: 0,
       commission,
-      classification: commission < 0 ? 'Chargeback' : 'Override',
+      classification: commission < 0 ? 'Chargeback' : 'Agency Override',
       period: 'Unknown',
       policyNumber,
       raw: row
@@ -143,8 +201,6 @@ function parseBSIRows(rows) {
 function parseNHPRows(wb) {
   const records = [];
   const ws = wb.Sheets[wb.SheetNames[0]];
-
-  // Find header row by scanning for 'Override' column
   const range = XLSX.utils.decode_range(ws['!ref']);
   let headerRow = -1;
   for (let r = range.s.r; r <= Math.min(range.s.r + 20, range.e.r); r++) {
@@ -157,24 +213,19 @@ function parseNHPRows(wb) {
     }
     if (headerRow >= 0) break;
   }
-
   if (headerRow < 0) return records;
-
-  // Read using that header row
   const rows = XLSX.utils.sheet_to_json(ws, { raw: true, defval: '', range: headerRow });
-
   for (const row of rows) {
-    const agent = String(row['Agent'] || '').trim();
+    const agent = normalizeAgentName(String(row['Agent'] || '').trim());
     const carrierRaw = String(row['Carrier-Statement Month'] || '').trim();
     const client = String(row['Subscriber Name'] || '').trim();
     const policyNumber = String(row['Policy Number'] || '').trim();
     const effectiveDate = formatDate(row['Policy Effective Date']);
     const period = formatDate(row['Commission Month']);
-    const status = String(row['Status'] || '').trim();
+    const nhpType = String(row['Type'] || '').trim();
     const commission = parseFloat(row['Override']) || 0;
-
     if (!client || commission === 0) continue;
-
+    const recordType = nhpType.toLowerCase().includes('commission') ? 'Agent Commission' : 'Agency Override';
     records.push({
       agent: agent || 'Unknown',
       carrier: normalizeNHPCarrier(carrierRaw),
@@ -182,7 +233,7 @@ function parseNHPRows(wb) {
       effectiveDate,
       premium: 0,
       commission,
-      classification: commission < 0 ? 'Chargeback' : (status || 'Override'),
+      classification: commission < 0 ? 'Chargeback' : recordType,
       period: period || 'Unknown',
       policyNumber,
       raw: row
@@ -212,7 +263,9 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     const ws = wb.Sheets[wb.SheetNames[0]];
 
     let records;
-    if (isBSIFile(req.file.originalname)) {
+    if (isUHCFile(req.file.originalname)) {
+      records = parseUHCRows(wb);
+    } else if (isBSIFile(req.file.originalname)) {
       const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
       records = parseBSIRows(rows);
     } else if (isNHPFile(req.file.originalname)) {
@@ -327,32 +380,37 @@ function heuristicMapping(headers) {
   const h = headers.map(x => x.toLowerCase());
   const find = (terms) => headers[h.findIndex(x => terms.some(t => x.includes(t)))] || null;
   return {
-    agent: find(['agent', 'producer', 'writing', 'rep']),
+    agent: find(['writing agent', 'agent', 'producer', 'rep']),
     carrier: find(['carrier', 'company', 'insurer', 'plan']),
-    client: find(['client', 'member', 'subscriber', 'insured', 'name']),
+    client: find(['member', 'client', 'subscriber', 'insured', 'name']),
     effectiveDate: find(['effective', 'eff date', 'policy date', 'start']),
-    premium: find(['premium', 'modal', 'annualized']),
+    premium: find(['prem', 'premium', 'modal', 'annualized']),
     commission: find(['commission', 'payment', 'amount', 'earned', 'comp']),
-    classification: find(['type', 'class', 'category', 'new', 'renewal']),
-    period: find(['period', 'month', 'statement', 'pay date']),
+    classification: find(['action', 'type', 'class', 'category', 'renewal']),
+    period: find(['payment period', 'period', 'month', 'statement']),
     policyNumber: find(['policy', 'member id', 'contract', 'certificate'])
   };
 }
 
 function parseRows(rows, mapping, filename) {
+  const carrier = detectCarrierFromFilename(filename);
   return rows
-    .map(row => ({
-      agent: mapping.agent ? String(row[mapping.agent] || '').trim() : filename.replace(/[_\d.xlsx]/g, ' ').trim(),
-      carrier: mapping.carrier ? String(row[mapping.carrier] || '').trim() : detectCarrierFromFilename(filename),
-      client: mapping.client ? String(row[mapping.client] || '').trim() : '',
-      effectiveDate: mapping.effectiveDate ? formatDate(row[mapping.effectiveDate]) : '',
-      premium: mapping.premium ? parseFloat(row[mapping.premium]) || 0 : 0,
-      commission: mapping.commission ? parseFloat(row[mapping.commission]) || 0 : 0,
-      classification: mapping.classification ? String(row[mapping.classification] || '').trim() : 'Unknown',
-      period: mapping.period ? String(row[mapping.period] || '').trim() : 'Unknown',
-      policyNumber: mapping.policyNumber ? String(row[mapping.policyNumber] || '').trim() : '',
-      raw: row
-    }))
+    .map(row => {
+      const agent = normalizeAgentName(mapping.agent ? String(row[mapping.agent] || '').trim() : '');
+      const recordType = isAgencyName(agent) ? 'Agent Commission' : 'Agency Override';
+      return {
+        agent: agent || 'The Health Experts Insurance',
+        carrier,
+        client: mapping.client ? String(row[mapping.client] || '').trim() : '',
+        effectiveDate: mapping.effectiveDate ? formatDate(row[mapping.effectiveDate]) : '',
+        premium: mapping.premium ? parseFloat(row[mapping.premium]) || 0 : 0,
+        commission: mapping.commission ? parseFloat(row[mapping.commission]) || 0 : 0,
+        classification: mapping.classification ? String(row[mapping.classification] || '').trim() || recordType : recordType,
+        period: mapping.period ? String(row[mapping.period] || '').trim() : 'Unknown',
+        policyNumber: mapping.policyNumber ? String(row[mapping.policyNumber] || '').trim() : '',
+        raw: row
+      };
+    })
     .filter(r => r.commission > 0 || r.premium > 0 || r.client);
 }
 
