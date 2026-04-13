@@ -23,6 +23,7 @@ initSchema().then(() => {
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/files', require('./routes/files'));
 app.use('/api/records', require('./routes/records'));
+app.use('/api/bob', require('./routes/bob'));
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
