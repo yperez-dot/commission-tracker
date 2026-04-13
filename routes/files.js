@@ -19,6 +19,23 @@ const upload = multer({ storage, limits: { fileSize: 20 * 1024 * 1024 } });
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
+function detectCarrierFromFilename(filename) {
+  const f = filename.toLowerCase();
+  if (f.includes('uhc') || f.includes('united') || f.includes('2737247')) return 'UnitedHealthcare';
+  if (f.includes('aetna')) return 'Aetna';
+  if (f.includes('humana')) return 'Humana';
+  if (f.includes('devoted')) return 'Devoted';
+  if (f.includes('cigna')) return 'Cigna';
+  if (f.includes('wellcare')) return 'WellCare';
+  if (f.includes('sunshine')) return 'Sunshine Health';
+  if (f.includes('molina')) return 'Molina';
+  if (f.includes('ambetter')) return 'Ambetter';
+  if (f.includes('florida blue') || f.includes('bcbs') || f.includes('floridablue')) return 'Florida Blue';
+  if (f.includes('oscar')) return 'Oscar Health';
+  if (f.includes('medmutual') || f.includes('med_mutual')) return 'Medical Mutual';
+  return 'Unknown';
+}
+
 router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
@@ -154,7 +171,7 @@ function parseRows(rows, mapping, filename) {
   return rows
     .map(row => ({
       agent: mapping.agent ? String(row[mapping.agent] || '').trim() : filename.replace(/[_\d.xlsx]/g, ' ').trim(),
-      carrier: mapping.carrier ? String(row[mapping.carrier] || '').trim() : 'Unknown',
+      carrier: mapping.carrier ? String(row[mapping.carrier] || '').trim() : detectCarrierFromFilename(filename),
       client: mapping.client ? String(row[mapping.client] || '').trim() : '',
       effectiveDate: mapping.effectiveDate ? String(row[mapping.effectiveDate] || '').trim() : '',
       premium: mapping.premium ? parseFloat(row[mapping.premium]) || 0 : 0,
