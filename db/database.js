@@ -54,10 +54,41 @@ async function initSchema() {
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
 
+      CREATE TABLE IF NOT EXISTS book_of_business (
+        id SERIAL PRIMARY KEY,
+        agent_name TEXT,
+        carrier TEXT NOT NULL,
+        client_full_name TEXT NOT NULL,
+        policy_number TEXT,
+        effective_date TEXT,
+        plan_type TEXT,
+        status TEXT DEFAULT 'active',
+        last_commission_date TEXT,
+        last_commission_amount REAL DEFAULT 0,
+        months_missing INTEGER DEFAULT 0,
+        resolution TEXT,
+        source TEXT DEFAULT 'statement',
+        notes TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE TABLE IF NOT EXISTS bob_uploads (
+        id SERIAL PRIMARY KEY,
+        original_name TEXT NOT NULL,
+        carrier TEXT,
+        row_count INTEGER DEFAULT 0,
+        uploaded_by INTEGER REFERENCES users(id),
+        uploaded_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
       CREATE INDEX IF NOT EXISTS idx_records_agent ON commission_records(agent_name);
       CREATE INDEX IF NOT EXISTS idx_records_carrier ON commission_records(carrier);
       CREATE INDEX IF NOT EXISTS idx_records_period ON commission_records(payment_period);
       CREATE INDEX IF NOT EXISTS idx_records_client ON commission_records(client_full_name);
+      CREATE INDEX IF NOT EXISTS idx_bob_carrier ON book_of_business(carrier);
+      CREATE INDEX IF NOT EXISTS idx_bob_client ON book_of_business(client_full_name);
+      CREATE INDEX IF NOT EXISTS idx_bob_status ON book_of_business(status);
     `);
 
     await seedDefaultAdmin(client);
@@ -75,7 +106,6 @@ async function seedDefaultAdmin(client) {
       'INSERT INTO users (name, email, password_hash, role) VALUES ($1, $2, $3, $4)',
       ['Yahoska Perez', 'yahoska@healthexps.com', hash, 'admin']
     );
-
     const agents = [
       { name: 'Jill Taylor', email: 'jill@healthexps.com' },
       { name: 'Katy Robles', email: 'katy@healthexps.com' },
