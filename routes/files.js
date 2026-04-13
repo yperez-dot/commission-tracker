@@ -22,9 +22,10 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 function detectCarrierFromFilename(filename) {
   const f = filename.toLowerCase();
   if (f.includes('uhc') || f.includes('united') || f.includes('2737247')) return 'UnitedHealthcare';
-  if (f.includes('aetna')) return 'Aetna';
-  if (f.includes('humana')) return 'Humana';
-  if (f.includes('devoted')) return 'Devoted';
+  if (f.includes('producerstatementreport')) return 'Aetna';
+  if (f.includes('16326554') || f.includes('devoted')) return 'Devoted';
+  if (f.includes('med_comm') || f.includes('humana')) return 'Humana';
+  if (f.includes('the_health_experts_insurance_statement') || f.includes('nhp')) return 'NHP';
   if (f.includes('cigna')) return 'Cigna';
   if (f.includes('wellcare')) return 'WellCare';
   if (f.includes('sunshine')) return 'Sunshine Health';
