@@ -1,80 +1,79 @@
-const Database = require('better-sqlite3');
-const path = require('path');
+const { Pool } = require('pg');
 const bcrypt = require('bcryptjs');
 
-const DB_PATH = path.join(__dirname, '..', 'data', 'tracker.db');
+let pool;
 
-let db;
-
-function getDb() {
-  if (!db) {
-    const fs = require('fs');
-    const dataDir = path.join(__dirname, '..', 'data');
-    if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-
-    db = new Database(DB_PATH);
-    db.pragma('journal_mode = WAL');
-    db.pragma('foreign_keys = ON');
-    initSchema();
+function getPool() {
+  if (!pool) {
+    pool = new Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false
+    });
+    pool.on('error', (err) => console.error('Database pool error:', err));
   }
-  return db;
+  return pool;
 }
 
-function initSchema() {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      email TEXT UNIQUE NOT NULL,
-      password_hash TEXT NOT NULL,
-      role TEXT NOT NULL DEFAULT 'agent',
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    );
+async function initSchema() {
+  const client = await getPool().connect();
+  try {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        email TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'agent',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
 
-    CREATE TABLE IF NOT EXISTS uploads (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      filename TEXT NOT NULL,
-      original_name TEXT NOT NULL,
-      carrier TEXT,
-      row_count INTEGER DEFAULT 0,
-      commission_sum REAL DEFAULT 0,
-      uploaded_by INTEGER,
-      uploaded_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (uploaded_by) REFERENCES users(id)
-    );
+      CREATE TABLE IF NOT EXISTS uploads (
+        id SERIAL PRIMARY KEY,
+        filename TEXT NOT NULL,
+        original_name TEXT NOT NULL,
+        carrier TEXT,
+        row_count INTEGER DEFAULT 0,
+        commission_sum REAL DEFAULT 0,
+        uploaded_by INTEGER REFERENCES users(id),
+        uploaded_at TIMESTAMPTZ DEFAULT NOW()
+      );
 
-    CREATE TABLE IF NOT EXISTS commission_records (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      upload_id INTEGER,
-      agent_name TEXT,
-      carrier TEXT,
-      client_full_name TEXT,
-      effective_date TEXT,
-      premium REAL DEFAULT 0,
-      commission REAL DEFAULT 0,
-      classification TEXT,
-      payment_period TEXT,
-      policy_number TEXT,
-      raw_data TEXT,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (upload_id) REFERENCES uploads(id) ON DELETE CASCADE
-    );
+      CREATE TABLE IF NOT EXISTS commission_records (
+        id SERIAL PRIMARY KEY,
+        upload_id INTEGER REFERENCES uploads(id) ON DELETE CASCADE,
+        agent_name TEXT,
+        carrier TEXT,
+        client_full_name TEXT,
+        effective_date TEXT,
+        premium REAL DEFAULT 0,
+        commission REAL DEFAULT 0,
+        classification TEXT,
+        payment_period TEXT,
+        policy_number TEXT,
+        raw_data TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
 
-    CREATE INDEX IF NOT EXISTS idx_records_agent ON commission_records(agent_name);
-    CREATE INDEX IF NOT EXISTS idx_records_carrier ON commission_records(carrier);
-    CREATE INDEX IF NOT EXISTS idx_records_period ON commission_records(payment_period);
-    CREATE INDEX IF NOT EXISTS idx_records_client ON commission_records(client_full_name);
-  `);
+      CREATE INDEX IF NOT EXISTS idx_records_agent ON commission_records(agent_name);
+      CREATE INDEX IF NOT EXISTS idx_records_carrier ON commission_records(carrier);
+      CREATE INDEX IF NOT EXISTS idx_records_period ON commission_records(payment_period);
+      CREATE INDEX IF NOT EXISTS idx_records_client ON commission_records(client_full_name);
+    `);
 
-  seedDefaultAdmin();
+    await seedDefaultAdmin(client);
+    console.log('✅ Database schema initialized');
+  } finally {
+    client.release();
+  }
 }
 
-function seedDefaultAdmin() {
-  const existing = db.prepare('SELECT id FROM users WHERE email = ?').get('yahoska@healthexps.com');
-  if (!existing) {
+async function seedDefaultAdmin(client) {
+  const existing = await client.query('SELECT id FROM users WHERE email = $1', ['yahoska@healthexps.com']);
+  if (existing.rows.length === 0) {
     const hash = bcrypt.hashSync('HealthExperts2024!', 10);
-    db.prepare(`INSERT INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)`).run(
-      'Yahoska Perez', 'yahoska@healthexps.com', hash, 'admin'
+    await client.query(
+      'INSERT INTO users (name, email, password_hash, role) VALUES ($1, $2, $3, $4)',
+      ['Yahoska Perez', 'yahoska@healthexps.com', hash, 'admin']
     );
 
     const agents = [
@@ -85,13 +84,14 @@ function seedDefaultAdmin() {
       { name: 'Sabri Perez', email: 'sabri@healthexps.com' },
     ];
     const agentHash = bcrypt.hashSync('Agent2024!', 10);
-    const stmt = db.prepare(`INSERT OR IGNORE INTO users (name, email, password_hash, role) VALUES (?, ?, ?, ?)`);
-    agents.forEach(a => stmt.run(a.name, a.email, agentHash, 'agent'));
-
+    for (const a of agents) {
+      await client.query(
+        'INSERT INTO users (name, email, password_hash, role) VALUES ($1, $2, $3, $4) ON CONFLICT (email) DO NOTHING',
+        [a.name, a.email, agentHash, 'agent']
+      );
+    }
     console.log('✅ Default users seeded');
-    console.log('   Admin: yahoska@healthexps.com / HealthExperts2024!');
-    console.log('   Agents: [name]@healthexps.com / Agent2024!');
   }
 }
 
-module.exports = { getDb };
+module.exports = { getPool, initSchema };
