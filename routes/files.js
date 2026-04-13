@@ -21,11 +21,15 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 function detectCarrierFromFilename(filename) {
   const f = filename.toLowerCase();
-  if (f.includes('uhc') || f.includes('united') || f.includes('2737247')) return 'UnitedHealthcare';
+  if (f.includes('commission_statement_2737247') || f.includes('uhc') || f.includes('united')) return 'UnitedHealthcare';
   if (f.includes('producerstatementreport')) return 'Aetna';
   if (f.includes('16326554') || f.includes('devoted')) return 'Devoted';
-  if (f.includes('med_comm') || f.includes('humana')) return 'Humana';
+  if (f.includes('the_health_experts_insurance_med_comm')) return 'Aetna';
+  if (f.includes('commissiondata') || f.includes('yahoska_perez_med_comm') || f.includes('humana')) return 'Humana';
+  if (f.includes('statement-health_experts') || f.includes('statement_health_experts')) return 'BSI';
   if (f.includes('the_health_experts_insurance_statement') || f.includes('nhp')) return 'NHP';
+  if (f.includes('commissions_ledger') || f.includes('solis')) return 'Solis';
+  if (f.includes('commission-statement') || f.includes('integrity')) return 'Integrity';
   if (f.includes('cigna')) return 'Cigna';
   if (f.includes('wellcare')) return 'WellCare';
   if (f.includes('sunshine')) return 'Sunshine Health';
@@ -38,6 +42,12 @@ function detectCarrierFromFilename(filename) {
 
 function formatDate(value) {
   if (!value) return '';
+  if (value instanceof Date) {
+    const m = String(value.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(value.getUTCDate()).padStart(2, '0');
+    const y = value.getUTCFullYear();
+    return `${m}/${d}/${y}`;
+  }
   if (typeof value === 'string') {
     if (value.match(/\d{1,2}\/\d{1,2}\/\d{4}/)) return value;
     if (value.match(/\d{4}-\d{2}-\d{2}/)) {
@@ -57,33 +67,90 @@ function formatDate(value) {
   return String(value);
 }
 
+function isBSIFile(filename) {
+  const f = filename.toLowerCase();
+  return f.includes('statement-health_experts') || f.includes('statement_health_experts');
+}
+
+function parseBSIRows(rows, filename) {
+  const records = [];
+  let dataStarted = false;
+  for (const row of rows) {
+    const vals = Object.values(row);
+    if (!dataStarted) {
+      const hasAgent = vals.some(v => String(v || '').toLowerCase().includes('agent'));
+      const hasCommission = vals.some(v => String(v || '').toLowerCase().includes('commission'));
+      if (hasAgent && hasCommission) { dataStarted = true; continue; }
+      continue;
+    }
+    const agent = String(vals[1] || '').trim();
+    const company = String(vals[2] || '').trim();
+    const policyNumber = String(vals[3] || '').trim();
+    const client = String(vals[4] || '').trim();
+    const effectiveDate = formatDate(vals[5]);
+    const commission = parseFloat(vals[6]) || 0;
+    if (!client && !commission) continue;
+    records.push({
+      agent: agent || 'BSI Agent',
+      carrier: 'BSI',
+      client,
+      effectiveDate,
+      premium: 0,
+      commission,
+      classification: commission < 0 ? 'Chargeback' : 'New Business',
+      period: 'Unknown',
+      policyNumber,
+      raw: row
+    });
+  }
+  return records.filter(r => r.commission !== 0 || r.client);
+}
+
 router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
   try {
+    const pool = getPool();
+
+    const existing = await pool.query(
+      'SELECT id FROM uploads WHERE original_name = $1',
+      [req.file.originalname]
+    );
+    if (existing.rows.length > 0) {
+      try { fs.unlinkSync(req.file.path); } catch (e) {}
+      return res.status(409).json({
+        error: `"${req.file.originalname}" has already been uploaded. Delete the existing file first if you want to re-upload it.`
+      });
+    }
+
     const wb = XLSX.readFile(req.file.path);
     const ws = wb.Sheets[wb.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
 
     if (!rows.length) return res.status(400).json({ error: 'File is empty' });
 
-    const headers = Object.keys(rows[0]);
-    const sample = rows.slice(0, 3);
-    const mapping = await mapColumnsWithAI(headers, sample);
-    const records = parseRows(rows, mapping, req.file.originalname);
+    let records;
+    if (isBSIFile(req.file.originalname)) {
+      records = parseBSIRows(rows, req.file.originalname);
+    } else {
+      const headers = Object.keys(rows[0]);
+      const sample = rows.slice(0, 3);
+      const mapping = await mapColumnsWithAI(headers, sample);
+      records = parseRows(rows, mapping, req.file.originalname);
+    }
 
-    const pool = getPool();
+    const pool2 = getPool();
     const commissionSum = records.reduce((s, r) => s + (r.commission || 0), 0);
     const carriers = [...new Set(records.map(r => r.carrier).filter(Boolean))];
 
-    const uploadResult = await pool.query(
+    const uploadResult = await pool2.query(
       'INSERT INTO uploads (filename, original_name, carrier, row_count, commission_sum, uploaded_by) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
       [req.file.filename, req.file.originalname, carriers.join(', '), records.length, commissionSum, req.user.id]
     );
     const uploadId = uploadResult.rows[0].id;
 
     for (const r of records) {
-      await pool.query(
+      await pool2.query(
         `INSERT INTO commission_records
           (upload_id, agent_name, carrier, client_full_name, effective_date, premium, commission, classification, payment_period, policy_number, raw_data)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
@@ -99,7 +166,6 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       rowCount: records.length,
       commissionSum,
       carriers,
-      mapping,
       preview: records.slice(0, 5)
     });
 
