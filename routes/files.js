@@ -40,6 +40,33 @@ function detectCarrierFromFilename(filename) {
   return 'Unknown';
 }
 
+function normalizeBSICarrier(company) {
+  const c = String(company || '').toLowerCase();
+  if (c.includes('united') || c.includes('uhc')) return 'UnitedHealthcare';
+  if (c.includes('humana') && c.includes('devoted')) return 'Humana/Devoted';
+  if (c.includes('humana')) return 'Humana';
+  if (c.includes('devoted')) return 'Devoted';
+  if (c.includes('aetna')) return 'Aetna';
+  if (c.includes('nhp')) return 'NHP';
+  return String(company || '').trim();
+}
+
+function normalizeNHPCarrier(carrierMonth) {
+  const c = String(carrierMonth || '').toLowerCase();
+  if (c.includes('aetna')) return 'Aetna';
+  if (c.includes('cigna')) return 'Cigna';
+  if (c.includes('devoted')) return 'Devoted';
+  if (c.includes('florida blue') || c.includes('floridablue')) return 'Florida Blue';
+  if (c.includes('gold kidney')) return 'Gold Kidney';
+  if (c.includes('humana')) return 'Humana';
+  if (c.includes('oscar')) return 'Oscar Health';
+  if (c.includes('simply')) return 'Simply';
+  if (c.includes('united') || c.includes('uhc')) return 'UnitedHealthcare';
+  if (c.includes('molina')) return 'Molina';
+  if (c.includes('wellcare')) return 'WellCare';
+  return String(carrierMonth || '').split(' - ')[0].trim();
+}
+
 function formatDate(value) {
   if (!value) return '';
   if (value instanceof Date) {
@@ -72,15 +99,22 @@ function isBSIFile(filename) {
   return f.includes('statement-health_experts') || f.includes('statement_health_experts');
 }
 
-function parseBSIRows(rows, filename) {
+function isNHPFile(filename) {
+  const f = filename.toLowerCase();
+  return f.includes('the_health_experts_insurance_statement');
+}
+
+function parseBSIRows(rows) {
   const records = [];
   let dataStarted = false;
   for (const row of rows) {
     const vals = Object.values(row);
     if (!dataStarted) {
-      const hasAgent = vals.some(v => String(v || '').toLowerCase().includes('agent'));
-      const hasCommission = vals.some(v => String(v || '').toLowerCase().includes('commission'));
-      if (hasAgent && hasCommission) { dataStarted = true; continue; }
+      const str = vals.map(v => String(v || '').toLowerCase()).join('|');
+      if (str.includes('agent') && str.includes('client') && str.includes('commission')) {
+        dataStarted = true;
+        continue;
+      }
       continue;
     }
     const agent = String(vals[1] || '').trim();
@@ -89,21 +123,76 @@ function parseBSIRows(rows, filename) {
     const client = String(vals[4] || '').trim();
     const effectiveDate = formatDate(vals[5]);
     const commission = parseFloat(vals[6]) || 0;
-    if (!client && !commission) continue;
+    if (!client) continue;
     records.push({
-      agent: agent || 'BSI Agent',
-      carrier: 'BSI',
+      agent: agent || 'Unknown',
+      carrier: normalizeBSICarrier(company),
       client,
       effectiveDate,
       premium: 0,
       commission,
-      classification: commission < 0 ? 'Chargeback' : 'New Business',
+      classification: commission < 0 ? 'Chargeback' : 'Override',
       period: 'Unknown',
       policyNumber,
       raw: row
     });
   }
-  return records.filter(r => r.commission !== 0 || r.client);
+  return records;
+}
+
+function parseNHPRows(rows) {
+  const records = [];
+  let dataStarted = false;
+  let colMap = {};
+
+  for (const row of rows) {
+    const vals = Object.values(row);
+    if (!dataStarted) {
+      const str = vals.map(v => String(v || '').toLowerCase()).join('|');
+      if (str.includes('agent') && str.includes('subscriber') && str.includes('override')) {
+        // Map column indices from header row
+        vals.forEach((v, i) => {
+          const key = String(v || '').toLowerCase().trim();
+          if (key === 'agent') colMap.agent = i;
+          if (key === 'carrier-statement month') colMap.carrier = i;
+          if (key === 'subscriber name') colMap.client = i;
+          if (key === 'policy number') colMap.policyNumber = i;
+          if (key === 'policy effective date') colMap.effectiveDate = i;
+          if (key === 'commission month') colMap.period = i;
+          if (key === 'status') colMap.status = i;
+          if (key === 'override') colMap.commission = i;
+        });
+        dataStarted = true;
+        continue;
+      }
+      continue;
+    }
+
+    const agent = String(vals[colMap.agent] || '').trim();
+    const carrierRaw = String(vals[colMap.carrier] || '').trim();
+    const client = String(vals[colMap.client] || '').trim();
+    const policyNumber = String(vals[colMap.policyNumber] || '').trim();
+    const effectiveDate = formatDate(vals[colMap.effectiveDate]);
+    const period = formatDate(vals[colMap.period]);
+    const status = String(vals[colMap.status] || '').trim();
+    const commission = parseFloat(vals[colMap.commission]) || 0;
+
+    if (!client || commission === 0) continue;
+
+    records.push({
+      agent: agent || 'Unknown',
+      carrier: normalizeNHPCarrier(carrierRaw),
+      client,
+      effectiveDate,
+      premium: 0,
+      commission,
+      classification: commission < 0 ? 'Chargeback' : (status || 'Override'),
+      period: period || 'Unknown',
+      policyNumber,
+      raw: row
+    });
+  }
+  return records;
 }
 
 router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
@@ -131,7 +220,9 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
 
     let records;
     if (isBSIFile(req.file.originalname)) {
-      records = parseBSIRows(rows, req.file.originalname);
+      records = parseBSIRows(rows);
+    } else if (isNHPFile(req.file.originalname)) {
+      records = parseNHPRows(rows);
     } else {
       const headers = Object.keys(rows[0]);
       const sample = rows.slice(0, 3);
@@ -139,18 +230,17 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       records = parseRows(rows, mapping, req.file.originalname);
     }
 
-    const pool2 = getPool();
     const commissionSum = records.reduce((s, r) => s + (r.commission || 0), 0);
     const carriers = [...new Set(records.map(r => r.carrier).filter(Boolean))];
 
-    const uploadResult = await pool2.query(
+    const uploadResult = await pool.query(
       'INSERT INTO uploads (filename, original_name, carrier, row_count, commission_sum, uploaded_by) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
       [req.file.filename, req.file.originalname, carriers.join(', '), records.length, commissionSum, req.user.id]
     );
     const uploadId = uploadResult.rows[0].id;
 
     for (const r of records) {
-      await pool2.query(
+      await pool.query(
         `INSERT INTO commission_records
           (upload_id, agent_name, carrier, client_full_name, effective_date, premium, commission, classification, payment_period, policy_number, raw_data)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
