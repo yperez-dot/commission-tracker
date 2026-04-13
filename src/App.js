@@ -7,6 +7,7 @@ import AllData from './pages/AllData';
 import MissingRenewals from './pages/MissingRenewals';
 import Agents from './pages/Agents';
 import Reconciliation from './pages/Reconciliation';
+import BookOfBusiness from './pages/BookOfBusiness';
 import './App.css';
 
 export default function App() {
@@ -63,6 +64,7 @@ export default function App() {
     { id: 'dashboard', label: 'Dashboard', icon: '◼' },
     { id: 'upload', label: 'Upload', icon: '↑' },
     { id: 'alldata', label: 'All Data', icon: '≡' },
+    { id: 'bob', label: 'Book of Business', icon: '◉' },
     { id: 'renewals', label: 'Missing Renewals', icon: '!' },
     { id: 'reconciliation', label: 'Reconciliation', icon: '⇄' },
     ...(user.role === 'admin' ? [{ id: 'agents', label: 'Agents', icon: '●' }] : [])
@@ -72,6 +74,7 @@ export default function App() {
     dashboard: <Dashboard user={user} />,
     upload: <Upload user={user} />,
     alldata: <AllData user={user} />,
+    bob: <BookOfBusiness user={user} />,
     renewals: <MissingRenewals user={user} />,
     reconciliation: <Reconciliation user={user} />,
     agents: <Agents user={user} />
