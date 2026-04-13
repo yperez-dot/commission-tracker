@@ -32,8 +32,28 @@ function detectCarrierFromFilename(filename) {
   if (f.includes('ambetter')) return 'Ambetter';
   if (f.includes('florida blue') || f.includes('bcbs') || f.includes('floridablue')) return 'Florida Blue';
   if (f.includes('oscar')) return 'Oscar Health';
-  if (f.includes('medmutual') || f.includes('med_mutual')) return 'Medical Mutual';
   return 'Unknown';
+}
+
+function formatDate(value) {
+  if (!value) return '';
+  if (typeof value === 'string') {
+    if (value.match(/\d{1,2}\/\d{1,2}\/\d{4}/)) return value;
+    if (value.match(/\d{4}-\d{2}-\d{2}/)) {
+      const [y, m, d] = value.split('-');
+      return `${m}/${d}/${y}`;
+    }
+    return value;
+  }
+  if (typeof value === 'number') {
+    const date = new Date((value - 25569) * 86400 * 1000);
+    if (isNaN(date.getTime())) return String(value);
+    const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(date.getUTCDate()).padStart(2, '0');
+    const y = date.getUTCFullYear();
+    return `${m}/${d}/${y}`;
+  }
+  return String(value);
 }
 
 router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
@@ -42,7 +62,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
   try {
     const wb = XLSX.readFile(req.file.path);
     const ws = wb.Sheets[wb.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
 
     if (!rows.length) return res.status(400).json({ error: 'File is empty' });
 
@@ -173,7 +193,7 @@ function parseRows(rows, mapping, filename) {
       agent: mapping.agent ? String(row[mapping.agent] || '').trim() : filename.replace(/[_\d.xlsx]/g, ' ').trim(),
       carrier: mapping.carrier ? String(row[mapping.carrier] || '').trim() : detectCarrierFromFilename(filename),
       client: mapping.client ? String(row[mapping.client] || '').trim() : '',
-      effectiveDate: mapping.effectiveDate ? String(row[mapping.effectiveDate] || '').trim() : '',
+      effectiveDate: mapping.effectiveDate ? formatDate(row[mapping.effectiveDate]) : '',
       premium: mapping.premium ? parseFloat(row[mapping.premium]) || 0 : 0,
       commission: mapping.commission ? parseFloat(row[mapping.commission]) || 0 : 0,
       classification: mapping.classification ? String(row[mapping.classification] || '').trim() : 'Unknown',
