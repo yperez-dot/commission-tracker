@@ -95,6 +95,19 @@ function isBSIFile(filename) {
 function isNHPFile(filename) {
   return filename.toLowerCase().replace(/\s+/g, '_').includes('the_health_experts_insurance_statement');
 }
+function isHumanaFile(filename) {
+  const f = filename.toLowerCase().replace(/\s+/g, '_');
+  return f.includes('commissiondata') || f.includes('yahoska_perez_med_comm') || f.includes('humana');
+}
+
+function classifyHumana(typeCode, commission) {
+  if (commission < 0) return 'Chargeback';
+  const t = String(typeCode || '').trim().toUpperCase();
+  if (t === 'F') return 'New Business';
+  if (t === 'R') return 'Renewal';
+  return 'Agent Commission';
+}
+
 function isAgencyName(name) {
   const n = String(name || '').toLowerCase().trim();
   return n.includes('the health experts') || n.includes('health experts insurance');
@@ -192,7 +205,7 @@ function parseUHCRows(wb) {
       effectiveDate,
       premium: parseFloat(row['Prem Amount']) || 0,
       commission,
-      classification: commission < 0 ? 'Chargeback' : recordType,
+      classification: commission < 0 ? 'Chargeback' : (isAgency ? recordType : uhcType),
       period: String(period),
       policyNumber,
       raw: row
@@ -409,13 +422,30 @@ function heuristicMapping(headers) {
   };
 }
 
+function normalizeClassification(raw, commission) {
+  if (commission < 0) return 'Chargeback';
+  const c = String(raw || '').trim().toUpperCase();
+  if (c === 'F') return 'New Business';
+  if (c === 'R') return 'Renewal';
+  if (c === 'NEW' || c === 'NEW BUSINESS') return 'New Business';
+  if (c === 'RENEWAL') return 'Renewal';
+  if (c === 'ADVANCE') return 'New Business';
+  if (c === 'CHARGEBACK') return 'Chargeback';
+  if (c === 'AGENT COMMISSION') return 'Agent Commission';
+  if (c === 'AGENCY OVERRIDE' || c === 'OVERRIDE') return 'Agency Override';
+  return raw ? raw : null;
+}
+
 function parseRows(rows, mapping, filename) {
   const carrier = detectCarrierFromFilename(filename);
   return rows.map(row => {
     const agent = normalizeAgentName(mapping.agent ? String(row[mapping.agent] || '').trim() : '');
     const rawPlanType = mapping.planType ? String(row[mapping.planType] || '').trim() : '';
     const policyNumber = mapping.policyNumber ? String(row[mapping.policyNumber] || '').trim() : '';
-    const recordType = isAgencyName(agent) ? 'Agent Commission' : 'Agency Override';
+    const commission = mapping.commission ? parseFloat(row[mapping.commission]) || 0 : 0;
+    const rawClass = mapping.classification ? String(row[mapping.classification] || '').trim() : '';
+    const agencyType = isAgencyName(agent) ? 'Agent Commission' : 'Agency Override';
+    const classification = normalizeClassification(rawClass, commission) || agencyType;
     return {
       agent: agent || 'The Health Experts Insurance',
       carrier,
@@ -423,8 +453,8 @@ function parseRows(rows, mapping, filename) {
       client: mapping.client ? String(row[mapping.client] || '').trim() : '',
       effectiveDate: mapping.effectiveDate ? formatDate(row[mapping.effectiveDate]) : '',
       premium: mapping.premium ? parseFloat(row[mapping.premium]) || 0 : 0,
-      commission: mapping.commission ? parseFloat(row[mapping.commission]) || 0 : 0,
-      classification: mapping.classification ? String(row[mapping.classification] || '').trim() || recordType : recordType,
+      commission,
+      classification,
       period: mapping.period ? String(row[mapping.period] || '').trim() : 'Unknown',
       policyNumber,
       raw: row
