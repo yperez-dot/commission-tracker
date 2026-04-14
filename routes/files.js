@@ -266,7 +266,10 @@ function parseNHPRows(wb) {
     const period = formatDate(row['Commission Month']);
     const nhpType = String(row['Type'] || '').trim();
     const lob = String(row['LOB'] || '').trim();
-    const commission = parseFloat(row['Override']) || 0;
+    // Commission rows use Commission column; Override rows use Override column
+    const commission = nhpType.toLowerCase().includes('commission')
+      ? (parseFloat(row['Commission']) || 0)
+      : (parseFloat(row['Override']) || 0);
     if (!client || commission === 0) continue;
 
     const carrier = normalizeNHPCarrier(carrierRaw);
@@ -334,7 +337,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     const uploadId = uploadResult.rows[0].id;
 
     // Ensure plan_type column exists
-    try { await pool.query("ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS plan_type TEXT DEFAULT ''"); } catch(e) {}
+    try { await pool.query('ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS plan_type TEXT DEFAULT '''); } catch(e) {}
 
     for (const r of records) {
       await pool.query(
