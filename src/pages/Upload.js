@@ -13,6 +13,8 @@ export default function Upload({ user }) {
   const [dragOver, setDragOver] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
   const [viewUpload, setViewUpload] = useState(null); // upload being viewed
+  const [selectedUploads, setSelectedUploads] = useState(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
   const [viewRecords, setViewRecords] = useState([]);
   const [viewLoading, setViewLoading] = useState(false);
 
@@ -51,6 +53,32 @@ export default function Upload({ user }) {
       setUploads(prev => prev.filter(u => u.id !== id));
     } catch (e) { console.error(e); }
     finally { setDeletingId(null); }
+  }
+
+  function toggleSelectUpload(id) {
+    setSelectedUploads(prev => {
+      const n = new Set(prev);
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
+    });
+  }
+
+  function selectAllUploads() {
+    if (selectedUploads.size === uploads.length) setSelectedUploads(new Set());
+    else setSelectedUploads(new Set(uploads.map(u => u.id)));
+  }
+
+  async function bulkDeleteUploads() {
+    if (!window.confirm(`Delete ${selectedUploads.size} uploads and all their records?`)) return;
+    setBulkDeleting(true);
+    try {
+      for (const id of selectedUploads) {
+        await apiFetch(`/files/uploads/${id}`, { method: 'DELETE' });
+      }
+      setUploads(prev => prev.filter(u => !selectedUploads.has(u.id)));
+      setSelectedUploads(new Set());
+    } catch (e) { console.error(e); }
+    finally { setBulkDeleting(false); }
   }
 
   async function openUpload(upload) {
@@ -213,7 +241,8 @@ export default function Upload({ user }) {
               <div className="empty-sub">Drop your first carrier statement above</div>
             </div>
           ) : uploads.map(u => (
-            <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', borderBottom: '1px solid var(--border)' }}>
+            <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', borderBottom: '1px solid var(--border)', background: selectedUploads.has(u.id) ? 'var(--blue-light)' : 'transparent' }}>
+              <input type="checkbox" checked={selectedUploads.has(u.id)} onChange={() => toggleSelectUpload(u.id)} style={{ cursor: 'pointer', flexShrink: 0 }} />
               <span style={{ fontSize: 20, flexShrink: 0 }}>📊</span>
               <div style={{ flex: 1, minWidth: 0 }}>
                 {/* Clickable filename */}
