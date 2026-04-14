@@ -12,7 +12,7 @@ const MY_AGENTS = [
   'Gina Berenguer','Jill Taylor','Katy Robles','Osmary Orozco',
   'Sabri Perez','The Health Experts Insurance','Yahoska Perez',
 ];
-const CLASSIFICATION_TYPES = ['Agent Commission','Agency Override','Chargeback','Renewal','Override'];
+const CLASSIFICATION_TYPES = ['New Business','Renewal','Agent Commission','Agency Override','Chargeback'];
 
 function formatPeriod(p) {
   if (!p || p === 'Unknown') return null;
