@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../api';
 
 function fmt(n) {
-  return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const num = parseFloat(String(n || '0').replace(/[$,]/g, ''));
+  return '$' + (isNaN(num) ? 0 : num).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
 function formatPeriodLabel(p) {
@@ -15,18 +16,28 @@ function formatPeriodLabel(p) {
   return null;
 }
 
+function normPeriod(p) {
+  if (!p) return null;
+  const s = String(p).trim();
+  if (s.match(/^\d{6}$/) && parseInt(s.slice(0,4)) > 1900) return s;
+  const m1 = s.match(/^(\d{1,2})\/(\d{4})$/);
+  if (m1) return m1[2] + m1[1].padStart(2,'0');
+  const m2 = s.match(/^(\d{1,2})\/\d{2}\/(\d{4})$/);
+  if (m2) return m2[2] + m2[1].padStart(2,'0');
+  return null;
+}
+
 export default function MissingRenewals({ user }) {
   const [periods, setPeriods] = useState([]);
   const [selectedPeriod, setSelectedPeriod] = useState('');
   const [loading, setLoading] = useState(false);
-  const [checked, setChecked] = useState(false);
+  const [rows, setRows] = useState([]); // all BOB clients for this period
+  const [showMissingOnly, setShowMissingOnly] = useState(false);
+  const [filterAgent, setFilterAgent] = useState('');
+  const [filterCarrier, setFilterCarrier] = useState('');
   const [selectedClient, setSelectedClient] = useState(null);
   const [clientRecords, setClientRecords] = useState([]);
   const [clientLoading, setClientLoading] = useState(false);
-  const [results, setResults] = useState({ missing: [], found: [], checkedClients: 0, matchedRecords: 0 });
-  const [filterCarrier, setFilterCarrier] = useState('');
-  const [filterAgent, setFilterAgent] = useState('');
-  const [tab, setTab] = useState('missing');
 
   useEffect(() => {
     apiFetch('/records/filters').then(d => {
@@ -35,7 +46,6 @@ export default function MissingRenewals({ user }) {
         const s = String(p);
         return s.match(/^\d{6}$/) || s.match(/^\d{2}\/\d{4}$/) || s.match(/^\d{2}\/\d{2}\/\d{4}$/);
       });
-      // Deduplicate by normalized label
       const seen = new Set();
       const deduped = valid.filter(p => {
         const label = formatPeriodLabel(p);
@@ -51,243 +61,230 @@ export default function MissingRenewals({ user }) {
   async function runCheck() {
     if (!selectedPeriod) return;
     setLoading(true);
-    setChecked(false);
+    setRows([]);
     try {
-      // Get all active BOB clients
+      const targetNorm = normPeriod(selectedPeriod);
+
+      // Get BOB clients
       const bobData = await apiFetch('/bob?status=active');
       const bobClients = bobData || [];
 
-      // Get all commission records for selected period
-      const recData = await apiFetch(`/records?periods=${encodeURIComponent(selectedPeriod)}&limit=2000`);
-      const records = recData.records || [];
-
-      // Also try normalizing — match by YYYYMM
-      function normPeriod(p) {
-        if (!p) return null;
-        const s = String(p).trim();
-        if (s.match(/^\d{6}$/)) return s;
-        const mm = s.match(/^(\d{1,2})\/(?:\d{2}\/)?(\d{4})$/);
-        if (mm) return mm[2] + mm[1].padStart(2,'0');
-        return null;
-      }
-      const targetNorm = normPeriod(selectedPeriod);
-      const allRecData = await apiFetch(`/records?limit=5000`);
+      // Get all commission records and filter by period
+      const allRecData = await apiFetch('/records?limit=5000');
       const allRecs = (allRecData.records || []).filter(r => {
         if (!r.payment_period) return false;
-        // Direct match
         if (r.payment_period === selectedPeriod) return true;
-        // Normalized YYYYMM match
         const n = normPeriod(r.payment_period);
-        if (n && targetNorm && n === targetNorm) return true;
-        // Match on MM/YYYY or MM/DD/YYYY
-        const recNorm = (() => {
-          const s = String(r.payment_period).trim();
-          const m1 = s.match(/^(\d{1,2})\/(\d{4})$/);
-          if (m1) return m1[2] + m1[1].padStart(2,'0');
-          const m2 = s.match(/^(\d{1,2})\/\d{2}\/(\d{4})$/);
-          if (m2) return m2[2] + m2[1].padStart(2,'0');
-          return null;
-        })();
-        return recNorm && targetNorm && recNorm === targetNorm;
+        return n && targetNorm && n === targetNorm;
       });
 
-      // Normalize name: handle both "FIRST LAST" and "LAST, FIRST" formats
-      function normalizeName(name) {
-        if (!name) return '';
-        const s = String(name).toLowerCase().trim();
-        // If has comma, it's "Last, First" — convert to "first last"
-        if (s.includes(',')) {
-          const [last, first] = s.split(',').map(p => p.trim());
-          return `${first} ${last}`.replace(/\s+/g, ' ').trim();
-        }
-        return s.replace(/\s+/g, ' ').trim();
+      // Build lookup: normalized_name|carrier -> record
+      const recMap = {};
+      for (const r of allRecs) {
+        const key = normName(r.client_full_name) + '|' + normCarrier(r.carrier);
+        if (!recMap[key]) recMap[key] = [];
+        recMap[key].push(r);
       }
 
-      function normalizeCarrier(c) {
-        const s = String(c || '').toLowerCase();
-        if (s.includes('united') || s.includes('uhc')) return 'unitedhealthcare';
-        if (s.includes('humana')) return 'humana';
-        if (s.includes('aetna')) return 'aetna';
-        if (s.includes('devoted')) return 'devoted';
-        if (s.includes('cigna')) return 'cigna';
-        if (s.includes('oscar')) return 'oscar health';
-        if (s.includes('florida blue') || s.includes('bcbs')) return 'florida blue';
-        if (s.includes('gold kidney')) return 'gold kidney';
-        if (s.includes('simply')) return 'simply';
-        if (s.includes('molina')) return 'molina';
-        return s;
+      // Also build last-name lookup
+      const lastNameMap = {};
+      for (const r of allRecs) {
+        const n = normName(r.client_full_name);
+        const last = n.split(' ').pop();
+        const key = last + '|' + normCarrier(r.carrier);
+        if (!lastNameMap[key]) lastNameMap[key] = [];
+        lastNameMap[key].push(r);
       }
 
-      // Build set of paid clients using normalized names
-      const paidSet = new Set(allRecs.map(r =>
-        `${normalizeName(r.client_full_name)}|${normalizeCarrier(r.carrier)}`
-      ));
-
-      // Also build a set with just last name + carrier for fuzzy matching
-      const paidLastNameSet = new Set(allRecs.map(r => {
-        const name = normalizeName(r.client_full_name);
-        const lastName = name.split(' ').pop();
-        return `${lastName}|${normalizeCarrier(r.carrier)}`;
-      }));
-
-      // Parse the selected period into a date for comparison
-      function periodToDate(p) {
-        if (!p) return null;
-        const s = String(p).trim();
-        if (s.match(/^\d{6}$/)) return new Date(parseInt(s.slice(0,4)), parseInt(s.slice(4,6))-1, 1);
-        const m1 = s.match(/^(\d{1,2})\/(\d{4})$/);
-        if (m1) return new Date(parseInt(m1[2]), parseInt(m1[1])-1, 1);
-        const m2 = s.match(/^(\d{1,2})\/\d{2}\/(\d{4})$/);
-        if (m2) return new Date(parseInt(m2[2]), parseInt(m2[1])-1, 1);
-        return null;
-      }
-
-      function parseEffDate(d) {
-        if (!d) return null;
-        const s = String(d).trim();
-        if (s.match(/^\d{1,2}\/\d{1,2}\/\d{4}$/)) {
-          const [m, day, y] = s.split('/');
-          return new Date(parseInt(y), parseInt(m)-1, 1);
-        }
-        if (s.match(/^\d{4}-\d{2}-\d{2}/)) {
-          const [y, m] = s.split('-');
-          return new Date(parseInt(y), parseInt(m)-1, 1);
-        }
-        return null;
-      }
-
+      // Build rows for each BOB client
       const checkDate = periodToDate(selectedPeriod);
-      // Carriers where we have per-client commission data
-      // Humana only sends summary totals, not per-client — can't match
-      const CHECKABLE_CARRIERS = ['unitedhealthcare', 'uhc', 'aetna', 'devoted', 'cigna', 'oscar health', 'florida blue', 'gold kidney', 'simply', 'molina', 'wellcare'];
-      const missing = [];
-      const found = [];
-      const newEnrollments = [];
-      const noData = []; // carriers we can't check
+      const built = [];
 
       for (const client of bobClients) {
-        const normName = normalizeName(client.client_full_name);
-        const normCarrier = normalizeCarrier(client.carrier);
-        const key = `${normName}|${normCarrier}`;
-        const lastName = normName.split(' ').pop();
-        const lastKey = `${lastName}|${normCarrier}`;
+        const nc = normCarrier(client.carrier);
 
-        // Skip carriers where we don't have per-client commission data
-        if (!CHECKABLE_CARRIERS.includes(normCarrier)) {
-          noData.push(client);
-          continue;
-        }
+        // Skip Humana — no per-client data
+        if (nc === 'humana') continue;
 
-        // Skip clients enrolled in the same year as the check period
-        // Medicare renewals don't pay until the year AFTER enrollment
+        // Skip new enrollments (enrolled same year or later)
         const effDate = parseEffDate(client.effective_date);
         const checkYear = checkDate ? checkDate.getFullYear() : null;
         const effYear = effDate ? effDate.getFullYear() : null;
-        if (checkYear && effYear && effYear >= checkYear) {
-          newEnrollments.push(client);
-          continue;
-        }
+        if (checkYear && effYear && effYear >= checkYear) continue;
 
-        if (paidSet.has(key) || paidLastNameSet.has(lastKey)) {
-          found.push(client);
-        } else {
-          missing.push(client);
-        }
+        const key = normName(client.client_full_name) + '|' + nc;
+        const lastName = normName(client.client_full_name).split(' ').pop();
+        const lastKey = lastName + '|' + nc;
+
+        const matchedRecs = recMap[key] || lastNameMap[lastKey] || [];
+        const commission = matchedRecs.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0);
+        const termReason = matchedRecs.find(r => r.termination_reason)?.termination_reason || '';
+
+        built.push({
+          client: client.client_full_name,
+          agent: client.agent_name || '—',
+          carrier: client.carrier,
+          effectiveDate: client.effective_date,
+          commission,
+          isMissing: matchedRecs.length === 0,
+          termReason,
+          monthsMissing: client.months_missing || 0,
+          bobId: client.id,
+          records: matchedRecs
+        });
       }
 
-      setResults({
-        missing,
-        found,
-        newEnrollments,
-        noData,
-        checkedClients: bobClients.length,
-        matchedRecords: allRecs.length
+      // Sort: missing first, then by agent, then by client name
+      built.sort((a, b) => {
+        if (a.isMissing !== b.isMissing) return a.isMissing ? -1 : 1;
+        return a.agent.localeCompare(b.agent) || a.client.localeCompare(b.client);
       });
-      setChecked(true);
-      setTab('missing');
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setLoading(false);
-    }
+
+      setRows(built);
+    } catch(e) { console.error(e); }
+    finally { setLoading(false); }
   }
 
-  async function openClient(client) {
-    setSelectedClient(client);
+  function normName(name) {
+    if (!name) return '';
+    const s = String(name).toLowerCase().trim();
+    if (s.includes(',')) {
+      const [last, first] = s.split(',').map(p => p.trim());
+      return `${first} ${last}`.replace(/\s+/g, ' ').trim();
+    }
+    return s.replace(/\s+/g, ' ').trim();
+  }
+
+  function normCarrier(c) {
+    const s = String(c || '').toLowerCase();
+    if (s.includes('united') || s.includes('uhc')) return 'unitedhealthcare';
+    if (s.includes('humana')) return 'humana';
+    if (s.includes('aetna')) return 'aetna';
+    if (s.includes('devoted')) return 'devoted';
+    if (s.includes('cigna')) return 'cigna';
+    if (s.includes('oscar')) return 'oscar health';
+    if (s.includes('florida blue') || s.includes('bcbs')) return 'florida blue';
+    if (s.includes('gold kidney')) return 'gold kidney';
+    if (s.includes('simply')) return 'simply';
+    if (s.includes('molina')) return 'molina';
+    return s;
+  }
+
+  function periodToDate(p) {
+    if (!p) return null;
+    const s = String(p).trim();
+    if (s.match(/^\d{6}$/)) return new Date(parseInt(s.slice(0,4)), parseInt(s.slice(4,6))-1, 1);
+    const m1 = s.match(/^(\d{1,2})\/(\d{4})$/);
+    if (m1) return new Date(parseInt(m1[2]), parseInt(m1[1])-1, 1);
+    const m2 = s.match(/^(\d{1,2})\/\d{2}\/(\d{4})$/);
+    if (m2) return new Date(parseInt(m2[2]), parseInt(m2[1])-1, 1);
+    return null;
+  }
+
+  function parseEffDate(d) {
+    if (!d) return null;
+    const s = String(d).trim();
+    if (s.match(/^\d{1,2}\/\d{1,2}\/\d{4}$/)) {
+      const [m,,y] = s.split('/');
+      return new Date(parseInt(y), parseInt(m)-1, 1);
+    }
+    if (s.match(/^\d{4}-\d{2}-\d{2}/)) {
+      const [y, m] = s.split('-');
+      return new Date(parseInt(y), parseInt(m)-1, 1);
+    }
+    return null;
+  }
+
+  async function openClient(row) {
+    setSelectedClient(row);
     setClientLoading(true);
     setClientRecords([]);
     try {
-      const name = encodeURIComponent(client.client_full_name);
-      const data = await apiFetch(`/records?limit=50&agents=${encodeURIComponent(client.agent_name || '')}`);
-      const recs = (data.records || []).filter(r =>
-        r.client_full_name?.toLowerCase().includes(client.client_full_name?.toLowerCase().split(' ').pop() || '') &&
-        r.carrier?.toLowerCase() === client.carrier?.toLowerCase()
-      );
+      const data = await apiFetch(`/records?limit=100`);
+      const recs = (data.records || []).filter(r => {
+        const lastName = row.client.toLowerCase().split(' ').pop();
+        return r.client_full_name?.toLowerCase().includes(lastName) &&
+          normCarrier(r.carrier) === normCarrier(row.carrier);
+      });
       setClientRecords(recs);
     } catch(e) { console.error(e); }
     finally { setClientLoading(false); }
   }
 
-  const carriers = [...new Set([...results.missing, ...results.found].map(c => c.carrier).filter(Boolean))];
-  const agents = [...new Set([...results.missing, ...results.found].map(c => c.agent_name).filter(Boolean))];
+  function exportReport() {
+    const headers = ['Agent', 'Carrier', 'Payment Period', 'Client', 'Effective Date', 'Commission', 'Status', 'Months Missing'];
+    const data = filtered.map(r => [
+      r.agent, r.carrier, formatPeriodLabel(selectedPeriod) || selectedPeriod,
+      r.client, r.effectiveDate,
+      r.isMissing ? '$0.00' : fmt(r.commission),
+      r.isMissing ? 'Missing' : 'Paid',
+      r.monthsMissing
+    ]);
+    const csv = [headers, ...data].map(r => r.map(v => `"${String(v||'').replace(/"/g,'""')}"`).join(',')).join('\n');
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `missing-renewals-${formatPeriodLabel(selectedPeriod)||selectedPeriod}-${new Date().toISOString().slice(0,10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
 
-  const filteredMissing = results.missing.filter(c =>
-    (!filterCarrier || c.carrier === filterCarrier) &&
-    (!filterAgent || c.agent_name === filterAgent)
-  );
-  const filteredFound = results.found.filter(c =>
-    (!filterCarrier || c.carrier === filterCarrier) &&
-    (!filterAgent || c.agent_name === filterAgent)
+  const agents = [...new Set(rows.map(r => r.agent).filter(Boolean))].sort();
+  const carriers = [...new Set(rows.map(r => r.carrier).filter(Boolean))].sort();
+
+  const filtered = rows.filter(r =>
+    (!showMissingOnly || r.isMissing) &&
+    (!filterAgent || r.agent === filterAgent) &&
+    (!filterCarrier || r.carrier === filterCarrier)
   );
 
-  const atRisk = filteredMissing.reduce((s, c) => s + (parseFloat(c.last_commission_amount) || 0), 0);
+  const missingCount = rows.filter(r => r.isMissing).length;
+  const paidCount = rows.filter(r => !r.isMissing).length;
+  const totalCommission = filtered.filter(r => !r.isMissing).reduce((s,r) => s + r.commission, 0);
   const periodLabel = formatPeriodLabel(selectedPeriod) || selectedPeriod;
-
-  const tabStyle = (id) => ({
-    padding: '7px 14px', border: 'none', background: 'none', fontSize: 13, cursor: 'pointer',
-    borderBottom: tab === id ? '2px solid var(--blue)' : '2px solid transparent',
-    color: tab === id ? 'var(--blue)' : 'var(--text-muted)',
-    fontWeight: tab === id ? 600 : 400, marginBottom: -1
-  });
 
   return (
     <div>
       {/* Client detail modal */}
       {selectedClient && (
-        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
-          <div style={{ background: '#ffffff', borderRadius: 12, width: '90%', maxWidth: 700, maxHeight: '80vh', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 40px rgba(0,0,0,0.25)' }}>
-            <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.5)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:20 }}>
+          <div style={{ background:'#ffffff',borderRadius:12,width:'90%',maxWidth:700,maxHeight:'80vh',display:'flex',flexDirection:'column',boxShadow:'0 8px 40px rgba(0,0,0,0.25)' }}>
+            <div style={{ padding:'14px 20px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'space-between' }}>
               <div>
-                <div style={{ fontWeight: 700, fontSize: 15 }}>{selectedClient.client_full_name}</div>
-                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>{selectedClient.carrier} · {selectedClient.agent_name} · Effective {selectedClient.effective_date}</div>
+                <div style={{ fontWeight:700,fontSize:15 }}>{selectedClient.client}</div>
+                <div style={{ fontSize:12,color:'var(--text-muted)',marginTop:2 }}>
+                  {selectedClient.carrier} · {selectedClient.agent} · Effective {selectedClient.effectiveDate}
+                  {selectedClient.isMissing && <span style={{ marginLeft:8,background:'#FCE8E8',color:'#A32D2D',borderRadius:4,padding:'1px 6px',fontSize:11,fontWeight:600 }}>Missing</span>}
+                </div>
               </div>
-              <button onClick={() => setSelectedClient(null)} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: 'var(--text-muted)' }}>✕</button>
+              <button onClick={() => setSelectedClient(null)} style={{ background:'none',border:'none',fontSize:20,cursor:'pointer',color:'var(--text-muted)' }}>✕</button>
             </div>
-            <div style={{ overflowY: 'auto', flex: 1 }}>
+            <div style={{ overflowY:'auto',flex:1 }}>
               {clientLoading ? (
-                <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>Loading payment history...</div>
+                <div style={{ padding:40,textAlign:'center',color:'var(--text-muted)' }}>Loading payment history...</div>
               ) : clientRecords.length === 0 ? (
-                <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
-                  <div style={{ fontSize: 24, marginBottom: 8 }}>📋</div>
-                  <div style={{ fontWeight: 600 }}>No commission records found</div>
-                  <div style={{ fontSize: 12, marginTop: 4 }}>This client has no payment history in your uploaded statements</div>
+                <div style={{ padding:40,textAlign:'center' }}>
+                  <div style={{ fontSize:24,marginBottom:8 }}>📋</div>
+                  <div style={{ fontWeight:600 }}>No commission records found</div>
+                  <div style={{ fontSize:12,color:'var(--text-muted)',marginTop:4 }}>No payment history in uploaded statements</div>
                 </div>
               ) : (
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-                  <thead style={{ position: 'sticky', top: 0, background: '#f8f9fa' }}>
+                <table style={{ width:'100%',borderCollapse:'collapse',fontSize:12 }}>
+                  <thead style={{ position:'sticky',top:0,background:'#f8f9fa' }}>
                     <tr>
                       {['Period','Carrier','Commission','Type'].map(h => (
-                        <th key={h} style={{ padding: '8px 14px', textAlign: 'left', fontWeight: 600, fontSize: 11, color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }}>{h}</th>
+                        <th key={h} style={{ padding:'8px 14px',textAlign:'left',fontWeight:600,fontSize:11,color:'var(--text-muted)',borderBottom:'1px solid var(--border)' }}>{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {clientRecords.map((r, i) => (
-                      <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
-                        <td style={{ padding: '8px 14px' }}>{r.payment_period || '—'}</td>
-                        <td style={{ padding: '8px 14px', color: 'var(--text-muted)' }}>{r.carrier}</td>
-                        <td style={{ padding: '8px 14px', fontWeight: 600, color: parseFloat(r.commission) < 0 ? '#E24B4A' : '#1D9E75' }}>${parseFloat(r.commission||0).toFixed(2)}</td>
-                        <td style={{ padding: '8px 14px', color: 'var(--text-muted)' }}>{r.classification}</td>
+                    {clientRecords.map((r,i) => (
+                      <tr key={i} style={{ borderBottom:'1px solid var(--border)' }}>
+                        <td style={{ padding:'8px 14px' }}>{r.payment_period||'—'}</td>
+                        <td style={{ padding:'8px 14px',color:'var(--text-muted)' }}>{r.carrier}</td>
+                        <td style={{ padding:'8px 14px',fontWeight:600,color:parseFloat(r.commission)<0?'#E24B4A':'#1D9E75' }}>{fmt(r.commission)}</td>
+                        <td style={{ padding:'8px 14px',color:'var(--text-muted)' }}>{r.classification}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -304,226 +301,127 @@ export default function MissingRenewals({ user }) {
       </div>
       <div className="page-body">
 
-        {/* Check panel */}
-        <div className="card" style={{ marginBottom: 14 }}>
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
-            <div>
-              <div className="form-label" style={{ marginBottom: 6, fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                Statement month
-              </div>
-              <select
-                className="filter-select"
-                value={selectedPeriod}
-                onChange={e => { setSelectedPeriod(e.target.value); setChecked(false); }}
-                style={{ minWidth: 160, fontSize: 13 }}
-              >
-                <option value="">Select month...</option>
-                {periods.map(p => {
-                  const label = formatPeriodLabel(p);
-                  return label ? <option key={p} value={p}>{label}</option> : null;
-                })}
-              </select>
-            </div>
-            <button
-              className="btn btn-primary"
-              onClick={runCheck}
-              disabled={loading || !selectedPeriod}
-              style={{ padding: '8px 20px', fontSize: 13 }}
-            >
-              {loading ? '⏳ Checking...' : '🔍 Run check'}
-            </button>
-            {checked && (
-              <div style={{ fontSize: 12, color: 'var(--text-muted)', alignSelf: 'center' }}>
-                Checked <strong>{results.checkedClients}</strong> BOB clients against <strong>{results.matchedRecords}</strong> statement records for <strong>{periodLabel}</strong>
-              </div>
-            )}
+        {/* Controls bar */}
+        <div style={{ display:'flex',alignItems:'flex-end',gap:10,flexWrap:'wrap',marginBottom:14,background:'var(--bg)',padding:'12px 14px',borderRadius:8,border:'1px solid var(--border)' }}>
+          <div>
+            <div className="form-label" style={{ marginBottom:4,fontSize:11,fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'0.5px' }}>Statement month</div>
+            <select className="filter-select" value={selectedPeriod} onChange={e => { setSelectedPeriod(e.target.value); setRows([]); }} style={{ minWidth:160,fontSize:13 }}>
+              <option value="">Select month...</option>
+              {periods.map(p => {
+                const label = formatPeriodLabel(p);
+                return label ? <option key={p} value={p}>{label}</option> : null;
+              })}
+            </select>
           </div>
+          <button className="btn btn-primary" onClick={runCheck} disabled={loading||!selectedPeriod} style={{ padding:'8px 20px',fontSize:13 }}>
+            {loading ? '⏳ Checking...' : '🔍 Run check'}
+          </button>
+          {rows.length > 0 && (
+            <>
+              <div style={{ display:'flex',alignItems:'center',gap:6,marginLeft:8 }}>
+                <input type="checkbox" id="missingOnly" checked={showMissingOnly} onChange={e => setShowMissingOnly(e.target.checked)} style={{ cursor:'pointer',width:14,height:14 }} />
+                <label htmlFor="missingOnly" style={{ fontSize:13,cursor:'pointer',fontWeight:showMissingOnly?600:400,color:showMissingOnly?'#E24B4A':'var(--text)' }}>Show only missing</label>
+              </div>
+              <select className="filter-select" value={filterAgent} onChange={e => setFilterAgent(e.target.value)}>
+                <option value="">All agents</option>
+                {agents.map(a => <option key={a} value={a}>{a}</option>)}
+              </select>
+              <select className="filter-select" value={filterCarrier} onChange={e => setFilterCarrier(e.target.value)}>
+                <option value="">All carriers</option>
+                {carriers.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+              <button onClick={exportReport} style={{ marginLeft:'auto',background:'none',border:'1px solid var(--border)',borderRadius:6,padding:'7px 14px',fontSize:12,cursor:'pointer' }}>
+                ↓ Download
+              </button>
+            </>
+          )}
         </div>
 
-        {/* No BOB warning */}
-        {checked && results.checkedClients === 0 && (
-          <div style={{ background: '#FFF8E6', border: '1px solid #F5D78E', borderRadius: 8, padding: '12px 16px', marginBottom: 14, fontSize: 13, color: '#7A5C00' }}>
-            ⚠️ Your Book of Business is empty. Go to <strong>Book of Business → Setup & tools → Upload carrier BOB export</strong> to add your clients first.
-          </div>
+        {rows.length > 0 && (
+          <>
+            {/* Stats bar */}
+            <div style={{ display:'flex',gap:6,alignItems:'center',marginBottom:10,fontSize:13,flexWrap:'wrap' }}>
+              <span style={{ color:'var(--text-muted)' }}>
+                Total rows: <strong>{filtered.length}</strong>
+              </span>
+              <span style={{ color:'var(--text-muted)',margin:'0 4px' }}>|</span>
+              <span style={{ color:'#E24B4A',fontWeight:600 }}>Missing: {missingCount}</span>
+              <span style={{ color:'var(--text-muted)',margin:'0 4px' }}>|</span>
+              <span style={{ color:'#1D9E75',fontWeight:600 }}>Paid: {paidCount}</span>
+              <span style={{ color:'var(--text-muted)',margin:'0 4px' }}>|</span>
+              <span>Commission: <strong style={{ color:'#1D9E75' }}>{fmt(totalCommission)}</strong></span>
+              <span style={{ fontSize:12,color:'var(--text-muted)',marginLeft:8 }}>— {periodLabel}</span>
+            </div>
+
+            {/* Humana note */}
+            <div style={{ background:'#FFF8E6',border:'1px solid #F5D78E',borderRadius:6,padding:'7px 12px',marginBottom:10,fontSize:12,color:'#7A5C00' }}>
+              ⚠️ Humana clients excluded — Humana statements don't include per-client data for matching
+            </div>
+
+            <div className="card" style={{ padding:0 }}>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th style={{ width:8 }}></th>
+                      <th>#</th>
+                      <th>Agent</th>
+                      <th>Carrier</th>
+                      <th>Client</th>
+                      <th>Effective date</th>
+                      <th>Commission</th>
+                      <th>Status</th>
+                      <th>Months missing</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {filtered.map((r, i) => (
+                      <tr key={i} style={{ background: r.isMissing ? '#FFF5F5' : 'transparent' }}>
+                        <td style={{ padding:'4px 6px' }}>
+                          {r.isMissing && <span style={{ display:'block',width:4,height:'100%',background:'#E24B4A',borderRadius:2 }}></span>}
+                        </td>
+                        <td style={{ color:'var(--text-muted)',fontSize:11 }}>{i+1}</td>
+                        <td style={{ fontWeight:500 }}>{r.agent}</td>
+                        <td style={{ fontSize:12 }}>{r.carrier}</td>
+                        <td>
+                          <button onClick={() => openClient(r)} style={{ background:'none',border:'none',cursor:'pointer',color:'#185FA5',fontWeight:600,padding:0,textDecoration:'underline',fontSize:12,textAlign:'left' }}>
+                            {r.client}
+                          </button>
+                        </td>
+                        <td style={{ fontSize:12,color:'var(--text-muted)' }}>{r.effectiveDate||'—'}</td>
+                        <td style={{ fontWeight:600,color:r.isMissing?'var(--text-muted)':'#1D9E75' }}>
+                          {r.isMissing ? '$0.00' : fmt(r.commission)}
+                        </td>
+                        <td>
+                          {r.isMissing
+                            ? <span className="badge badge-red">Missing</span>
+                            : <span className="badge badge-green">Paid</span>}
+                        </td>
+                        <td style={{ fontSize:12,color:'var(--text-muted)' }}>
+                          {r.monthsMissing > 0 ? <span style={{ color:'#E24B4A',fontWeight:600 }}>{r.monthsMissing} mo</span> : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ background:'var(--gray-50)',fontWeight:600 }}>
+                      <td colSpan={6} style={{ padding:'8px 12px',fontSize:12 }}>Total ({filtered.filter(r=>!r.isMissing).length} paid)</td>
+                      <td style={{ padding:'8px 12px',fontSize:12,color:'#1D9E75' }}>{fmt(totalCommission)}</td>
+                      <td colSpan={2}></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+          </>
         )}
 
-        {checked && results.checkedClients > 0 && (
-          <div>
-            {/* KPI cards */}
-            <div className="kpi-grid" style={{ marginBottom: 14 }}>
-              <div className="kpi-card">
-                <div className="kpi-label">Renewals checked</div>
-                <div className="kpi-value blue">{results.checkedClients - (results.newEnrollments||[]).length}</div>
-              </div>
-              <div className="kpi-card">
-                <div className="kpi-label">Missing this month</div>
-                <div className={`kpi-value ${results.missing.length > 0 ? 'red' : 'green'}`}>{results.missing.length}</div>
-              </div>
-              <div className="kpi-card">
-                <div className="kpi-label">Paid this month</div>
-                <div className="kpi-value green">{results.found.length}</div>
-              </div>
-              <div className="kpi-card">
-                <div className="kpi-label">New enrollments (excl.)</div>
-                <div className="kpi-value">{(results.newEnrollments||[]).length}</div>
-              </div>
-            </div>
-
-            {results.missing.length === 0 && (
-              <div style={{ background: '#EAF3DE', border: '1px solid #C0DD97', borderRadius: 8, padding: '12px 16px', marginBottom: 14, fontSize: 13, color: '#3B6D11', fontWeight: 600 }}>
-                ✓ All {results.checkedClients} BOB clients appeared in {periodLabel} statements — no missing renewals!
-              </div>
-            )}
-
-            {/* Humana warning */}
-            {(results.noData||[]).length > 0 && (
-              <div style={{ background: '#FFF8E6', border: '1px solid #F5D78E', borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 13, color: '#7A5C00', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span>⚠️ <strong>{(results.noData||[]).length} Humana clients</strong> skipped — Humana statements don't include per-client data for matching.</span>
-              </div>
-            )}
-
-            {/* Export missing report */}
-            {results.missing.length > 0 && (
-              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 10 }}>
-                <button onClick={() => {
-                  const headers = ['Client','Agent','Carrier','Effective Date','Last Commission','Months Missing'];
-                  const rows = filteredMissing.map(c => [c.client_full_name, c.agent_name, c.carrier, c.effective_date, c.last_commission_amount, c.months_missing > 0 ? c.months_missing + ' months' : 'New miss']);
-                  const csv = [headers,...rows].map(r => r.map(v => `"${String(v||'').replace(/"/g,'""')}"`).join(',')).join('\n');
-                  const blob = new Blob([csv], {type:'text/csv'});
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement('a');
-                  a.href=url; a.download=`missing_renewals_${selectedPeriod}.csv`; a.click();
-                  URL.revokeObjectURL(url);
-                }} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '6px 14px', fontSize: 12, cursor: 'pointer' }}>
-                  ↓ Export missing report
-                </button>
-              </div>
-            )}
-
-            {/* Filters */}
-            {(carriers.length > 1 || agents.length > 1) && (
-              <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
-                {carriers.length > 1 && (
-                  <select className="filter-select" value={filterCarrier} onChange={e => setFilterCarrier(e.target.value)}>
-                    <option value="">All carriers</option>
-                    {carriers.map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
-                )}
-                {agents.length > 1 && (
-                  <select className="filter-select" value={filterAgent} onChange={e => setFilterAgent(e.target.value)}>
-                    <option value="">All agents</option>
-                    {agents.map(a => <option key={a} value={a}>{a}</option>)}
-                  </select>
-                )}
-              </div>
-            )}
-
-            {/* Tabs */}
-            <div style={{ display: 'flex', gap: 8, borderBottom: '1px solid var(--border)', marginBottom: 0 }}>
-              <button style={tabStyle('missing')} onClick={() => setTab('missing')}>
-                Missing ({filteredMissing.length})
-              </button>
-              <button style={tabStyle('found')} onClick={() => setTab('found')}>
-                Paid ({filteredFound.length})
-              </button>
-            </div>
-
-            <div className="card" style={{ padding: 0 }}>
-              {tab === 'missing' && (
-                filteredMissing.length === 0 ? (
-                  <div className="empty-state">
-                    <div className="empty-icon">✅</div>
-                    <div className="empty-title">No missing clients</div>
-                    <div className="empty-sub">All filtered clients appeared in {periodLabel}</div>
-                  </div>
-                ) : (
-                  <div className="table-wrap">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>#</th>
-                          <th>Client</th>
-                          <th>Agent</th>
-                          <th>Carrier</th>
-                          <th>Effective date</th>
-                          <th>Last commission</th>
-                          <th>Months missing</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredMissing.map((c, i) => (
-                          <tr key={c.id}>
-                            <td style={{ color: 'var(--text-muted)', fontSize: 11 }}>{i + 1}</td>
-                            <td style={{ fontWeight: 500 }}><button onClick={() => openClient(c)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#185FA5', fontWeight: 600, padding: 0, textDecoration: 'underline', fontSize: 12 }}>{c.client_full_name}</button></td>
-                            <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{c.agent_name || '—'}</td>
-                            <td style={{ fontSize: 12 }}>{c.carrier}</td>
-                            <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{c.effective_date || '—'}</td>
-                            <td style={{ fontWeight: 600, color: '#E24B4A' }}>{fmt(c.last_commission_amount)}</td>
-                            <td>
-                              {c.months_missing > 0
-                                ? <span className={`badge ${c.months_missing >= 2 ? 'badge-red' : 'badge-amber'}`}>{c.months_missing} mo</span>
-                                : <span className="badge badge-gray">New miss</span>}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                      <tfoot>
-                        <tr style={{ background: 'var(--gray-50)', fontWeight: 600 }}>
-                          <td colSpan={5} style={{ padding: '8px 12px', fontSize: 12 }}>Total at risk</td>
-                          <td style={{ padding: '8px 12px', fontSize: 12, color: '#E24B4A' }}>{fmt(atRisk)}</td>
-                          <td></td>
-                        </tr>
-                      </tfoot>
-                    </table>
-                  </div>
-                )
-              )}
-
-              {tab === 'found' && (
-                filteredFound.length === 0 ? (
-                  <div className="empty-state">
-                    <div className="empty-icon">📋</div>
-                    <div className="empty-title">No matching clients</div>
-                  </div>
-                ) : (
-                  <div className="table-wrap">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>#</th>
-                          <th>Client</th>
-                          <th>Agent</th>
-                          <th>Carrier</th>
-                          <th>Effective date</th>
-                          <th>Last commission</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredFound.map((c, i) => (
-                          <tr key={c.id}>
-                            <td style={{ color: 'var(--text-muted)', fontSize: 11 }}>{i + 1}</td>
-                            <td style={{ fontWeight: 500 }}><button onClick={() => openClient(c)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#185FA5', fontWeight: 600, padding: 0, textDecoration: 'underline', fontSize: 12 }}>{c.client_full_name}</button></td>
-                            <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{c.agent_name || '—'}</td>
-                            <td style={{ fontSize: 12 }}>{c.carrier}</td>
-                            <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{c.effective_date || '—'}</td>
-                            <td style={{ fontWeight: 600, color: '#1D9E75' }}>{fmt(c.last_commission_amount)}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )
-              )}
-            </div>
-          </div>
-        )}
-
-        {!checked && !loading && (
+        {!rows.length && !loading && (
           <div className="card">
             <div className="empty-state">
               <div className="empty-icon">🔍</div>
               <div className="empty-title">Select a month and run the check</div>
-              <div className="empty-sub">The system will compare every client in your Book of Business against that month's commission records and flag anyone who didn't get paid.</div>
+              <div className="empty-sub">Shows all BOB clients for that month — toggle "Show only missing" to filter to unpaid renewals</div>
             </div>
           </div>
         )}
