@@ -128,18 +128,26 @@ function formatDate(value) {
     return `${m}/${d}/${y}`;
   }
   if (typeof value === 'string') {
-    if (value.match(/\d{1,2}\/\d{1,2}\/\d{4}/)) return value;
-    if (value.match(/\d{4}-\d{2}-\d{2}/)) {
+    if (value.match(/^\d{1,2}\/\d{1,2}\/\d{4}$/)) return value;
+    if (value.match(/^\d{4}-\d{2}-\d{2}/)) {
       const [y, m, d] = value.split('-');
       return `${m}/${d}/${y}`;
     }
+    // Handle string like "Feb", "MAR" etc - return as-is for period
     return value;
   }
   if (typeof value === 'number') {
     const s = String(value);
-    if (s.match(/^\d{6}$/)) return s;
+    // YYYYMMDD format — e.g. 20260201
+    if (s.match(/^\d{8}$/) && parseInt(s.slice(0,4)) > 1900) {
+      const y = s.slice(0,4), m = s.slice(4,6), d = s.slice(6,8);
+      return `${m}/${d}/${y}`;
+    }
+    // YYYYMM format — e.g. 202602
+    if (s.match(/^\d{6}$/) && parseInt(s.slice(0,4)) > 1900) return s;
+    // Excel serial number — only if reasonable range (before year 2100)
     const date = new Date((value - 25569) * 86400 * 1000);
-    if (isNaN(date.getTime())) return String(value);
+    if (isNaN(date.getTime()) || date.getUTCFullYear() > 2100) return String(value);
     const m = String(date.getUTCMonth() + 1).padStart(2, '0');
     const d = String(date.getUTCDate()).padStart(2, '0');
     const y = date.getUTCFullYear();
@@ -285,7 +293,36 @@ function parseNHPRows(wb) {
     const client = String(row['Subscriber Name'] || '').trim();
     const policyNumber = String(row['Policy Number'] || '').trim();
     const effectiveDate = formatDate(row['Policy Effective Date']);
-    const period = formatDate(row['Commission Month']);
+    // Normalize Commission Month to YYYYMM format
+    const rawPeriod = row['Commission Month'];
+    let period = '';
+    if (rawPeriod instanceof Date || (typeof rawPeriod === 'object' && rawPeriod !== null)) {
+      const dt = new Date(rawPeriod);
+      if (!isNaN(dt)) period = String(dt.getUTCFullYear()) + String(dt.getUTCMonth()+1).padStart(2,'0');
+    } else if (typeof rawPeriod === 'number') {
+      const s = String(rawPeriod);
+      if (s.match(/^\d{8}$/) && parseInt(s.slice(0,4)) > 1900) {
+        period = s.slice(0,6); // YYYYMM from YYYYMMDD
+      } else if (s.match(/^\d{6}$/) && parseInt(s.slice(0,4)) > 1900) {
+        period = s; // already YYYYMM
+      } else {
+        // Excel serial — convert
+        const dt = new Date((rawPeriod - 25569) * 86400 * 1000);
+        if (!isNaN(dt) && dt.getUTCFullYear() < 2100) {
+          period = String(dt.getUTCFullYear()) + String(dt.getUTCMonth()+1).padStart(2,'0');
+        }
+      }
+    } else if (typeof rawPeriod === 'string') {
+      const s = rawPeriod.trim();
+      if (s.match(/^\d{6}$/)) period = s;
+      else if (s.match(/^\d{8}$/)) period = s.slice(0,6);
+      else if (s.match(/^\d{4}-\d{2}-\d{2}/)) period = s.replace(/-/g,'').slice(0,6);
+      else {
+        const months = {jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12'};
+        const m = s.toLowerCase().match(/^([a-z]{3})/);
+        if (m && months[m[1]]) period = new Date().getFullYear() + months[m[1]];
+      }
+    }
     const nhpType = String(row['Type'] || '').trim();
     const lob = String(row['LOB'] || '').trim();
     // Commission rows use Commission column; Override rows use Override column
