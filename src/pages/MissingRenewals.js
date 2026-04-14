@@ -20,6 +20,9 @@ export default function MissingRenewals({ user }) {
   const [selectedPeriod, setSelectedPeriod] = useState('');
   const [loading, setLoading] = useState(false);
   const [checked, setChecked] = useState(false);
+  const [selectedClient, setSelectedClient] = useState(null);
+  const [clientRecords, setClientRecords] = useState([]);
+  const [clientLoading, setClientLoading] = useState(false);
   const [results, setResults] = useState({ missing: [], found: [], checkedClients: 0, matchedRecords: 0 });
   const [filterCarrier, setFilterCarrier] = useState('');
   const [filterAgent, setFilterAgent] = useState('');
@@ -127,8 +130,40 @@ export default function MissingRenewals({ user }) {
         return `${lastName}|${normalizeCarrier(r.carrier)}`;
       }));
 
+      // Parse the selected period into a date for comparison
+      function periodToDate(p) {
+        if (!p) return null;
+        const s = String(p).trim();
+        if (s.match(/^\d{6}$/)) return new Date(parseInt(s.slice(0,4)), parseInt(s.slice(4,6))-1, 1);
+        const m1 = s.match(/^(\d{1,2})\/(\d{4})$/);
+        if (m1) return new Date(parseInt(m1[2]), parseInt(m1[1])-1, 1);
+        const m2 = s.match(/^(\d{1,2})\/\d{2}\/(\d{4})$/);
+        if (m2) return new Date(parseInt(m2[2]), parseInt(m2[1])-1, 1);
+        return null;
+      }
+
+      function parseEffDate(d) {
+        if (!d) return null;
+        const s = String(d).trim();
+        if (s.match(/^\d{1,2}\/\d{1,2}\/\d{4}$/)) {
+          const [m, day, y] = s.split('/');
+          return new Date(parseInt(y), parseInt(m)-1, 1);
+        }
+        if (s.match(/^\d{4}-\d{2}-\d{2}/)) {
+          const [y, m] = s.split('-');
+          return new Date(parseInt(y), parseInt(m)-1, 1);
+        }
+        return null;
+      }
+
+      const checkDate = periodToDate(selectedPeriod);
+      // Carriers where we have per-client commission data
+      // Humana only sends summary totals, not per-client — can't match
+      const CHECKABLE_CARRIERS = ['unitedhealthcare', 'uhc', 'aetna', 'devoted', 'cigna', 'oscar health', 'florida blue', 'gold kidney', 'simply', 'molina', 'wellcare'];
       const missing = [];
       const found = [];
+      const newEnrollments = [];
+      const noData = []; // carriers we can't check
 
       for (const client of bobClients) {
         const normName = normalizeName(client.client_full_name);
@@ -136,6 +171,22 @@ export default function MissingRenewals({ user }) {
         const key = `${normName}|${normCarrier}`;
         const lastName = normName.split(' ').pop();
         const lastKey = `${lastName}|${normCarrier}`;
+
+        // Skip carriers where we don't have per-client commission data
+        if (!CHECKABLE_CARRIERS.includes(normCarrier)) {
+          noData.push(client);
+          continue;
+        }
+
+        // Skip clients enrolled in the same year as the check period
+        // Medicare renewals don't pay until the year AFTER enrollment
+        const effDate = parseEffDate(client.effective_date);
+        const checkYear = checkDate ? checkDate.getFullYear() : null;
+        const effYear = effDate ? effDate.getFullYear() : null;
+        if (checkYear && effYear && effYear >= checkYear) {
+          newEnrollments.push(client);
+          continue;
+        }
 
         if (paidSet.has(key) || paidLastNameSet.has(lastKey)) {
           found.push(client);
@@ -147,6 +198,8 @@ export default function MissingRenewals({ user }) {
       setResults({
         missing,
         found,
+        newEnrollments,
+        noData,
         checkedClients: bobClients.length,
         matchedRecords: allRecs.length
       });
@@ -157,6 +210,22 @@ export default function MissingRenewals({ user }) {
     } finally {
       setLoading(false);
     }
+  }
+
+  async function openClient(client) {
+    setSelectedClient(client);
+    setClientLoading(true);
+    setClientRecords([]);
+    try {
+      const name = encodeURIComponent(client.client_full_name);
+      const data = await apiFetch(`/records?limit=50&agents=${encodeURIComponent(client.agent_name || '')}`);
+      const recs = (data.records || []).filter(r =>
+        r.client_full_name?.toLowerCase().includes(client.client_full_name?.toLowerCase().split(' ').pop() || '') &&
+        r.carrier?.toLowerCase() === client.carrier?.toLowerCase()
+      );
+      setClientRecords(recs);
+    } catch(e) { console.error(e); }
+    finally { setClientLoading(false); }
   }
 
   const carriers = [...new Set([...results.missing, ...results.found].map(c => c.carrier).filter(Boolean))];
@@ -183,6 +252,52 @@ export default function MissingRenewals({ user }) {
 
   return (
     <div>
+      {/* Client detail modal */}
+      {selectedClient && (
+        <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+          <div style={{ background: '#ffffff', borderRadius: 12, width: '90%', maxWidth: 700, maxHeight: '80vh', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 40px rgba(0,0,0,0.25)' }}>
+            <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 15 }}>{selectedClient.client_full_name}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>{selectedClient.carrier} · {selectedClient.agent_name} · Effective {selectedClient.effective_date}</div>
+              </div>
+              <button onClick={() => setSelectedClient(null)} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: 'var(--text-muted)' }}>✕</button>
+            </div>
+            <div style={{ overflowY: 'auto', flex: 1 }}>
+              {clientLoading ? (
+                <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>Loading payment history...</div>
+              ) : clientRecords.length === 0 ? (
+                <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
+                  <div style={{ fontSize: 24, marginBottom: 8 }}>📋</div>
+                  <div style={{ fontWeight: 600 }}>No commission records found</div>
+                  <div style={{ fontSize: 12, marginTop: 4 }}>This client has no payment history in your uploaded statements</div>
+                </div>
+              ) : (
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <thead style={{ position: 'sticky', top: 0, background: '#f8f9fa' }}>
+                    <tr>
+                      {['Period','Carrier','Commission','Type'].map(h => (
+                        <th key={h} style={{ padding: '8px 14px', textAlign: 'left', fontWeight: 600, fontSize: 11, color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {clientRecords.map((r, i) => (
+                      <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
+                        <td style={{ padding: '8px 14px' }}>{r.payment_period || '—'}</td>
+                        <td style={{ padding: '8px 14px', color: 'var(--text-muted)' }}>{r.carrier}</td>
+                        <td style={{ padding: '8px 14px', fontWeight: 600, color: parseFloat(r.commission) < 0 ? '#E24B4A' : '#1D9E75' }}>${parseFloat(r.commission||0).toFixed(2)}</td>
+                        <td style={{ padding: '8px 14px', color: 'var(--text-muted)' }}>{r.classification}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="page-header">
         <div className="page-title">Missing Renewals</div>
         <div className="page-sub">Compare your Book of Business against any month's commission statements</div>
@@ -237,8 +352,8 @@ export default function MissingRenewals({ user }) {
             {/* KPI cards */}
             <div className="kpi-grid" style={{ marginBottom: 14 }}>
               <div className="kpi-card">
-                <div className="kpi-label">BOB clients checked</div>
-                <div className="kpi-value blue">{results.checkedClients}</div>
+                <div className="kpi-label">Renewals checked</div>
+                <div className="kpi-value blue">{results.checkedClients - (results.newEnrollments||[]).length}</div>
               </div>
               <div className="kpi-card">
                 <div className="kpi-label">Missing this month</div>
@@ -249,14 +364,39 @@ export default function MissingRenewals({ user }) {
                 <div className="kpi-value green">{results.found.length}</div>
               </div>
               <div className="kpi-card">
-                <div className="kpi-label">Est. at risk</div>
-                <div className={`kpi-value ${atRisk > 0 ? 'amber' : 'green'}`}>{fmt(atRisk)}</div>
+                <div className="kpi-label">New enrollments (excl.)</div>
+                <div className="kpi-value">{(results.newEnrollments||[]).length}</div>
               </div>
             </div>
 
             {results.missing.length === 0 && (
               <div style={{ background: '#EAF3DE', border: '1px solid #C0DD97', borderRadius: 8, padding: '12px 16px', marginBottom: 14, fontSize: 13, color: '#3B6D11', fontWeight: 600 }}>
                 ✓ All {results.checkedClients} BOB clients appeared in {periodLabel} statements — no missing renewals!
+              </div>
+            )}
+
+            {/* Humana warning */}
+            {(results.noData||[]).length > 0 && (
+              <div style={{ background: '#FFF8E6', border: '1px solid #F5D78E', borderRadius: 8, padding: '10px 14px', marginBottom: 14, fontSize: 13, color: '#7A5C00', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span>⚠️ <strong>{(results.noData||[]).length} Humana clients</strong> skipped — Humana statements don't include per-client data for matching.</span>
+              </div>
+            )}
+
+            {/* Export missing report */}
+            {results.missing.length > 0 && (
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 10 }}>
+                <button onClick={() => {
+                  const headers = ['Client','Agent','Carrier','Effective Date','Last Commission','Months Missing'];
+                  const rows = filteredMissing.map(c => [c.client_full_name, c.agent_name, c.carrier, c.effective_date, c.last_commission_amount, c.months_missing > 0 ? c.months_missing + ' months' : 'New miss']);
+                  const csv = [headers,...rows].map(r => r.map(v => `"${String(v||'').replace(/"/g,'""')}"`).join(',')).join('\n');
+                  const blob = new Blob([csv], {type:'text/csv'});
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href=url; a.download=`missing_renewals_${selectedPeriod}.csv`; a.click();
+                  URL.revokeObjectURL(url);
+                }} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '6px 14px', fontSize: 12, cursor: 'pointer' }}>
+                  ↓ Export missing report
+                </button>
               </div>
             )}
 
@@ -314,7 +454,7 @@ export default function MissingRenewals({ user }) {
                         {filteredMissing.map((c, i) => (
                           <tr key={c.id}>
                             <td style={{ color: 'var(--text-muted)', fontSize: 11 }}>{i + 1}</td>
-                            <td style={{ fontWeight: 500 }}>{c.client_full_name}</td>
+                            <td style={{ fontWeight: 500 }}><button onClick={() => openClient(c)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#185FA5', fontWeight: 600, padding: 0, textDecoration: 'underline', fontSize: 12 }}>{c.client_full_name}</button></td>
                             <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{c.agent_name || '—'}</td>
                             <td style={{ fontSize: 12 }}>{c.carrier}</td>
                             <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{c.effective_date || '—'}</td>
@@ -362,7 +502,7 @@ export default function MissingRenewals({ user }) {
                         {filteredFound.map((c, i) => (
                           <tr key={c.id}>
                             <td style={{ color: 'var(--text-muted)', fontSize: 11 }}>{i + 1}</td>
-                            <td style={{ fontWeight: 500 }}>{c.client_full_name}</td>
+                            <td style={{ fontWeight: 500 }}><button onClick={() => openClient(c)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#185FA5', fontWeight: 600, padding: 0, textDecoration: 'underline', fontSize: 12 }}>{c.client_full_name}</button></td>
                             <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{c.agent_name || '—'}</td>
                             <td style={{ fontSize: 12 }}>{c.carrier}</td>
                             <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{c.effective_date || '—'}</td>
