@@ -95,8 +95,8 @@ export default function Upload({ user }) {
   function handleDrop(e) {
     e.preventDefault();
     setDragOver(false);
-    const file = e.dataTransfer.files[0];
-    if (file) handleFile(file);
+    const files = Array.from(e.dataTransfer.files);
+    for (const file of files) { await handleFile(file); }
   }
 
   const totalRecords = uploads.reduce((s, u) => s + (u.row_count || 0), 0);
@@ -171,7 +171,7 @@ export default function Upload({ user }) {
 
       <div className="page-header">
         <div className="page-title">Upload statements</div>
-        <div className="page-sub">Drop carrier Excel files — AI auto-detects columns for any carrier format</div>
+        <div className="page-sub">Upload carrier statements — OliComm auto-detects columns for any format</div>
       </div>
       <div className="page-body">
 
@@ -199,8 +199,12 @@ export default function Upload({ user }) {
                 <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>Supports .xlsx, .xls, .csv — any carrier format</div>
                 <label style={{ background: 'var(--blue)', color: '#fff', borderRadius: 6, padding: '8px 20px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
                   Choose file
-                  <input type="file" accept=".xlsx,.xls,.csv" style={{ display: 'none' }}
-                    onChange={e => { if (e.target.files[0]) handleFile(e.target.files[0]); e.target.value = ''; }} />
+                  <input type="file" accept=".xlsx,.xls,.csv" multiple style={{ display: 'none' }}
+                    onChange={async e => {
+                      const files = Array.from(e.target.files);
+                      for (const f of files) { await handleFile(f); }
+                      e.target.value = '';
+                    }} />
                 </label>
               </div>
             )}
