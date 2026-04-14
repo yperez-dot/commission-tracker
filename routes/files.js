@@ -189,13 +189,14 @@ function parseUHCRows(wb) {
     const effectiveDate = formatDate(row['Original Effective Date']);
     const period = String(row['Payment Period'] || '').trim();
     const rawPlanType = String(row['Plan Type'] || '').trim();
+    const commAction = String(row['Commission Action'] || '').trim();
 
     if (!client || commission === 0) continue;
 
     const isAgency = isAgencyName(writingAgentRaw);
-    const recordType = isAgency ? 'Agent Commission' : 'Agency Override';
     const agentName = isAgency ? 'The Health Experts Insurance' : normalizeAgentName(writingAgentRaw);
     const planType = derivePlanType('UnitedHealthcare', rawPlanType, policyNumber, '');
+    const uhcClass = isAgency ? 'Agent Commission' : (commAction.toLowerCase() === 'new' ? 'New Business' : 'Renewal');
 
     records.push({
       agent: agentName,
@@ -205,7 +206,7 @@ function parseUHCRows(wb) {
       effectiveDate,
       premium: parseFloat(row['Prem Amount']) || 0,
       commission,
-      classification: commission < 0 ? 'Chargeback' : (isAgency ? 'Agent Commission' : (commAction.toLowerCase() === 'new' ? 'New Business' : 'Renewal')),
+      classification: commission < 0 ? 'Chargeback' : uhcClass,
       period: String(period),
       policyNumber,
       raw: row
