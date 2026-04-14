@@ -101,7 +101,11 @@ export default function MissingRenewals({ user }) {
         const nc = normCarrier(client.carrier);
 
         const effDate = parseEffDate(client.effective_date);
-        if (checkDate && effDate && effDate >= checkDate) continue;
+        // Skip clients enrolled in the same calendar year or later than the check period
+        // e.g. Mar 2026 check → skip anyone enrolled in 2026 or later
+        const checkYear = checkDate ? checkDate.getFullYear() : null;
+        const effYear = effDate ? effDate.getFullYear() : null;
+        if (checkYear && effYear && effYear >= checkYear) continue;
 
         const key = normName(client.client_full_name) + '|' + nc;
         const lastName = normName(client.client_full_name).split(' ').pop();
