@@ -27,14 +27,14 @@ router.get('/', requireAuth, async (req, res) => {
     if (planType) { where.push(`COALESCE(plan_type,'') = $${idx++}`); params.push(planType); }
     if (upload_id) { where.push(`upload_id = $${idx++}`); params.push(parseInt(upload_id)); }
     if (payee) { where.push(`cr.payee = $${idx++}`); params.push(payee); }
-    const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
+    const wc = where.length ? 'WHERE ' + where.join(' AND ').replace(/(?<![a-z_])(agent_name|carrier|payment_period|classification|plan_type|upload_id)/g, 'cr.$1') : '';
     const records = await pool.query(
       `SELECT cr.id, cr.agent_name, cr.carrier,
         COALESCE(cr.plan_type, '') as plan_type,
         cr.client_full_name, cr.effective_date, cr.premium, cr.commission,
         cr.classification, cr.payment_period, cr.policy_number, cr.created_at,
         cr.upload_id, cr.payee, u.original_name as upload_name
-       FROM commission_records cr LEFT JOIN uploads u ON cr.upload_id = u.id ${wc.replace('WHERE ', 'WHERE cr.')} ORDER BY cr.created_at DESC LIMIT $${idx++} OFFSET $${idx++}`,
+       FROM commission_records cr LEFT JOIN uploads u ON cr.upload_id = u.id ${wc} ORDER BY cr.created_at DESC LIMIT $${idx++} OFFSET $${idx++}`,
       [...params, parseInt(limit), parseInt(offset)]
     );
     const total = await pool.query(`SELECT COUNT(*) as count FROM commission_records ${wc}`, params);
@@ -88,7 +88,7 @@ router.get('/summary', requireAuth, async (req, res) => {
     if (periods) { const list = periods.split(',').map(p=>p.trim()).filter(Boolean); if (list.length) { where.push(`payment_period = ANY($${idx++})`); params.push(list); } }
     if (classifications) { const list = classifications.split(',').map(c=>c.trim()).filter(Boolean); if (list.length) { where.push(`classification = ANY($${idx++})`); params.push(list); } }
     if (planTypes) { const list = planTypes.split(',').map(p=>p.trim()).filter(Boolean); if (list.length) { where.push(`COALESCE(plan_type,'') = ANY($${idx++})`); params.push(list); } }
-    const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
+    const wc = where.length ? 'WHERE ' + where.join(' AND ').replace(/(?<![a-z_])(agent_name|carrier|payment_period|classification|plan_type|upload_id)/g, 'cr.$1') : '';
     const [totalComm, totalRec, agentCnt, carrierCnt, byAgent, byCarrier, byPeriod] = await Promise.all([
       pool.query(`SELECT COALESCE(SUM(commission),0) as total FROM commission_records ${wc}`, params),
       pool.query(`SELECT COUNT(*) as count FROM commission_records ${wc}`, params),
@@ -119,7 +119,7 @@ router.get('/kpi', requireAuth, async (req, res) => {
     if (periods) { const list = periods.split(',').map(p=>p.trim()).filter(Boolean); if (list.length) { where.push(`payment_period = ANY($${idx++})`); params.push(list); } }
     if (classifications) { const list = classifications.split(',').map(c=>c.trim()).filter(Boolean); if (list.length) { where.push(`classification = ANY($${idx++})`); params.push(list); } }
     if (planTypes) { const list = planTypes.split(',').map(p=>p.trim()).filter(Boolean); if (list.length) { where.push(`COALESCE(plan_type,'') = ANY($${idx++})`); params.push(list); } }
-    const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
+    const wc = where.length ? 'WHERE ' + where.join(' AND ').replace(/(?<![a-z_])(agent_name|carrier|payment_period|classification|plan_type|upload_id)/g, 'cr.$1') : '';
     const rows = await pool.query(`
       SELECT agent_name,
         COUNT(*) as total_count,
