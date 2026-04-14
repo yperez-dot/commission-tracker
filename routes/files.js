@@ -237,7 +237,23 @@ function parseUHCRows(wb) {
   return records;
 }
 
-function parseBSIRows(wb) {
+function parseBSIRows(wb, filename) {
+  // Try to extract period from filename e.g. Statement-health_experts-202603.xlsx
+  function getPeriodFromFilename(fn) {
+    if (!fn) return 'Unknown';
+    const f = fn.toLowerCase();
+    const m1 = f.match(/(20\d{2})(0[1-9]|1[0-2])/);
+    if (m1) return m1[1] + m1[2];
+    const months = {jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12'};
+    const m2 = f.match(/([a-z]{3})[_\-]?(20\d{2})/) || f.match(/(20\d{2})[_\-]([a-z]{3})/);
+    if (m2) {
+      const mon = months[m2[1]] || months[m2[2]];
+      const yr = m2[1].match(/^20/) ? m2[1] : m2[2];
+      if (mon && yr) return yr + mon;
+    }
+    return 'Unknown';
+  }
+  const filePeriod = getPeriodFromFilename(filename);
   const records = [];
   const ws = wb.Sheets[wb.SheetNames[0]];
   const range = XLSX.utils.decode_range(ws['!ref']);
@@ -299,7 +315,7 @@ function parseBSIRows(wb) {
       premium: 0,
       commission,
       classification: commission < 0 ? 'Chargeback' : 'Agency Override',
-      period: 'Unknown',
+      period: filePeriod,
       policyNumber,
       payee: 'BSI',
       raw: row
@@ -426,7 +442,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     if (isUHCFile(req.file.originalname)) {
       records = parseUHCRows(wb);
     } else if (isBSIFile(req.file.originalname)) {
-      records = parseBSIRows(wb);
+      records = parseBSIRows(wb, req.file.originalname);
     } else if (isNHPFile(req.file.originalname)) {
       records = parseNHPRows(wb);
     } else if (isAPLFile(req.file.originalname)) {
