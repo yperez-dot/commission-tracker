@@ -86,6 +86,8 @@ async function initSchema() {
       CREATE INDEX IF NOT EXISTS idx_records_agent ON commission_records(agent_name);
       CREATE INDEX IF NOT EXISTS idx_records_carrier ON commission_records(carrier);
       CREATE INDEX IF NOT EXISTS idx_records_plan_type ON commission_records(plan_type);
+      CREATE INDEX IF NOT EXISTS idx_records_payee ON commission_records(payee);
+      ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS payee TEXT DEFAULT '';
       CREATE INDEX IF NOT EXISTS idx_records_period ON commission_records(payment_period);
       CREATE INDEX IF NOT EXISTS idx_records_client ON commission_records(client_full_name);
       CREATE INDEX IF NOT EXISTS idx_bob_carrier ON book_of_business(carrier);
