@@ -32,11 +32,47 @@ router.get('/', requireAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Delete single record
 router.delete('/:id', requireAuth, requireAdmin, async (req, res) => {
   try {
     const pool = getPool();
     await pool.query('DELETE FROM commission_records WHERE id = $1', [req.params.id]);
     res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Bulk delete — pass array of ids OR delete all with current filters
+router.post('/bulk-delete', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const pool = getPool();
+    const { ids, deleteAll, agent, carrier, period, classification } = req.body;
+
+    if (deleteAll) {
+      // Delete everything — nuclear option
+      await pool.query('DELETE FROM commission_records');
+      await pool.query('DELETE FROM uploads');
+      await pool.query('DELETE FROM book_of_business');
+      res.json({ success: true, deleted: 'all', message: 'All records deleted' });
+      return;
+    }
+
+    if (ids && ids.length > 0) {
+      // Delete specific IDs
+      await pool.query('DELETE FROM commission_records WHERE id = ANY($1)', [ids]);
+      res.json({ success: true, deleted: ids.length });
+      return;
+    }
+
+    // Delete by filters
+    let where = [], params = [], idx = 1;
+    if (agent) { where.push(`agent_name = $${idx++}`); params.push(agent); }
+    if (carrier) { where.push(`carrier = $${idx++}`); params.push(carrier); }
+    if (period) { where.push(`payment_period = $${idx++}`); params.push(period); }
+    if (classification) { where.push(`classification = $${idx++}`); params.push(classification); }
+    if (!where.length) return res.status(400).json({ error: 'No filters specified for bulk delete' });
+    const wc = 'WHERE ' + where.join(' AND ');
+    const result = await pool.query(`DELETE FROM commission_records ${wc}`, params);
+    res.json({ success: true, deleted: result.rowCount });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -84,8 +120,7 @@ router.get('/kpi', requireAuth, async (req, res) => {
     if (planTypes) { const list = planTypes.split(',').map(p=>p.trim()).filter(Boolean); if (list.length) { where.push(`plan_type = ANY($${idx++})`); params.push(list); } }
     const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
     const rows = await pool.query(`
-      SELECT
-        agent_name,
+      SELECT agent_name,
         COUNT(*) as total_count,
         COALESCE(SUM(commission), 0) as total_commission,
         COALESCE(SUM(CASE WHEN commission < 0 THEN ABS(commission) ELSE 0 END), 0) as chargeback_amount,
@@ -109,13 +144,12 @@ router.get('/kpi', requireAuth, async (req, res) => {
     const agents2 = rows.rows.map(r => {
       const total = parseFloat(r.total_commission) || 0;
       const cb = parseFloat(r.chargeback_amount) || 0;
-      const adv = parseFloat(r.advance_amount) || 0;
       return {
         agent_name: r.agent_name,
         total_commission: total,
         total_count: parseInt(r.total_count) || 0,
         distribution_pct: totals.total_commission > 0 ? (total / totals.total_commission * 100) : 0,
-        advance_amount: adv,
+        advance_amount: parseFloat(r.advance_amount) || 0,
         chargeback_amount: cb,
         chargeback_count: parseInt(r.chargeback_count) || 0,
         chargeback_ratio: Math.abs(total) > 0 ? (cb / Math.abs(total) * 100) : 0,
