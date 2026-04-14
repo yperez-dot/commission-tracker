@@ -77,6 +77,9 @@ export default function AllData({ user, initialFilters = {} }) {
   const [selPeriods, setSelPeriods] = useState(initialFilters.period ? [initialFilters.period] : []);
   const [selTypes, setSelTypes] = useState(initialFilters.classification ? [initialFilters.classification] : []);
   const [selPayees, setSelPayees] = useState([]);
+  const [search, setSearch] = useState('');
+  const [sortCol, setSortCol] = useState('');
+  const [sortDir, setSortDir] = useState('asc');
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(0);
   const [selected, setSelected] = useState(new Set());
@@ -107,18 +110,20 @@ export default function AllData({ user, initialFilters = {} }) {
       if (selCarriers.length === 1) params.set('carrier', selCarriers[0]);
       if (selPeriods.length === 1) params.set('period', selPeriods[0]);
       if (selTypes.length === 1) params.set('classification', selTypes[0]);
+      // For multi-select, use comma-separated (handled by backend ANY filter)
       if (selAgents.length > 1) params.set('agents', selAgents.join(','));
       if (selCarriers.length > 1) params.set('carriers', selCarriers.join(','));
       if (selPeriods.length > 1) params.set('periods', selPeriods.join(','));
       if (selTypes.length > 1) params.set('classifications', selTypes.join(','));
       if (selPayees.length === 1) params.set('payee', selPayees[0]);
+      if (search.trim()) params.set('search', search.trim());
       const data = await apiFetch(`/records?${params}`);
       setRecords(data.records || []);
       setTotal(data.total || 0);
       setSelected(new Set());
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
-  }, [selAgents, selCarriers, selPeriods, selTypes, selPayees]);
+  }, [selAgents, selCarriers, selPeriods, selTypes, selPayees, search]);
 
   useEffect(() => { setPage(0); loadRecords(0); }, [loadRecords]);
 
@@ -129,7 +134,7 @@ export default function AllData({ user, initialFilters = {} }) {
   }
 
   function clearAll() {
-    setSelAgents([]); setSelCarriers([]); setSelPeriods([]); setSelTypes([]); setSelPayees([]);
+    setSelAgents([]); setSelCarriers([]); setSelPeriods([]); setSelTypes([]); setSelPayees([]); setSearch('');
     setPage(0);
   }
 
@@ -161,12 +166,27 @@ export default function AllData({ user, initialFilters = {} }) {
     finally { setDeleting(false); }
   }
 
+  function handleSort(col) {
+    if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortCol(col); setSortDir('asc'); }
+  }
+
+  const sortedRecords = [...records].sort((a, b) => {
+    if (!sortCol) return 0;
+    const aVal = String(a[sortCol] || '').toLowerCase();
+    const bVal = String(b[sortCol] || '').toLowerCase();
+    const numA = parseFloat(a[sortCol]);
+    const numB = parseFloat(b[sortCol]);
+    if (!isNaN(numA) && !isNaN(numB)) return sortDir === 'asc' ? numA - numB : numB - numA;
+    return sortDir === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+  });
+
   const grandTotal = records.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0);
-  const hasFilters = selAgents.length || selCarriers.length || selPeriods.length || selTypes.length || selPayees.length;
+  const hasFilters = selAgents.length || selCarriers.length || selPeriods.length || selTypes.length || selPayees.length || search.trim();
 
   function exportCSV() {
-    const headers = ['Agent', 'Carrier', 'Client', 'Effective Date', 'Premium', 'Commission', 'Type', 'Period', 'Payee'];
-    const rows = records.map(r => [r.agent_name, r.carrier, r.client_full_name, r.effective_date, r.premium, r.commission, r.classification, r.payment_period, r.payee]);
+    const headers = ['Agent', 'Carrier', 'Client', 'Effective Date', 'Premium', 'Commission', 'Type', 'Period'];
+    const rows = records.map(r => [r.agent_name, r.carrier, r.client_full_name, r.effective_date, r.premium, r.commission, r.classification, r.payment_period]);
     const csv = [headers, ...rows].map(r => r.map(v => `"${String(v||'').replace(/"/g,'""')}"`).join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
@@ -189,6 +209,7 @@ export default function AllData({ user, initialFilters = {} }) {
       </div>
       <div className="page-body">
 
+        {/* Delete modal */}
         {confirmDelete && (
           <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
             <div style={{ background: '#ffffff', borderRadius: 12, padding: 28, width: 400, boxShadow: '0 8px 40px rgba(0,0,0,0.25)', border: '1px solid #e0e0e0' }}>
@@ -209,12 +230,20 @@ export default function AllData({ user, initialFilters = {} }) {
           </div>
         )}
 
+        {/* Multi-select filter bar */}
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12, alignItems: 'center' }}>
           <MultiSelect label="Agents" options={filterOptions.agents || []} selected={selAgents} onChange={setSelAgents} />
           <MultiSelect label="Carriers" options={filterOptions.carriers || []} selected={selCarriers} onChange={setSelCarriers} />
           <MultiSelect label="Periods" options={(filterOptions.periods || []).filter(p => p && p !== 'Unknown')} selected={selPeriods} onChange={setSelPeriods} />
           <MultiSelect label="Types" options={classificationTypes} selected={selTypes} onChange={setSelTypes} />
           <MultiSelect label="Payee" options={filterOptions.payees || []} selected={selPayees} onChange={setSelPayees} />
+          <input
+            type="text"
+            placeholder="Search client, agent..."
+            value={search}
+            onChange={e => { setSearch(e.target.value); setPage(0); }}
+            style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border)', fontSize: 12, minWidth: 200, background: 'var(--bg)', color: 'var(--text)' }}
+          />
           {hasFilters && (
             <button onClick={clearAll} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #E24B4A', background: 'none', color: '#E24B4A', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
               Clear all
@@ -236,6 +265,7 @@ export default function AllData({ user, initialFilters = {} }) {
           </div>
         </div>
 
+        {/* Active filter pills */}
         {hasFilters && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
             {[...selAgents, ...selCarriers, ...selPeriods, ...selTypes, ...selPayees].map(f => (
@@ -260,12 +290,21 @@ export default function AllData({ user, initialFilters = {} }) {
                   <thead>
                     <tr>
                       {user.role === 'admin' && <th style={{ width: 36 }}><input type="checkbox" checked={selected.size === records.length && records.length > 0} onChange={toggleSelectAll} style={{ cursor: 'pointer' }} /></th>}
-                      <th>#</th><th>Agent</th><th>Carrier</th><th>Client</th><th>Effective</th><th>Premium</th><th>Commission</th><th>Type</th><th>Period</th><th>Payee</th>
+                      <th>#</th>
+                      {['agent_name','carrier','client_full_name','effective_date','premium','commission','classification','payment_period','payee'].map((col, i) => {
+                        const labels = ['Agent','Carrier','Client','Effective','Premium','Commission','Type','Period','Payee'];
+                        const isActive = sortCol === col;
+                        return (
+                          <th key={col} onClick={() => handleSort(col)} style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}>
+                            {labels[i]} {isActive ? (sortDir === 'asc' ? '↑' : '↓') : <span style={{opacity:0.3}}>↕</span>}
+                          </th>
+                        );
+                      })}
                       {user.role === 'admin' && <th></th>}
                     </tr>
                   </thead>
                   <tbody>
-                    {records.map((r, i) => {
+                    {sortedRecords.map((r, i) => {
                       const isSel = selected.has(r.id);
                       return (
                         <tr key={r.id} style={{ background: isSel ? 'var(--blue-light)' : 'transparent' }}>
