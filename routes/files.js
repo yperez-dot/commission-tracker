@@ -200,7 +200,11 @@ function parseUHCRows(wb) {
     const isAgency = isAgencyName(writingAgentRaw);
     const agentName = isAgency ? 'The Health Experts Insurance' : normalizeAgentName(writingAgentRaw);
     const planType = derivePlanType('UnitedHealthcare', rawPlanType, policyNumber, '');
-    const uhcClass = isAgency ? 'Agent Commission' : (commAction.toLowerCase() === 'new' ? 'New Business' : 'Renewal');
+    const commActionLower = commAction.toLowerCase();
+    const uhcClass = commActionLower === 'new' ? 'New Business'
+      : commActionLower === 'renewal' ? 'Renewal'
+      : commActionLower.includes('chargeback') ? 'Chargeback'
+      : 'Agent Commission';
 
     records.push({
       agent: agentName,
