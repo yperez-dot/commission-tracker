@@ -252,13 +252,16 @@ export default function BookOfBusiness({ user }) {
             <div className="table-wrap">
               <table>
                 <thead>
-                  <tr><th>Carrier</th><th>Active clients</th><th>Missing</th><th>Source</th><th>Last updated</th></tr>
+                  <tr><th>Carrier</th><th>Active clients</th><th>Missing</th><th>Source</th><th>Last updated</th><th></th></tr>
                 </thead>
                 <tbody>
                   {(summary?.byCarrier||[]).map((c,i) => (
-                    <tr key={i}>
-                      <td style={{fontWeight:500}}>{c.carrier}</td>
-                      <td>{c.count}</td>
+                    <tr key={i}
+                      onClick={()=>{ setFilterCarrier(c.carrier); setTab('all'); }}
+                      style={{cursor:'pointer'}}
+                    >
+                      <td style={{fontWeight:500,color:'#185FA5'}}>{c.carrier}</td>
+                      <td style={{fontWeight:600,color:'#185FA5'}}>{c.count}</td>
                       <td>{clients.filter(x=>x.carrier===c.carrier&&x.months_missing>0).length>0
                         ? <span className="badge badge-red">{clients.filter(x=>x.carrier===c.carrier&&x.months_missing>0).length}</span>
                         : <span className="badge badge-green">0</span>}</td>
@@ -266,6 +269,7 @@ export default function BookOfBusiness({ user }) {
                         ? <span className="badge badge-blue">BOB export</span>
                         : <span className="badge badge-gray">Statements only</span>}</td>
                       <td style={{fontSize:11,color:'var(--text-muted)'}}>{c.last_updated?new Date(c.last_updated).toLocaleDateString():'—'}</td>
+                      <td style={{fontSize:11,color:'var(--text-muted)'}}>View →</td>
                     </tr>
                   ))}
                 </tbody>
