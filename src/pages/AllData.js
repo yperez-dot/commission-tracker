@@ -137,7 +137,7 @@ export default function AllData({ user, initialFilters = {} }) {
         {/* Confirm delete modal */}
         {confirmDelete && (
           <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.5)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center'}}>
-            <div style={{background:'var(--bg)',borderRadius:12,padding:28,width:400,boxShadow:'0 8px 40px rgba(0,0,0,0.25)'}}>
+            <div style={{background:'#ffffff',borderRadius:12,padding:28,width:400,boxShadow:'0 8px 40px rgba(0,0,0,0.25)',border:'1px solid #e0e0e0'}}>
               <div style={{fontWeight:700,fontSize:16,marginBottom:8,color: confirmDelete==='all'?'#E24B4A':'var(--text)'}}>
                 {deleteModalText[confirmDelete]?.title}
               </div>
@@ -211,7 +211,17 @@ export default function AllData({ user, initialFilters = {} }) {
           </div>
         )}
 
-       
+        {/* Totals bar */}
+        {records.length > 0 && (
+          <div className="card" style={{marginBottom:12,padding:'10px 14px'}}>
+            <div style={{fontSize:11,fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:8}}>Totals for current view</div>
+            <div style={{display:'flex',flexWrap:'wrap',gap:'6px 20px',alignItems:'center'}}>
+              {Object.entries(agentTotals).sort((a,b)=>b[1]-a[1]).map(([name,tot])=>(
+                <div key={name} style={{display:'flex',alignItems:'center',gap:6,fontSize:13}}>
+                  <span style={{color:'var(--text-muted)'}}>{name}</span>
+                  <span style={{fontWeight:600,color:tot<0?'var(--red)':'var(--green)'}}>{fmt(tot)}</span>
+                </div>
+              ))}
               <div style={{marginLeft:'auto',display:'flex',alignItems:'center',gap:6,fontSize:13,borderLeft:'1px solid var(--border)',paddingLeft:16}}>
                 <span style={{color:'var(--text-muted)'}}>Grand total</span>
                 <span style={{fontWeight:700,fontSize:15,color:grandTotal<0?'var(--red)':'var(--blue)'}}>{fmt(grandTotal)}</span>
