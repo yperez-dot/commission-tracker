@@ -181,13 +181,42 @@ router.post('/check-renewals', requireAuth, async (req, res) => {
     if (!period) return res.status(400).json({ error: 'Period required' });
     const isAdmin = req.user.role === 'admin';
     const af = isAdmin ? '' : `AND agent_name ILIKE '%${req.user.name}%'`;
-    const commRecords = await pool.query(
-      `SELECT LOWER(TRIM(client_full_name)) as client_key, carrier, agent_name, commission, payment_period FROM commission_records WHERE payment_period = $1 ${af}`,
-      [period]
+
+    // Normalize period to YYYYMM for flexible matching
+    function normalizePeriod(p) {
+      if (!p) return null;
+      const s = String(p).trim();
+      // Already YYYYMM
+      if (s.match(/^\d{6}$/)) return s;
+      // MM/DD/YYYY or MM/YYYY
+      const mmyyyy = s.match(/^(\d{1,2})\/(?:\d{2}\/)?(\d{4})$/);
+      if (mmyyyy) return mmyyyy[2] + mmyyyy[1].padStart(2,'0');
+      // Month name like FEB2026 or FEB 2026
+      const months = {jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12'};
+      const named = s.toLowerCase().match(/^([a-z]{3})\s*(\d{4})$/);
+      if (named && months[named[1]]) return named[2] + months[named[1]];
+      return null;
+    }
+
+    const targetNorm = normalizePeriod(period);
+
+    // Get all commission records — filter by normalized period
+    const allRecords = await pool.query(
+      `SELECT LOWER(TRIM(client_full_name)) as client_key, carrier, agent_name, commission, payment_period
+       FROM commission_records WHERE commission > 0 ${af}`
     );
-    const paidSet = new Set(commRecords.rows.map(r => `${r.client_key}|${r.carrier.toLowerCase()}`));
+
+    // Match records whose period normalizes to the same YYYYMM
+    const matchingRecords = allRecords.rows.filter(r => {
+      const norm = normalizePeriod(r.payment_period);
+      return norm && targetNorm && norm === targetNorm;
+    });
+
+    const paidSet = new Set(matchingRecords.map(r => `${r.client_key}|${r.carrier.toLowerCase()}`));
+
     const bobClients = await pool.query(`SELECT * FROM book_of_business WHERE status = 'active' ${af}`);
     let missingCount = 0, recoveredCount = 0;
+
     for (const client of bobClients.rows) {
       const key = `${client.client_full_name.toLowerCase().trim()}|${client.carrier.toLowerCase()}`;
       const wasMissing = client.months_missing > 0;
@@ -200,13 +229,21 @@ router.post('/check-renewals', requireAuth, async (req, res) => {
         recoveredCount++;
       }
     }
-    for (const rec of commRecords.rows) {
+
+    // Update last commission info for matched clients
+    for (const rec of matchingRecords) {
       await pool.query(
-        `UPDATE book_of_business SET last_commission_date = $1, last_commission_amount = $2, updated_at = NOW() WHERE LOWER(TRIM(client_full_name)) = $3 AND LOWER(carrier) = $4 AND status = 'active'`,
+        `UPDATE book_of_business SET last_commission_date = $1, last_commission_amount = $2, updated_at = NOW()
+         WHERE LOWER(TRIM(client_full_name)) = $3 AND LOWER(carrier) = $4 AND status = 'active'`,
         [period, rec.commission, rec.client_key, rec.carrier.toLowerCase()]
       );
     }
-    res.json({ missingCount, recoveredCount, period, checkedClients: bobClients.rows.length });
+
+    res.json({
+      missingCount, recoveredCount, period,
+      checkedClients: bobClients.rows.length,
+      matchedRecords: matchingRecords.length
+    });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
