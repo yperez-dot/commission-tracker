@@ -77,18 +77,22 @@ router.post('/bulk-delete', requireAuth, requireAdmin, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ─── Summary — no table alias, WHERE uses bare column names ──────────────────
 router.get('/summary', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
     const { agents, carriers, periods, classifications, planTypes } = req.query;
     let where = [], params = [], idx = 1;
+
     if (req.user.role === 'agent') { where.push(`agent_name ILIKE $${idx++}`); params.push(`%${req.user.name}%`); }
     if (agents) { const list = agents.split(',').map(a=>a.trim()).filter(Boolean); if (list.length) { where.push(`agent_name = ANY($${idx++})`); params.push(list); } }
     if (carriers) { const list = carriers.split(',').map(c=>c.trim()).filter(Boolean); if (list.length) { where.push(`carrier = ANY($${idx++})`); params.push(list); } }
     if (periods) { const list = periods.split(',').map(p=>p.trim()).filter(Boolean); if (list.length) { where.push(`payment_period = ANY($${idx++})`); params.push(list); } }
     if (classifications) { const list = classifications.split(',').map(c=>c.trim()).filter(Boolean); if (list.length) { where.push(`classification = ANY($${idx++})`); params.push(list); } }
     if (planTypes) { const list = planTypes.split(',').map(p=>p.trim()).filter(Boolean); if (list.length) { where.push(`COALESCE(plan_type,'') = ANY($${idx++})`); params.push(list); } }
-    const wc = where.length ? 'WHERE ' + where.join(' AND ').replace(/(?<![a-z_])(agent_name|carrier|payment_period|classification|plan_type|upload_id)/g, 'cr.$1') : '';
+
+    const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
+
     const [totalComm, totalRec, agentCnt, carrierCnt, byAgent, byCarrier, byPeriod] = await Promise.all([
       pool.query(`SELECT COALESCE(SUM(commission),0) as total FROM commission_records ${wc}`, params),
       pool.query(`SELECT COUNT(*) as count FROM commission_records ${wc}`, params),
@@ -96,30 +100,37 @@ router.get('/summary', requireAuth, async (req, res) => {
       pool.query(`SELECT COUNT(DISTINCT carrier) as count FROM commission_records ${wc}`, params),
       pool.query(`SELECT agent_name, SUM(commission) as total, COUNT(*) as count FROM commission_records ${wc} GROUP BY agent_name ORDER BY total DESC`, params),
       pool.query(`SELECT carrier, SUM(commission) as total, COUNT(*) as count FROM commission_records ${wc} GROUP BY carrier ORDER BY total DESC`, params),
-      pool.query(`SELECT payment_period, SUM(commission) as total, COUNT(*) as count FROM commission_records ${wc} GROUP BY payment_period ORDER BY payment_period DESC LIMIT 12`, params),
+      pool.query(`SELECT payment_period as period, SUM(commission) as total, COUNT(*) as count FROM commission_records ${wc} GROUP BY payment_period ORDER BY payment_period ASC`, params),
     ]);
+
     res.json({
       totalCommission: parseFloat(totalComm.rows[0].total),
       totalRecords: parseInt(totalRec.rows[0].count),
       agentCount: parseInt(agentCnt.rows[0].count),
       carrierCount: parseInt(carrierCnt.rows[0].count),
-      byAgent: byAgent.rows, byCarrier: byCarrier.rows, byPeriod: byPeriod.rows
+      byAgent: byAgent.rows,
+      byCarrier: byCarrier.rows,
+      byPeriod: byPeriod.rows,
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ─── KPI — no table alias, WHERE uses bare column names ──────────────────────
 router.get('/kpi', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
     const { agents, carriers, periods, classifications, planTypes } = req.query;
     let where = [], params = [], idx = 1;
+
     if (req.user.role === 'agent') { where.push(`agent_name ILIKE $${idx++}`); params.push(`%${req.user.name}%`); }
     if (agents) { const list = agents.split(',').map(a=>a.trim()).filter(Boolean); if (list.length) { where.push(`agent_name = ANY($${idx++})`); params.push(list); } }
     if (carriers) { const list = carriers.split(',').map(c=>c.trim()).filter(Boolean); if (list.length) { where.push(`carrier = ANY($${idx++})`); params.push(list); } }
     if (periods) { const list = periods.split(',').map(p=>p.trim()).filter(Boolean); if (list.length) { where.push(`payment_period = ANY($${idx++})`); params.push(list); } }
     if (classifications) { const list = classifications.split(',').map(c=>c.trim()).filter(Boolean); if (list.length) { where.push(`classification = ANY($${idx++})`); params.push(list); } }
     if (planTypes) { const list = planTypes.split(',').map(p=>p.trim()).filter(Boolean); if (list.length) { where.push(`COALESCE(plan_type,'') = ANY($${idx++})`); params.push(list); } }
-    const wc = where.length ? 'WHERE ' + where.join(' AND ').replace(/(?<![a-z_])(agent_name|carrier|payment_period|classification|plan_type|upload_id)/g, 'cr.$1') : '';
+
+    const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
+
     const rows = await pool.query(`
       SELECT agent_name,
         COUNT(*) as total_count,
@@ -128,10 +139,11 @@ router.get('/kpi', requireAuth, async (req, res) => {
         COUNT(CASE WHEN commission < 0 THEN 1 END) as chargeback_count,
         COALESCE(SUM(CASE WHEN classification ILIKE '%advance%' THEN commission ELSE 0 END), 0) as advance_amount,
         COUNT(CASE WHEN classification ILIKE '%advance%' THEN 1 END) as advance_count,
-        COUNT(CASE WHEN classification = 'Agent Commission' OR classification = 'Agency Override' THEN 1 END) as new_apps
+        COUNT(CASE WHEN classification IN ('New Business','Renewal') THEN 1 END) as new_apps
       FROM commission_records ${wc}
       GROUP BY agent_name ORDER BY total_commission DESC
     `, params);
+
     const totals = rows.rows.reduce((acc, r) => {
       acc.total_commission += parseFloat(r.total_commission) || 0;
       acc.total_count += parseInt(r.total_count) || 0;
@@ -142,7 +154,8 @@ router.get('/kpi', requireAuth, async (req, res) => {
       acc.new_apps += parseInt(r.new_apps) || 0;
       return acc;
     }, { total_commission:0, total_count:0, chargeback_amount:0, chargeback_count:0, advance_amount:0, advance_count:0, new_apps:0 });
-    const agents2 = rows.rows.map(r => {
+
+    const agentsOut = rows.rows.map(r => {
       const total = parseFloat(r.total_commission) || 0;
       const cb = parseFloat(r.chargeback_amount) || 0;
       return {
@@ -159,7 +172,8 @@ router.get('/kpi', requireAuth, async (req, res) => {
         advance_count: parseInt(r.advance_count) || 0,
       };
     });
-    res.json({ agents: agents2, totals });
+
+    res.json({ agents: agentsOut, totals });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -193,7 +207,6 @@ router.get('/filters', requireAuth, async (req, res) => {
       pool.query(`SELECT DISTINCT payment_period FROM commission_records ${baseWhere} ORDER BY payment_period DESC`)
     ]);
 
-    // plan_type may not exist yet — try it separately and fallback to empty
     let planTypes = [];
     try {
       const planWhere = isAdmin
@@ -201,12 +214,8 @@ router.get('/filters', requireAuth, async (req, res) => {
         : `WHERE agent_name ILIKE '%${req.user.name}%' AND plan_type IS NOT NULL AND plan_type != ''`;
       const pt = await pool.query(`SELECT DISTINCT plan_type FROM commission_records ${planWhere} ORDER BY plan_type`);
       planTypes = pt.rows.map(p => p.plan_type).filter(Boolean);
-    } catch (e) {
-      // column doesn't exist yet — that's fine, return empty
-      console.log('plan_type column not yet available:', e.message);
-    }
+    } catch (e) { console.log('plan_type not available:', e.message); }
 
-    // payee — try separately with fallback
     let payees = [];
     try {
       const payeeWhere = isAdmin
@@ -214,9 +223,7 @@ router.get('/filters', requireAuth, async (req, res) => {
         : `WHERE agent_name ILIKE '%${req.user.name}%' AND payee IS NOT NULL AND payee != ''`;
       const py = await pool.query(`SELECT DISTINCT payee FROM commission_records ${payeeWhere} ORDER BY payee`);
       payees = py.rows.map(p => p.payee).filter(Boolean);
-    } catch (e) {
-      console.log('payee column not available:', e.message);
-    }
+    } catch (e) { console.log('payee not available:', e.message); }
 
     res.json({
       agents: agents.rows.map(a => a.agent_name).filter(Boolean),
