@@ -93,7 +93,11 @@ function isBSIFile(filename) {
   return f.includes('statement-health_experts') || f.includes('statement_health_experts');
 }
 function isNHPFile(filename) {
-  return filename.toLowerCase().replace(/\s+/g, '_').includes('the_health_experts_insurance_statement');
+  const f = filename.toLowerCase().replace(/[\s()]/g, '_');
+  return f.includes('the_health_experts_insurance_statement') ||
+    f.includes('the_health_experst_insurance') ||
+    (f.includes('the_health_experts') && f.includes('statement')) ||
+    (f.includes('yahoska') && f.includes('katy') && f.includes('statement'));
 }
 function isHumanaFile(filename) {
   const f = filename.toLowerCase().replace(/\s+/g, '_');
