@@ -23,7 +23,8 @@ router.get('/', requireAuth, async (req, res) => {
     if (upload_id) { where.push(`upload_id = $${idx++}`); params.push(parseInt(upload_id)); }
     const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
     const records = await pool.query(
-      `SELECT id, agent_name, carrier, plan_type, client_full_name, effective_date, premium, commission, classification, payment_period, policy_number, created_at FROM commission_records ${wc} ORDER BY created_at DESC LIMIT $${idx++} OFFSET $${idx++}`,
+      `SELECT id, agent_name, carrier, plan_type, client_full_name, effective_date, premium, commission, classification, payment_period, policy_number, created_at
+       FROM commission_records ${wc} ORDER BY created_at DESC LIMIT $${idx++} OFFSET $${idx++}`,
       [...params, parseInt(limit), parseInt(offset)]
     );
     const total = await pool.query(`SELECT COUNT(*) as count FROM commission_records ${wc}`, params);
@@ -31,7 +32,6 @@ router.get('/', requireAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Delete a single commission record
 router.delete('/:id', requireAuth, requireAdmin, async (req, res) => {
   try {
     const pool = getPool();
@@ -71,6 +71,63 @@ router.get('/summary', requireAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+router.get('/kpi', requireAuth, async (req, res) => {
+  try {
+    const pool = getPool();
+    const { agents, carriers, periods, classifications, planTypes } = req.query;
+    let where = [], params = [], idx = 1;
+    if (req.user.role === 'agent') { where.push(`agent_name ILIKE $${idx++}`); params.push(`%${req.user.name}%`); }
+    if (agents) { const list = agents.split(',').map(a=>a.trim()).filter(Boolean); if (list.length) { where.push(`agent_name = ANY($${idx++})`); params.push(list); } }
+    if (carriers) { const list = carriers.split(',').map(c=>c.trim()).filter(Boolean); if (list.length) { where.push(`carrier = ANY($${idx++})`); params.push(list); } }
+    if (periods) { const list = periods.split(',').map(p=>p.trim()).filter(Boolean); if (list.length) { where.push(`payment_period = ANY($${idx++})`); params.push(list); } }
+    if (classifications) { const list = classifications.split(',').map(c=>c.trim()).filter(Boolean); if (list.length) { where.push(`classification = ANY($${idx++})`); params.push(list); } }
+    if (planTypes) { const list = planTypes.split(',').map(p=>p.trim()).filter(Boolean); if (list.length) { where.push(`plan_type = ANY($${idx++})`); params.push(list); } }
+    const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
+    const rows = await pool.query(`
+      SELECT
+        agent_name,
+        COUNT(*) as total_count,
+        COALESCE(SUM(commission), 0) as total_commission,
+        COALESCE(SUM(CASE WHEN commission < 0 THEN ABS(commission) ELSE 0 END), 0) as chargeback_amount,
+        COUNT(CASE WHEN commission < 0 THEN 1 END) as chargeback_count,
+        COALESCE(SUM(CASE WHEN classification ILIKE '%advance%' THEN commission ELSE 0 END), 0) as advance_amount,
+        COUNT(CASE WHEN classification ILIKE '%advance%' THEN 1 END) as advance_count,
+        COUNT(CASE WHEN classification = 'Agent Commission' OR classification = 'Agency Override' THEN 1 END) as new_apps
+      FROM commission_records ${wc}
+      GROUP BY agent_name ORDER BY total_commission DESC
+    `, params);
+    const totals = rows.rows.reduce((acc, r) => {
+      acc.total_commission += parseFloat(r.total_commission) || 0;
+      acc.total_count += parseInt(r.total_count) || 0;
+      acc.chargeback_amount += parseFloat(r.chargeback_amount) || 0;
+      acc.chargeback_count += parseInt(r.chargeback_count) || 0;
+      acc.advance_amount += parseFloat(r.advance_amount) || 0;
+      acc.advance_count += parseInt(r.advance_count) || 0;
+      acc.new_apps += parseInt(r.new_apps) || 0;
+      return acc;
+    }, { total_commission:0, total_count:0, chargeback_amount:0, chargeback_count:0, advance_amount:0, advance_count:0, new_apps:0 });
+    const agents2 = rows.rows.map(r => {
+      const total = parseFloat(r.total_commission) || 0;
+      const cb = parseFloat(r.chargeback_amount) || 0;
+      const adv = parseFloat(r.advance_amount) || 0;
+      return {
+        agent_name: r.agent_name,
+        total_commission: total,
+        total_count: parseInt(r.total_count) || 0,
+        distribution_pct: totals.total_commission > 0 ? (total / totals.total_commission * 100) : 0,
+        advance_amount: adv,
+        chargeback_amount: cb,
+        chargeback_count: parseInt(r.chargeback_count) || 0,
+        chargeback_ratio: Math.abs(total) > 0 ? (cb / Math.abs(total) * 100) : 0,
+        net_sales: total - cb,
+        new_apps: parseInt(r.new_apps) || 0,
+        advance_count: parseInt(r.advance_count) || 0,
+      };
+    });
+    res.json({ agents: agents2, totals });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 router.get('/missing-renewals', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
@@ -92,13 +149,16 @@ router.get('/missing-renewals', requireAuth, async (req, res) => {
 router.get('/filters', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
-    const af = req.user.role === 'admin' ? '' : `WHERE agent_name ILIKE '%${req.user.name}%'`;
-    const wf = req.user.role === 'admin' ? `WHERE plan_type IS NOT NULL AND plan_type != ''` : `WHERE agent_name ILIKE '%${req.user.name}%' AND plan_type IS NOT NULL AND plan_type != ''`;
+    const isAdmin = req.user.role === 'admin';
+    const baseWhere = isAdmin ? '' : `WHERE agent_name ILIKE '%${req.user.name}%'`;
+    const planWhere = isAdmin
+      ? `WHERE plan_type IS NOT NULL AND plan_type != ''`
+      : `WHERE agent_name ILIKE '%${req.user.name}%' AND plan_type IS NOT NULL AND plan_type != ''`;
     const [agents, carriers, periods, planTypes] = await Promise.all([
-      pool.query(`SELECT DISTINCT agent_name FROM commission_records ${af} ORDER BY agent_name`),
-      pool.query(`SELECT DISTINCT carrier FROM commission_records ${af} ORDER BY carrier`),
-      pool.query(`SELECT DISTINCT payment_period FROM commission_records ${af} ORDER BY payment_period DESC`),
-      pool.query(`SELECT DISTINCT plan_type FROM commission_records ${wf} ORDER BY plan_type`)
+      pool.query(`SELECT DISTINCT agent_name FROM commission_records ${baseWhere} ORDER BY agent_name`),
+      pool.query(`SELECT DISTINCT carrier FROM commission_records ${baseWhere} ORDER BY carrier`),
+      pool.query(`SELECT DISTINCT payment_period FROM commission_records ${baseWhere} ORDER BY payment_period DESC`),
+      pool.query(`SELECT DISTINCT plan_type FROM commission_records ${planWhere} ORDER BY plan_type`)
     ]);
     res.json({
       agents: agents.rows.map(a=>a.agent_name).filter(Boolean),
@@ -118,74 +178,3 @@ router.post('/normalize-agents', requireAuth, requireAdmin, async (req, res) => 
 });
 
 module.exports = router;
-
-// KPI summary endpoint
-router.get('/kpi', requireAuth, async (req, res) => {
-  try {
-    const pool = getPool();
-    const { agents, carriers, periods, classifications, planTypes } = req.query;
-    let where = [], params = [], idx = 1;
-
-    if (req.user.role === 'agent') { where.push(`agent_name ILIKE $${idx++}`); params.push(`%${req.user.name}%`); }
-    if (agents) { const list = agents.split(',').map(a=>a.trim()).filter(Boolean); if (list.length) { where.push(`agent_name = ANY($${idx++})`); params.push(list); } }
-    if (carriers) { const list = carriers.split(',').map(c=>c.trim()).filter(Boolean); if (list.length) { where.push(`carrier = ANY($${idx++})`); params.push(list); } }
-    if (periods) { const list = periods.split(',').map(p=>p.trim()).filter(Boolean); if (list.length) { where.push(`payment_period = ANY($${idx++})`); params.push(list); } }
-    if (classifications) { const list = classifications.split(',').map(c=>c.trim()).filter(Boolean); if (list.length) { where.push(`classification = ANY($${idx++})`); params.push(list); } }
-    if (planTypes) { const list = planTypes.split(',').map(p=>p.trim()).filter(Boolean); if (list.length) { where.push(`plan_type = ANY($${idx++})`); params.push(list); } }
-
-    const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
-
-    const rows = await pool.query(`
-      SELECT
-        agent_name,
-        COUNT(*) as total_count,
-        COALESCE(SUM(commission), 0) as total_commission,
-        COALESCE(SUM(CASE WHEN classification = 'Chargeback' OR commission < 0 THEN ABS(commission) ELSE 0 END), 0) as chargeback_amount,
-        COUNT(CASE WHEN classification = 'Chargeback' OR commission < 0 THEN 1 END) as chargeback_count,
-        COALESCE(SUM(CASE WHEN classification ILIKE '%advance%' THEN commission ELSE 0 END), 0) as advance_amount,
-        COUNT(CASE WHEN classification ILIKE '%advance%' THEN 1 END) as advance_count,
-        COUNT(CASE WHEN classification ILIKE '%new%' OR classification = 'Agent Commission' OR classification = 'Agency Override' THEN 1 END) as new_apps
-      FROM commission_records ${wc}
-      GROUP BY agent_name
-      ORDER BY total_commission DESC
-    `, params);
-
-    const grandTotal = rows.rows.reduce((acc, r) => {
-      acc.total_commission += parseFloat(r.total_commission) || 0;
-      acc.total_count += parseInt(r.total_count) || 0;
-      acc.chargeback_amount += parseFloat(r.chargeback_amount) || 0;
-      acc.chargeback_count += parseInt(r.chargeback_count) || 0;
-      acc.advance_amount += parseFloat(r.advance_amount) || 0;
-      acc.advance_count += parseInt(r.advance_count) || 0;
-      acc.new_apps += parseInt(r.new_apps) || 0;
-      return acc;
-    }, { total_commission: 0, total_count: 0, chargeback_amount: 0, chargeback_count: 0, advance_amount: 0, advance_count: 0, new_apps: 0 });
-
-    const agentsWithKpi = rows.rows.map(r => {
-      const total = parseFloat(r.total_commission) || 0;
-      const chargebacks = parseFloat(r.chargeback_amount) || 0;
-      const advances = parseFloat(r.advance_amount) || 0;
-      const distribution = grandTotal.total_commission > 0 ? (total / grandTotal.total_commission * 100) : 0;
-      const chargebackRatio = (advances + total) > 0 ? (chargebacks / Math.abs(total) * 100) : 0;
-      const netSales = total - chargebacks;
-      return {
-        agent_name: r.agent_name,
-        total_commission: total,
-        total_count: parseInt(r.total_count) || 0,
-        distribution_pct: distribution,
-        advance_amount: advances,
-        chargeback_amount: chargebacks,
-        chargeback_count: parseInt(r.chargeback_count) || 0,
-        chargeback_ratio: chargebackRatio,
-        net_sales: netSales,
-        new_apps: parseInt(r.new_apps) || 0,
-        advance_count: parseInt(r.advance_count) || 0,
-      };
-    });
-
-    res.json({ agents: agentsWithKpi, totals: grandTotal });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
-  }
-});
