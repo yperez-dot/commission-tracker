@@ -15,28 +15,34 @@ const CLASSIFICATION_TYPES = ['Agent Commission','Agency Override','Chargeback',
 function formatPeriod(p) {
   if (!p || p === 'Unknown') return null;
   const s = String(p).trim();
-  // YYYYMM → MM/YYYY
   if (s.match(/^\d{6}$/)) return s.slice(4,6) + '/' + s.slice(0,4);
-  // MM/DD/YYYY → MM/YYYY
   if (s.match(/^\d{2}\/\d{2}\/\d{4}$/)) return s.slice(0,2) + '/' + s.slice(6,10);
-  // Already looks like a period label
   if (s.match(/^\d{2}\/\d{4}$/)) return s;
-  return null; // skip garbage
+  return null;
 }
 
-function BarChart({ data, color }) {
-  if (!data || !data.length) return <div style={{color:'var(--text-muted)',fontSize:12,padding:16,textAlign:'center'}}>No data</div>;
+function BarChart({ data, color, onClickItem }) {
+  if (!data || !data.length) return (
+    <div style={{color:'var(--text-muted)',fontSize:12,padding:16,textAlign:'center'}}>No data</div>
+  );
   const max = Math.max(...data.map(d => Math.abs(parseFloat(d.total)||0)));
   return (
     <div style={{display:'flex',flexDirection:'column',gap:8}}>
       {data.slice(0,8).map((d,i) => {
         const val = parseFloat(d.total)||0;
-        const pct = max>0 ? (Math.abs(val)/max)*100 : 0;
-        const name = d.agent_name || d.carrier || d.name || '';
+        const pct = max>0?(Math.abs(val)/max)*100:0;
+        const name = d.agent_name || d.carrier || '';
         return (
-          <div key={i}>
+          <div key={i}
+            onClick={() => onClickItem && onClickItem(d)}
+            style={{cursor: onClickItem ? 'pointer' : 'default'}}
+          >
             <div style={{display:'flex',justifyContent:'space-between',marginBottom:3}}>
-              <span style={{fontSize:11,color:'var(--text-muted)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'60%'}} title={name}>{name}</span>
+              <span style={{
+                fontSize:11,color: onClickItem ? '#185FA5' : 'var(--text-muted)',
+                overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'65%',
+                textDecoration: onClickItem ? 'underline' : 'none'
+              }} title={name}>{name}</span>
               <span style={{fontSize:11,fontWeight:600,color:val<0?'#E24B4A':color}}>{fmt(val)}</span>
             </div>
             <div style={{background:'var(--gray-100)',borderRadius:4,height:6,overflow:'hidden'}}>
@@ -71,8 +77,10 @@ function FilterGroup({ title, items, selected, onToggle, onToggleAll, format }) 
               color:isSel?'#0C447C':'var(--text)',transition:'background 0.15s'
             }}>
               <span style={{
-                width:14,height:14,borderRadius:3,flexShrink:0,border:isSel?'none':'1.5px solid var(--border)',
-                background:isSel?'#185FA5':'transparent',display:'flex',alignItems:'center',justifyContent:'center'
+                width:14,height:14,borderRadius:3,flexShrink:0,
+                border:isSel?'none':'1.5px solid var(--border)',
+                background:isSel?'#185FA5':'transparent',
+                display:'flex',alignItems:'center',justifyContent:'center'
               }}>
                 {isSel && <span style={{color:'#fff',fontSize:9,lineHeight:1}}>✓</span>}
               </span>
@@ -85,7 +93,7 @@ function FilterGroup({ title, items, selected, onToggle, onToggleAll, format }) 
   );
 }
 
-export default function Dashboard({ user }) {
+export default function Dashboard({ user, onNavigate }) {
   const [summary, setSummary] = useState(null);
   const [allFilters, setAllFilters] = useState({ agents:[], carriers:[], periods:[] });
   const [loading, setLoading] = useState(false);
@@ -124,7 +132,26 @@ export default function Dashboard({ user }) {
     setSelAgents([]); setSelCarriers([]); setSelPeriods([]); setSelTypes([]);
   }
 
-  // Clean periods — deduplicate by formatted label, skip garbage
+  // Navigate to All Data with current filters + optional override
+  function drillDown(overrides = {}) {
+    if (!onNavigate) return;
+    onNavigate('alldata', {
+      agent: overrides.agent || (selAgents.length === 1 ? selAgents[0] : ''),
+      carrier: overrides.carrier || (selCarriers.length === 1 ? selCarriers[0] : ''),
+      period: overrides.period || (selPeriods.length === 1 ? selPeriods[0] : ''),
+      classification: overrides.classification || (selTypes.length === 1 ? selTypes[0] : ''),
+    });
+  }
+
+  function onAgentClick(d) {
+    drillDown({ agent: d.agent_name });
+  }
+
+  function onCarrierClick(d) {
+    drillDown({ carrier: d.carrier });
+  }
+
+  // Clean periods
   const cleanPeriods = [];
   const seen = new Set();
   (allFilters.periods || []).forEach(p => {
@@ -144,11 +171,12 @@ export default function Dashboard({ user }) {
         <div className="page-sub">Welcome back, {user.name.split(' ')[0]} — here's your commission overview</div>
       </div>
 
-      <div style={{display:'flex',gap:0,height:'calc(100vh - 100px)',overflow:'hidden'}}>
+      <div style={{display:'flex',height:'calc(100vh - 100px)',overflow:'hidden'}}>
 
         {/* Left filter sidebar */}
         <div style={{
-          width:220,minWidth:220,background:'var(--gray-50)',borderRight:'1px solid var(--border)',
+          width:220,minWidth:220,background:'var(--gray-50)',
+          borderRight:'1px solid var(--border)',
           overflowY:'auto',padding:'16px 12px',flexShrink:0
         }}>
           <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14}}>
@@ -166,41 +194,23 @@ export default function Dashboard({ user }) {
             </div>
           )}
 
-          <FilterGroup
-            title="Agent"
-            items={agentList}
-            selected={selAgents}
+          <FilterGroup title="Agent" items={agentList} selected={selAgents}
             onToggle={item=>toggle(selAgents,setSelAgents,item)}
             onToggleAll={items=>toggleAll(selAgents,setSelAgents,items)}
           />
-
           <div style={{borderTop:'1px solid var(--border)',marginBottom:16}}/>
-
-          <FilterGroup
-            title="Carrier"
-            items={allFilters.carriers||[]}
-            selected={selCarriers}
+          <FilterGroup title="Carrier" items={allFilters.carriers||[]} selected={selCarriers}
             onToggle={item=>toggle(selCarriers,setSelCarriers,item)}
             onToggleAll={items=>toggleAll(selCarriers,setSelCarriers,items)}
           />
-
           <div style={{borderTop:'1px solid var(--border)',marginBottom:16}}/>
-
-          <FilterGroup
-            title="Period"
-            items={cleanPeriods}
-            selected={selPeriods}
+          <FilterGroup title="Period" items={cleanPeriods} selected={selPeriods}
             onToggle={item=>toggle(selPeriods,setSelPeriods,item)}
             onToggleAll={items=>toggleAll(selPeriods,setSelPeriods,items)}
             format={formatPeriod}
           />
-
           <div style={{borderTop:'1px solid var(--border)',marginBottom:16}}/>
-
-          <FilterGroup
-            title="Type"
-            items={CLASSIFICATION_TYPES}
-            selected={selTypes}
+          <FilterGroup title="Type" items={CLASSIFICATION_TYPES} selected={selTypes}
             onToggle={item=>toggle(selTypes,setSelTypes,item)}
             onToggleAll={items=>toggleAll(selTypes,setSelTypes,items)}
           />
@@ -208,6 +218,31 @@ export default function Dashboard({ user }) {
 
         {/* Main content */}
         <div style={{flex:1,overflowY:'auto',padding:'16px 20px'}}>
+
+          {/* View all records button when filters active */}
+          {hasFilters && (
+            <div style={{
+              background:'#E6F1FB',border:'1px solid #B5D4F4',borderRadius:8,
+              padding:'10px 14px',display:'flex',alignItems:'center',
+              justifyContent:'space-between',marginBottom:14,fontSize:13
+            }}>
+              <span style={{color:'#0C447C'}}>
+                Viewing filtered data —
+                <strong style={{marginLeft:4}}>
+                  {summary?.totalRecords || 0} records
+                </strong>
+              </span>
+              <button
+                onClick={() => drillDown()}
+                style={{
+                  background:'#185FA5',color:'#fff',border:'none',borderRadius:6,
+                  padding:'6px 14px',fontSize:12,fontWeight:600,cursor:'pointer'
+                }}
+              >
+                View all records →
+              </button>
+            </div>
+          )}
 
           {/* KPI cards */}
           <div className="kpi-grid" style={{marginBottom:16}}>
@@ -229,22 +264,29 @@ export default function Dashboard({ user }) {
             </div>
           </div>
 
-          {/* Charts */}
+          {/* Charts — clickable */}
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14,marginBottom:16}}>
             <div className="card">
-              <div className="card-title" style={{marginBottom:14}}>By agent</div>
-              <BarChart data={summary?.byAgent||[]} color="#185FA5"/>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14}}>
+                <div className="card-title" style={{margin:0}}>By agent</div>
+                <span style={{fontSize:10,color:'var(--text-muted)'}}>Click to drill down</span>
+              </div>
+              <BarChart data={summary?.byAgent||[]} color="#185FA5" onClickItem={onAgentClick}/>
             </div>
             <div className="card">
-              <div className="card-title" style={{marginBottom:14}}>By carrier</div>
-              <BarChart data={summary?.byCarrier||[]} color="#1D9E75"/>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14}}>
+                <div className="card-title" style={{margin:0}}>By carrier</div>
+                <span style={{fontSize:10,color:'var(--text-muted)'}}>Click to drill down</span>
+              </div>
+              <BarChart data={summary?.byCarrier||[]} color="#1D9E75" onClickItem={onCarrierClick}/>
             </div>
           </div>
 
-          {/* Agent breakdown table */}
+          {/* Agent breakdown table — clickable rows */}
           <div className="card" style={{padding:0}}>
-            <div style={{padding:'12px 16px',borderBottom:'1px solid var(--border)',fontSize:13,fontWeight:600}}>
-              Agent breakdown
+            <div style={{padding:'12px 16px',borderBottom:'1px solid var(--border)',fontSize:13,fontWeight:600,display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+              <span>Agent breakdown</span>
+              <span style={{fontSize:11,color:'var(--text-muted)'}}>Click any row to see records</span>
             </div>
             <div className="table-wrap">
               <table>
@@ -254,17 +296,23 @@ export default function Dashboard({ user }) {
                     <th>Agent</th>
                     <th>Total commission</th>
                     <th>Records</th>
+                    <th></th>
                   </tr>
                 </thead>
                 <tbody>
                   {loading ? (
-                    <tr><td colSpan={4} style={{textAlign:'center',padding:24,color:'var(--text-muted)'}}>Loading...</td></tr>
+                    <tr><td colSpan={5} style={{textAlign:'center',padding:24,color:'var(--text-muted)'}}>Loading...</td></tr>
                   ) : (summary?.byAgent||[]).map((a,i) => (
-                    <tr key={i}>
+                    <tr key={i}
+                      onClick={() => onAgentClick(a)}
+                      style={{cursor:'pointer'}}
+                      className="clickable-row"
+                    >
                       <td style={{color:'var(--text-muted)',fontSize:11}}>{i+1}</td>
-                      <td style={{fontWeight:500}}>{a.agent_name}</td>
+                      <td style={{fontWeight:500,color:'#185FA5'}}>{a.agent_name}</td>
                       <td style={{fontWeight:600,color:parseFloat(a.total)<0?'var(--red)':'var(--green)'}}>{fmt(a.total)}</td>
                       <td style={{color:'var(--text-muted)'}}>{a.count}</td>
+                      <td style={{color:'var(--text-muted)',fontSize:11}}>View →</td>
                     </tr>
                   ))}
                 </tbody>
@@ -274,6 +322,7 @@ export default function Dashboard({ user }) {
                       <td colSpan={2} style={{padding:'10px 12px',fontSize:13}}>Total</td>
                       <td style={{padding:'10px 12px',color:'var(--green)'}}>{fmt(summary.totalCommission)}</td>
                       <td style={{padding:'10px 12px',color:'var(--text-muted)'}}>{summary.totalRecords}</td>
+                      <td></td>
                     </tr>
                   </tfoot>
                 )}
