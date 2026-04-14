@@ -116,7 +116,7 @@ export default function AllData({ user, initialFilters = {} }) {
     URL.revokeObjectURL(url);
   }
 
-  const classificationTypes = ['Agent Commission', 'Agency Override', 'Chargeback', 'Override', 'Renewal'];
+  const classificationTypes = ['New Business', 'Renewal', 'Agent Commission', 'Agency Override', 'Chargeback'];
   const hasFilters = agent || carrier || period || classification;
   const allPageSelected = records.length > 0 && selected.size === records.length;
 
