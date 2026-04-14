@@ -92,6 +92,12 @@ function isBSIFile(filename) {
   const f = filename.toLowerCase().replace(/\s+/g, '_');
   return f.includes('statement-health_experts') || f.includes('statement_health_experts');
 }
+function isAPLFile(filename) {
+  const f = filename.toLowerCase().replace(/[\s()]/g, '_');
+  return f.includes('commission-statement') || f.includes('commission_statement_2026') && !f.includes('2737247') ||
+    f.includes('integrity') || f.includes('apl');
+}
+
 function isNHPFile(filename) {
   const f = filename.toLowerCase().replace(/[\s()]/g, '_');
   return f.includes('the_health_experts_insurance_statement') ||
@@ -369,6 +375,20 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     const ws = wb.Sheets[wb.SheetNames[0]];
 
     let records;
+    // Set default payee based on file type
+    const determinePayee = (filename) => {
+      const f = filename.toLowerCase();
+      if (f.includes('commission_statement_2737247')) return 'UnitedHealthcare';
+      if (f.includes('statement-health_experts') || f.includes('statement_health_experts')) return 'BSI';
+      if (f.includes('the_health_experts_insurance_statement') || f.includes('the_health_experst_insurance') || (f.includes('yahoska') && f.includes('katy'))) return 'NHP';
+      if (f.includes('commission-statement') || f.includes('integrity') || f.includes('apl')) return 'APL';
+      if (f.includes('commissiondata') || f.includes('humana')) return 'Humana';
+      if (f.includes('devoted')) return 'Devoted';
+      if (f.includes('aetna') || f.includes('producerstatement')) return 'Aetna';
+      return 'Direct';
+    };
+    const defaultPayee = determinePayee(req.file.originalname);
+
     if (isUHCFile(req.file.originalname)) {
       records = parseUHCRows(wb);
     } else if (isBSIFile(req.file.originalname)) {
@@ -376,6 +396,8 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       records = parseBSIRows(rows);
     } else if (isNHPFile(req.file.originalname)) {
       records = parseNHPRows(wb);
+    } else if (isAPLFile(req.file.originalname)) {
+      records = parseAPLRows(wb);
     } else {
       const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
       if (!rows.length) return res.status(400).json({ error: 'File is empty' });
@@ -383,6 +405,9 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       const mapping = await mapColumnsWithAI(headers, rows.slice(0, 3));
       records = parseRows(rows, mapping, req.file.originalname);
     }
+
+    // Apply default payee to records that don't have one set
+    records = records.map(r => ({ ...r, payee: r.payee || defaultPayee }));
 
     if (!records.length) return res.status(400).json({ error: 'No records found in file' });
 
@@ -397,12 +422,13 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
 
     // Ensure plan_type column exists
     try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS plan_type TEXT DEFAULT ''`); } catch(e) {}
+    try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS payee TEXT DEFAULT ''`); } catch(e) {}
 
     for (const r of records) {
       await pool.query(
-        `INSERT INTO commission_records (upload_id, agent_name, carrier, plan_type, client_full_name, effective_date, premium, commission, classification, payment_period, policy_number, raw_data)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-        [uploadId, r.agent, r.carrier, r.planType || '', r.client, r.effectiveDate, r.premium || 0, r.commission || 0, r.classification, r.period, r.policyNumber, JSON.stringify(r.raw)]
+        `INSERT INTO commission_records (upload_id, agent_name, carrier, plan_type, client_full_name, effective_date, premium, commission, classification, payment_period, policy_number, payee, raw_data)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+        [uploadId, r.agent, r.carrier, r.planType || '', r.client, r.effectiveDate, r.premium || 0, r.commission || 0, r.classification, r.period, r.policyNumber, r.payee || '', JSON.stringify(r.raw)]
       );
     }
 
@@ -466,6 +492,64 @@ function heuristicMapping(headers) {
     policyNumber: find(['policy', 'member id', 'contract', 'certificate']),
     planType: find(['plan type', 'product', 'line', 'benefit'])
   };
+}
+
+function parseAPLRows(wb) {
+  const records = [];
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
+
+  for (const row of rows) {
+    const payee = String(row['Generated From'] || '').trim(); // APL, Integrity etc
+    const client = String(row['Insured'] || '').trim();
+    const agentRaw = String(row['Writing Agent Name'] || '').trim();
+    const carrierRaw = String(row['Carrier'] || '').trim();
+    const policyNumber = String(row['Policy'] || '').trim();
+    const effectiveDate = formatDate(row['Effective Date']);
+    const paymentDate = formatDate(row['Payment Date']);
+    const payoutType = String(row['Payout Type'] || '').trim();
+    const transactionType = String(row['Transaction Type'] || '').trim();
+    const commission = parseFloat(row['Amount']) || 0;
+
+    if (!client || commission === 0) continue;
+
+    // Normalize carrier — remove "- Delegated" etc
+    const carrier = carrierRaw.replace(/[-–].*delegated.*/i, '').replace(/[-–].*direct.*/i, '').trim();
+    const normalizedCarrier = carrier.toLowerCase().includes('humana') ? 'Humana'
+      : carrier.toLowerCase().includes('aetna') ? 'Aetna'
+      : carrier.toLowerCase().includes('united') ? 'UnitedHealthcare'
+      : carrier.toLowerCase().includes('cigna') ? 'Cigna'
+      : carrier;
+
+    // Period = payment date as YYYYMM
+    let period = '';
+    if (paymentDate) {
+      const parts = paymentDate.split('/');
+      if (parts.length === 3) period = parts[2] + parts[0].padStart(2,'0');
+    }
+
+    const classification = commission < 0 ? 'Chargeback'
+      : transactionType.toLowerCase().includes('override') ? 'Agency Override'
+      : payoutType.toLowerCase() === 'renewal' ? 'Renewal'
+      : payoutType.toLowerCase().includes('new') ? 'New Business'
+      : 'Agency Override';
+
+    records.push({
+      agent: normalizeAgentName(agentRaw) || 'The Health Experts Insurance',
+      carrier: normalizedCarrier,
+      planType: derivePlanType(normalizedCarrier, 'MA', policyNumber, ''),
+      client,
+      effectiveDate,
+      premium: 0,
+      commission,
+      classification,
+      period: period || paymentDate,
+      policyNumber,
+      payee: payee || 'APL',
+      raw: row
+    });
+  }
+  return records;
 }
 
 function normalizeClassification(raw, commission) {
