@@ -337,7 +337,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     const uploadId = uploadResult.rows[0].id;
 
     // Ensure plan_type column exists
-    try { await pool.query('ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS plan_type TEXT DEFAULT '''); } catch(e) {}
+    try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS plan_type TEXT DEFAULT ''`); } catch(e) {}
 
     for (const r of records) {
       await pool.query(
