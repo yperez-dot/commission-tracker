@@ -12,7 +12,7 @@ function requireAdmin(req, res, next) {
 router.get('/', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
-    const { agent, agents, carrier, carriers, period, periods, classification, classifications, planType, upload_id, limit = 500, offset = 0 } = req.query;
+    const { agent, agents, carrier, carriers, period, periods, classification, classifications, planType, payee, upload_id, limit = 500, offset = 0 } = req.query;
     let where = [], params = [], idx = 1;
     if (req.user.role === 'agent') { where.push(`agent_name ILIKE $${idx++}`); params.push(`%${req.user.name}%`); }
     // Single or multi select for each filter
@@ -26,13 +26,15 @@ router.get('/', requireAuth, async (req, res) => {
     else if (classification) { where.push(`classification = $${idx++}`); params.push(classification); }
     if (planType) { where.push(`COALESCE(plan_type,'') = $${idx++}`); params.push(planType); }
     if (upload_id) { where.push(`upload_id = $${idx++}`); params.push(parseInt(upload_id)); }
+    if (payee) { where.push(`cr.payee = $${idx++}`); params.push(payee); }
     const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
     const records = await pool.query(
-      `SELECT id, agent_name, carrier,
-        COALESCE(plan_type, '') as plan_type,
-        client_full_name, effective_date, premium, commission,
-        classification, payment_period, policy_number, created_at
-       FROM commission_records ${wc} ORDER BY created_at DESC LIMIT $${idx++} OFFSET $${idx++}`,
+      `SELECT cr.id, cr.agent_name, cr.carrier,
+        COALESCE(cr.plan_type, '') as plan_type,
+        cr.client_full_name, cr.effective_date, cr.premium, cr.commission,
+        cr.classification, cr.payment_period, cr.policy_number, cr.created_at,
+        cr.upload_id, cr.payee, u.original_name as upload_name
+       FROM commission_records cr LEFT JOIN uploads u ON cr.upload_id = u.id ${wc.replace('WHERE ', 'WHERE cr.')} ORDER BY cr.created_at DESC LIMIT $${idx++} OFFSET $${idx++}`,
       [...params, parseInt(limit), parseInt(offset)]
     );
     const total = await pool.query(`SELECT COUNT(*) as count FROM commission_records ${wc}`, params);
