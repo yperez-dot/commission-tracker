@@ -26,8 +26,8 @@ const C = {
   bgSubtle: '#FAFAF8',
   border: '#EDEAE4',
   text: '#3D2B1F',
-  textMuted: '#9E856E',
-  textLight: '#C4B5A0',
+  textMuted: '#6B4F35',
+  textLight: '#9E856E',
   green: '#4A7260',
   red: '#A0522D',
   barActive: '#C9A96E',
@@ -64,9 +64,9 @@ function VerticalBarChart({ data, loading }) {
           const isRecent = i >= data.length-4;
           return (
             <div key={i} style={{flex:1,minWidth:36,maxWidth:80,display:'flex',flexDirection:'column',alignItems:'center',height:'100%',justifyContent:'flex-end'}}>
-              <span style={{fontSize:10,fontWeight:400,color:isNeg?C.red:C.textMuted,marginBottom:4,whiteSpace:'nowrap'}}>{fmtK(val)}</span>
+              <span style={{fontSize:10,fontWeight:400,color:isNeg?C.red:C.text,marginBottom:4,whiteSpace:'nowrap'}}>{fmtK(val)}</span>
               <div style={{width:'55%',height:`${pct}%`,minHeight:3,background:isNeg?C.red:isRecent?C.barActive:C.barMuted,borderRadius:'3px 3px 0 0',transition:'height 0.4s ease'}}/>
-              <span style={{fontSize:10,color:C.textLight,marginTop:6,textAlign:'center',whiteSpace:'nowrap',overflow:'hidden',maxWidth:'100%',textOverflow:'ellipsis'}}>{label}</span>
+              <span style={{fontSize:10,color:C.textMuted,marginTop:6,textAlign:'center',whiteSpace:'nowrap',overflow:'hidden',maxWidth:'100%',textOverflow:'ellipsis'}}>{label}</span>
             </div>
           );
         })}
@@ -89,8 +89,8 @@ function HBar({ data, color, onClickItem, loading }) {
         return (
           <div key={i} onClick={()=>onClickItem&&onClickItem(d)} style={{cursor:onClickItem?'pointer':'default'}}>
             <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
-              <span style={{fontSize:12,color:onClickItem?C.accentDark:C.text,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'65%',fontWeight:400}} title={name}>{name}</span>
-              <span style={{fontSize:12,fontWeight:500,color:isNeg?C.red:color}}>{fmt(val)}</span>
+              <span style={{fontSize:12,color:onClickItem?C.accentDark:C.text,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'65%',fontWeight:500}} title={name}>{name}</span>
+              <span style={{fontSize:12,fontWeight:500,color:isNeg?C.red:C.text}}>{fmt(val)}</span>
             </div>
             <div style={{background:C.accentLight,borderRadius:3,height:4,overflow:'hidden'}}>
               <div style={{width:`${pct}%`,background:isNeg?C.red:color,height:'100%',borderRadius:3,transition:'width 0.5s ease'}}/>
@@ -243,7 +243,7 @@ export default function Dashboard({ user, onNavigate }) {
           <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:16}}>
             <div>
               <div style={{fontSize:20,fontWeight:500,color:C.text}}>Dashboard</div>
-              <div style={{fontSize:12,color:C.textMuted,marginTop:2}}>Welcome back, {user.name.split(' ')[0]} — here's your commission overview</div>
+              <div style={{fontSize:13,color:C.text,marginTop:2}}>Welcome back, {user.name.split(' ')[0]} — here's your commission overview</div>
             </div>
             {hasFilters && (
               <div style={{display:'flex',flexWrap:'wrap',gap:4,justifyContent:'flex-end',maxWidth:500}}>
@@ -264,7 +264,7 @@ export default function Dashboard({ user, onNavigate }) {
               <div key={i} style={{...card,padding:'14px 18px'}}>
                 <div style={{fontSize:11,color:C.textMuted,fontWeight:500,textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:6}}>{c.label}</div>
                 <div style={{fontSize:22,fontWeight:500,color:c.color,lineHeight:1}}>{loading?'—':c.value}</div>
-                <div style={{fontSize:12,color:C.textLight,marginTop:5}}>{c.sub}</div>
+                <div style={{fontSize:12,color:C.textMuted,marginTop:5}}>{c.sub}</div>
               </div>
             ))}
           </div>
@@ -276,7 +276,7 @@ export default function Dashboard({ user, onNavigate }) {
               <div style={{fontSize:13,fontWeight:500,color:C.text}}>Commission & Count</div>
               <div style={{display:'flex',alignItems:'center',gap:12,fontSize:11,color:C.textLight}}>
                 <span style={{display:'flex',alignItems:'center',gap:4}}><span style={{width:8,height:8,borderRadius:2,background:C.barActive,display:'inline-block'}}/> Commission</span>
-                {periodData.length>0&&<span>{formatPeriod(periodData[0]?.period)} – {formatPeriod(periodData[periodData.length-1]?.period)}</span>}
+                <span style={{color:C.text}}>{periodData.length>0&&formatPeriod(periodData[0]?.period)} – {formatPeriod(periodData[periodData.length-1]?.period)}</span>}
               </div>
             </div>
             <VerticalBarChart data={periodData} loading={loading}/>
@@ -317,20 +317,20 @@ export default function Dashboard({ user, onNavigate }) {
                     <tr key={i} onClick={()=>drillDown({agent:a.agent_name})} style={{cursor:'pointer',borderBottom:`0.5px solid ${C.border}`}}
                       onMouseEnter={e=>e.currentTarget.style.background=C.bgSubtle}
                       onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-                      <td style={{padding:'9px 12px',color:C.textLight,fontSize:11}}>{i+1}</td>
+                      <td style={{padding:'9px 12px',color:C.textMuted,fontSize:11}}>{i+1}</td>
                       <td style={{padding:'9px 12px',fontWeight:500,color:C.accentDark}}>{a.agent_name}</td>
                       <td style={{padding:'9px 12px',fontWeight:500,color:a.total_commission<0?C.red:C.green}}>{fmt(a.total_commission)}</td>
                       <td style={{padding:'9px 12px',color:C.text}}>{a.total_count.toLocaleString()}</td>
-                      <td style={{padding:'9px 12px',color:C.textMuted}}>{fmtPct(a.distribution_pct)}</td>
-                      <td style={{padding:'9px 12px',color:a.advance_amount>0?C.accentDark:C.textMuted}}>{fmt(a.advance_amount)}</td>
-                      <td style={{padding:'9px 12px',color:a.chargeback_amount>0?C.red:C.textMuted}}>{a.chargeback_amount>0?'- ':''}{fmt(a.chargeback_amount)}</td>
+                      <td style={{padding:'9px 12px',color:C.text}}>{fmtPct(a.distribution_pct)}</td>
+                      <td style={{padding:'9px 12px',color:a.advance_amount>0?C.accentDark:C.text}}>{fmt(a.advance_amount)}</td>
+                      <td style={{padding:'9px 12px',color:a.chargeback_amount>0?C.red:C.text}}>{a.chargeback_amount>0?'- ':''}{fmt(a.chargeback_amount)}</td>
                       <td style={{padding:'9px 12px'}}>
                         <span style={{background:a.chargeback_ratio>10?'#F5EAE4':a.chargeback_ratio>5?'#F5EDD4':C.bgSubtle,color:a.chargeback_ratio>10?'#7A3D1F':a.chargeback_ratio>5?'#6B4E0A':C.textMuted,borderRadius:4,padding:'2px 7px',fontSize:11,fontWeight:500}}>{fmtPct(a.chargeback_ratio)}</span>
                       </td>
                       <td style={{padding:'9px 12px',fontWeight:500,color:a.net_sales<0?C.red:C.green}}>{fmt(a.net_sales)}</td>
                       <td style={{padding:'9px 12px',color:C.text}}>{a.new_apps}</td>
                       <td style={{padding:'9px 12px',color:C.text}}>{a.advance_count}</td>
-                      <td style={{padding:'9px 12px',color:a.chargeback_count>0?C.red:C.textMuted,fontWeight:a.chargeback_count>0?500:400}}>{a.chargeback_count}</td>
+                      <td style={{padding:'9px 12px',color:a.chargeback_count>0?C.red:C.text,fontWeight:a.chargeback_count>0?500:400}}>{a.chargeback_count}</td>
                     </tr>
                   ))}
                 </tbody>
