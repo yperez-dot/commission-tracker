@@ -1,34 +1,104 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../api';
 
-function fmt(n) { return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function fmt(n) {
+  return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function formatPeriodLabel(p) {
+  if (!p) return null;
+  const s = String(p).trim();
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  if (s.match(/^\d{6}$/)) return months[parseInt(s.slice(4,6))-1] + ' ' + s.slice(0,4);
+  if (s.match(/^\d{2}\/\d{4}$/)) return months[parseInt(s.slice(0,2))-1] + ' ' + s.slice(3);
+  if (s.match(/^\d{2}\/\d{2}\/\d{4}$/)) return months[parseInt(s.slice(0,2))-1] + ' ' + s.slice(6);
+  return null;
+}
 
 export default function MissingRenewals({ user }) {
   const [periods, setPeriods] = useState([]);
-  const [lastPeriod, setLastPeriod] = useState('');
-  const [thisPeriod, setThisPeriod] = useState('');
-  const [result, setResult] = useState(null);
+  const [selectedPeriod, setSelectedPeriod] = useState('');
   const [loading, setLoading] = useState(false);
-  const [agentFilter, setAgentFilter] = useState('');
+  const [checked, setChecked] = useState(false);
+  const [results, setResults] = useState({ missing: [], found: [], checkedClients: 0, matchedRecords: 0 });
+  const [filterCarrier, setFilterCarrier] = useState('');
+  const [filterAgent, setFilterAgent] = useState('');
   const [tab, setTab] = useState('missing');
 
   useEffect(() => {
     apiFetch('/records/filters').then(d => {
-      setPeriods(d.periods || []);
-      if (d.periods?.length >= 2) {
-        setThisPeriod(d.periods[0]);
-        setLastPeriod(d.periods[1]);
-      }
+      const valid = (d.periods || []).filter(p => {
+        if (!p || p === 'Unknown') return false;
+        const s = String(p);
+        return s.match(/^\d{6}$/) || s.match(/^\d{2}\/\d{4}$/) || s.match(/^\d{2}\/\d{2}\/\d{4}$/);
+      });
+      // Deduplicate by normalized label
+      const seen = new Set();
+      const deduped = valid.filter(p => {
+        const label = formatPeriodLabel(p);
+        if (!label || seen.has(label)) return false;
+        seen.add(label);
+        return true;
+      });
+      setPeriods(deduped);
+      if (deduped.length > 0) setSelectedPeriod(deduped[0]);
     }).catch(console.error);
   }, []);
 
-  async function runComparison() {
-    if (!lastPeriod || !thisPeriod) return;
+  async function runCheck() {
+    if (!selectedPeriod) return;
     setLoading(true);
+    setChecked(false);
     try {
-      const data = await apiFetch(`/records/missing-renewals?lastPeriod=${encodeURIComponent(lastPeriod)}&thisPeriod=${encodeURIComponent(thisPeriod)}`);
-      setResult(data);
-      setAgentFilter('');
+      // Get all active BOB clients
+      const bobData = await apiFetch('/bob?status=active');
+      const bobClients = bobData || [];
+
+      // Get all commission records for selected period
+      const recData = await apiFetch(`/records?periods=${encodeURIComponent(selectedPeriod)}&limit=2000`);
+      const records = recData.records || [];
+
+      // Also try normalizing — match by YYYYMM
+      function normPeriod(p) {
+        if (!p) return null;
+        const s = String(p).trim();
+        if (s.match(/^\d{6}$/)) return s;
+        const mm = s.match(/^(\d{1,2})\/(?:\d{2}\/)?(\d{4})$/);
+        if (mm) return mm[2] + mm[1].padStart(2,'0');
+        return null;
+      }
+      const targetNorm = normPeriod(selectedPeriod);
+      const allRecData = await apiFetch(`/records?limit=5000`);
+      const allRecs = (allRecData.records || []).filter(r => {
+        const n = normPeriod(r.payment_period);
+        return n && targetNorm && n === targetNorm;
+      });
+
+      // Build set of paid clients: lowercase name + carrier
+      const paidSet = new Set(allRecs.map(r =>
+        `${String(r.client_full_name || '').toLowerCase().trim()}|${String(r.carrier || '').toLowerCase()}`
+      ));
+
+      const missing = [];
+      const found = [];
+
+      for (const client of bobClients) {
+        const key = `${String(client.client_full_name || '').toLowerCase().trim()}|${String(client.carrier || '').toLowerCase()}`;
+        if (paidSet.has(key)) {
+          found.push(client);
+        } else {
+          missing.push(client);
+        }
+      }
+
+      setResults({
+        missing,
+        found,
+        checkedClients: bobClients.length,
+        matchedRecords: allRecs.length
+      });
+      setChecked(true);
+      setTab('missing');
     } catch (e) {
       console.error(e);
     } finally {
@@ -36,166 +106,235 @@ export default function MissingRenewals({ user }) {
     }
   }
 
-  const filterByAgent = arr => agentFilter ? arr.filter(r => r.agent_name === agentFilter) : arr;
+  const carriers = [...new Set([...results.missing, ...results.found].map(c => c.carrier).filter(Boolean))];
+  const agents = [...new Set([...results.missing, ...results.found].map(c => c.agent_name).filter(Boolean))];
 
-  const missing = filterByAgent(result?.missing || []).sort((a, b) => (b.commission || 0) - (a.commission || 0));
-  const newClients = filterByAgent(result?.newClients || []);
-  const allAgents = result ? [...new Set([...result.missing, ...result.newClients].map(r => r.agent_name))] : [];
+  const filteredMissing = results.missing.filter(c =>
+    (!filterCarrier || c.carrier === filterCarrier) &&
+    (!filterAgent || c.agent_name === filterAgent)
+  );
+  const filteredFound = results.found.filter(c =>
+    (!filterCarrier || c.carrier === filterCarrier) &&
+    (!filterAgent || c.agent_name === filterAgent)
+  );
 
-  const riskLevel = c => c >= 500 ? { label: 'High', color: '#E24B4A', pct: 100 } : c >= 100 ? { label: 'Medium', color: '#BA7517', pct: 60 } : { label: 'Low', color: '#888780', pct: 25 };
+  const atRisk = filteredMissing.reduce((s, c) => s + (parseFloat(c.last_commission_amount) || 0), 0);
+  const periodLabel = formatPeriodLabel(selectedPeriod) || selectedPeriod;
+
+  const tabStyle = (id) => ({
+    padding: '7px 14px', border: 'none', background: 'none', fontSize: 13, cursor: 'pointer',
+    borderBottom: tab === id ? '2px solid var(--blue)' : '2px solid transparent',
+    color: tab === id ? 'var(--blue)' : 'var(--text-muted)',
+    fontWeight: tab === id ? 600 : 400, marginBottom: -1
+  });
 
   return (
-    <>
+    <div>
       <div className="page-header">
-        <div className="page-title">Missing renewals</div>
-        <div className="page-sub">Compare two months to find clients who stopped paying</div>
+        <div className="page-title">Missing Renewals</div>
+        <div className="page-sub">Compare your Book of Business against any month's commission statements</div>
       </div>
       <div className="page-body">
-        <div className="card" style={{marginBottom:14}}>
-          <div style={{display:'flex', alignItems:'flex-end', gap:12, flexWrap:'wrap'}}>
+
+        {/* Check panel */}
+        <div className="card" style={{ marginBottom: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
             <div>
-              <div className="form-label">Last month</div>
-              <select className="filter-select" value={lastPeriod} onChange={e => setLastPeriod(e.target.value)}>
-                <option value="">Select period</option>
-                {periods.map(p => <option key={p} value={p}>{p}</option>)}
+              <div className="form-label" style={{ marginBottom: 6, fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                Statement month
+              </div>
+              <select
+                className="filter-select"
+                value={selectedPeriod}
+                onChange={e => { setSelectedPeriod(e.target.value); setChecked(false); }}
+                style={{ minWidth: 160, fontSize: 13 }}
+              >
+                <option value="">Select month...</option>
+                {periods.map(p => {
+                  const label = formatPeriodLabel(p);
+                  return label ? <option key={p} value={p}>{label}</option> : null;
+                })}
               </select>
             </div>
-            <div>
-              <div className="form-label">This month</div>
-              <select className="filter-select" value={thisPeriod} onChange={e => setThisPeriod(e.target.value)}>
-                <option value="">Select period</option>
-                {periods.map(p => <option key={p} value={p}>{p}</option>)}
-              </select>
-            </div>
-            <button className="btn btn-primary" onClick={runComparison} disabled={loading || !lastPeriod || !thisPeriod}>
-              {loading ? <><span className="spinner"></span> Comparing...</> : 'Compare →'}
+            <button
+              className="btn btn-primary"
+              onClick={runCheck}
+              disabled={loading || !selectedPeriod}
+              style={{ padding: '8px 20px', fontSize: 13 }}
+            >
+              {loading ? '⏳ Checking...' : '🔍 Run check'}
             </button>
+            {checked && (
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', alignSelf: 'center' }}>
+                Checked <strong>{results.checkedClients}</strong> BOB clients against <strong>{results.matchedRecords}</strong> statement records for <strong>{periodLabel}</strong>
+              </div>
+            )}
           </div>
         </div>
 
-        {!result && !loading && (
-          <div className="card">
-            <div className="empty-state">
-              <div className="empty-icon">🔍</div>
-              <div className="empty-title">Select two periods and compare</div>
-              <div className="empty-sub">The detector will find every client who appeared last month but not this month</div>
-            </div>
+        {/* No BOB warning */}
+        {checked && results.checkedClients === 0 && (
+          <div style={{ background: '#FFF8E6', border: '1px solid #F5D78E', borderRadius: 8, padding: '12px 16px', marginBottom: 14, fontSize: 13, color: '#7A5C00' }}>
+            ⚠️ Your Book of Business is empty. Go to <strong>Book of Business → Setup & tools → Upload carrier BOB export</strong> to add your clients first.
           </div>
         )}
 
-        {result && (
-          <>
-            <div className="kpi-grid" style={{marginBottom:14}}>
+        {checked && results.checkedClients > 0 && (
+          <div>
+            {/* KPI cards */}
+            <div className="kpi-grid" style={{ marginBottom: 14 }}>
               <div className="kpi-card">
-                <div className="kpi-label">Last month clients</div>
-                <div className="kpi-value blue">{result.lastPeriodCount}</div>
+                <div className="kpi-label">BOB clients checked</div>
+                <div className="kpi-value blue">{results.checkedClients}</div>
               </div>
               <div className="kpi-card">
-                <div className="kpi-label">This month clients</div>
-                <div className="kpi-value blue">{result.thisPeriodCount}</div>
+                <div className="kpi-label">Missing this month</div>
+                <div className={`kpi-value ${results.missing.length > 0 ? 'red' : 'green'}`}>{results.missing.length}</div>
               </div>
               <div className="kpi-card">
-                <div className="kpi-label">Missing renewals</div>
-                <div className={`kpi-value ${result.missing.length > 0 ? 'red' : 'green'}`}>{result.missing.length}</div>
+                <div className="kpi-label">Paid this month</div>
+                <div className="kpi-value green">{results.found.length}</div>
               </div>
               <div className="kpi-card">
-                <div className="kpi-label">Est. lost / mo</div>
-                <div className="kpi-value amber">{fmt(result.lostRevenue)}</div>
+                <div className="kpi-label">Est. at risk</div>
+                <div className={`kpi-value ${atRisk > 0 ? 'amber' : 'green'}`}>{fmt(atRisk)}</div>
               </div>
             </div>
 
-            <div style={{display:'flex', gap:8, marginBottom:12, borderBottom:'1px solid var(--border)', paddingBottom:0}}>
-              {[
-                { id: 'missing', label: `Missing (${result.missing.length})` },
-                { id: 'new', label: `New this month (${result.newClients.length})` }
-              ].map(t => (
-                <button key={t.id} onClick={() => setTab(t.id)}
-                  style={{padding:'7px 14px', border:'none', background:'none', fontSize:13, cursor:'pointer',
-                    borderBottom: tab === t.id ? '2px solid var(--blue)' : '2px solid transparent',
-                    color: tab === t.id ? 'var(--blue)' : 'var(--text-muted)',
-                    fontWeight: tab === t.id ? 600 : 400, marginBottom:-1}}>
-                  {t.label}
-                </button>
-              ))}
-              {allAgents.length > 1 && (
-                <select className="filter-select" style={{marginLeft:'auto'}} value={agentFilter} onChange={e => setAgentFilter(e.target.value)}>
-                  <option value="">All agents</option>
-                  {allAgents.map(a => <option key={a} value={a}>{a}</option>)}
-                </select>
-              )}
-            </div>
+            {results.missing.length === 0 && (
+              <div style={{ background: '#EAF3DE', border: '1px solid #C0DD97', borderRadius: 8, padding: '12px 16px', marginBottom: 14, fontSize: 13, color: '#3B6D11', fontWeight: 600 }}>
+                ✓ All {results.checkedClients} BOB clients appeared in {periodLabel} statements — no missing renewals!
+              </div>
+            )}
 
-            {tab === 'missing' && (
-              <div className="card" style={{padding:0}}>
-                {!missing.length ? (
-                  <div className="empty-state">
-                    <div className="empty-icon">✅</div>
-                    <div className="empty-title">No missing renewals!</div>
-                    <div className="empty-sub">Every client from last month appeared this month too</div>
-                  </div>
-                ) : (
-                  <div className="table-wrap">
-                    <table>
-                      <thead>
-                        <tr><th>#</th><th>Client</th><th>Agent</th><th>Carrier</th><th>Last commission</th><th>Risk</th></tr>
-                      </thead>
-                      <tbody>
-                        {missing.map((r, i) => {
-                          const risk = riskLevel(r.commission);
-                          return (
-                            <tr key={i}>
-                              <td style={{color:'var(--text-muted)', fontSize:11}}>{i + 1}</td>
-                              <td style={{fontWeight:500}}>{r.client_full_name || '—'}</td>
-                              <td>{r.agent_name}</td>
-                              <td style={{fontSize:12}}>{r.carrier}</td>
-                              <td style={{fontWeight:600, color:'var(--red)'}}>{fmt(r.commission)}</td>
-                              <td style={{minWidth:80}}>
-                                <span style={{fontSize:12, color:risk.color, fontWeight:500}}>{risk.label}</span>
-                                <div className="risk-bar">
-                                  <div className="risk-fill" style={{width:risk.pct+'%', background:risk.color}}></div>
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
+            {/* Filters */}
+            {(carriers.length > 1 || agents.length > 1) && (
+              <div style={{ display: 'flex', gap: 8, marginBottom: 10 }}>
+                {carriers.length > 1 && (
+                  <select className="filter-select" value={filterCarrier} onChange={e => setFilterCarrier(e.target.value)}>
+                    <option value="">All carriers</option>
+                    {carriers.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                )}
+                {agents.length > 1 && (
+                  <select className="filter-select" value={filterAgent} onChange={e => setFilterAgent(e.target.value)}>
+                    <option value="">All agents</option>
+                    {agents.map(a => <option key={a} value={a}>{a}</option>)}
+                  </select>
                 )}
               </div>
             )}
 
-            {tab === 'new' && (
-              <div className="card" style={{padding:0}}>
-                {!newClients.length ? (
+            {/* Tabs */}
+            <div style={{ display: 'flex', gap: 8, borderBottom: '1px solid var(--border)', marginBottom: 0 }}>
+              <button style={tabStyle('missing')} onClick={() => setTab('missing')}>
+                Missing ({filteredMissing.length})
+              </button>
+              <button style={tabStyle('found')} onClick={() => setTab('found')}>
+                Paid ({filteredFound.length})
+              </button>
+            </div>
+
+            <div className="card" style={{ padding: 0 }}>
+              {tab === 'missing' && (
+                filteredMissing.length === 0 ? (
                   <div className="empty-state">
-                    <div className="empty-sub">No new clients this month</div>
+                    <div className="empty-icon">✅</div>
+                    <div className="empty-title">No missing clients</div>
+                    <div className="empty-sub">All filtered clients appeared in {periodLabel}</div>
                   </div>
                 ) : (
                   <div className="table-wrap">
                     <table>
                       <thead>
-                        <tr><th>#</th><th>Client</th><th>Agent</th><th>Carrier</th><th>Commission</th></tr>
+                        <tr>
+                          <th>#</th>
+                          <th>Client</th>
+                          <th>Agent</th>
+                          <th>Carrier</th>
+                          <th>Effective date</th>
+                          <th>Last commission</th>
+                          <th>Months missing</th>
+                        </tr>
                       </thead>
                       <tbody>
-                        {filterByAgent(newClients).map((r, i) => (
-                          <tr key={i}>
-                            <td style={{color:'var(--text-muted)', fontSize:11}}>{i + 1}</td>
-                            <td style={{fontWeight:500}}>{r.client_full_name || '—'}</td>
-                            <td>{r.agent_name}</td>
-                            <td style={{fontSize:12}}>{r.carrier}</td>
-                            <td style={{fontWeight:600, color:'var(--green)'}}>{fmt(r.commission)}</td>
+                        {filteredMissing.map((c, i) => (
+                          <tr key={c.id}>
+                            <td style={{ color: 'var(--text-muted)', fontSize: 11 }}>{i + 1}</td>
+                            <td style={{ fontWeight: 500 }}>{c.client_full_name}</td>
+                            <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{c.agent_name || '—'}</td>
+                            <td style={{ fontSize: 12 }}>{c.carrier}</td>
+                            <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{c.effective_date || '—'}</td>
+                            <td style={{ fontWeight: 600, color: '#E24B4A' }}>{fmt(c.last_commission_amount)}</td>
+                            <td>
+                              {c.months_missing > 0
+                                ? <span className={`badge ${c.months_missing >= 2 ? 'badge-red' : 'badge-amber'}`}>{c.months_missing} mo</span>
+                                : <span className="badge badge-gray">New miss</span>}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot>
+                        <tr style={{ background: 'var(--gray-50)', fontWeight: 600 }}>
+                          <td colSpan={5} style={{ padding: '8px 12px', fontSize: 12 }}>Total at risk</td>
+                          <td style={{ padding: '8px 12px', fontSize: 12, color: '#E24B4A' }}>{fmt(atRisk)}</td>
+                          <td></td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                )
+              )}
+
+              {tab === 'found' && (
+                filteredFound.length === 0 ? (
+                  <div className="empty-state">
+                    <div className="empty-icon">📋</div>
+                    <div className="empty-title">No matching clients</div>
+                  </div>
+                ) : (
+                  <div className="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>#</th>
+                          <th>Client</th>
+                          <th>Agent</th>
+                          <th>Carrier</th>
+                          <th>Effective date</th>
+                          <th>Last commission</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredFound.map((c, i) => (
+                          <tr key={c.id}>
+                            <td style={{ color: 'var(--text-muted)', fontSize: 11 }}>{i + 1}</td>
+                            <td style={{ fontWeight: 500 }}>{c.client_full_name}</td>
+                            <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{c.agent_name || '—'}</td>
+                            <td style={{ fontSize: 12 }}>{c.carrier}</td>
+                            <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{c.effective_date || '—'}</td>
+                            <td style={{ fontWeight: 600, color: '#1D9E75' }}>{fmt(c.last_commission_amount)}</td>
                           </tr>
                         ))}
                       </tbody>
                     </table>
                   </div>
-                )}
-              </div>
-            )}
-          </>
+                )
+              )}
+            </div>
+          </div>
+        )}
+
+        {!checked && !loading && (
+          <div className="card">
+            <div className="empty-state">
+              <div className="empty-icon">🔍</div>
+              <div className="empty-title">Select a month and run the check</div>
+              <div className="empty-sub">The system will compare every client in your Book of Business against that month's commission records and flag anyone who didn't get paid.</div>
+            </div>
+          </div>
         )}
       </div>
-    </>
+    </div>
   );
 }
