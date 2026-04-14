@@ -212,15 +212,41 @@ router.post('/check-renewals', requireAuth, async (req, res) => {
       return norm && targetNorm && norm === targetNorm;
     });
 
-    const paidSet = new Set(matchingRecords.map(r => `${r.client_key}|${r.carrier.toLowerCase()}`));
+    // Normalize name: handle both "FIRST LAST" and "LAST, FIRST" formats
+    function normName(name) {
+      if (!name) return '';
+      const s = String(name).toLowerCase().trim();
+      if (s.includes(',')) {
+        const [last, first] = s.split(',').map(p => p.trim());
+        return `${first} ${last}`.replace(/\s+/g, ' ').trim();
+      }
+      return s.replace(/\s+/g, ' ').trim();
+    }
+    function normCarrier(c) {
+      const s = String(c || '').toLowerCase();
+      if (s.includes('united') || s.includes('uhc')) return 'unitedhealthcare';
+      if (s.includes('humana')) return 'humana';
+      if (s.includes('aetna')) return 'aetna';
+      return s;
+    }
+
+    // Build paid sets using normalized names
+    const paidSet = new Set(matchingRecords.map(r => `${normName(r.client_key)}|${normCarrier(r.carrier)}`));
+    const paidLastNameSet = new Set(matchingRecords.map(r => {
+      const n = normName(r.client_key);
+      return `${n.split(' ').pop()}|${normCarrier(r.carrier)}`;
+    }));
 
     const bobClients = await pool.query(`SELECT * FROM book_of_business WHERE status = 'active' ${af}`);
     let missingCount = 0, recoveredCount = 0;
 
     for (const client of bobClients.rows) {
-      const key = `${client.client_full_name.toLowerCase().trim()}|${client.carrier.toLowerCase()}`;
+      const normN = normName(client.client_full_name);
+      const normC = normCarrier(client.carrier);
+      const key = `${normN}|${normC}`;
+      const lastKey = `${normN.split(' ').pop()}|${normC}`;
       const wasMissing = client.months_missing > 0;
-      const isPaid = paidSet.has(key);
+      const isPaid = paidSet.has(key) || paidLastNameSet.has(lastKey);
       if (!isPaid) {
         await pool.query(`UPDATE book_of_business SET months_missing = months_missing + 1, updated_at = NOW() WHERE id = $1`, [client.id]);
         missingCount++;
@@ -321,6 +347,17 @@ router.post('/build-from-statements', requireAuth, async (req, res) => {
       } else { skipped++; }
     }
     res.json({ added, skipped, total: added + skipped });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Bulk delete by carrier
+router.post('/bulk-delete', requireAuth, async (req, res) => {
+  try {
+    const pool = getPool();
+    const { carrier } = req.body;
+    if (!carrier) return res.status(400).json({ error: 'Carrier required' });
+    const result = await pool.query('DELETE FROM book_of_business WHERE carrier = $1', [carrier]);
+    res.json({ success: true, deleted: result.rowCount });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
