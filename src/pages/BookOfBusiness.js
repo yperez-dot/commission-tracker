@@ -16,6 +16,7 @@ export default function BookOfBusiness({ user }) {
   const [filterCarrier, setFilterCarrier] = useState('');
   const [filterAgent, setFilterAgent] = useState('');
   const [filterStatus, setFilterStatus] = useState('active');
+  const [search, setSearch] = useState('');
   const [agents, setAgents] = useState([]);
   const [loading, setLoading] = useState(false);
   const [buildStatus, setBuildStatus] = useState('');
@@ -118,14 +119,23 @@ export default function BookOfBusiness({ user }) {
     e.target.value = '';
   }
 
+  // Filter clients by search
+  const filteredClients = search.trim()
+    ? clients.filter(c =>
+        c.client_full_name?.toLowerCase().includes(search.toLowerCase()) ||
+        c.agent_name?.toLowerCase().includes(search.toLowerCase()) ||
+        c.carrier?.toLowerCase().includes(search.toLowerCase())
+      )
+    : clients;
+
   const activeCount = clients.filter(c => c.status === 'active').length;
   const termedCount = clients.filter(c => c.status === 'inactive').length;
 
   const tabStyle = (id) => ({
     padding:'7px 14px', border:'none', background:'none', fontSize:13, cursor:'pointer',
-    borderBottom: tab===id ? '2px solid var(--blue)' : '2px solid transparent',
-    color: tab===id ? 'var(--blue)' : 'var(--text-muted)',
-    fontWeight: tab===id ? 600 : 400, marginBottom:-1
+    borderBottom: tab===id ? '2px solid var(--accent)' : '2px solid transparent',
+    color: tab===id ? 'var(--accent)' : 'var(--text-muted)',
+    fontWeight: tab===id ? 500 : 400, marginBottom:-1
   });
 
   return (
@@ -133,13 +143,13 @@ export default function BookOfBusiness({ user }) {
       {/* Delete client modal */}
       {confirmDelete && (
         <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.4)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center'}}>
-          <div style={{background:'#ffffff',borderRadius:12,padding:24,width:360,boxShadow:'0 8px 32px rgba(0,0,0,0.2)',border:'1px solid #e0e0e0'}}>
-            <div style={{fontWeight:600,fontSize:15,marginBottom:8}}>Remove from BOB?</div>
+          <div style={{background:'var(--bg)',borderRadius:12,padding:24,width:360,boxShadow:'0 8px 32px rgba(0,0,0,0.15)',border:'1px solid var(--border)'}}>
+            <div style={{fontWeight:500,fontSize:15,marginBottom:8}}>Remove from BOB?</div>
             <div style={{fontSize:13,color:'var(--text-muted)',marginBottom:4}}><strong>{confirmDelete.client_full_name}</strong></div>
             <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:16}}>{confirmDelete.carrier} · {confirmDelete.agent_name}</div>
             <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
               <button onClick={()=>setConfirmDelete(null)} className="btn">Cancel</button>
-              <button onClick={()=>deleteClient(confirmDelete.id)} style={{background:'#E24B4A',color:'#fff',border:'none',borderRadius:6,padding:'7px 16px',fontSize:13,fontWeight:600,cursor:'pointer'}} disabled={deleting===confirmDelete.id}>
+              <button onClick={()=>deleteClient(confirmDelete.id)} className="btn btn-danger" disabled={deleting===confirmDelete.id}>
                 {deleting===confirmDelete.id ? 'Removing...' : 'Remove'}
               </button>
             </div>
@@ -150,14 +160,12 @@ export default function BookOfBusiness({ user }) {
       {/* Delete carrier modal */}
       {confirmCarrierDelete && (
         <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.4)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center'}}>
-          <div style={{background:'#ffffff',borderRadius:12,padding:24,width:380,boxShadow:'0 8px 32px rgba(0,0,0,0.2)',border:'1px solid #e0e0e0'}}>
-            <div style={{fontWeight:600,fontSize:15,marginBottom:8,color:'#E24B4A'}}>Delete all {confirmCarrierDelete} clients?</div>
+          <div style={{background:'var(--bg)',borderRadius:12,padding:24,width:380,boxShadow:'0 8px 32px rgba(0,0,0,0.15)',border:'1px solid var(--border)'}}>
+            <div style={{fontWeight:500,fontSize:15,marginBottom:8,color:'var(--red)'}}>Delete all {confirmCarrierDelete} clients?</div>
             <div style={{fontSize:13,color:'var(--text-muted)',marginBottom:16}}>This will remove all BOB clients for {confirmCarrierDelete}. You can re-upload their BOB export to restore them.</div>
             <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
               <button onClick={()=>setConfirmCarrierDelete(null)} className="btn">Cancel</button>
-              <button onClick={()=>deleteCarrier(confirmCarrierDelete)} style={{background:'#E24B4A',color:'#fff',border:'none',borderRadius:6,padding:'7px 16px',fontSize:13,fontWeight:600,cursor:'pointer'}}>
-                Delete all
-              </button>
+              <button onClick={()=>deleteCarrier(confirmCarrierDelete)} className="btn btn-danger">Delete all</button>
             </div>
           </div>
         </div>
@@ -177,9 +185,9 @@ export default function BookOfBusiness({ user }) {
         </div>
 
         {buildStatus && (
-          <div className="alert alert-success" style={{marginBottom:14,display:'flex',alignItems:'center'}}>
+          <div style={{marginBottom:14,padding:'10px 14px',background:'var(--bg-subtle)',border:'1px solid var(--border)',borderRadius:8,fontSize:13,color:'var(--text)',display:'flex',alignItems:'center'}}>
             {buildStatus}
-            <button onClick={()=>setBuildStatus('')} style={{marginLeft:'auto',background:'none',border:'none',cursor:'pointer',fontSize:14}}>×</button>
+            <button onClick={()=>setBuildStatus('')} style={{marginLeft:'auto',background:'none',border:'none',cursor:'pointer',fontSize:16,color:'var(--text-muted)'}}>×</button>
           </div>
         )}
 
@@ -192,7 +200,26 @@ export default function BookOfBusiness({ user }) {
 
         {(tab==='all' || tab==='termed') && (
           <div>
-            <div className="filters" style={{marginBottom:10}}>
+            {/* Filters + search bar */}
+            <div style={{display:'flex',gap:8,marginBottom:10,alignItems:'center',flexWrap:'wrap'}}>
+              <input
+                type="text"
+                placeholder="Search client, agent, carrier..."
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                style={{
+                  padding:'7px 12px',
+                  border:'1px solid var(--border)',
+                  borderRadius:6,
+                  fontSize:13,
+                  color:'var(--text)',
+                  background:'var(--bg)',
+                  outline:'none',
+                  minWidth:240,
+                  flex:1,
+                  maxWidth:360,
+                }}
+              />
               <select className="filter-select" value={filterCarrier} onChange={e=>setFilterCarrier(e.target.value)}>
                 <option value="">All carriers</option>
                 {(summary?.byCarrier||[]).map(c=><option key={c.carrier} value={c.carrier}>{c.carrier}</option>)}
@@ -201,15 +228,20 @@ export default function BookOfBusiness({ user }) {
                 <option value="">All agents</option>
                 {agents.map(a=><option key={a} value={a}>{a}</option>)}
               </select>
-              <span className="row-count">{clients.length} clients</span>
+              <span style={{fontSize:12,color:'var(--text-muted)'}}>
+                {search.trim() ? `${filteredClients.length} of ${clients.length}` : `${clients.length}`} clients
+              </span>
+              {search && (
+                <button onClick={()=>setSearch('')} style={{background:'none',border:'none',cursor:'pointer',fontSize:12,color:'var(--text-muted)',padding:'0 4px'}}>✕ Clear</button>
+              )}
             </div>
 
             <div className="card" style={{padding:0}}>
-              {clients.length===0 ? (
+              {filteredClients.length===0 ? (
                 <div className="empty-state">
                   <div className="empty-icon">📋</div>
-                  <div className="empty-title">{tab==='termed' ? 'No termed clients' : 'No clients yet'}</div>
-                  <div className="empty-sub">{tab==='termed' ? 'Mark clients as Termed or Deceased to see them here' : 'Upload a BOB export or build from statements'}</div>
+                  <div className="empty-title">{search ? 'No clients match your search' : tab==='termed' ? 'No termed clients' : 'No clients yet'}</div>
+                  <div className="empty-sub">{search ? `No results for "${search}"` : tab==='termed' ? 'Mark clients as Termed or Deceased to see them here' : 'Upload a BOB export or build from statements'}</div>
                 </div>
               ) : (
                 <div className="table-wrap">
@@ -227,17 +259,25 @@ export default function BookOfBusiness({ user }) {
                       </tr>
                     </thead>
                     <tbody>
-                      {clients.map((c,i) => (
-                        <tr key={c.id} style={{background: c.status==='inactive' ? '#FFF5F5' : 'transparent'}}>
+                      {filteredClients.map((c,i) => (
+                        <tr key={c.id} style={{background: c.status==='inactive' ? 'var(--bg-subtle)' : 'transparent'}}>
                           <td style={{color:'var(--text-muted)',fontSize:11}}>{i+1}</td>
-                          <td style={{fontWeight:500}}>{c.client_full_name}</td>
+                          <td style={{fontWeight:500}}>
+                            {search.trim()
+                              ? <span dangerouslySetInnerHTML={{__html: c.client_full_name.replace(
+                                  new RegExp(`(${search.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')})`, 'gi'),
+                                  '<mark style="background:#F5EDD4;color:#6B4E0A;border-radius:2px;padding:0 2px">$1</mark>'
+                                )}} />
+                              : c.client_full_name
+                            }
+                          </td>
                           <td style={{fontSize:12}}>{c.agent_name||'—'}</td>
                           <td style={{fontSize:12}}>{c.carrier}</td>
                           <td style={{fontSize:11,color:'var(--text-muted)'}}>{c.effective_date||'—'}</td>
-                          <td style={{fontWeight:600,color:'var(--green)'}}>{fmt(c.last_commission_amount)}</td>
+                          <td style={{fontWeight:500,color:'var(--green)'}}>{fmt(c.last_commission_amount)}</td>
                           <td>
                             <select value={c.resolution||''} onChange={e=>updateStatus(c.id,e.target.value)}
-                              style={{fontSize:11,padding:'3px 6px',borderRadius:'var(--radius)',border:'1px solid var(--border)',background: c.status==='inactive'?'#FCE8E8':'var(--gray-50)',color:'var(--text)'}}>
+                              style={{fontSize:11,padding:'3px 6px',borderRadius:5,border:'1px solid var(--border)',background:c.status==='inactive'?'var(--bg-subtle)':'var(--bg)',color:'var(--text)'}}>
                               {STATUSES.map(r=><option key={r} value={r}>{r||'Active'}</option>)}
                             </select>
                           </td>
@@ -267,16 +307,15 @@ export default function BookOfBusiness({ user }) {
                 <tbody>
                   {(summary?.byCarrier||[]).map((c,i) => (
                     <tr key={i} onClick={()=>{ setFilterCarrier(c.carrier); setFilterStatus('active'); setTab('all'); }} style={{cursor:'pointer'}}>
-                      <td style={{fontWeight:500,color:'#185FA5'}}>{c.carrier}</td>
-                      <td style={{fontWeight:600,color:'#185FA5'}}>{c.count}</td>
+                      <td style={{fontWeight:500,color:'var(--accent)'}}>{c.carrier}</td>
+                      <td style={{fontWeight:500,color:'var(--accent)'}}>{c.count}</td>
                       <td>{(summary?.bySource||[]).find(s=>s.source==='bob_export')
                         ? <span className="badge badge-blue">BOB export</span>
                         : <span className="badge badge-gray">Statements only</span>}</td>
                       <td style={{fontSize:11,color:'var(--text-muted)'}}>{c.last_updated?new Date(c.last_updated).toLocaleDateString():'—'}</td>
                       <td style={{fontSize:11,color:'var(--text-muted)'}}>View →</td>
                       <td onClick={e=>e.stopPropagation()}>
-                        <button onClick={()=>setConfirmCarrierDelete(c.carrier)}
-                          style={{background:'none',border:'1px solid #F7C1C1',borderRadius:6,padding:'3px 10px',fontSize:11,cursor:'pointer',color:'#E24B4A',fontWeight:600}}>
+                        <button onClick={()=>setConfirmCarrierDelete(c.carrier)} className="btn btn-danger" style={{fontSize:11,padding:'3px 10px'}}>
                           Delete
                         </button>
                       </td>
@@ -319,7 +358,7 @@ export default function BookOfBusiness({ user }) {
                   </select>
                 </div>
                 <button className="btn btn-primary" onClick={runRenewalCheck} disabled={loading||!checkPeriod}>
-                  {loading?<><span className="spinner"></span> Checking...</>:'Run renewal check →'}
+                  {loading ? 'Checking...' : 'Run renewal check →'}
                 </button>
               </div>
             </div>
@@ -338,7 +377,7 @@ export default function BookOfBusiness({ user }) {
                 Upload a BOB export file directly from a carrier portal for more accurate tracking.
               </p>
               {uploadStatus && (
-                <div className={`alert ${uploadStatus.startsWith('Error')?'alert-error':'alert-success'}`} style={{marginBottom:12}}>
+                <div style={{marginBottom:12,padding:'8px 12px',background:'var(--bg-subtle)',border:'1px solid var(--border)',borderRadius:6,fontSize:13}}>
                   {uploadStatus}
                 </div>
               )}
