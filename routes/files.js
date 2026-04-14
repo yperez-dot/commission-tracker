@@ -205,7 +205,7 @@ function parseUHCRows(wb) {
       effectiveDate,
       premium: parseFloat(row['Prem Amount']) || 0,
       commission,
-      classification: commission < 0 ? 'Chargeback' : (isAgency ? 'Agent Commission' : (commAction.toLowerCase() === 'new' ? 'New Business' : 'Renewal')),,
+      classification: commission < 0 ? 'Chargeback' : (isAgency ? 'Agent Commission' : (commAction.toLowerCase() === 'new' ? 'New Business' : 'Renewal')),
       period: String(period),
       policyNumber,
       raw: row
