@@ -62,7 +62,7 @@ input, select, textarea { font-family: inherit; font-size: 14px; }
 }
 
 .logo-name { font-size: 14px; font-weight: 500; color: #F0EAE0; line-height: 1.2; }
-.logo-sub { font-size: 10px; color: rgba(255,255,255,0.3); }
+.logo-sub { font-size: 12px; color: rgba(255,255,255,0.45); }
 
 .sidebar-nav { flex: 1; padding: 10px 8px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
 
