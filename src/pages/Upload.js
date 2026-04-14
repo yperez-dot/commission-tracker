@@ -12,7 +12,7 @@ export default function Upload({ user }) {
   const [error, setError] = useState('');
   const [dragOver, setDragOver] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
-  const [viewUpload, setViewUpload] = useState(null); // upload being viewed
+  const [viewUpload, setViewUpload] = useState(null);
   const [selectedUploads, setSelectedUploads] = useState(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [viewRecords, setViewRecords] = useState([]);
@@ -92,7 +92,8 @@ export default function Upload({ user }) {
     finally { setViewLoading(false); }
   }
 
-  function handleDrop(e) {
+  // ← FIX: was missing async
+  async function handleDrop(e) {
     e.preventDefault();
     setDragOver(false);
     const files = Array.from(e.dataTransfer.files);
@@ -108,7 +109,6 @@ export default function Upload({ user }) {
       {viewUpload && (
         <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
           <div style={{ background: '#ffffff', borderRadius: 12, width: '90%', maxWidth: 900, maxHeight: '85vh', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 40px rgba(0,0,0,0.25)' }}>
-            {/* Modal header */}
             <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
               <div>
                 <div style={{ fontWeight: 700, fontSize: 15 }}>{viewUpload.original_name}</div>
@@ -118,7 +118,6 @@ export default function Upload({ user }) {
               </div>
               <button onClick={() => setViewUpload(null)} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: 'var(--text-muted)', padding: '0 4px' }}>✕</button>
             </div>
-            {/* Modal body */}
             <div style={{ overflowY: 'auto', flex: 1 }}>
               {viewLoading ? (
                 <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>Loading records...</div>
@@ -224,7 +223,6 @@ export default function Upload({ user }) {
           </div>
         )}
 
-        {/* Summary bar */}
         {uploads.length > 0 && (
           <div style={{ display: 'flex', gap: 16, marginBottom: 12, fontSize: 13 }}>
             <span style={{ color: 'var(--text-muted)' }}><strong style={{ color: 'var(--text)' }}>{uploads.length}</strong> uploads</span>
@@ -233,7 +231,6 @@ export default function Upload({ user }) {
           </div>
         )}
 
-        {/* Upload list */}
         <div className="card" style={{ padding: 0 }}>
           <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 }}>
             <input type="checkbox" checked={selectedUploads.size === uploads.length && uploads.length > 0} onChange={selectAllUploads} style={{ cursor: 'pointer' }} />
@@ -257,7 +254,6 @@ export default function Upload({ user }) {
               <input type="checkbox" checked={selectedUploads.has(u.id)} onChange={() => toggleSelectUpload(u.id)} style={{ cursor: 'pointer', flexShrink: 0 }} />
               <span style={{ fontSize: 20, flexShrink: 0 }}>📊</span>
               <div style={{ flex: 1, minWidth: 0 }}>
-                {/* Clickable filename */}
                 <button onClick={() => openUpload(u)} style={{
                   background: 'none', border: 'none', padding: 0, cursor: 'pointer',
                   fontWeight: 600, fontSize: 13, color: '#185FA5', textAlign: 'left',
