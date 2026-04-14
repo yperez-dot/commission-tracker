@@ -39,11 +39,11 @@ function BarChart({ data, color, onClickItem }) {
           >
             <div style={{display:'flex',justifyContent:'space-between',marginBottom:3}}>
               <span style={{
-                fontSize:11,color: onClickItem ? '#185FA5' : 'var(--text-muted)',
+                fontSize:13,color: onClickItem ? '#185FA5' : 'var(--text-muted)',
                 overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'65%',
-                textDecoration: onClickItem ? 'underline' : 'none'
+                textDecoration: 'none'
               }} title={name}>{name}</span>
-              <span style={{fontSize:11,fontWeight:600,color:val<0?'#E24B4A':color}}>{fmt(val)}</span>
+              <span style={{fontSize:13,fontWeight:600,color:val<0?'#E24B4A':color}}>{fmt(val)}</span>
             </div>
             <div style={{background:'var(--gray-100)',borderRadius:4,height:6,overflow:'hidden'}}>
               <div style={{width:`${pct}%`,background:val<0?'#E24B4A':color,height:'100%',borderRadius:4,transition:'width 0.4s ease'}}/>
