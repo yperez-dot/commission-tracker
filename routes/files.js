@@ -118,6 +118,103 @@ function classifyHumana(typeCode, commission) {
   return 'Agent Commission';
 }
 
+function parseHumanaRows(wb, filename) {
+  const records = [];
+  // Humana CommissionData files are SpreadsheetML XML — XLSX.js reads them but with different structure
+  // Try standard sheet_to_json first
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true, header: 1 });
+  if (!rows.length) return records;
+
+  // Find header row
+  let headerRow = -1;
+  let headers = [];
+  for (let i = 0; i < Math.min(rows.length, 5); i++) {
+    const row = rows[i];
+    const str = row.map(v => String(v || '')).join('|').toLowerCase();
+    if (str.includes('grpname') || str.includes('wanameam') || str.includes('wasan')) {
+      headerRow = i;
+      headers = row.map(v => String(v || ''));
+      break;
+    }
+  }
+  if (headerRow < 0) {
+    // Try first row as header
+    headers = rows[0].map(v => String(v || ''));
+    headerRow = 0;
+  }
+
+  const col = (name) => {
+    const idx = headers.findIndex(h => h.toLowerCase() === name.toLowerCase());
+    return idx;
+  };
+
+  const grpIdx = col('GrpName');
+  const waIdx = col('WaName');
+  const paidIdx = col('PaidAmount');
+  const monthIdx = col('MonthPaid');
+  const effIdx = col('EffDate');
+  const commentIdx = col('Comment');
+  const fyrIdx = col('FrstYrRnwl');
+  const grpNbrIdx = col('GrpNbr');
+
+  if (grpIdx < 0 || paidIdx < 0) return records;
+
+  // Extract period from filename or MonthPaid
+  const monthMap = {jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12'};
+
+  for (let i = headerRow + 1; i < rows.length; i++) {
+    const row = rows[i];
+    if (!row || !row[grpIdx]) continue;
+
+    const client = String(row[grpIdx] || '').trim();
+    const agentRaw = String(row[waIdx] >= 0 ? row[waIdx] : '').trim();
+    const commission = parseFloat(row[paidIdx]) || 0;
+    const monthPaid = String(row[monthIdx] || '').trim().toLowerCase();
+    const effDate = row[effIdx] ? formatDate(row[effIdx]) : '';
+    const comment = String(row[commentIdx] >= 0 ? row[commentIdx] : '').toLowerCase();
+    const fyr = String(row[fyrIdx] >= 0 ? row[fyrIdx] : '').trim().toUpperCase();
+    const policyNumber = String(row[grpNbrIdx] >= 0 ? row[grpNbrIdx] : '').trim();
+
+    if (!client || commission === 0) continue;
+
+    // Period from MonthPaid (JAN, FEB etc) — need year from filename or EffDate
+    let period = '';
+    if (monthPaid && monthMap[monthPaid]) {
+      // Try to get year from effective date or filename
+      const fn = filename.toLowerCase();
+      const yrMatch = fn.match(/20(\d{2})/);
+      let year = yrMatch ? '20' + yrMatch[1] : new Date().getFullYear().toString();
+      if (effDate) {
+        const effYear = effDate.slice(-4);
+        if (effYear.match(/^20\d{2}$/)) year = effYear;
+      }
+      period = year + monthMap[monthPaid];
+    }
+
+    const classification = commission < 0 ? 'Chargeback'
+      : fyr === 'F' || comment.includes('first year') ? 'New Business'
+      : fyr === 'R' || comment.includes('renewal') ? 'Renewal'
+      : 'Agent Commission';
+
+    records.push({
+      agent: normalizeAgentName(agentRaw) || 'The Health Experts Insurance',
+      carrier: 'Humana',
+      planType: 'Humana Med Adv',
+      client,
+      effectiveDate: effDate,
+      premium: 0,
+      commission,
+      classification,
+      period,
+      policyNumber,
+      payee: 'Humana',
+      raw: row
+    });
+  }
+  return records;
+}
+
 function isAgencyName(name) {
   const n = String(name || '').toLowerCase().trim();
   return n.includes('the health experts') || n.includes('health experts insurance');
@@ -445,6 +542,8 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       records = parseBSIRows(wb, req.file.originalname);
     } else if (isNHPFile(req.file.originalname)) {
       records = parseNHPRows(wb);
+    } else if (isHumanaFile(req.file.originalname)) {
+      records = parseHumanaRows(wb, req.file.originalname);
     } else if (isAPLFile(req.file.originalname)) {
       records = parseAPLRows(wb);
     } else {
