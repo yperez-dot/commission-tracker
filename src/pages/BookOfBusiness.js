@@ -1,362 +1,364 @@
-const express = require('express');
-const router = express.Router();
-const multer = require('multer');
-const XLSX = require('xlsx');
-const path = require('path');
-const fs = require('fs');
-const { getPool } = require('../db/database');
-const { requireAuth } = require('./auth');
-const { normalizeAgentName } = require('../normalize');
+import React, { useState, useEffect, useCallback } from 'react';
+import { apiFetch, apiUpload } from '../api';
 
-const UPLOADS_DIR = path.join('/tmp', 'uploads');
-if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
-
-const storage = multer.diskStorage({
-  destination: UPLOADS_DIR,
-  filename: (req, file, cb) => cb(null, `${Date.now()}_${file.originalname.replace(/\s+/g, '_')}`)
-});
-const upload = multer({ storage, limits: { fileSize: 20 * 1024 * 1024 } });
-
-function formatDate(value) {
-  if (!value) return '';
-  if (value instanceof Date) {
-    const m = String(value.getUTCMonth() + 1).padStart(2, '0');
-    const d = String(value.getUTCDate()).padStart(2, '0');
-    const y = value.getUTCFullYear();
-    return `${m}/${d}/${y}`;
-  }
-  if (typeof value === 'string') {
-    if (value.match(/\d{1,2}\/\d{1,2}\/\d{4}/)) return value;
-    if (value.match(/\d{4}-\d{2}-\d{2}/)) {
-      const [y, m, d] = value.split('-');
-      return `${m}/${d}/${y}`;
-    }
-    return value;
-  }
-  if (typeof value === 'number') {
-    const date = new Date((value - 25569) * 86400 * 1000);
-    if (isNaN(date.getTime())) return String(value);
-    const m = String(date.getUTCMonth() + 1).padStart(2, '0');
-    const d = String(date.getUTCDate()).padStart(2, '0');
-    const y = date.getUTCFullYear();
-    return `${m}/${d}/${y}`;
-  }
-  return String(value);
+function fmt(n) {
+  return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-// Find the real header row by scanning for known column names
-function findHeaderRow(ws) {
-  const range = XLSX.utils.decode_range(ws['!ref']);
-  const clientKeywords = ['member', 'client', 'subscriber', 'insured', 'firstname', 'lastname', 'name'];
-  for (let r = range.s.r; r <= Math.min(range.s.r + 10, range.e.r); r++) {
-    let matches = 0;
-    for (let c = range.s.c; c <= range.e.c; c++) {
-      const cell = ws[XLSX.utils.encode_cell({ r, c })];
-      if (cell) {
-        const v = String(cell.v || '').toLowerCase().replace(/\s+/g, '');
-        if (clientKeywords.some(k => v.includes(k))) matches++;
-      }
-    }
-    if (matches >= 2) return r;
+const CARRIERS = ['UnitedHealthcare','Humana','Aetna','Devoted','Cigna','Florida Blue','Oscar Health','Molina','WellCare','Sunshine Health','Gold Kidney','NHP','BSI','Solis','Integrity'];
+const STATUSES = ['','Termed','Deceased','Plan changed','Duplicate','Resolved'];
+
+export default function BookOfBusiness({ user }) {
+  const [summary, setSummary] = useState(null);
+  const [clients, setClients] = useState([]);
+  const [periods, setPeriods] = useState([]);
+  const [tab, setTab] = useState('all');
+  const [filterCarrier, setFilterCarrier] = useState('');
+  const [filterAgent, setFilterAgent] = useState('');
+  const [filterStatus, setFilterStatus] = useState('active');
+  const [agents, setAgents] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [buildStatus, setBuildStatus] = useState('');
+  const [checkPeriod, setCheckPeriod] = useState('');
+  const [uploadCarrier, setUploadCarrier] = useState('');
+  const [uploadStatus, setUploadStatus] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  const [confirmCarrierDelete, setConfirmCarrierDelete] = useState(null);
+  const [deleting, setDeleting] = useState(null);
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [sum, filtersData] = await Promise.all([
+        apiFetch('/bob/summary'),
+        apiFetch('/records/filters')
+      ]);
+      setSummary(sum);
+      setPeriods(filtersData.periods || []);
+      setAgents(filtersData.agents || []);
+      if (filtersData.periods?.length) setCheckPeriod(filtersData.periods[0]);
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); }
+  }, []);
+
+  const loadClients = useCallback(async () => {
+    try {
+      const params = new URLSearchParams();
+      if (filterCarrier) params.set('carrier', filterCarrier);
+      if (filterAgent) params.set('agent', filterAgent);
+      if (filterStatus) params.set('status', filterStatus);
+      const data = await apiFetch(`/bob?${params}`);
+      setClients(data);
+    } catch (e) { console.error(e); }
+  }, [tab, filterCarrier, filterAgent, filterStatus]);
+
+  useEffect(() => { loadData(); }, [loadData]);
+  useEffect(() => { loadClients(); }, [loadClients]);
+
+  async function buildFromStatements() {
+    setBuildStatus('building');
+    try {
+      const result = await apiFetch('/bob/build-from-statements', { method: 'POST' });
+      setBuildStatus(`Added ${result.added} clients to your BOB from existing statements!`);
+      loadData(); loadClients();
+    } catch (e) { setBuildStatus('Error: ' + e.message); }
   }
-  return 0;
-}
 
-// Parse BOB rows from a sheet, handling files with disclaimer rows at top
-function parseBOBSheet(ws) {
-  const headerRow = findHeaderRow(ws);
-  const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true, range: headerRow });
-  if (!rows.length) return null;
-
-  // Normalize all header keys to lowercase for matching
-  const firstRow = rows[0];
-  const keyMap = {};
-  Object.keys(firstRow).forEach(k => { keyMap[k.toLowerCase().replace(/\s+/g, '')] = k; });
-
-  const findKey = (terms) => {
-    for (const t of terms) {
-      if (keyMap[t]) return keyMap[t];
-      // partial match
-      const found = Object.keys(keyMap).find(k => k.includes(t));
-      if (found) return keyMap[found];
-    }
-    return null;
-  };
-
-  // UHC BOB has separate first/last name columns
-  const firstNameCol = findKey(['memberfirstname', 'firstname', 'first']);
-  const lastNameCol = findKey(['memberlastname', 'lastname', 'last']);
-  const clientCol = findKey(['membername', 'clientname', 'subscribername', 'name', 'client', 'member', 'subscriber']);
-  const agentCol = findKey(['agentname', 'writingagentname', 'agent', 'producer']);
-  const policyCol = findKey(['membernumber', 'policynumber', 'memberid', 'policy', 'certificate', 'applicationnumber', 'policyid']);
-  const effDateCol = findKey(['policyeffectivedate', 'effectivedate', 'effective', 'effdate', 'startdate']);
-  const planCol = findKey(['planname', 'plan', 'product', 'benefit']);
-  const statusCol = findKey(['memberstatus', 'planstatus', 'status']);
-
-  return rows.map(row => {
-    // Build full name from first+last if no combined name col
-    let clientName = '';
-    if (firstNameCol && lastNameCol) {
-      const first = String(row[firstNameCol] || '').trim();
-      const last = String(row[lastNameCol] || '').trim();
-      clientName = [first, last].filter(Boolean).join(' ');
-    } else if (clientCol) {
-      clientName = String(row[clientCol] || '').trim();
-    }
-
-    return {
-      client: clientName,
-      agent: agentCol ? normalizeAgentName(String(row[agentCol] || '').trim()) : '',
-      policyNumber: policyCol ? String(row[policyCol] || '').trim() : '',
-      effectiveDate: effDateCol ? formatDate(row[effDateCol]) : '',
-      planType: planCol ? String(row[planCol] || '').trim() : '',
-      status: statusCol ? String(row[statusCol] || '').trim().toLowerCase() : 'active',
-    };
-  }).filter(r => r.client && r.client.length > 1);
-}
-
-router.get('/', requireAuth, async (req, res) => {
-  try {
-    const pool = getPool();
-    const { carrier, agent, status, missing } = req.query;
-    let where = ['1=1'];
-    let params = [];
-    let idx = 1;
-    if (req.user.role === 'agent') { where.push(`agent_name ILIKE $${idx++}`); params.push(`%${req.user.name}%`); }
-    if (carrier) { where.push(`carrier = $${idx++}`); params.push(carrier); }
-    if (agent) { where.push(`agent_name = $${idx++}`); params.push(agent); }
-    if (status) { where.push(`status = $${idx++}`); params.push(status); }
-    if (missing === 'true') { where.push(`months_missing > 0 AND status = 'active'`); }
-    const result = await pool.query(
-      `SELECT * FROM book_of_business WHERE ${where.join(' AND ')} ORDER BY months_missing DESC, client_full_name ASC`,
-      params
-    );
-    res.json(result.rows);
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-router.get('/summary', requireAuth, async (req, res) => {
-  try {
-    const pool = getPool();
-    const isAdmin = req.user.role === 'admin';
-    const af = isAdmin ? '' : `AND agent_name ILIKE '%${req.user.name}%'`;
-    const total = await pool.query(`SELECT COUNT(*) as count FROM book_of_business WHERE status = 'active' ${af}`);
-    const missing = await pool.query(`SELECT COUNT(*) as count, COALESCE(SUM(last_commission_amount),0) as at_risk FROM book_of_business WHERE months_missing > 0 AND status = 'active' ${af}`);
-    const newThis = await pool.query(`SELECT COUNT(*) as count FROM book_of_business WHERE created_at > NOW() - INTERVAL '35 days' ${af}`);
-    const byCarrier = await pool.query(`SELECT carrier, COUNT(*) as count, MAX(updated_at) as last_updated FROM book_of_business WHERE status = 'active' ${af} GROUP BY carrier ORDER BY count DESC`);
-    const bySource = await pool.query(`SELECT source, COUNT(*) as count FROM book_of_business WHERE status = 'active' ${af} GROUP BY source`);
-    res.json({
-      totalActive: parseInt(total.rows[0].count),
-      missingCount: parseInt(missing.rows[0].count),
-      atRisk: parseFloat(missing.rows[0].at_risk),
-      newEnrollments: parseInt(newThis.rows[0].count),
-      byCarrier: byCarrier.rows,
-      bySource: bySource.rows
-    });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-router.patch('/:id', requireAuth, async (req, res) => {
-  try {
-    const pool = getPool();
-    const { resolution, status, notes } = req.body;
-    const updates = [];
-    const params = [];
-    let idx = 1;
-    if (resolution !== undefined) { updates.push(`resolution = $${idx++}`); params.push(resolution); }
-    if (status !== undefined) { updates.push(`status = $${idx++}`); params.push(status); }
-    if (notes !== undefined) { updates.push(`notes = $${idx++}`); params.push(notes); }
-    updates.push(`updated_at = NOW()`);
-    if (updates.length === 1) return res.status(400).json({ error: 'Nothing to update' });
-    params.push(req.params.id);
-    await pool.query(`UPDATE book_of_business SET ${updates.join(', ')} WHERE id = $${idx}`, params);
-    res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-router.post('/check-renewals', requireAuth, async (req, res) => {
-  try {
-    const pool = getPool();
-    const { period } = req.body;
-    if (!period) return res.status(400).json({ error: 'Period required' });
-    const isAdmin = req.user.role === 'admin';
-    const af = isAdmin ? '' : `AND agent_name ILIKE '%${req.user.name}%'`;
-
-    // Normalize period to YYYYMM for flexible matching
-    function normalizePeriod(p) {
-      if (!p) return null;
-      const s = String(p).trim();
-      // Already YYYYMM
-      if (s.match(/^\d{6}$/)) return s;
-      // MM/DD/YYYY or MM/YYYY
-      const mmyyyy = s.match(/^(\d{1,2})\/(?:\d{2}\/)?(\d{4})$/);
-      if (mmyyyy) return mmyyyy[2] + mmyyyy[1].padStart(2,'0');
-      // Month name like FEB2026 or FEB 2026
-      const months = {jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12'};
-      const named = s.toLowerCase().match(/^([a-z]{3})\s*(\d{4})$/);
-      if (named && months[named[1]]) return named[2] + months[named[1]];
-      return null;
-    }
-
-    const targetNorm = normalizePeriod(period);
-
-    // Get all commission records — filter by normalized period
-    const allRecords = await pool.query(
-      `SELECT LOWER(TRIM(client_full_name)) as client_key, carrier, agent_name, commission, payment_period
-       FROM commission_records WHERE commission > 0 ${af}`
-    );
-
-    // Match records whose period normalizes to the same YYYYMM
-    const matchingRecords = allRecords.rows.filter(r => {
-      const norm = normalizePeriod(r.payment_period);
-      return norm && targetNorm && norm === targetNorm;
-    });
-
-    // Normalize name: handle both "FIRST LAST" and "LAST, FIRST" formats
-    function normName(name) {
-      if (!name) return '';
-      const s = String(name).toLowerCase().trim();
-      if (s.includes(',')) {
-        const [last, first] = s.split(',').map(p => p.trim());
-        return `${first} ${last}`.replace(/\s+/g, ' ').trim();
-      }
-      return s.replace(/\s+/g, ' ').trim();
-    }
-    function normCarrier(c) {
-      const s = String(c || '').toLowerCase();
-      if (s.includes('united') || s.includes('uhc')) return 'unitedhealthcare';
-      if (s.includes('humana')) return 'humana';
-      if (s.includes('aetna')) return 'aetna';
-      return s;
-    }
-
-    // Build paid sets using normalized names
-    const paidSet = new Set(matchingRecords.map(r => `${normName(r.client_key)}|${normCarrier(r.carrier)}`));
-    const paidLastNameSet = new Set(matchingRecords.map(r => {
-      const n = normName(r.client_key);
-      return `${n.split(' ').pop()}|${normCarrier(r.carrier)}`;
-    }));
-
-    const bobClients = await pool.query(`SELECT * FROM book_of_business WHERE status = 'active' ${af}`);
-    let missingCount = 0, recoveredCount = 0;
-
-    for (const client of bobClients.rows) {
-      const normN = normName(client.client_full_name);
-      const normC = normCarrier(client.carrier);
-      const key = `${normN}|${normC}`;
-      const lastKey = `${normN.split(' ').pop()}|${normC}`;
-      const wasMissing = client.months_missing > 0;
-      const isPaid = paidSet.has(key) || paidLastNameSet.has(lastKey);
-      if (!isPaid) {
-        await pool.query(`UPDATE book_of_business SET months_missing = months_missing + 1, updated_at = NOW() WHERE id = $1`, [client.id]);
-        missingCount++;
-      } else if (wasMissing && isPaid) {
-        await pool.query(`UPDATE book_of_business SET months_missing = 0, resolution = 'recovered', updated_at = NOW() WHERE id = $1`, [client.id]);
-        recoveredCount++;
-      }
-    }
-
-    // Update last commission info for matched clients
-    for (const rec of matchingRecords) {
-      await pool.query(
-        `UPDATE book_of_business SET last_commission_date = $1, last_commission_amount = $2, updated_at = NOW()
-         WHERE LOWER(TRIM(client_full_name)) = $3 AND LOWER(carrier) = $4 AND status = 'active'`,
-        [period, rec.commission, rec.client_key, rec.carrier.toLowerCase()]
-      );
-    }
-
-    res.json({
-      missingCount, recoveredCount, period,
-      checkedClients: bobClients.rows.length,
-      matchedRecords: matchingRecords.length
-    });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
-
-router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-  try {
-    const pool = getPool();
-    const { carrier } = req.body;
-    if (!carrier) return res.status(400).json({ error: 'Carrier name required' });
-
-    const wb = XLSX.readFile(req.file.path);
-    const ws = wb.Sheets[wb.SheetNames[0]];
-    const parsed = parseBOBSheet(ws);
-
-    if (!parsed) return res.status(400).json({ error: 'Could not parse file — no recognizable columns found' });
-    if (!parsed.length) return res.status(400).json({ error: 'No client records found in file' });
-
-    let added = 0, updated = 0;
-    for (const r of parsed) {
-      const isTermed = r.status.includes('term') || r.status.includes('cancel') || r.status.includes('inactive');
-      const recordStatus = isTermed ? 'inactive' : 'active';
-
-      const existing = await pool.query(
-        `SELECT id FROM book_of_business WHERE LOWER(TRIM(client_full_name)) = LOWER($1) AND carrier = $2`,
-        [r.client, carrier]
-      );
-      if (existing.rows.length > 0) {
-        await pool.query(
-          `UPDATE book_of_business SET agent_name = COALESCE(NULLIF($1,''), agent_name), policy_number = COALESCE(NULLIF($2,''), policy_number), effective_date = COALESCE(NULLIF($3,''), effective_date), plan_type = COALESCE(NULLIF($4,''), plan_type), source = 'bob_export', status = $5, updated_at = NOW() WHERE id = $6`,
-          [r.agent, r.policyNumber, r.effectiveDate, r.planType, recordStatus, existing.rows[0].id]
-        );
-        updated++;
-      } else {
-        await pool.query(
-          `INSERT INTO book_of_business (agent_name, carrier, client_full_name, policy_number, effective_date, plan_type, source, status) VALUES ($1, $2, $3, $4, $5, $6, 'bob_export', $7)`,
-          [r.agent, carrier, r.client, r.policyNumber, r.effectiveDate, r.planType, recordStatus]
-        );
-        added++;
-      }
-    }
-
-    await pool.query(
-      `INSERT INTO bob_uploads (original_name, carrier, row_count, uploaded_by) VALUES ($1, $2, $3, $4)`,
-      [req.file.originalname, carrier, parsed.length, req.user.id]
-    );
-
-    try { fs.unlinkSync(req.file.path); } catch (e) {}
-    res.json({ added, updated, total: added + updated, carrier });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: err.message });
+  async function runRenewalCheck() {
+    if (!checkPeriod) return;
+    setLoading(true);
+    try {
+      const result = await apiFetch('/bob/check-renewals', { method: 'POST', body: JSON.stringify({ period: checkPeriod }) });
+      setBuildStatus(`✓ Checked ${result.checkedClients} clients — ${result.missingCount} missing, ${result.recoveredCount} recovered.`);
+      loadData(); loadClients();
+    } catch (e) { setBuildStatus('Error: ' + e.message); }
+    finally { setLoading(false); }
   }
-});
 
-router.post('/build-from-statements', requireAuth, async (req, res) => {
-  try {
-    const pool = getPool();
-    const isAdmin = req.user.role === 'admin';
-    const af = isAdmin ? '' : `AND agent_name ILIKE '%${req.user.name}%'`;
-    const records = await pool.query(
-      `SELECT DISTINCT ON (LOWER(TRIM(client_full_name)), carrier) client_full_name, carrier, agent_name, effective_date, commission, payment_period FROM commission_records WHERE client_full_name != '' AND commission > 0 ${af} ORDER BY LOWER(TRIM(client_full_name)), carrier, created_at DESC`
-    );
-    let added = 0, skipped = 0;
-    for (const rec of records.rows) {
-      const existing = await pool.query(
-        `SELECT id FROM book_of_business WHERE LOWER(TRIM(client_full_name)) = LOWER($1) AND carrier = $2`,
-        [rec.client_full_name, rec.carrier]
-      );
-      if (existing.rows.length === 0) {
-        await pool.query(
-          `INSERT INTO book_of_business (agent_name, carrier, client_full_name, effective_date, last_commission_date, last_commission_amount, source, status) VALUES ($1, $2, $3, $4, $5, $6, 'statement', 'active')`,
-          [rec.agent_name, rec.carrier, rec.client_full_name, rec.effective_date, rec.payment_period, rec.commission]
-        );
-        added++;
-      } else { skipped++; }
-    }
-    res.json({ added, skipped, total: added + skipped });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
+  async function updateStatus(id, resolution) {
+    try {
+      const status = (resolution === 'Termed' || resolution === 'Deceased') ? 'inactive' : 'active';
+      await apiFetch(`/bob/${id}`, { method: 'PATCH', body: JSON.stringify({ resolution, status }) });
+      setClients(prev => prev.map(c => c.id === id ? { ...c, resolution, status } : c));
+      loadData();
+    } catch (e) { console.error(e); }
+  }
 
-// DELETE a single BOB client
-router.delete('/:id', requireAuth, async (req, res) => {
-  try {
-    const pool = getPool();
-    await pool.query('DELETE FROM book_of_business WHERE id = $1', [req.params.id]);
-    res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-});
+  async function deleteClient(id) {
+    setDeleting(id);
+    try {
+      await apiFetch(`/bob/${id}`, { method: 'DELETE' });
+      setClients(prev => prev.filter(c => c.id !== id));
+      setConfirmDelete(null);
+      loadData();
+    } catch (e) { console.error(e); }
+    finally { setDeleting(null); }
+  }
 
-module.exports = router;
+  async function deleteCarrier(carrier) {
+    try {
+      await apiFetch('/bob/bulk-delete', { method: 'POST', body: JSON.stringify({ carrier }) });
+      setConfirmCarrierDelete(null);
+      loadData(); loadClients();
+    } catch (e) { console.error(e); }
+  }
+
+  async function handleBOBUpload(e) {
+    const file = e.target.files[0];
+    if (!file || !uploadCarrier) return;
+    setUploadStatus('Uploading...');
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('carrier', uploadCarrier);
+    try {
+      const result = await apiUpload('/bob/upload', fd);
+      setUploadStatus(`Done! Added ${result.added} new, updated ${result.updated} existing clients for ${result.carrier}`);
+      loadData(); loadClients();
+    } catch (err) { setUploadStatus('Error: ' + err.message); }
+    e.target.value = '';
+  }
+
+  const activeCount = clients.filter(c => c.status === 'active').length;
+  const termedCount = clients.filter(c => c.status === 'inactive').length;
+
+  const tabStyle = (id) => ({
+    padding:'7px 14px', border:'none', background:'none', fontSize:13, cursor:'pointer',
+    borderBottom: tab===id ? '2px solid var(--blue)' : '2px solid transparent',
+    color: tab===id ? 'var(--blue)' : 'var(--text-muted)',
+    fontWeight: tab===id ? 600 : 400, marginBottom:-1
+  });
+
+  return (
+    <div>
+      {/* Delete client modal */}
+      {confirmDelete && (
+        <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.4)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center'}}>
+          <div style={{background:'#ffffff',borderRadius:12,padding:24,width:360,boxShadow:'0 8px 32px rgba(0,0,0,0.2)',border:'1px solid #e0e0e0'}}>
+            <div style={{fontWeight:600,fontSize:15,marginBottom:8}}>Remove from BOB?</div>
+            <div style={{fontSize:13,color:'var(--text-muted)',marginBottom:4}}><strong>{confirmDelete.client_full_name}</strong></div>
+            <div style={{fontSize:12,color:'var(--text-muted)',marginBottom:16}}>{confirmDelete.carrier} · {confirmDelete.agent_name}</div>
+            <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+              <button onClick={()=>setConfirmDelete(null)} className="btn">Cancel</button>
+              <button onClick={()=>deleteClient(confirmDelete.id)} style={{background:'#E24B4A',color:'#fff',border:'none',borderRadius:6,padding:'7px 16px',fontSize:13,fontWeight:600,cursor:'pointer'}} disabled={deleting===confirmDelete.id}>
+                {deleting===confirmDelete.id ? 'Removing...' : 'Remove'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete carrier modal */}
+      {confirmCarrierDelete && (
+        <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.4)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center'}}>
+          <div style={{background:'#ffffff',borderRadius:12,padding:24,width:380,boxShadow:'0 8px 32px rgba(0,0,0,0.2)',border:'1px solid #e0e0e0'}}>
+            <div style={{fontWeight:600,fontSize:15,marginBottom:8,color:'#E24B4A'}}>Delete all {confirmCarrierDelete} clients?</div>
+            <div style={{fontSize:13,color:'var(--text-muted)',marginBottom:16}}>This will remove all BOB clients for {confirmCarrierDelete}. You can re-upload their BOB export to restore them.</div>
+            <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+              <button onClick={()=>setConfirmCarrierDelete(null)} className="btn">Cancel</button>
+              <button onClick={()=>deleteCarrier(confirmCarrierDelete)} style={{background:'#E24B4A',color:'#fff',border:'none',borderRadius:6,padding:'7px 16px',fontSize:13,fontWeight:600,cursor:'pointer'}}>
+                Delete all
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="page-header">
+        <div className="page-title">Book of Business</div>
+        <div className="page-sub">Active clients across all carriers</div>
+      </div>
+      <div className="page-body">
+
+        <div className="kpi-grid" style={{marginBottom:14}}>
+          <div className="kpi-card"><div className="kpi-label">Active clients</div><div className="kpi-value blue">{summary?.totalActive||0}</div></div>
+          <div className="kpi-card"><div className="kpi-label">Termed / Deceased</div><div className="kpi-value">{termedCount}</div></div>
+          <div className="kpi-card"><div className="kpi-label">Carriers tracked</div><div className="kpi-value">{summary?.byCarrier?.length||0}</div></div>
+          <div className="kpi-card"><div className="kpi-label">New this month</div><div className="kpi-value green">{summary?.newEnrollments||0}</div></div>
+        </div>
+
+        {buildStatus && (
+          <div className="alert alert-success" style={{marginBottom:14,display:'flex',alignItems:'center'}}>
+            {buildStatus}
+            <button onClick={()=>setBuildStatus('')} style={{marginLeft:'auto',background:'none',border:'none',cursor:'pointer',fontSize:14}}>×</button>
+          </div>
+        )}
+
+        <div style={{display:'flex',gap:8,marginBottom:12,borderBottom:'1px solid var(--border)',flexWrap:'wrap'}}>
+          <button style={tabStyle('all')} onClick={()=>{setTab('all');setFilterStatus('active');}}>All active ({summary?.totalActive||0})</button>
+          <button style={tabStyle('termed')} onClick={()=>{setTab('termed');setFilterStatus('inactive');}}>Termed / Deceased ({termedCount})</button>
+          <button style={tabStyle('carriers')} onClick={()=>setTab('carriers')}>By carrier</button>
+          <button style={tabStyle('setup')} onClick={()=>setTab('setup')}>Setup & tools</button>
+        </div>
+
+        {(tab==='all' || tab==='termed') && (
+          <div>
+            <div className="filters" style={{marginBottom:10}}>
+              <select className="filter-select" value={filterCarrier} onChange={e=>setFilterCarrier(e.target.value)}>
+                <option value="">All carriers</option>
+                {(summary?.byCarrier||[]).map(c=><option key={c.carrier} value={c.carrier}>{c.carrier}</option>)}
+              </select>
+              <select className="filter-select" value={filterAgent} onChange={e=>setFilterAgent(e.target.value)}>
+                <option value="">All agents</option>
+                {agents.map(a=><option key={a} value={a}>{a}</option>)}
+              </select>
+              <span className="row-count">{clients.length} clients</span>
+            </div>
+
+            <div className="card" style={{padding:0}}>
+              {clients.length===0 ? (
+                <div className="empty-state">
+                  <div className="empty-icon">📋</div>
+                  <div className="empty-title">{tab==='termed' ? 'No termed clients' : 'No clients yet'}</div>
+                  <div className="empty-sub">{tab==='termed' ? 'Mark clients as Termed or Deceased to see them here' : 'Upload a BOB export or build from statements'}</div>
+                </div>
+              ) : (
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>#</th>
+                        <th>Client</th>
+                        <th>Agent</th>
+                        <th>Carrier</th>
+                        <th>Eff. date</th>
+                        <th>Last commission</th>
+                        <th>Status</th>
+                        <th></th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {clients.map((c,i) => (
+                        <tr key={c.id} style={{background: c.status==='inactive' ? '#FFF5F5' : 'transparent'}}>
+                          <td style={{color:'var(--text-muted)',fontSize:11}}>{i+1}</td>
+                          <td style={{fontWeight:500}}>{c.client_full_name}</td>
+                          <td style={{fontSize:12}}>{c.agent_name||'—'}</td>
+                          <td style={{fontSize:12}}>{c.carrier}</td>
+                          <td style={{fontSize:11,color:'var(--text-muted)'}}>{c.effective_date||'—'}</td>
+                          <td style={{fontWeight:600,color:'var(--green)'}}>{fmt(c.last_commission_amount)}</td>
+                          <td>
+                            <select value={c.resolution||''} onChange={e=>updateStatus(c.id,e.target.value)}
+                              style={{fontSize:11,padding:'3px 6px',borderRadius:'var(--radius)',border:'1px solid var(--border)',background: c.status==='inactive'?'#FCE8E8':'var(--gray-50)',color:'var(--text)'}}>
+                              {STATUSES.map(r=><option key={r} value={r}>{r||'Active'}</option>)}
+                            </select>
+                          </td>
+                          <td>
+                            <button onClick={()=>setConfirmDelete(c)}
+                              style={{background:'none',border:'none',cursor:'pointer',color:'var(--text-muted)',fontSize:14,padding:'2px 6px',borderRadius:4}}>
+                              ✕
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {tab==='carriers' && (
+          <div className="card" style={{padding:0}}>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr><th>Carrier</th><th>Active clients</th><th>Source</th><th>Last updated</th><th></th><th></th></tr>
+                </thead>
+                <tbody>
+                  {(summary?.byCarrier||[]).map((c,i) => (
+                    <tr key={i} onClick={()=>{ setFilterCarrier(c.carrier); setFilterStatus('active'); setTab('all'); }} style={{cursor:'pointer'}}>
+                      <td style={{fontWeight:500,color:'#185FA5'}}>{c.carrier}</td>
+                      <td style={{fontWeight:600,color:'#185FA5'}}>{c.count}</td>
+                      <td>{(summary?.bySource||[]).find(s=>s.source==='bob_export')
+                        ? <span className="badge badge-blue">BOB export</span>
+                        : <span className="badge badge-gray">Statements only</span>}</td>
+                      <td style={{fontSize:11,color:'var(--text-muted)'}}>{c.last_updated?new Date(c.last_updated).toLocaleDateString():'—'}</td>
+                      <td style={{fontSize:11,color:'var(--text-muted)'}}>View →</td>
+                      <td onClick={e=>e.stopPropagation()}>
+                        <button onClick={()=>setConfirmCarrierDelete(c.carrier)}
+                          style={{background:'none',border:'1px solid #F7C1C1',borderRadius:6,padding:'3px 10px',fontSize:11,cursor:'pointer',color:'#E24B4A',fontWeight:600}}>
+                          Delete
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {tab==='setup' && (
+          <div>
+            <div className="card" style={{marginBottom:14}}>
+              <div className="card-title">Run monthly renewal check</div>
+              <p style={{fontSize:13,color:'var(--text-muted)',marginBottom:12}}>
+                Select a statement period and run the check — compares every BOB client against that month's commission records.
+              </p>
+              <div style={{display:'flex',gap:10,alignItems:'flex-end',flexWrap:'wrap'}}>
+                <div>
+                  <div className="form-label">Statement period</div>
+                  <select className="filter-select" value={checkPeriod} onChange={e=>setCheckPeriod(e.target.value)}>
+                    <option value="">Select period</option>
+                    {periods.filter(p => {
+                      if (!p || p === 'Unknown') return false;
+                      const s = String(p);
+                      return s.match(/^\d{6}$/) || s.match(/^\d{1,2}\/\d{4}$/) || s.match(/^\d{1,2}\/\d{2}\/\d{4}$/);
+                    }).map(p => {
+                      let label = p;
+                      const s = String(p);
+                      if (s.match(/^\d{6}$/)) {
+                        const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+                        label = months[parseInt(s.slice(4,6))-1] + ' ' + s.slice(0,4);
+                      } else if (s.match(/^\d{2}\/\d{4}$/)) {
+                        const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+                        label = months[parseInt(s.slice(0,2))-1] + ' ' + s.slice(3);
+                      }
+                      return <option key={p} value={p}>{label}</option>;
+                    })}
+                  </select>
+                </div>
+                <button className="btn btn-primary" onClick={runRenewalCheck} disabled={loading||!checkPeriod}>
+                  {loading?<><span className="spinner"></span> Checking...</>:'Run renewal check →'}
+                </button>
+              </div>
+            </div>
+
+            <div className="card" style={{marginBottom:14}}>
+              <div className="card-title">Build BOB from existing statements</div>
+              <p style={{fontSize:13,color:'var(--text-muted)',marginBottom:12}}>
+                Automatically populate your Book of Business from all commission records already uploaded.
+              </p>
+              <button className="btn btn-primary" onClick={buildFromStatements}>Build BOB from statements →</button>
+            </div>
+
+            <div className="card">
+              <div className="card-title">Upload carrier BOB export</div>
+              <p style={{fontSize:13,color:'var(--text-muted)',marginBottom:12}}>
+                Upload a BOB export file directly from a carrier portal for more accurate tracking.
+              </p>
+              {uploadStatus && (
+                <div className={`alert ${uploadStatus.startsWith('Error')?'alert-error':'alert-success'}`} style={{marginBottom:12}}>
+                  {uploadStatus}
+                </div>
+              )}
+              <div style={{display:'flex',gap:10,alignItems:'flex-end',flexWrap:'wrap'}}>
+                <div>
+                  <div className="form-label">Carrier</div>
+                  <select className="filter-select" value={uploadCarrier} onChange={e=>setUploadCarrier(e.target.value)}>
+                    <option value="">Select carrier</option>
+                    {CARRIERS.map(c=><option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <div className="form-label">BOB export file (.xlsx or .csv)</div>
+                  <input type="file" accept=".xlsx,.csv,.xls" disabled={!uploadCarrier} onChange={handleBOBUpload} style={{fontSize:12}}/>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
