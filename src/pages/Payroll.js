@@ -126,8 +126,11 @@ export default function Payroll({ user }) {
     if (!period) return;
     setLoading(true);
     try {
-      // Get Agent Commission records for this period from NHP
-      const data = await apiFetch(`/records?period=${encodeURIComponent(period)}&classification=Agent Commission&limit=500`);
+      // 'all' means no period filter — show everything unpaid
+      const url = period === 'all'
+        ? `/records?classification=Agent%20Commission&limit=1000`
+        : `/records?period=${encodeURIComponent(period)}&classification=Agent%20Commission&limit=500`;
+      const data = await apiFetch(url);
       const allRecs = (data.records || []).filter(r =>
         !isYourTeam(r.agent_name) && parseFloat(r.commission) > 0
       );
@@ -184,7 +187,7 @@ export default function Payroll({ user }) {
   function exportStatement(agent) {
     const payout = payouts.find(p => p.agent === agent);
     if (!payout) return;
-    const periodLabel = formatPeriodLabel(selectedPeriod) || selectedPeriod;
+    const periodLabel = selectedPeriod === 'all' ? 'All Periods' : (formatPeriodLabel(selectedPeriod) || selectedPeriod);
     const headers = ['Client', 'Carrier', 'Effective Date', 'Commission'];
     const rows = payout.records.map(r => [r.client_full_name, r.carrier, r.effective_date, r.commission]);
     const csv = [
@@ -206,7 +209,7 @@ export default function Payroll({ user }) {
 
   function exportAll() {
     if (!payouts.length) return;
-    const periodLabel = formatPeriodLabel(selectedPeriod) || selectedPeriod;
+    const periodLabel = selectedPeriod === 'all' ? 'All Periods' : (formatPeriodLabel(selectedPeriod) || selectedPeriod);
     const lines = [`NHP Payout Summary — ${periodLabel}`, `Generated: ${new Date().toLocaleDateString()}`, ``];
     for (const p of payouts) {
       lines.push(`Agent: ${p.agent}`, `Total: ${fmt(p.total)}`, `Status: ${paidStatus[p.agent] ? `Paid ${paidDates[p.agent]}` : 'Unpaid'}`, `Client,Carrier,Effective,Commission`);
@@ -224,7 +227,7 @@ export default function Payroll({ user }) {
   const totalPaid = payouts.filter(p => paidStatus[p.agent]).reduce((s, p) => s + p.total, 0);
   const totalUnpaid = totalOwed - totalPaid;
   const paidCount = payouts.filter(p => paidStatus[p.agent]).length;
-  const periodLabel = formatPeriodLabel(selectedPeriod) || selectedPeriod;
+  const periodLabel = selectedPeriod === 'all' ? 'All Periods' : (formatPeriodLabel(selectedPeriod) || selectedPeriod);
 
   const tabStyle = (id) => ({
     padding: '7px 14px', border: 'none', background: 'none', fontSize: 13, cursor: 'pointer',
@@ -257,6 +260,7 @@ export default function Payroll({ user }) {
                   <div className="form-label">Select month</div>
                   <select className="filter-select" value={selectedPeriod} onChange={e => handlePeriodChange(e.target.value)} style={{ minWidth: 160 }}>
                     <option value="">Select period...</option>
+                    <option value="all">— All periods (show everything) —</option>
                     {periods.map(p => {
                       const label = formatPeriodLabel(p);
                       return label ? <option key={p} value={p}>{label}</option> : null;
@@ -352,6 +356,15 @@ export default function Payroll({ user }) {
                       </tr>
                     ))}
                   </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
                 </table>
               </div>
             )}
