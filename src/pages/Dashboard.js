@@ -169,7 +169,7 @@ export default function Dashboard({ user, onNavigate }) {
     <>
       <div className="page-header">
         <div className="page-title">Dashboard</div>
-        <div className="page-sub">Welcome back, {user.name.split(' ')[0]} — here's your commission overview</div>
+        <div className="page-sub">Welcome back, {user.name.split(' ')[0]} 👋</div>
       </div>
 
       <div style={{display:'flex',height:'calc(100vh - 100px)',overflow:'hidden'}}>
