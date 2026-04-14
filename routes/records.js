@@ -12,7 +12,7 @@ function requireAdmin(req, res, next) {
 router.get('/', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
-    const { agent, carrier, period, classification, planType, limit = 500, offset = 0 } = req.query;
+    const { agent, carrier, period, classification, planType, upload_id, limit = 500, offset = 0 } = req.query;
     let where = [], params = [], idx = 1;
     if (req.user.role === 'agent') { where.push(`agent_name ILIKE $${idx++}`); params.push(`%${req.user.name}%`); }
     if (agent) { where.push(`agent_name = $${idx++}`); params.push(agent); }
@@ -20,6 +20,7 @@ router.get('/', requireAuth, async (req, res) => {
     if (period) { where.push(`payment_period = $${idx++}`); params.push(period); }
     if (classification) { where.push(`classification = $${idx++}`); params.push(classification); }
     if (planType) { where.push(`plan_type = $${idx++}`); params.push(planType); }
+    if (upload_id) { where.push(`upload_id = $${idx++}`); params.push(parseInt(upload_id)); }
     const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
     const records = await pool.query(
       `SELECT id, agent_name, carrier, plan_type, client_full_name, effective_date, premium, commission, classification, payment_period, policy_number, created_at FROM commission_records ${wc} ORDER BY created_at DESC LIMIT $${idx++} OFFSET $${idx++}`,
