@@ -81,6 +81,12 @@ function detectCarrierFromFilename(filename) {
   if (f.includes('ambetter')) return 'Ambetter';
   if (f.includes('florida_blue') || f.includes('bcbs') || f.includes('floridablue')) return 'Florida Blue';
   if (f.includes('oscar')) return 'Oscar Health';
+  if (f.includes('avmed') || f.includes('av_med')) return 'AVMED';
+  if (f.includes('doctors') || f.includes('doctor_')) return 'DOCTORS';
+  if (f.includes('sunshine')) return 'Sunshine Health';
+  if (f.includes('gold_kidney') || f.includes('goldkidney')) return 'Gold Kidney';
+  if (f.includes('simply')) return 'Simply';
+  if (f.includes('ambetter')) return 'Ambetter';
   return 'Unknown';
 }
 
@@ -603,13 +609,19 @@ function parseSolisRows(wb, filename) {
 
     if (!client || commission === 0) continue;
 
-    const classification = commission < 0 ? 'Chargeback'
-      : paymentType.includes('initial') ? 'New Business'
-      : paymentType.includes('renewal') ? 'Renewal'
-      : paymentType.includes('chargeback') ? 'Chargeback'
-      : 'Agency Override';
-
+    // Solis labels AEP new enrollments as "Renewal Compensation"
+    // Override: if eff date is in the current year, it's a new enrollment
     const effRaw = row['Commission Eff. Date'];
+    const effYearCheck = effRaw ? new Date(effRaw).getFullYear() : null;
+    const currentYear = new Date().getFullYear();
+    const isNewEnrollment = effYearCheck && effYearCheck >= currentYear;
+
+    const classification = commission < 0 ? 'Chargeback'
+      : paymentType.includes('chargeback') ? 'Chargeback'
+      : paymentType.includes('initial') ? 'New Business'
+      : isNewEnrollment ? 'New Business'
+      : paymentType.includes('renewal') ? 'Renewal'
+      : 'Agency Override';
     let period = '';
     if (effRaw) {
       const d = new Date(effRaw);
