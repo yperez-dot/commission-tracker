@@ -27,6 +27,83 @@ function normPeriod(p) {
   return null;
 }
 
+// Normalize a name to lowercase, handle "LAST, FIRST" format
+function normName(name) {
+  if (!name) return '';
+  const s = String(name).toLowerCase().trim();
+  if (s.includes(',')) {
+    const parts = s.split(',').map(p => p.trim());
+    return (parts[1] + ' ' + parts[0]).replace(/\s+/g, ' ').trim();
+  }
+  return s.replace(/\s+/g, ' ').trim();
+}
+
+// Generate name variants to handle Humana's LASTNAME FIRSTNAME format
+function nameVariants(name) {
+  if (!name) return [];
+  const norm = normName(name);
+  const parts = norm.split(' ').filter(Boolean);
+  const result = [norm];
+
+  if (parts.length >= 2) {
+    // Strip single-letter middle initial from end: "hector proano alcivar p" → "hector proano alcivar"
+    const noTrailingInitial = parts.filter((p, i) => !(i === parts.length - 1 && p.length === 1)).join(' ');
+    if (noTrailingInitial !== norm) result.push(noTrailingInitial);
+
+    // Reversed word order: "hector proano alcivar" → "alcivar proano hector"
+    const reversed = [...parts].reverse().join(' ');
+    if (!result.includes(reversed)) result.push(reversed);
+
+    // Reversed without trailing initial
+    const partsNoInitial = parts.filter((p, i) => !(i === parts.length - 1 && p.length === 1));
+    const reversedNoInitial = [...partsNoInitial].reverse().join(' ');
+    if (!result.includes(reversedNoInitial)) result.push(reversedNoInitial);
+  }
+
+  return result;
+}
+
+function normCarrier(c) {
+  const s = String(c || '').toLowerCase();
+  if (s.includes('united') || s.includes('uhc')) return 'unitedhealthcare';
+  if (s.includes('humana')) return 'humana';
+  if (s.includes('aetna')) return 'aetna';
+  if (s.includes('devoted')) return 'devoted';
+  if (s.includes('cigna')) return 'cigna';
+  if (s.includes('oscar')) return 'oscar health';
+  if (s.includes('florida blue') || s.includes('bcbs')) return 'florida blue';
+  if (s.includes('gold kidney')) return 'gold kidney';
+  if (s.includes('simply')) return 'simply';
+  if (s.includes('molina')) return 'molina';
+  if (s.includes('solis')) return 'solis';
+  return s;
+}
+
+function periodToDate(p) {
+  if (!p) return null;
+  const s = String(p).trim();
+  if (s.match(/^\d{6}$/)) return new Date(parseInt(s.slice(0,4)), parseInt(s.slice(4,6))-1, 1);
+  const m1 = s.match(/^(\d{1,2})\/(\d{4})$/);
+  if (m1) return new Date(parseInt(m1[2]), parseInt(m1[1])-1, 1);
+  const m2 = s.match(/^(\d{1,2})\/\d{2}\/(\d{4})$/);
+  if (m2) return new Date(parseInt(m2[2]), parseInt(m2[1])-1, 1);
+  return null;
+}
+
+function parseEffDate(d) {
+  if (!d) return null;
+  const s = String(d).trim();
+  if (s.match(/^\d{1,2}\/\d{1,2}\/\d{4}$/)) {
+    const [m,,y] = s.split('/');
+    return new Date(parseInt(y), parseInt(m)-1, 1);
+  }
+  if (s.match(/^\d{4}-\d{2}-\d{2}/)) {
+    const [y, m] = s.split('-');
+    return new Date(parseInt(y), parseInt(m)-1, 1);
+  }
+  return null;
+}
+
 export default function MissingRenewals({ user }) {
   const [periods, setPeriods] = useState([]);
   const [selectedPeriod, setSelectedPeriod] = useState('');
@@ -64,11 +141,12 @@ export default function MissingRenewals({ user }) {
     setRows([]);
     try {
       const targetNorm = normPeriod(selectedPeriod);
+      const checkDate = periodToDate(selectedPeriod);
 
       const bobData = await apiFetch('/bob?status=active');
       const bobClients = bobData || [];
 
-      const allRecData = await apiFetch(`/records?limit=10000&periods=${encodeURIComponent(targetNorm || selectedPeriod)}`);
+      const allRecData = await apiFetch('/records?limit=5000');
       const allRecs = (allRecData.records || []).filter(r => {
         if (!r.payment_period) return false;
         if (r.payment_period === selectedPeriod) return true;
@@ -76,7 +154,7 @@ export default function MissingRenewals({ user }) {
         return n && targetNorm && n === targetNorm;
       });
 
-      // Full name lookup
+      // Build full-name lookup: "normname|carrier" → records[]
       const recMap = {};
       for (const r of allRecs) {
         const key = normName(r.client_full_name) + '|' + normCarrier(r.carrier);
@@ -84,64 +162,58 @@ export default function MissingRenewals({ user }) {
         recMap[key].push(r);
       }
 
-      // Last name fuzzy lookup
+      // Build last-name lookup for fuzzy fallback
       const lastNameMap = {};
       for (const r of allRecs) {
-        const n = normName(r.client_full_name);
-        const last = n.split(' ').pop();
-        const key = last + '|' + normCarrier(r.carrier);
-        if (!lastNameMap[key]) lastNameMap[key] = [];
-        lastNameMap[key].push(r);
+        const parts = normName(r.client_full_name).split(' ').filter(p => p.length > 1);
+        if (!parts.length) continue;
+        // Index by last significant word
+        const lastKey = parts[parts.length - 1] + '|' + normCarrier(r.carrier);
+        if (!lastNameMap[lastKey]) lastNameMap[lastKey] = [];
+        lastNameMap[lastKey].push(r);
+        // Also index by first significant word (handles reversed names)
+        const firstKey = parts[0] + '|' + normCarrier(r.carrier);
+        if (!lastNameMap[firstKey]) lastNameMap[firstKey] = [];
+        lastNameMap[firstKey].push(r);
       }
 
-      const checkDate = periodToDate(selectedPeriod);
       const built = [];
-
-      console.log('[MR DEBUG] targetNorm:', targetNorm);
-      console.log('[MR DEBUG] allRecs count:', allRecs.length);
-      console.log('[MR DEBUG] bobClients count:', bobClients.length);
-      console.log('[MR DEBUG] sample rec periods:', allRecs.slice(0,3).map(r => r.payment_period));
-      console.log('[MR DEBUG] recMap keys sample:', Object.keys(recMap).slice(0,5));
 
       for (const client of bobClients) {
         const nc = normCarrier(client.carrier);
 
+        // Skip clients enrolled in same calendar year or later than check period
         const effDate = parseEffDate(client.effective_date);
-        // Skip clients enrolled in the same calendar year or later than the check period
-        // e.g. Mar 2026 check → skip anyone enrolled in 2026 or later
         const checkYear = checkDate ? checkDate.getFullYear() : null;
         const effYear = effDate ? effDate.getFullYear() : null;
         if (checkYear && effYear && effYear >= checkYear) continue;
 
         // Try all name variants for matching
         const variants = nameVariants(client.client_full_name);
-        if (client.client_full_name?.toUpperCase().includes('HECTOR')) {
-          console.log('[MR DEBUG HECTOR] variants:', variants);
-          console.log('[MR DEBUG HECTOR] nc:', nc);
-          console.log('[MR DEBUG HECTOR] keys to try:', variants.map(v => v + '|' + nc));
-          console.log('[MR DEBUG HECTOR] recMap has:', variants.map(v => v + '|' + nc).filter(k => recMap[k]));
-        }
         let matchedRecs = [];
+
+        // 1. Try exact variant match
         for (const v of variants) {
-          if (recMap[v + '|' + nc] && recMap[v + '|' + nc].length) {
-            matchedRecs = recMap[v + '|' + nc];
+          const k = v + '|' + nc;
+          if (recMap[k] && recMap[k].length) {
+            matchedRecs = recMap[k];
             break;
           }
         }
-        // Also try last-name-only map with variants
+
+        // 2. Try last-name/first-name fuzzy match
         if (!matchedRecs.length) {
-          for (const v of variants) {
-            const vParts = v.split(' ').filter(p => p.length > 1);
-            for (const part of vParts) {
-              const lk = part + '|' + nc;
-              if (lastNameMap[lk] && lastNameMap[lk].length) {
-                matchedRecs = lastNameMap[lk];
-                break;
-              }
+          const normClient = normName(client.client_full_name);
+          const clientParts = normClient.split(' ').filter(p => p.length > 1);
+          for (const part of clientParts) {
+            const k = part + '|' + nc;
+            if (lastNameMap[k] && lastNameMap[k].length) {
+              matchedRecs = lastNameMap[k];
+              break;
             }
-            if (matchedRecs.length) break;
           }
         }
+
         const commission = matchedRecs.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0);
 
         built.push({
@@ -167,90 +239,20 @@ export default function MissingRenewals({ user }) {
     finally { setLoading(false); }
   }
 
-  function normName(name) {
-    if (!name) return '';
-    const s = String(name).toLowerCase().trim();
-    // Handle LAST, FIRST format
-    if (s.includes(',')) {
-      const [last, first] = s.split(',').map(p => p.trim());
-      return `${first} ${last}`.replace(/\s+/g, ' ').trim();
-    }
-    return s.replace(/\s+/g, ' ').trim();
-  }
-
-  // Generate all name variants to try matching
-  function nameVariants(name) {
-    if (!name) return [];
-    const s = normName(name);
-    const parts = s.split(' ').filter(Boolean);
-    if (parts.length < 2) return [s];
-    const variants = new Set();
-    variants.add(s);
-    // Strip trailing single letter (middle initial like HECTOR P)
-    const noInitial = parts.filter(p => p.length > 1).join(' ');
-    if (noInitial !== s) variants.add(noInitial);
-    // Try reversed: if "PROANO ALCIVAR HECTOR" → "HECTOR PROANO ALCIVAR"
-    const reversed = [...parts].reverse().join(' ');
-    variants.add(reversed);
-    // Reversed without initial
-    const reversedNoInitial = parts.filter(p => p.length > 1).reverse().join(' ');
-    variants.add(reversedNoInitial);
-    // Last word only (surname matching)
-    const significantParts = parts.filter(p => p.length > 1);
-    if (significantParts.length) variants.add(significantParts[significantParts.length - 1]);
-    return [...variants];
-  }
-
-  function normCarrier(c) {
-    const s = String(c || '').toLowerCase();
-    if (s.includes('united') || s.includes('uhc')) return 'unitedhealthcare';
-    if (s.includes('humana')) return 'humana';
-    if (s.includes('aetna')) return 'aetna';
-    if (s.includes('devoted')) return 'devoted';
-    if (s.includes('cigna')) return 'cigna';
-    if (s.includes('oscar')) return 'oscar health';
-    if (s.includes('florida blue') || s.includes('bcbs')) return 'florida blue';
-    if (s.includes('gold kidney')) return 'gold kidney';
-    if (s.includes('simply')) return 'simply';
-    if (s.includes('molina')) return 'molina';
-    return s;
-  }
-
-  function periodToDate(p) {
-    if (!p) return null;
-    const s = String(p).trim();
-    if (s.match(/^\d{6}$/)) return new Date(parseInt(s.slice(0,4)), parseInt(s.slice(4,6))-1, 1);
-    const m1 = s.match(/^(\d{1,2})\/(\d{4})$/);
-    if (m1) return new Date(parseInt(m1[2]), parseInt(m1[1])-1, 1);
-    const m2 = s.match(/^(\d{1,2})\/\d{2}\/(\d{4})$/);
-    if (m2) return new Date(parseInt(m2[2]), parseInt(m2[1])-1, 1);
-    return null;
-  }
-
-  function parseEffDate(d) {
-    if (!d) return null;
-    const s = String(d).trim();
-    if (s.match(/^\d{1,2}\/\d{1,2}\/\d{4}$/)) {
-      const [m,,y] = s.split('/');
-      return new Date(parseInt(y), parseInt(m)-1, 1);
-    }
-    if (s.match(/^\d{4}-\d{2}-\d{2}/)) {
-      const [y, m] = s.split('-');
-      return new Date(parseInt(y), parseInt(m)-1, 1);
-    }
-    return null;
-  }
-
   async function openClient(row) {
     setSelectedClient(row);
     setClientLoading(true);
     setClientRecords([]);
     try {
-      const data = await apiFetch(`/records?limit=100`);
+      const data = await apiFetch(`/records?limit=200`);
       const recs = (data.records || []).filter(r => {
-        const lastName = row.client.toLowerCase().split(' ').pop();
-        return r.client_full_name?.toLowerCase().includes(lastName) &&
-          normCarrier(r.carrier) === normCarrier(row.carrier);
+        const normClient = normName(row.client);
+        const normRecord = normName(r.client_full_name);
+        if (normCarrier(r.carrier) !== normCarrier(row.carrier)) return false;
+        if (normClient === normRecord) return true;
+        // Check any variant
+        return nameVariants(row.client).some(v => v === normRecord) ||
+               nameVariants(r.client_full_name).some(v => v === normClient);
       });
       setClientRecords(recs);
     } catch(e) { console.error(e); }
@@ -292,16 +294,15 @@ export default function MissingRenewals({ user }) {
 
   return (
     <div>
-      {/* Client detail modal */}
       {selectedClient && (
         <div style={{ position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.5)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center',padding:20 }}>
-          <div style={{ background:'#ffffff',borderRadius:12,width:'90%',maxWidth:700,maxHeight:'80vh',display:'flex',flexDirection:'column',boxShadow:'0 8px 40px rgba(0,0,0,0.25)' }}>
+          <div style={{ background:'#ffffff',borderRadius:12,width:'90%',maxWidth:700,maxHeight:'80vh',display:'flex',flexDirection:'column',boxShadow:'0 8px 40px rgba(0,0,0,0.2)' }}>
             <div style={{ padding:'14px 20px',borderBottom:'1px solid var(--border)',display:'flex',alignItems:'center',justifyContent:'space-between' }}>
               <div>
-                <div style={{ fontWeight:700,fontSize:15 }}>{selectedClient.client}</div>
+                <div style={{ fontWeight:500,fontSize:15 }}>{selectedClient.client}</div>
                 <div style={{ fontSize:12,color:'var(--text-muted)',marginTop:2 }}>
                   {selectedClient.carrier} · {selectedClient.agent} · Effective {selectedClient.effectiveDate}
-                  {selectedClient.isMissing && <span style={{ marginLeft:8,background:'#FCE8E8',color:'#A32D2D',borderRadius:4,padding:'1px 6px',fontSize:11,fontWeight:600 }}>Missing</span>}
+                  {selectedClient.isMissing && <span style={{ marginLeft:8,background:'#F5EAE4',color:'#7A3D1F',borderRadius:4,padding:'1px 6px',fontSize:11,fontWeight:500 }}>Missing</span>}
                 </div>
               </div>
               <button onClick={() => setSelectedClient(null)} style={{ background:'none',border:'none',fontSize:20,cursor:'pointer',color:'var(--text-muted)' }}>✕</button>
@@ -312,15 +313,15 @@ export default function MissingRenewals({ user }) {
               ) : clientRecords.length === 0 ? (
                 <div style={{ padding:40,textAlign:'center' }}>
                   <div style={{ fontSize:24,marginBottom:8 }}>📋</div>
-                  <div style={{ fontWeight:600 }}>No commission records found</div>
+                  <div style={{ fontWeight:500 }}>No commission records found</div>
                   <div style={{ fontSize:12,color:'var(--text-muted)',marginTop:4 }}>No payment history in uploaded statements</div>
                 </div>
               ) : (
                 <table style={{ width:'100%',borderCollapse:'collapse',fontSize:12 }}>
-                  <thead style={{ position:'sticky',top:0,background:'#f8f9fa' }}>
+                  <thead style={{ position:'sticky',top:0,background:'var(--bg-subtle)' }}>
                     <tr>
                       {['Period','Carrier','Commission','Type'].map(h => (
-                        <th key={h} style={{ padding:'8px 14px',textAlign:'left',fontWeight:600,fontSize:11,color:'var(--text-muted)',borderBottom:'1px solid var(--border)' }}>{h}</th>
+                        <th key={h} style={{ padding:'8px 14px',textAlign:'left',fontWeight:500,fontSize:11,color:'var(--text-muted)',borderBottom:'1px solid var(--border)' }}>{h}</th>
                       ))}
                     </tr>
                   </thead>
@@ -329,7 +330,7 @@ export default function MissingRenewals({ user }) {
                       <tr key={i} style={{ borderBottom:'1px solid var(--border)' }}>
                         <td style={{ padding:'8px 14px' }}>{r.payment_period||'—'}</td>
                         <td style={{ padding:'8px 14px',color:'var(--text-muted)' }}>{r.carrier}</td>
-                        <td style={{ padding:'8px 14px',fontWeight:600,color:parseFloat(r.commission)<0?'#E24B4A':'#1D9E75' }}>{fmt(r.commission)}</td>
+                        <td style={{ padding:'8px 14px',fontWeight:500,color:parseFloat(r.commission)<0?'var(--red)':'var(--green)' }}>{fmt(r.commission)}</td>
                         <td style={{ padding:'8px 14px',color:'var(--text-muted)' }}>{r.classification}</td>
                       </tr>
                     ))}
@@ -347,9 +348,9 @@ export default function MissingRenewals({ user }) {
       </div>
       <div className="page-body">
 
-        <div style={{ display:'flex',alignItems:'flex-end',gap:10,flexWrap:'wrap',marginBottom:14,background:'var(--bg)',padding:'12px 14px',borderRadius:8,border:'1px solid var(--border)' }}>
+        <div style={{ display:'flex',alignItems:'flex-end',gap:10,flexWrap:'wrap',marginBottom:14,background:'var(--bg)',padding:'12px 14px',borderRadius:8,border:'0.5px solid var(--border)' }}>
           <div>
-            <div className="form-label" style={{ marginBottom:4,fontSize:11,fontWeight:600,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'0.5px' }}>Statement month</div>
+            <div className="form-label" style={{ marginBottom:4 }}>Statement month</div>
             <select className="filter-select" value={selectedPeriod} onChange={e => { setSelectedPeriod(e.target.value); setRows([]); }} style={{ minWidth:160,fontSize:13 }}>
               <option value="">Select month...</option>
               {periods.map(p => {
@@ -364,8 +365,8 @@ export default function MissingRenewals({ user }) {
           {rows.length > 0 && (
             <>
               <div style={{ display:'flex',alignItems:'center',gap:6,marginLeft:8 }}>
-                <input type="checkbox" id="missingOnly" checked={showMissingOnly} onChange={e => setShowMissingOnly(e.target.checked)} style={{ cursor:'pointer',width:14,height:14 }} />
-                <label htmlFor="missingOnly" style={{ fontSize:13,cursor:'pointer',fontWeight:showMissingOnly?600:400,color:showMissingOnly?'#E24B4A':'var(--text)' }}>Show only missing</label>
+                <input type="checkbox" id="missingOnly" checked={showMissingOnly} onChange={e => setShowMissingOnly(e.target.checked)} style={{ cursor:'pointer',width:14,height:14,accentColor:'var(--accent)' }} />
+                <label htmlFor="missingOnly" style={{ fontSize:13,cursor:'pointer',fontWeight:showMissingOnly?500:400,color:showMissingOnly?'var(--red)':'var(--text)' }}>Show only missing</label>
               </div>
               <select className="filter-select" value={filterAgent} onChange={e => setFilterAgent(e.target.value)}>
                 <option value="">All agents</option>
@@ -375,7 +376,7 @@ export default function MissingRenewals({ user }) {
                 <option value="">All carriers</option>
                 {carriers.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
-              <button onClick={exportReport} style={{ marginLeft:'auto',background:'none',border:'1px solid var(--border)',borderRadius:6,padding:'7px 14px',fontSize:12,cursor:'pointer' }}>
+              <button onClick={exportReport} style={{ marginLeft:'auto',background:'none',border:'0.5px solid var(--border)',borderRadius:6,padding:'7px 14px',fontSize:12,cursor:'pointer',color:'var(--text)' }}>
                 ↓ Download
               </button>
             </>
@@ -387,11 +388,11 @@ export default function MissingRenewals({ user }) {
             <div style={{ display:'flex',gap:6,alignItems:'center',marginBottom:10,fontSize:13,flexWrap:'wrap' }}>
               <span style={{ color:'var(--text-muted)' }}>Total rows: <strong>{filtered.length}</strong></span>
               <span style={{ color:'var(--text-muted)',margin:'0 4px' }}>|</span>
-              <span style={{ color:'#E24B4A',fontWeight:600 }}>Missing: {missingCount}</span>
+              <span style={{ color:'var(--red)',fontWeight:500 }}>Missing: {missingCount}</span>
               <span style={{ color:'var(--text-muted)',margin:'0 4px' }}>|</span>
-              <span style={{ color:'#1D9E75',fontWeight:600 }}>Paid: {paidCount}</span>
+              <span style={{ color:'var(--green)',fontWeight:500 }}>Paid: {paidCount}</span>
               <span style={{ color:'var(--text-muted)',margin:'0 4px' }}>|</span>
-              <span>Commission: <strong style={{ color:'#1D9E75' }}>{fmt(totalCommission)}</strong></span>
+              <span>Commission: <strong style={{ color:'var(--green)' }}>{fmt(totalCommission)}</strong></span>
               <span style={{ fontSize:12,color:'var(--text-muted)',marginLeft:8 }}>— {periodLabel}</span>
             </div>
 
@@ -413,20 +414,20 @@ export default function MissingRenewals({ user }) {
                   </thead>
                   <tbody>
                     {filtered.map((r, i) => (
-                      <tr key={i} style={{ background: r.isMissing ? '#FFF5F5' : 'transparent' }}>
+                      <tr key={i} style={{ background: r.isMissing ? '#FFF8F5' : 'transparent' }}>
                         <td style={{ padding:'4px 6px' }}>
-                          {r.isMissing && <span style={{ display:'block',width:4,height:'100%',background:'#E24B4A',borderRadius:2 }}></span>}
+                          {r.isMissing && <span style={{ display:'block',width:3,height:'100%',background:'var(--red)',borderRadius:2 }}></span>}
                         </td>
                         <td style={{ color:'var(--text-muted)',fontSize:11 }}>{i+1}</td>
-                        <td style={{ fontWeight:500 }}>{r.agent}</td>
+                        <td style={{ fontWeight:400 }}>{r.agent}</td>
                         <td style={{ fontSize:12 }}>{r.carrier}</td>
                         <td>
-                          <button onClick={() => openClient(r)} style={{ background:'none',border:'none',cursor:'pointer',color:'#185FA5',fontWeight:600,padding:0,textDecoration:'underline',fontSize:12,textAlign:'left' }}>
+                          <button onClick={() => openClient(r)} style={{ background:'none',border:'none',cursor:'pointer',color:'var(--accent-dark)',fontWeight:500,padding:0,textDecoration:'underline',fontSize:12,textAlign:'left' }}>
                             {r.client}
                           </button>
                         </td>
                         <td style={{ fontSize:12,color:'var(--text-muted)' }}>{r.effectiveDate||'—'}</td>
-                        <td style={{ fontWeight:600,color:r.isMissing?'var(--text-muted)':'#1D9E75' }}>
+                        <td style={{ fontWeight:500,color:r.isMissing?'var(--text-muted)':'var(--green)' }}>
                           {r.isMissing ? '$0.00' : fmt(r.commission)}
                         </td>
                         <td>
@@ -435,15 +436,15 @@ export default function MissingRenewals({ user }) {
                             : <span className="badge badge-green">Paid</span>}
                         </td>
                         <td style={{ fontSize:12,color:'var(--text-muted)' }}>
-                          {r.monthsMissing > 0 ? <span style={{ color:'#E24B4A',fontWeight:600 }}>{r.monthsMissing} mo</span> : '—'}
+                          {r.monthsMissing > 0 ? <span style={{ color:'var(--red)',fontWeight:500 }}>{r.monthsMissing} mo</span> : '—'}
                         </td>
                       </tr>
                     ))}
                   </tbody>
                   <tfoot>
-                    <tr style={{ background:'var(--gray-50)',fontWeight:600 }}>
+                    <tr style={{ background:'var(--bg-subtle)',fontWeight:500 }}>
                       <td colSpan={6} style={{ padding:'8px 12px',fontSize:12 }}>Total ({filtered.filter(r=>!r.isMissing).length} paid)</td>
-                      <td style={{ padding:'8px 12px',fontSize:12,color:'#1D9E75' }}>{fmt(totalCommission)}</td>
+                      <td style={{ padding:'8px 12px',fontSize:12,color:'var(--green)' }}>{fmt(totalCommission)}</td>
                       <td colSpan={2}></td>
                     </tr>
                   </tfoot>
