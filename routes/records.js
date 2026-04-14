@@ -12,7 +12,7 @@ function requireAdmin(req, res, next) {
 router.get('/', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
-    const { agent, agents, carrier, carriers, period, periods, classification, classifications, planType, payee, upload_id, limit = 500, offset = 0 } = req.query;
+    const { agent, agents, carrier, carriers, period, periods, classification, classifications, planType, payee, search, upload_id, limit = 500, offset = 0 } = req.query;
     let where = [], params = [], idx = 1;
     if (req.user.role === 'agent') { where.push(`cr.agent_name ILIKE $${idx++}`); params.push(`%${req.user.name}%`); }
     if (agents) { const list = agents.split(',').map(a=>a.trim()).filter(Boolean); if (list.length) { where.push(`cr.agent_name = ANY($${idx++})`); params.push(list); } }
@@ -26,6 +26,7 @@ router.get('/', requireAuth, async (req, res) => {
     if (planType) { where.push(`COALESCE(cr.plan_type,'') = $${idx++}`); params.push(planType); }
     if (upload_id) { where.push(`cr.upload_id = $${idx++}`); params.push(parseInt(upload_id)); }
     if (payee) { where.push(`cr.payee = $${idx++}`); params.push(payee); }
+    if (search) { where.push(`(cr.client_full_name ILIKE $${idx} OR cr.agent_name ILIKE $${idx} OR cr.carrier ILIKE $${idx})`); params.push(`%${search}%`); idx++; }
     const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
     const records = await pool.query(
       `SELECT cr.id, cr.agent_name, cr.carrier,
