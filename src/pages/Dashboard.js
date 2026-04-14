@@ -215,12 +215,16 @@ export default function Dashboard({ user, onNavigate }) {
         {/* Main content */}
         <div style={{flex:1,overflowY:'auto',padding:'16px 20px'}}>
 
+
+
+          {/* Active filter pills */}
           {hasFilters && (
-            <div style={{background:'#E6F1FB',border:'1px solid #B5D4F4',borderRadius:8,padding:'10px 14px',display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:14,fontSize:13}}>
-              <span style={{color:'#0C447C'}}>Filtered view — <strong>{(summary?.totalRecords||0).toLocaleString()} records</strong></span>
-              <button onClick={()=>drillDown()} style={{background:'#185FA5',color:'#fff',border:'none',borderRadius:6,padding:'6px 14px',fontSize:12,fontWeight:600,cursor:'pointer'}}>
-                View all records →
-              </button>
+            <div style={{display:'flex',flexWrap:'wrap',gap:6,marginBottom:12,alignItems:'center'}}>
+              <span style={{fontSize:11,color:'var(--text-muted)',fontWeight:600}}>Filtered:</span>
+              {[...selAgents,...selCarriers,...selPeriods.map(p=>formatPeriod(p)),...selTypes,...selPlanTypes].filter(Boolean).map(f=>(
+                <span key={f} style={{background:'#185FA5',color:'#fff',borderRadius:4,padding:'2px 10px',fontSize:11,fontWeight:600}}>{f}</span>
+              ))}
+              <span style={{fontSize:11,color:'var(--text-muted)',marginLeft:4}}>— {(summary?.totalRecords||0).toLocaleString()} records</span>
             </div>
           )}
 
