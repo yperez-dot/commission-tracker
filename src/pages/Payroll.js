@@ -70,7 +70,7 @@ function PayoutRow({ p, isPaid, paidDate, onTogglePaid, onExport }) {
           <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
             <thead>
               <tr>
-                {['Client','Carrier','Effective','Amount'].map(h => (
+                {['Client','Carrier','Effective','Period','Amount'].map(h => (
                   <th key={h} style={{ textAlign: h === 'Amount' ? 'right' : 'left', padding: '6px 8px', color: 'var(--text-muted)', fontWeight: 500, fontSize: 11, borderBottom: '1px solid var(--border)' }}>{h}</th>
                 ))}
               </tr>
@@ -80,7 +80,8 @@ function PayoutRow({ p, isPaid, paidDate, onTogglePaid, onExport }) {
                 <tr key={j}>
                   <td style={{ padding: '5px 8px' }}>{r.client_full_name}</td>
                   <td style={{ padding: '5px 8px', color: 'var(--text-muted)', fontSize: 11 }}>{r.carrier}</td>
-                  <td style={{ padding: '5px 8px', color: 'var(--text-muted)', fontSize: 11 }}>{r.effective_date}</td>
+                  <td style={{ padding: '5px 8px', color: 'var(--text-muted)', fontSize: 11 }}>{r.effective_date || '—'}</td>
+                  <td style={{ padding: '5px 8px', color: 'var(--text-muted)', fontSize: 11 }}>{r.payment_period || '—'}</td>
                   <td style={{ padding: '5px 8px', textAlign: 'right', fontWeight: 600, color: parseFloat(r.commission) < 0 ? '#E24B4A' : '#1D9E75' }}>{fmt(r.commission)}</td>
                 </tr>
               ))}
@@ -136,8 +137,13 @@ export default function Payroll({ user }) {
       );
 
       const grouped = {};
+      const seen = new Set();
       for (const r of allRecs) {
         const agent = r.agent_name || 'Unknown';
+        // Deduplicate by client+carrier+period+amount to avoid counting same record multiple times
+        const dedupKey = `${agent}|${r.client_full_name}|${r.carrier}|${r.payment_period}|${r.commission}`;
+        if (seen.has(dedupKey)) continue;
+        seen.add(dedupKey);
         if (!grouped[agent]) grouped[agent] = { agent, records: [], total: 0 };
         grouped[agent].records.push(r);
         grouped[agent].total += parseFloat(r.commission) || 0;
