@@ -17,8 +17,52 @@ const storage = multer.diskStorage({
   filename: (req, file, cb) => cb(null, `${Date.now()}_${file.originalname.replace(/\s+/g, '_')}`)
 });
 const upload = multer({ storage, limits: { fileSize: 20 * 1024 * 1024 } });
-
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+// ─── Plan type derivation ────────────────────────────────────────────────────
+
+function derivePlanType(carrier, rawPlanType, policyNumber, lob) {
+  const pt = String(rawPlanType || '').toLowerCase().trim();
+  const pn = String(policyNumber || '').toLowerCase().trim();
+  const lb = String(lob || '').toLowerCase().trim();
+
+  if (carrier === 'UnitedHealthcare') {
+    if (['mapd','dsnp','csnp'].includes(pt)) return 'UnitedHealthcare Med Adv';
+    if (pt.includes('medsup') || pt.includes('modmedsup')) return 'UnitedHealthcare Med Supp';
+    if (pt.includes('partd') || pt === 'partd') return 'UnitedHealthcare PDP';
+    return 'UnitedHealthcare Med Adv'; // default UHC
+  }
+
+  if (carrier === 'Humana' || carrier === 'Humana/Devoted') {
+    if (pn.includes('_pdp') || pt.includes('pdp')) return 'Humana PDP';
+    if (pt.includes('dental') || pt === 'idv') return 'Humana Dental';
+    if (pn.includes('_hmo') || pn.includes('_ppo') || pt === 'ma') return 'Humana Med Adv';
+    return 'Humana Med Adv';
+  }
+
+  if (carrier === 'Devoted') return 'Devoted Med Adv';
+
+  if (carrier === 'Aetna') {
+    if (pt.includes('pdp') || pn.includes('pdp')) return 'Aetna PDP';
+    return 'Aetna MAPD';
+  }
+
+  if (carrier === 'Cigna') return 'Cigna ACA';
+  if (carrier === 'Oscar Health') return 'Oscar Health ACA';
+  if (carrier === 'Florida Blue') return 'Florida Blue Med Adv';
+  if (carrier === 'Gold Kidney') return 'Gold Kidney Med Adv';
+  if (carrier === 'Simply') return 'Simply Med Adv';
+  if (carrier === 'Molina') return 'Molina Med Adv';
+  if (carrier === 'WellCare') return 'WellCare Med Adv';
+
+  // NHP/BSI — use LOB
+  if (lb === 'aca') return `${carrier} ACA`;
+  if (lb === 'ma') return `${carrier} Med Adv`;
+
+  return carrier;
+}
+
+// ─── Filename detection ──────────────────────────────────────────────────────
 
 function detectCarrierFromFilename(filename) {
   const f = filename.toLowerCase().replace(/\s+/g, '_');
@@ -42,24 +86,52 @@ function detectCarrierFromFilename(filename) {
 }
 
 function isUHCFile(filename) {
-  const f = filename.toLowerCase().replace(/\s+/g, '_');
-  return f.includes('commission_statement_2737247');
+  return filename.toLowerCase().replace(/\s+/g, '_').includes('commission_statement_2737247');
 }
-
 function isBSIFile(filename) {
   const f = filename.toLowerCase().replace(/\s+/g, '_');
   return f.includes('statement-health_experts') || f.includes('statement_health_experts');
 }
-
 function isNHPFile(filename) {
-  const f = filename.toLowerCase().replace(/\s+/g, '_');
-  return f.includes('the_health_experts_insurance_statement');
+  return filename.toLowerCase().replace(/\s+/g, '_').includes('the_health_experts_insurance_statement');
 }
-
 function isAgencyName(name) {
   const n = String(name || '').toLowerCase().trim();
   return n.includes('the health experts') || n.includes('health experts insurance');
 }
+
+// ─── Date formatting ─────────────────────────────────────────────────────────
+
+function formatDate(value) {
+  if (!value) return '';
+  if (value instanceof Date) {
+    const m = String(value.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(value.getUTCDate()).padStart(2, '0');
+    const y = value.getUTCFullYear();
+    return `${m}/${d}/${y}`;
+  }
+  if (typeof value === 'string') {
+    if (value.match(/\d{1,2}\/\d{1,2}\/\d{4}/)) return value;
+    if (value.match(/\d{4}-\d{2}-\d{2}/)) {
+      const [y, m, d] = value.split('-');
+      return `${m}/${d}/${y}`;
+    }
+    return value;
+  }
+  if (typeof value === 'number') {
+    const s = String(value);
+    if (s.match(/^\d{6}$/)) return s;
+    const date = new Date((value - 25569) * 86400 * 1000);
+    if (isNaN(date.getTime())) return String(value);
+    const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(date.getUTCDate()).padStart(2, '0');
+    const y = date.getUTCFullYear();
+    return `${m}/${d}/${y}`;
+  }
+  return String(value);
+}
+
+// ─── Carrier normalizers ─────────────────────────────────────────────────────
 
 function normalizeBSICarrier(company) {
   const c = String(company || '').toLowerCase();
@@ -88,40 +160,10 @@ function normalizeNHPCarrier(carrierMonth) {
   return String(carrierMonth || '').split(' - ')[0].trim();
 }
 
-function formatDate(value) {
-  if (!value) return '';
-  if (value instanceof Date) {
-    const m = String(value.getUTCMonth() + 1).padStart(2, '0');
-    const d = String(value.getUTCDate()).padStart(2, '0');
-    const y = value.getUTCFullYear();
-    return `${m}/${d}/${y}`;
-  }
-  if (typeof value === 'string') {
-    if (value.match(/\d{1,2}\/\d{1,2}\/\d{4}/)) return value;
-    if (value.match(/\d{4}-\d{2}-\d{2}/)) {
-      const [y, m, d] = value.split('-');
-      return `${m}/${d}/${y}`;
-    }
-    return value;
-  }
-  if (typeof value === 'number') {
-    const s = String(value);
-    // Payment period like 202603
-    if (s.match(/^\d{6}$/)) return s;
-    const date = new Date((value - 25569) * 86400 * 1000);
-    if (isNaN(date.getTime())) return String(value);
-    const m = String(date.getUTCMonth() + 1).padStart(2, '0');
-    const d = String(date.getUTCDate()).padStart(2, '0');
-    const y = date.getUTCFullYear();
-    return `${m}/${d}/${y}`;
-  }
-  return String(value);
-}
+// ─── Parsers ─────────────────────────────────────────────────────────────────
 
-// UHC-specific parser using Writing Agent Name to determine type
 function parseUHCRows(wb) {
   const records = [];
-  // UHC uses 'Commission Transactions' sheet
   const sheetName = wb.SheetNames.find(s => s.toLowerCase().includes('commission trans')) || wb.SheetNames[0];
   const ws = wb.Sheets[sheetName];
   const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
@@ -133,22 +175,19 @@ function parseUHCRows(wb) {
     const policyNumber = String(row['Policy Number'] || '').trim();
     const effectiveDate = formatDate(row['Original Effective Date']);
     const period = String(row['Payment Period'] || '').trim();
-    const commAction = String(row['Commission Action'] || '').trim();
-    const planType = String(row['Plan Type'] || '').trim();
+    const rawPlanType = String(row['Plan Type'] || '').trim();
 
     if (!client || commission === 0) continue;
 
-    // Key rule: Writing Agent = agency name → Agent Commission (you wrote it)
-    // Writing Agent = real person → Agency Override (they wrote it, you get override)
     const isAgency = isAgencyName(writingAgentRaw);
     const recordType = isAgency ? 'Agent Commission' : 'Agency Override';
-    const agentName = isAgency
-      ? 'The Health Experts Insurance'
-      : normalizeAgentName(writingAgentRaw);
+    const agentName = isAgency ? 'The Health Experts Insurance' : normalizeAgentName(writingAgentRaw);
+    const planType = derivePlanType('UnitedHealthcare', rawPlanType, policyNumber, '');
 
     records.push({
       agent: agentName,
       carrier: 'UnitedHealthcare',
+      planType,
       client,
       effectiveDate,
       premium: parseFloat(row['Prem Amount']) || 0,
@@ -182,9 +221,11 @@ function parseBSIRows(rows) {
     const effectiveDate = formatDate(vals[5]);
     const commission = parseFloat(vals[6]) || 0;
     if (!client) continue;
+    const carrier = normalizeBSICarrier(company);
     records.push({
       agent: agent || 'Unknown',
-      carrier: normalizeBSICarrier(company),
+      carrier,
+      planType: derivePlanType(carrier, '', policyNumber, ''),
       client,
       effectiveDate,
       premium: 0,
@@ -215,6 +256,7 @@ function parseNHPRows(wb) {
   }
   if (headerRow < 0) return records;
   const rows = XLSX.utils.sheet_to_json(ws, { raw: true, defval: '', range: headerRow });
+
   for (const row of rows) {
     const agent = normalizeAgentName(String(row['Agent'] || '').trim());
     const carrierRaw = String(row['Carrier-Statement Month'] || '').trim();
@@ -223,12 +265,18 @@ function parseNHPRows(wb) {
     const effectiveDate = formatDate(row['Policy Effective Date']);
     const period = formatDate(row['Commission Month']);
     const nhpType = String(row['Type'] || '').trim();
+    const lob = String(row['LOB'] || '').trim();
     const commission = parseFloat(row['Override']) || 0;
     if (!client || commission === 0) continue;
+
+    const carrier = normalizeNHPCarrier(carrierRaw);
     const recordType = nhpType.toLowerCase().includes('commission') ? 'Agent Commission' : 'Agency Override';
+    const planType = derivePlanType(carrier, '', policyNumber, lob);
+
     records.push({
       agent: agent || 'Unknown',
-      carrier: normalizeNHPCarrier(carrierRaw),
+      carrier,
+      planType,
       client,
       effectiveDate,
       premium: 0,
@@ -242,21 +290,17 @@ function parseNHPRows(wb) {
   return records;
 }
 
+// ─── Upload route ─────────────────────────────────────────────────────────────
+
 router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
   try {
     const pool = getPool();
-
-    const existing = await pool.query(
-      'SELECT id FROM uploads WHERE original_name = $1',
-      [req.file.originalname]
-    );
+    const existing = await pool.query('SELECT id FROM uploads WHERE original_name = $1', [req.file.originalname]);
     if (existing.rows.length > 0) {
       try { fs.unlinkSync(req.file.path); } catch (e) {}
-      return res.status(409).json({
-        error: `"${req.file.originalname}" has already been uploaded. Delete the existing file first if you want to re-upload it.`
-      });
+      return res.status(409).json({ error: `"${req.file.originalname}" has already been uploaded. Delete it first.` });
     }
 
     const wb = XLSX.readFile(req.file.path);
@@ -274,8 +318,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
       if (!rows.length) return res.status(400).json({ error: 'File is empty' });
       const headers = Object.keys(rows[0]);
-      const sample = rows.slice(0, 3);
-      const mapping = await mapColumnsWithAI(headers, sample);
+      const mapping = await mapColumnsWithAI(headers, rows.slice(0, 3));
       records = parseRows(rows, mapping, req.file.originalname);
     }
 
@@ -292,23 +335,15 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
 
     for (const r of records) {
       await pool.query(
-        `INSERT INTO commission_records
-          (upload_id, agent_name, carrier, client_full_name, effective_date, premium, commission, classification, payment_period, policy_number, raw_data)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
-        [uploadId, r.agent, r.carrier, r.client, r.effectiveDate, r.premium || 0, r.commission || 0, r.classification, r.period, r.policyNumber, JSON.stringify(r.raw)]
+        `INSERT INTO commission_records (upload_id, agent_name, carrier, plan_type, client_full_name, effective_date, premium, commission, classification, payment_period, policy_number, raw_data)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        [uploadId, r.agent, r.carrier, r.planType || '', r.client, r.effectiveDate, r.premium || 0, r.commission || 0, r.classification, r.period, r.policyNumber, JSON.stringify(r.raw)]
       );
     }
 
     try { fs.unlinkSync(req.file.path); } catch (e) {}
 
-    res.json({
-      uploadId,
-      filename: req.file.originalname,
-      rowCount: records.length,
-      commissionSum,
-      carriers,
-      preview: records.slice(0, 5)
-    });
+    res.json({ uploadId, filename: req.file.originalname, rowCount: records.length, commissionSum, carriers, preview: records.slice(0, 5) });
 
   } catch (err) {
     console.error('Upload error:', err);
@@ -319,16 +354,9 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
 router.get('/uploads', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
-    const result = await pool.query(`
-      SELECT u.*, usr.name as uploaded_by_name
-      FROM uploads u
-      LEFT JOIN users usr ON u.uploaded_by = usr.id
-      ORDER BY u.uploaded_at DESC
-    `);
+    const result = await pool.query(`SELECT u.*, usr.name as uploaded_by_name FROM uploads u LEFT JOIN users usr ON u.uploaded_by = usr.id ORDER BY u.uploaded_at DESC`);
     res.json(result.rows);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 router.delete('/uploads/:id', requireAuth, async (req, res) => {
@@ -336,42 +364,24 @@ router.delete('/uploads/:id', requireAuth, async (req, res) => {
     const pool = getPool();
     await pool.query('DELETE FROM uploads WHERE id = $1', [req.params.id]);
     res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
+
+// ─── AI column mapping ────────────────────────────────────────────────────────
 
 async function mapColumnsWithAI(headers, sample) {
   try {
     const prompt = `You are parsing an insurance carrier commission statement Excel file.
-
 Column headers found: ${headers.join(', ')}
-
 Sample row: ${JSON.stringify(sample[0])}
+Map these columns to our schema. Respond ONLY with valid JSON, no markdown:
+{"agent":"column name or null","carrier":"column name or null","client":"column name or null","effectiveDate":"column name or null","premium":"column name or null","commission":"column name required","classification":"column name or null","period":"column name or null","policyNumber":"column name or null","planType":"column name for plan type/product type or null"}`;
 
-Map these columns to our schema. Respond ONLY with a valid JSON object, no markdown, no explanation:
-{
-  "agent": "column name for agent/producer/writing agent name, or null",
-  "carrier": "column name for insurance carrier/company name, or null",
-  "client": "column name for client/member/subscriber/insured full name, or null",
-  "effectiveDate": "column name for policy effective date, or null",
-  "premium": "column name for premium/modal premium amount, or null",
-  "commission": "column name for commission/payment/amount paid (the money earned), required - best guess if unclear",
-  "classification": "column name for payment type: renewal/new business/advance/chargeback, or null",
-  "period": "column name for payment period/statement month, or null",
-  "policyNumber": "column name for policy/member ID/contract number, or null"
-}`;
-
-    const msg = await anthropic.messages.create({
-      model: 'claude-opus-4-5',
-      max_tokens: 500,
-      messages: [{ role: 'user', content: prompt }]
-    });
-
+    const msg = await anthropic.messages.create({ model: 'claude-opus-4-5', max_tokens: 500, messages: [{ role: 'user', content: prompt }] });
     const text = msg.content[0].text.replace(/```json|```/g, '').trim();
     return JSON.parse(text);
   } catch (e) {
-    console.error('AI mapping failed, using heuristics:', e.message);
+    console.error('AI mapping failed:', e.message);
     return heuristicMapping(headers);
   }
 }
@@ -388,30 +398,32 @@ function heuristicMapping(headers) {
     commission: find(['commission', 'payment', 'amount', 'earned', 'comp']),
     classification: find(['action', 'type', 'class', 'category', 'renewal']),
     period: find(['payment period', 'period', 'month', 'statement']),
-    policyNumber: find(['policy', 'member id', 'contract', 'certificate'])
+    policyNumber: find(['policy', 'member id', 'contract', 'certificate']),
+    planType: find(['plan type', 'product', 'line', 'benefit'])
   };
 }
 
 function parseRows(rows, mapping, filename) {
   const carrier = detectCarrierFromFilename(filename);
-  return rows
-    .map(row => {
-      const agent = normalizeAgentName(mapping.agent ? String(row[mapping.agent] || '').trim() : '');
-      const recordType = isAgencyName(agent) ? 'Agent Commission' : 'Agency Override';
-      return {
-        agent: agent || 'The Health Experts Insurance',
-        carrier,
-        client: mapping.client ? String(row[mapping.client] || '').trim() : '',
-        effectiveDate: mapping.effectiveDate ? formatDate(row[mapping.effectiveDate]) : '',
-        premium: mapping.premium ? parseFloat(row[mapping.premium]) || 0 : 0,
-        commission: mapping.commission ? parseFloat(row[mapping.commission]) || 0 : 0,
-        classification: mapping.classification ? String(row[mapping.classification] || '').trim() || recordType : recordType,
-        period: mapping.period ? String(row[mapping.period] || '').trim() : 'Unknown',
-        policyNumber: mapping.policyNumber ? String(row[mapping.policyNumber] || '').trim() : '',
-        raw: row
-      };
-    })
-    .filter(r => r.commission > 0 || r.premium > 0 || r.client);
+  return rows.map(row => {
+    const agent = normalizeAgentName(mapping.agent ? String(row[mapping.agent] || '').trim() : '');
+    const rawPlanType = mapping.planType ? String(row[mapping.planType] || '').trim() : '';
+    const policyNumber = mapping.policyNumber ? String(row[mapping.policyNumber] || '').trim() : '';
+    const recordType = isAgencyName(agent) ? 'Agent Commission' : 'Agency Override';
+    return {
+      agent: agent || 'The Health Experts Insurance',
+      carrier,
+      planType: derivePlanType(carrier, rawPlanType, policyNumber, ''),
+      client: mapping.client ? String(row[mapping.client] || '').trim() : '',
+      effectiveDate: mapping.effectiveDate ? formatDate(row[mapping.effectiveDate]) : '',
+      premium: mapping.premium ? parseFloat(row[mapping.premium]) || 0 : 0,
+      commission: mapping.commission ? parseFloat(row[mapping.commission]) || 0 : 0,
+      classification: mapping.classification ? String(row[mapping.classification] || '').trim() || recordType : recordType,
+      period: mapping.period ? String(row[mapping.period] || '').trim() : 'Unknown',
+      policyNumber,
+      raw: row
+    };
+  }).filter(r => r.commission > 0 || r.premium > 0 || r.client);
 }
 
 module.exports = router;
