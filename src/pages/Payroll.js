@@ -257,7 +257,7 @@ export default function Payroll({ user }) {
     <div>
       <div className="page-header">
         <div className="page-title">Payroll</div>
-        <div className="page-sub">Agent payout statements — track who you owe and mark as paid</div>
+        <div className="page-sub">Agent payout statements — track commissions owed and payments</div>
       </div>
       <div className="page-body">
 
