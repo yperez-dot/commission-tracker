@@ -30,7 +30,7 @@ function derivePlanType(carrier, rawPlanType, policyNumber, lob) {
     if (['mapd','dsnp','csnp'].includes(pt)) return 'UnitedHealthcare Med Adv';
     if (pt.includes('medsup') || pt.includes('modmedsup')) return 'UnitedHealthcare Med Supp';
     if (pt.includes('partd') || pt === 'partd') return 'UnitedHealthcare PDP';
-    return 'UnitedHealthcare Med Adv'; // default UHC
+    return 'UnitedHealthcare Med Adv';
   }
 
   if (carrier === 'Humana' || carrier === 'Humana/Devoted') {
@@ -55,7 +55,6 @@ function derivePlanType(carrier, rawPlanType, policyNumber, lob) {
   if (carrier === 'Molina') return 'Molina Med Adv';
   if (carrier === 'WellCare') return 'WellCare Med Adv';
 
-  // NHP/BSI — use LOB
   if (lb === 'aca') return `${carrier} ACA`;
   if (lb === 'ma') return `${carrier} Med Adv`;
 
@@ -96,13 +95,11 @@ function isSolisFile(filename) {
   const f = filename.toLowerCase().replace(/[\s()]/g, '_');
   return f.includes('commissions_ledger') || f.includes('solis');
 }
-
 function isAPLFile(filename) {
   const f = filename.toLowerCase().replace(/[\s()]/g, '_');
   return f.includes('commission-statement') || f.includes('commission_statement_2026') && !f.includes('2737247') ||
     f.includes('integrity') || f.includes('apl');
 }
-
 function isNHPFile(filename) {
   const f = filename.toLowerCase().replace(/[\s()]/g, '_');
   return f.includes('the_health_experts_insurance_statement') ||
@@ -113,116 +110,6 @@ function isNHPFile(filename) {
 function isHumanaFile(filename) {
   const f = filename.toLowerCase().replace(/\s+/g, '_');
   return f.includes('commissiondata') || f.includes('yahoska_perez_med_comm') || f.includes('humana');
-}
-
-function classifyHumana(typeCode, commission) {
-  if (commission < 0) return 'Chargeback';
-  const t = String(typeCode || '').trim().toUpperCase();
-  if (t === 'F') return 'New Business';
-  if (t === 'R') return 'Renewal';
-  return 'Agent Commission';
-}
-
-function parseHumanaRows(wb, filename) {
-  const records = [];
-  // Humana CommissionData files are SpreadsheetML XML — XLSX.js reads them but with different structure
-  // Try standard sheet_to_json first
-  const ws = wb.Sheets[wb.SheetNames[0]];
-  const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true, header: 1 });
-  if (!rows.length) return records;
-
-  // Find header row
-  let headerRow = -1;
-  let headers = [];
-  for (let i = 0; i < Math.min(rows.length, 5); i++) {
-    const row = rows[i];
-    const str = row.map(v => String(v || '')).join('|').toLowerCase();
-    if (str.includes('grpname') || str.includes('wanameam') || str.includes('wasan')) {
-      headerRow = i;
-      headers = row.map(v => String(v || ''));
-      break;
-    }
-  }
-  if (headerRow < 0) {
-    // Try first row as header
-    headers = rows[0].map(v => String(v || ''));
-    headerRow = 0;
-  }
-
-  const col = (name) => {
-    const idx = headers.findIndex(h => h.toLowerCase() === name.toLowerCase());
-    return idx;
-  };
-
-  const grpIdx = col('GrpName');
-  const waIdx = col('WaName');
-  const paidIdx = col('PaidAmount');
-  const monthIdx = col('MonthPaid');
-  const effIdx = col('EffDate');
-  const commentIdx = col('Comment');
-  const fyrIdx = col('FrstYrRnwl');
-  const grpNbrIdx = col('GrpNbr');
-
-  if (grpIdx < 0 || paidIdx < 0) return records;
-
-  // Extract period from filename or MonthPaid
-  const monthMap = {jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12'};
-
-  for (let i = headerRow + 1; i < rows.length; i++) {
-    const row = rows[i];
-    if (!row || !row[grpIdx]) continue;
-
-    const client = String(row[grpIdx] || '').trim();
-    const agentRaw = String(row[waIdx] >= 0 ? row[waIdx] : '').trim();
-    const commission = parseFloat(row[paidIdx]) || 0;
-    const monthPaid = String(row[monthIdx] || '').trim().toLowerCase();
-    const effDate = row[effIdx] ? formatDate(row[effIdx]) : '';
-    const comment = String(row[commentIdx] >= 0 ? row[commentIdx] : '').toLowerCase();
-    const fyr = String(fyrIdx >= 0 ? row[fyrIdx] : '').trim().toUpperCase();
-    const policyNumber = String(grpNbrIdx >= 0 ? row[grpNbrIdx] : '').trim();
-
-    if (!client || commission === 0) continue;
-
-    // Period from MonthPaid (JAN, FEB etc) — need year from filename or EffDate
-    let period = '';
-    if (monthPaid && monthMap[monthPaid]) {
-      // Try to get year from effective date or filename
-      const fn = filename.toLowerCase();
-      const yrMatch = fn.match(/20(\d{2})/);
-      let year = yrMatch ? '20' + yrMatch[1] : new Date().getFullYear().toString();
-      if (effDate) {
-        const effYear = effDate.slice(-4);
-        if (effYear.match(/^20\d{2}$/)) year = effYear;
-      }
-      period = year + monthMap[monthPaid];
-    }
-
-    const classification = commission < 0 ? 'Chargeback'
-      : fyr === 'F' || comment.includes('first year') ? 'New Business'
-      : fyr === 'R' || comment.includes('renewal') ? 'Renewal'
-      : 'Agent Commission';
-
-    records.push({
-      agent: normalizeAgentName(agentRaw) || 'The Health Experts Insurance',
-      carrier: 'Humana',
-      planType: 'Humana Med Adv',
-      client,
-      effectiveDate: effDate,
-      premium: 0,
-      commission,
-      classification,
-      period,
-      policyNumber,
-      payee: 'Humana',
-      raw: row
-    });
-  }
-  return records;
-}
-
-function isAgencyName(name) {
-  const n = String(name || '').toLowerCase().trim();
-  return n.includes('the health experts') || n.includes('health experts insurance');
 }
 
 // ─── Date formatting ─────────────────────────────────────────────────────────
@@ -241,19 +128,15 @@ function formatDate(value) {
       const [y, m, d] = value.split('-');
       return `${m}/${d}/${y}`;
     }
-    // Handle string like "Feb", "MAR" etc - return as-is for period
     return value;
   }
   if (typeof value === 'number') {
     const s = String(value);
-    // YYYYMMDD format — e.g. 20260201
     if (s.match(/^\d{8}$/) && parseInt(s.slice(0,4)) > 1900) {
       const y = s.slice(0,4), m = s.slice(4,6), d = s.slice(6,8);
       return `${m}/${d}/${y}`;
     }
-    // YYYYMM format — e.g. 202602
     if (s.match(/^\d{6}$/) && parseInt(s.slice(0,4)) > 1900) return s;
-    // Excel serial number — only if reasonable range (before year 2100)
     const date = new Date((value - 25569) * 86400 * 1000);
     if (isNaN(date.getTime()) || date.getUTCFullYear() > 2100) return String(value);
     const m = String(date.getUTCMonth() + 1).padStart(2, '0');
@@ -291,6 +174,11 @@ function normalizeNHPCarrier(carrierMonth) {
   if (c.includes('molina')) return 'Molina';
   if (c.includes('wellcare')) return 'WellCare';
   return String(carrierMonth || '').split(' - ')[0].trim();
+}
+
+function isAgencyName(name) {
+  const n = String(name || '').toLowerCase().trim();
+  return n.includes('the health experts') || n.includes('health experts insurance');
 }
 
 // ─── Parsers ─────────────────────────────────────────────────────────────────
@@ -339,8 +227,133 @@ function parseUHCRows(wb) {
   return records;
 }
 
+// ─── Humana parser — SpreadsheetML XML ───────────────────────────────────────
+// Humana CommissionData files are SpreadsheetML XML disguised as .xls.
+// XLSX.js cannot parse them. We read the raw file buffer as UTF-8 XML.
+
+function parseHumanaRows(wb, filename, rawBuffer) {
+  const records = [];
+
+  try {
+    if (!rawBuffer) {
+      console.error('parseHumanaRows: no rawBuffer provided');
+      return records;
+    }
+
+    const content = rawBuffer.toString('utf-8');
+    // Humana uses broken XML declaration — fix it
+    const fixedXml = content.replace('<xml version>', '<?xml version="1.0"?>');
+
+    const monthMap = {
+      jan:'01', feb:'02', mar:'03', apr:'04', may:'05', jun:'06',
+      jul:'07', aug:'08', sep:'09', oct:'10', nov:'11', dec:'12'
+    };
+
+    // Extract rows via regex — no external XML deps needed
+    const rowRegex = /<Row[^>]*>([\s\S]*?)<\/Row>/g;
+    const cellRegex = /<Cell[^>]*>[\s\S]*?<Data[^>]*>([\s\S]*?)<\/Data>[\s\S]*?<\/Cell>/g;
+
+    const allRows = [];
+    let rowMatch;
+    while ((rowMatch = rowRegex.exec(fixedXml)) !== null) {
+      const rowContent = rowMatch[1];
+      const cells = [];
+      let cellMatch;
+      while ((cellMatch = cellRegex.exec(rowContent)) !== null) {
+        cells.push(cellMatch[1].trim());
+      }
+      if (cells.length > 0) allRows.push(cells);
+    }
+
+    if (!allRows.length) {
+      console.error('parseHumanaRows: no rows found in XML');
+      return records;
+    }
+
+    const headers = allRows[0];
+    const col = (name) => headers.indexOf(name);
+
+    const grpIdx     = col('GrpName');
+    const waIdx      = col('WaName');
+    const paidIdx    = col('PaidAmount');
+    const monthIdx   = col('MonthPaid');
+    const effIdx     = col('EffDate');
+    const fyrIdx     = col('FrstYrRnwl');
+    const grpNbrIdx  = col('GrpNbr');
+    const commRunIdx = col('CommRunDt');
+    const blkBusIdx  = col('BlkBusCd');
+    const productIdx = col('Product');
+
+    if (grpIdx < 0 || paidIdx < 0) {
+      console.error('parseHumanaRows: required columns not found. Headers:', headers);
+      return records;
+    }
+
+    for (let i = 1; i < allRows.length; i++) {
+      const vals = allRows[i];
+      const get = (idx) => (idx >= 0 && idx < vals.length ? vals[idx] : '') || '';
+
+      const client     = get(grpIdx).trim();
+      const agentRaw   = get(waIdx).trim();
+      const commission = parseFloat(get(paidIdx)) || 0;
+      const monthPaid  = get(monthIdx).trim().toLowerCase();
+      const effDateRaw = get(effIdx).trim();
+      const fyr        = get(fyrIdx).trim().toUpperCase();
+      const policyNum  = get(grpNbrIdx).trim();
+      const commRunDt  = get(commRunIdx).trim();  // e.g. "2025-03-19T00:00:00.000"
+      const blkBus     = get(blkBusIdx).trim().toUpperCase();
+      const product    = get(productIdx).trim().toUpperCase();
+
+      if (!client || commission === 0) continue;
+
+      // Period: CommRunDt year + MonthPaid month
+      // e.g. CommRunDt=2025-03-19, MonthPaid=MAR → 202503
+      // e.g. CommRunDt=2025-03-19, MonthPaid=JAN → 202501 (retroactive)
+      let period = '';
+      if (monthPaid && monthMap[monthPaid] && commRunDt) {
+        const yearMatch = commRunDt.match(/^(\d{4})/);
+        const year = yearMatch ? yearMatch[1] : new Date().getFullYear().toString();
+        period = year + monthMap[monthPaid];
+      }
+
+      // EffDate ISO string → MM/DD/YYYY
+      let effectiveDate = '';
+      const em = effDateRaw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (em) effectiveDate = `${em[2]}/${em[3]}/${em[1]}`;
+
+      // Plan type from BlkBusCd + Product
+      let planType = 'Humana Med Adv';
+      if (blkBus === 'IN' || product === 'DENTAL') planType = 'Humana Dental';
+      else if (product === 'PDP' || policyNum.toLowerCase().includes('_pdp')) planType = 'Humana PDP';
+
+      const classification = commission < 0 ? 'Chargeback'
+        : fyr === 'F' ? 'New Business'
+        : fyr === 'R' ? 'Renewal'
+        : 'Agent Commission';
+
+      records.push({
+        agent: normalizeAgentName(agentRaw) || 'The Health Experts Insurance',
+        carrier: 'Humana',
+        planType,
+        client,
+        effectiveDate,
+        premium: 0,
+        commission,
+        classification,
+        period,
+        policyNumber: policyNum,
+        payee: 'Humana',
+        raw: {}
+      });
+    }
+  } catch (err) {
+    console.error('parseHumanaRows error:', err.message);
+  }
+
+  return records;
+}
+
 function parseBSIRows(wb, filename) {
-  // Try to extract period from filename e.g. Statement-health_experts-202603.xlsx
   function getPeriodFromFilename(fn) {
     if (!fn) return 'Unknown';
     const f = fn.toLowerCase();
@@ -360,7 +373,6 @@ function parseBSIRows(wb, filename) {
   const ws = wb.Sheets[wb.SheetNames[0]];
   const range = XLSX.utils.decode_range(ws['!ref']);
 
-  // Find header row containing Agent, Client Name, Commission
   let headerRow = -1;
   for (let r = range.s.r; r <= Math.min(range.s.r + 15, range.e.r); r++) {
     const rowVals = [];
@@ -378,7 +390,6 @@ function parseBSIRows(wb, filename) {
 
   const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true, range: headerRow });
 
-  // Find actual column names (case-insensitive)
   const firstRow = rows[0] || {};
   const keyMap = {};
   Object.keys(firstRow).forEach(k => { keyMap[k.toLowerCase().replace(/[^a-z]/g, '')] = k; });
@@ -392,11 +403,11 @@ function parseBSIRows(wb, filename) {
     return null;
   };
 
-  const agentCol = findCol(['agent']);
-  const companyCol = findCol(['company', 'carrier', 'companyname']);
-  const policyCol = findCol(['policy', 'policynumber']);
-  const clientCol = findCol(['clientname', 'client', 'membername', 'member', 'insured']);
-  const effDateCol = findCol(['effectivedate', 'effective', 'effdate']);
+  const agentCol      = findCol(['agent']);
+  const companyCol    = findCol(['company', 'carrier', 'companyname']);
+  const policyCol     = findCol(['policy', 'policynumber']);
+  const clientCol     = findCol(['clientname', 'client', 'membername', 'member', 'insured']);
+  const effDateCol    = findCol(['effectivedate', 'effective', 'effdate']);
   const commissionCol = findCol(['commission', 'amount', 'comp']);
 
   for (const row of rows) {
@@ -426,7 +437,6 @@ function parseBSIRows(wb, filename) {
   return records;
 }
 
-
 function parseNHPRows(wb) {
   const records = [];
   const ws = wb.Sheets[wb.SheetNames[0]];
@@ -451,7 +461,6 @@ function parseNHPRows(wb) {
     const client = String(row['Subscriber Name'] || '').trim();
     const policyNumber = String(row['Policy Number'] || '').trim();
     const effectiveDate = formatDate(row['Policy Effective Date']);
-    // Normalize Commission Month to YYYYMM format
     const rawPeriod = row['Commission Month'];
     let period = '';
     if (rawPeriod instanceof Date || (typeof rawPeriod === 'object' && rawPeriod !== null)) {
@@ -460,11 +469,10 @@ function parseNHPRows(wb) {
     } else if (typeof rawPeriod === 'number') {
       const s = String(rawPeriod);
       if (s.match(/^\d{8}$/) && parseInt(s.slice(0,4)) > 1900) {
-        period = s.slice(0,6); // YYYYMM from YYYYMMDD
+        period = s.slice(0,6);
       } else if (s.match(/^\d{6}$/) && parseInt(s.slice(0,4)) > 1900) {
-        period = s; // already YYYYMM
+        period = s;
       } else {
-        // Excel serial — convert
         const dt = new Date((rawPeriod - 25569) * 86400 * 1000);
         if (!isNaN(dt) && dt.getUTCFullYear() < 2100) {
           period = String(dt.getUTCFullYear()) + String(dt.getUTCMonth()+1).padStart(2,'0');
@@ -483,7 +491,6 @@ function parseNHPRows(wb) {
     }
     const nhpType = String(row['Type'] || '').trim();
     const lob = String(row['LOB'] || '').trim();
-    // Commission rows use Commission column; Override rows use Override column
     const commission = nhpType.toLowerCase().includes('commission')
       ? (parseFloat(row['Commission']) || 0)
       : (parseFloat(row['Override']) || 0);
@@ -510,6 +517,165 @@ function parseNHPRows(wb) {
   return records;
 }
 
+function parseAPLRows(wb) {
+  const records = [];
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
+
+  for (const row of rows) {
+    const payee = String(row['Generated From'] || '').trim();
+    const client = String(row['Insured'] || '').trim();
+    const agentRaw = String(row['Writing Agent Name'] || '').trim();
+    const carrierRaw = String(row['Carrier'] || '').trim();
+    const policyNumber = String(row['Policy'] || '').trim();
+    const effectiveDate = formatDate(row['Effective Date']);
+    const paymentDate = formatDate(row['Payment Date']);
+    const payoutType = String(row['Payout Type'] || '').trim();
+    const transactionType = String(row['Transaction Type'] || '').trim();
+    const commission = parseFloat(row['Amount']) || 0;
+
+    if (!client || commission === 0) continue;
+
+    const carrier = carrierRaw.replace(/[-–].*delegated.*/i, '').replace(/[-–].*direct.*/i, '').trim();
+    const normalizedCarrier = carrier.toLowerCase().includes('humana') ? 'Humana'
+      : carrier.toLowerCase().includes('aetna') ? 'Aetna'
+      : carrier.toLowerCase().includes('united') ? 'UnitedHealthcare'
+      : carrier.toLowerCase().includes('cigna') ? 'Cigna'
+      : carrier;
+
+    let period = '';
+    if (paymentDate) {
+      const parts = paymentDate.split('/');
+      if (parts.length === 3) period = parts[2] + parts[0].padStart(2,'0');
+    }
+
+    const classification = commission < 0 ? 'Chargeback'
+      : transactionType.toLowerCase().includes('override') ? 'Agency Override'
+      : payoutType.toLowerCase() === 'renewal' ? 'Renewal'
+      : payoutType.toLowerCase().includes('new') ? 'New Business'
+      : 'Agency Override';
+
+    records.push({
+      agent: normalizeAgentName(agentRaw) || 'The Health Experts Insurance',
+      carrier: normalizedCarrier,
+      planType: derivePlanType(normalizedCarrier, 'MA', policyNumber, ''),
+      client,
+      effectiveDate,
+      premium: 0,
+      commission,
+      classification,
+      period: period || paymentDate,
+      policyNumber,
+      payee: payee || 'APL',
+      raw: row
+    });
+  }
+  return records;
+}
+
+function parseSolisRows(wb, filename) {
+  const records = [];
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const range = XLSX.utils.decode_range(ws['!ref']);
+
+  let headerRow = -1;
+  for (let r = range.s.r; r <= Math.min(range.s.r + 10, range.e.r); r++) {
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const cell = ws[XLSX.utils.encode_cell({ r, c })];
+      if (cell && String(cell.v || '').toLowerCase().includes('member name')) {
+        headerRow = r;
+        break;
+      }
+    }
+    if (headerRow >= 0) break;
+  }
+  if (headerRow < 0) return records;
+
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true, range: headerRow });
+
+  for (const row of rows) {
+    const client = String(row['Member Name'] || '').trim();
+    const agent = normalizeAgentName(String(row['Agent Name'] || '').trim());
+    const commission = parseFloat(row['Payment Amt']) || 0;
+    const effectiveDate = formatDate(row['Commission Eff. Date'] || row['Member Enrollment Date']);
+    const paymentType = String(row['Payment Type'] || '').toLowerCase();
+    const policyNumber = String(row['Plan Member ID'] || '').trim();
+
+    if (!client || commission === 0) continue;
+
+    const classification = commission < 0 ? 'Chargeback'
+      : paymentType.includes('initial') ? 'New Business'
+      : paymentType.includes('renewal') ? 'Renewal'
+      : paymentType.includes('chargeback') ? 'Chargeback'
+      : 'Agency Override';
+
+    const effRaw = row['Commission Eff. Date'];
+    let period = '';
+    if (effRaw) {
+      const d = new Date(effRaw);
+      if (!isNaN(d)) {
+        period = String(d.getFullYear()) + String(d.getMonth() + 1).padStart(2, '0');
+      }
+    }
+
+    records.push({
+      agent: agent || 'The Health Experts Insurance',
+      carrier: 'Solis',
+      planType: 'Solis Med Adv',
+      client,
+      effectiveDate,
+      premium: 0,
+      commission,
+      classification,
+      period,
+      policyNumber,
+      payee: 'Solis',
+      raw: row
+    });
+  }
+  return records;
+}
+
+function normalizeClassification(raw, commission) {
+  if (commission < 0) return 'Chargeback';
+  const c = String(raw || '').trim().toUpperCase();
+  if (c === 'F') return 'New Business';
+  if (c === 'R') return 'Renewal';
+  if (c === 'NEW' || c === 'NEW BUSINESS') return 'New Business';
+  if (c === 'RENEWAL') return 'Renewal';
+  if (c === 'ADVANCE') return 'New Business';
+  if (c === 'CHARGEBACK') return 'Chargeback';
+  if (c === 'AGENT COMMISSION') return 'Agent Commission';
+  if (c === 'AGENCY OVERRIDE' || c === 'OVERRIDE') return 'Agency Override';
+  return raw ? raw : null;
+}
+
+function parseRows(rows, mapping, filename) {
+  const carrier = detectCarrierFromFilename(filename);
+  return rows.map(row => {
+    const agent = normalizeAgentName(mapping.agent ? String(row[mapping.agent] || '').trim() : '');
+    const rawPlanType = mapping.planType ? String(row[mapping.planType] || '').trim() : '';
+    const policyNumber = mapping.policyNumber ? String(row[mapping.policyNumber] || '').trim() : '';
+    const commission = mapping.commission ? parseFloat(row[mapping.commission]) || 0 : 0;
+    const rawClass = mapping.classification ? String(row[mapping.classification] || '').trim() : '';
+    const agencyType = isAgencyName(agent) ? 'Agent Commission' : 'Agency Override';
+    const classification = normalizeClassification(rawClass, commission) || agencyType;
+    return {
+      agent: agent || 'The Health Experts Insurance',
+      carrier,
+      planType: derivePlanType(carrier, rawPlanType, policyNumber, ''),
+      client: mapping.client ? String(row[mapping.client] || '').trim() : '',
+      effectiveDate: mapping.effectiveDate ? formatDate(row[mapping.effectiveDate]) : '',
+      premium: mapping.premium ? parseFloat(row[mapping.premium]) || 0 : 0,
+      commission,
+      classification,
+      period: mapping.period ? String(row[mapping.period] || '').trim() : 'Unknown',
+      policyNumber,
+      raw: row
+    };
+  }).filter(r => r.commission > 0 || r.premium > 0 || r.client);
+}
+
 // ─── Upload route ─────────────────────────────────────────────────────────────
 
 router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
@@ -527,7 +693,6 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     const ws = wb.Sheets[wb.SheetNames[0]];
 
     let records;
-    // Set default payee based on file type
     const determinePayee = (filename) => {
       const f = filename.toLowerCase();
       if (f.includes('commission_statement_2737247')) return 'UnitedHealthcare';
@@ -549,7 +714,9 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     } else if (isNHPFile(req.file.originalname)) {
       records = parseNHPRows(wb);
     } else if (isHumanaFile(req.file.originalname)) {
-      records = parseHumanaRows(wb, req.file.originalname);
+      // Read raw buffer BEFORE XLSX tries to parse — Humana files are SpreadsheetML XML
+      const rawBuffer = fs.readFileSync(req.file.path);
+      records = parseHumanaRows(wb, req.file.originalname, rawBuffer);
     } else if (isSolisFile(req.file.originalname)) {
       records = parseSolisRows(wb, req.file.originalname);
     } else if (isAPLFile(req.file.originalname)) {
@@ -576,7 +743,6 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     );
     const uploadId = uploadResult.rows[0].id;
 
-    // Ensure plan_type column exists
     try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS plan_type TEXT DEFAULT ''`); } catch(e) {}
     try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS payee TEXT DEFAULT ''`); } catch(e) {}
 
@@ -648,175 +814,6 @@ function heuristicMapping(headers) {
     policyNumber: find(['policy', 'member id', 'contract', 'certificate']),
     planType: find(['plan type', 'product', 'line', 'benefit'])
   };
-}
-
-function parseAPLRows(wb) {
-  const records = [];
-  const ws = wb.Sheets[wb.SheetNames[0]];
-  const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
-
-  for (const row of rows) {
-    const payee = String(row['Generated From'] || '').trim(); // APL, Integrity etc
-    const client = String(row['Insured'] || '').trim();
-    const agentRaw = String(row['Writing Agent Name'] || '').trim();
-    const carrierRaw = String(row['Carrier'] || '').trim();
-    const policyNumber = String(row['Policy'] || '').trim();
-    const effectiveDate = formatDate(row['Effective Date']);
-    const paymentDate = formatDate(row['Payment Date']);
-    const payoutType = String(row['Payout Type'] || '').trim();
-    const transactionType = String(row['Transaction Type'] || '').trim();
-    const commission = parseFloat(row['Amount']) || 0;
-
-    if (!client || commission === 0) continue;
-
-    // Normalize carrier — remove "- Delegated" etc
-    const carrier = carrierRaw.replace(/[-–].*delegated.*/i, '').replace(/[-–].*direct.*/i, '').trim();
-    const normalizedCarrier = carrier.toLowerCase().includes('humana') ? 'Humana'
-      : carrier.toLowerCase().includes('aetna') ? 'Aetna'
-      : carrier.toLowerCase().includes('united') ? 'UnitedHealthcare'
-      : carrier.toLowerCase().includes('cigna') ? 'Cigna'
-      : carrier;
-
-    // Period = payment date as YYYYMM
-    let period = '';
-    if (paymentDate) {
-      const parts = paymentDate.split('/');
-      if (parts.length === 3) period = parts[2] + parts[0].padStart(2,'0');
-    }
-
-    const classification = commission < 0 ? 'Chargeback'
-      : transactionType.toLowerCase().includes('override') ? 'Agency Override'
-      : payoutType.toLowerCase() === 'renewal' ? 'Renewal'
-      : payoutType.toLowerCase().includes('new') ? 'New Business'
-      : 'Agency Override';
-
-    records.push({
-      agent: normalizeAgentName(agentRaw) || 'The Health Experts Insurance',
-      carrier: normalizedCarrier,
-      planType: derivePlanType(normalizedCarrier, 'MA', policyNumber, ''),
-      client,
-      effectiveDate,
-      premium: 0,
-      commission,
-      classification,
-      period: period || paymentDate,
-      policyNumber,
-      payee: payee || 'APL',
-      raw: row
-    });
-  }
-  return records;
-}
-
-function parseSolisRows(wb, filename) {
-  const records = [];
-  const ws = wb.Sheets[wb.SheetNames[0]];
-  const range = XLSX.utils.decode_range(ws['!ref']);
-
-  // Find header row
-  let headerRow = -1;
-  for (let r = range.s.r; r <= Math.min(range.s.r + 10, range.e.r); r++) {
-    for (let c = range.s.c; c <= range.e.c; c++) {
-      const cell = ws[XLSX.utils.encode_cell({ r, c })];
-      if (cell && String(cell.v || '').toLowerCase().includes('member name')) {
-        headerRow = r;
-        break;
-      }
-    }
-    if (headerRow >= 0) break;
-  }
-  if (headerRow < 0) return records;
-
-  const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true, range: headerRow });
-
-  // Extract period from filename
-  function getYear(fn) {
-    const m = fn.match(/20(\d{2})/);
-    return m ? '20' + m[1] : new Date().getFullYear().toString();
-  }
-
-  for (const row of rows) {
-    const client = String(row['Member Name'] || '').trim();
-    const agent = normalizeAgentName(String(row['Agent Name'] || '').trim());
-    const commission = parseFloat(row['Payment Amt']) || 0;
-    const effectiveDate = formatDate(row['Commission Eff. Date'] || row['Member Enrollment Date']);
-    const paymentType = String(row['Payment Type'] || '').toLowerCase();
-    const policyNumber = String(row['Plan Member ID'] || '').trim();
-
-    if (!client || commission === 0) continue;
-
-    const classification = commission < 0 ? 'Chargeback'
-      : paymentType.includes('initial') ? 'New Business'
-      : paymentType.includes('renewal') ? 'Renewal'
-      : paymentType.includes('chargeback') ? 'Chargeback'
-      : 'Agency Override';
-
-    // Use Commission Eff. Date month+year as period
-    const effRaw = row['Commission Eff. Date'];
-    let period = '';
-    if (effRaw) {
-      const d = new Date(effRaw);
-      if (!isNaN(d)) {
-        period = String(d.getFullYear()) + String(d.getMonth() + 1).padStart(2, '0');
-      }
-    }
-
-    records.push({
-      agent: agent || 'The Health Experts Insurance',
-      carrier: 'Solis',
-      planType: 'Solis Med Adv',
-      client,
-      effectiveDate,
-      premium: 0,
-      commission,
-      classification,
-      period,
-      policyNumber,
-      payee: 'Solis',
-      raw: row
-    });
-  }
-  return records;
-}
-
-function normalizeClassification(raw, commission) {
-  if (commission < 0) return 'Chargeback';
-  const c = String(raw || '').trim().toUpperCase();
-  if (c === 'F') return 'New Business';
-  if (c === 'R') return 'Renewal';
-  if (c === 'NEW' || c === 'NEW BUSINESS') return 'New Business';
-  if (c === 'RENEWAL') return 'Renewal';
-  if (c === 'ADVANCE') return 'New Business';
-  if (c === 'CHARGEBACK') return 'Chargeback';
-  if (c === 'AGENT COMMISSION') return 'Agent Commission';
-  if (c === 'AGENCY OVERRIDE' || c === 'OVERRIDE') return 'Agency Override';
-  return raw ? raw : null;
-}
-
-function parseRows(rows, mapping, filename) {
-  const carrier = detectCarrierFromFilename(filename);
-  return rows.map(row => {
-    const agent = normalizeAgentName(mapping.agent ? String(row[mapping.agent] || '').trim() : '');
-    const rawPlanType = mapping.planType ? String(row[mapping.planType] || '').trim() : '';
-    const policyNumber = mapping.policyNumber ? String(row[mapping.policyNumber] || '').trim() : '';
-    const commission = mapping.commission ? parseFloat(row[mapping.commission]) || 0 : 0;
-    const rawClass = mapping.classification ? String(row[mapping.classification] || '').trim() : '';
-    const agencyType = isAgencyName(agent) ? 'Agent Commission' : 'Agency Override';
-    const classification = normalizeClassification(rawClass, commission) || agencyType;
-    return {
-      agent: agent || 'The Health Experts Insurance',
-      carrier,
-      planType: derivePlanType(carrier, rawPlanType, policyNumber, ''),
-      client: mapping.client ? String(row[mapping.client] || '').trim() : '',
-      effectiveDate: mapping.effectiveDate ? formatDate(row[mapping.effectiveDate]) : '',
-      premium: mapping.premium ? parseFloat(row[mapping.premium]) || 0 : 0,
-      commission,
-      classification,
-      period: mapping.period ? String(row[mapping.period] || '').trim() : 'Unknown',
-      policyNumber,
-      raw: row
-    };
-  }).filter(r => r.commission > 0 || r.premium > 0 || r.client);
 }
 
 module.exports = router;
