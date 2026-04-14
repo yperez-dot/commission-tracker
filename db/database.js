@@ -43,6 +43,7 @@ async function initSchema() {
         upload_id INTEGER REFERENCES uploads(id) ON DELETE CASCADE,
         agent_name TEXT,
         carrier TEXT,
+        plan_type TEXT,
         client_full_name TEXT,
         effective_date TEXT,
         premium REAL DEFAULT 0,
@@ -84,15 +85,18 @@ async function initSchema() {
 
       CREATE INDEX IF NOT EXISTS idx_records_agent ON commission_records(agent_name);
       CREATE INDEX IF NOT EXISTS idx_records_carrier ON commission_records(carrier);
+      CREATE INDEX IF NOT EXISTS idx_records_plan_type ON commission_records(plan_type);
       CREATE INDEX IF NOT EXISTS idx_records_period ON commission_records(payment_period);
       CREATE INDEX IF NOT EXISTS idx_records_client ON commission_records(client_full_name);
       CREATE INDEX IF NOT EXISTS idx_bob_carrier ON book_of_business(carrier);
       CREATE INDEX IF NOT EXISTS idx_bob_client ON book_of_business(client_full_name);
       CREATE INDEX IF NOT EXISTS idx_bob_status ON book_of_business(status);
+
+      ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS plan_type TEXT;
     `);
 
     await seedDefaultAdmin(client);
-    console.log('✅ Database schema initialized');
+    console.log('Database schema initialized');
   } finally {
     client.release();
   }
@@ -120,7 +124,7 @@ async function seedDefaultAdmin(client) {
         [a.name, a.email, agentHash, 'agent']
       );
     }
-    console.log('✅ Default users seeded');
+    console.log('Default users seeded');
   }
 }
 
