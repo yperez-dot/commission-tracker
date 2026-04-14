@@ -103,9 +103,6 @@ export default function MissingRenewals({ user }) {
       for (const client of bobClients) {
         const nc = normCarrier(client.carrier);
 
-        // Skip Humana — no per-client data
-        if (nc === 'humana') continue;
-
         // Skip new enrollments (enrolled same year or later)
         const effDate = parseEffDate(client.effective_date);
         const checkYear = checkDate ? checkDate.getFullYear() : null;
@@ -353,10 +350,7 @@ export default function MissingRenewals({ user }) {
               <span style={{ fontSize:12,color:'var(--text-muted)',marginLeft:8 }}>— {periodLabel}</span>
             </div>
 
-            {/* Humana note */}
-            <div style={{ background:'#FFF8E6',border:'1px solid #F5D78E',borderRadius:6,padding:'7px 12px',marginBottom:10,fontSize:12,color:'#7A5C00' }}>
-              ⚠️ Humana clients excluded — Humana statements don't include per-client data for matching
-            </div>
+            
 
             <div className="card" style={{ padding:0 }}>
               <div className="table-wrap">
