@@ -365,12 +365,3 @@ export default function Payroll({ user }) {
     </div>
   );
 }
-                </table>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
