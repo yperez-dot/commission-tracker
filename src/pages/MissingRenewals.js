@@ -101,9 +101,7 @@ export default function MissingRenewals({ user }) {
         const nc = normCarrier(client.carrier);
 
         const effDate = parseEffDate(client.effective_date);
-        const checkYear = checkDate ? checkDate.getFullYear() : null;
-        const effYear = effDate ? effDate.getFullYear() : null;
-        if (checkYear && effYear && effYear >= checkYear) continue;
+        if (checkDate && effDate && effDate >= checkDate) continue;
 
         const key = normName(client.client_full_name) + '|' + nc;
         const lastName = normName(client.client_full_name).split(' ').pop();
