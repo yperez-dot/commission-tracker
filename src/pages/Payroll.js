@@ -350,7 +350,7 @@ export default function Payroll({ user }) {
               <div className="table-wrap">
                 <table>
                   <thead>
-                    <tr><th>Period</th><th>Agent</th><th>Amount</th><th>Date paid</th></tr>
+                    <tr><th>Period</th><th>Agent</th><th>Amount</th><th>Date paid</th><th></th></tr>
                   </thead>
                   <tbody>
                     {history.map((r, i) => (
@@ -359,6 +359,27 @@ export default function Payroll({ user }) {
                         <td style={{ fontWeight: 500 }}>{r.agent}</td>
                         <td style={{ fontWeight: 600, color: '#1D9E75' }}>{fmt(r.amount)}</td>
                         <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{r.date}</td>
+                        <td>
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            <button onClick={() => { handlePeriodChange(r.period); setTab('payroll'); }} style={{
+                              background: 'none', border: '1px solid var(--border)', borderRadius: 6,
+                              padding: '3px 10px', fontSize: 11, cursor: 'pointer', color: '#185FA5', fontWeight: 600
+                            }}>View</button>
+                            <button onClick={() => {
+                              const updated = history.filter((_, j) => j !== i);
+                              setHistory(updated);
+                              localStorage.setItem('payroll_history', JSON.stringify(updated));
+                              // Also unmark as paid in the period storage
+                              const key = `payroll_period_${r.period}`;
+                              const saved = JSON.parse(localStorage.getItem(key) || '{}');
+                              if (saved.paid) { delete saved.paid[r.agent]; delete saved.dates[r.agent]; }
+                              localStorage.setItem(key, JSON.stringify(saved));
+                            }} style={{
+                              background: 'none', border: '1px solid #F7C1C1', borderRadius: 6,
+                              padding: '3px 10px', fontSize: 11, cursor: 'pointer', color: '#E24B4A', fontWeight: 600
+                            }}>Delete</button>
+                          </div>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
