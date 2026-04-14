@@ -68,7 +68,7 @@ export default function BookOfBusiness({ user }) {
     setLoading(true);
     try {
       const result = await apiFetch('/bob/check-renewals', { method: 'POST', body: JSON.stringify({ period: checkPeriod }) });
-      setBuildStatus(`Checked ${result.checkedClients} clients — ${result.missingCount} missing, ${result.recoveredCount} recovered`);
+      setBuildStatus(`✓ Checked ${result.checkedClients} BOB clients against ${result.matchedRecords} statement records — ${result.missingCount} missing, ${result.recoveredCount} recovered. Switch to Missing Renewals tab to review.`);
       loadData(); loadClients();
     } catch (e) { setBuildStatus('Error: ' + e.message); }
     finally { setLoading(false); }
@@ -290,7 +290,25 @@ export default function BookOfBusiness({ user }) {
                   <div className="form-label">Statement period</div>
                   <select className="filter-select" value={checkPeriod} onChange={e=>setCheckPeriod(e.target.value)}>
                     <option value="">Select period</option>
-                    {periods.map(p=><option key={p} value={p}>{p}</option>)}
+                    {periods.filter(p => {
+                      if (!p || p === 'Unknown') return false;
+                      const s = String(p);
+                      if (s.match(/^\d{6}$/)) return true;
+                      if (s.match(/^\d{1,2}\/\d{4}$/)) return true;
+                      if (s.match(/^\d{1,2}\/\d{2}\/\d{4}$/)) return true;
+                      return false;
+                    }).map(p => {
+                      let label = p;
+                      const s = String(p);
+                      if (s.match(/^\d{6}$/)) {
+                        const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+                        label = months[parseInt(s.slice(4,6))-1] + ' ' + s.slice(0,4);
+                      } else if (s.match(/^\d{2}\/\d{4}$/)) {
+                        const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+                        label = months[parseInt(s.slice(0,2))-1] + ' ' + s.slice(3);
+                      }
+                      return <option key={p} value={p}>{label}</option>;
+                    })}
                   </select>
                 </div>
                 <button className="btn btn-primary" onClick={runRenewalCheck} disabled={loading||!checkPeriod}>
