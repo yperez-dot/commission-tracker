@@ -206,11 +206,24 @@ router.get('/filters', requireAuth, async (req, res) => {
       console.log('plan_type column not yet available:', e.message);
     }
 
+    // payee — try separately with fallback
+    let payees = [];
+    try {
+      const payeeWhere = isAdmin
+        ? `WHERE payee IS NOT NULL AND payee != ''`
+        : `WHERE agent_name ILIKE '%${req.user.name}%' AND payee IS NOT NULL AND payee != ''`;
+      const py = await pool.query(`SELECT DISTINCT payee FROM commission_records ${payeeWhere} ORDER BY payee`);
+      payees = py.rows.map(p => p.payee).filter(Boolean);
+    } catch (e) {
+      console.log('payee column not available:', e.message);
+    }
+
     res.json({
       agents: agents.rows.map(a => a.agent_name).filter(Boolean),
       carriers: carriers.rows.map(c => c.carrier).filter(Boolean),
       periods: periods.rows.map(p => p.payment_period).filter(Boolean),
-      planTypes
+      planTypes,
+      payees
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
