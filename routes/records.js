@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { getPool } = require('../db/database');
 const { requireAuth } = require('./auth');
-const { normalizeAgentName, normalizeAllRecords } = require('../normalize');
+const { normalizeAllRecords } = require('../normalize');
 
 function requireAdmin(req, res, next) {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
@@ -23,7 +23,10 @@ router.get('/', requireAuth, async (req, res) => {
     if (upload_id) { where.push(`upload_id = $${idx++}`); params.push(parseInt(upload_id)); }
     const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
     const records = await pool.query(
-      `SELECT id, agent_name, carrier, plan_type, client_full_name, effective_date, premium, commission, classification, payment_period, policy_number, created_at
+      `SELECT id, agent_name, carrier,
+        COALESCE(plan_type, '') as plan_type,
+        client_full_name, effective_date, premium, commission,
+        classification, payment_period, policy_number, created_at
        FROM commission_records ${wc} ORDER BY created_at DESC LIMIT $${idx++} OFFSET $${idx++}`,
       [...params, parseInt(limit), parseInt(offset)]
     );
@@ -32,7 +35,6 @@ router.get('/', requireAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Delete single record
 router.delete('/:id', requireAuth, requireAdmin, async (req, res) => {
   try {
     const pool = getPool();
@@ -41,37 +43,29 @@ router.delete('/:id', requireAuth, requireAdmin, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Bulk delete — pass array of ids OR delete all with current filters
 router.post('/bulk-delete', requireAuth, requireAdmin, async (req, res) => {
   try {
     const pool = getPool();
     const { ids, deleteAll, agent, carrier, period, classification } = req.body;
-
     if (deleteAll) {
-      // Delete everything — nuclear option
       await pool.query('DELETE FROM commission_records');
       await pool.query('DELETE FROM uploads');
       await pool.query('DELETE FROM book_of_business');
       res.json({ success: true, deleted: 'all', message: 'All records deleted' });
       return;
     }
-
     if (ids && ids.length > 0) {
-      // Delete specific IDs
       await pool.query('DELETE FROM commission_records WHERE id = ANY($1)', [ids]);
       res.json({ success: true, deleted: ids.length });
       return;
     }
-
-    // Delete by filters
     let where = [], params = [], idx = 1;
     if (agent) { where.push(`agent_name = $${idx++}`); params.push(agent); }
     if (carrier) { where.push(`carrier = $${idx++}`); params.push(carrier); }
     if (period) { where.push(`payment_period = $${idx++}`); params.push(period); }
     if (classification) { where.push(`classification = $${idx++}`); params.push(classification); }
-    if (!where.length) return res.status(400).json({ error: 'No filters specified for bulk delete' });
-    const wc = 'WHERE ' + where.join(' AND ');
-    const result = await pool.query(`DELETE FROM commission_records ${wc}`, params);
+    if (!where.length) return res.status(400).json({ error: 'No filters specified' });
+    const result = await pool.query(`DELETE FROM commission_records WHERE ${where.join(' AND ')}`, params);
     res.json({ success: true, deleted: result.rowCount });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -86,7 +80,7 @@ router.get('/summary', requireAuth, async (req, res) => {
     if (carriers) { const list = carriers.split(',').map(c=>c.trim()).filter(Boolean); if (list.length) { where.push(`carrier = ANY($${idx++})`); params.push(list); } }
     if (periods) { const list = periods.split(',').map(p=>p.trim()).filter(Boolean); if (list.length) { where.push(`payment_period = ANY($${idx++})`); params.push(list); } }
     if (classifications) { const list = classifications.split(',').map(c=>c.trim()).filter(Boolean); if (list.length) { where.push(`classification = ANY($${idx++})`); params.push(list); } }
-    if (planTypes) { const list = planTypes.split(',').map(p=>p.trim()).filter(Boolean); if (list.length) { where.push(`plan_type = ANY($${idx++})`); params.push(list); } }
+    if (planTypes) { const list = planTypes.split(',').map(p=>p.trim()).filter(Boolean); if (list.length) { where.push(`COALESCE(plan_type,'') = ANY($${idx++})`); params.push(list); } }
     const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
     const [totalComm, totalRec, agentCnt, carrierCnt, byAgent, byCarrier, byPeriod] = await Promise.all([
       pool.query(`SELECT COALESCE(SUM(commission),0) as total FROM commission_records ${wc}`, params),
@@ -117,7 +111,7 @@ router.get('/kpi', requireAuth, async (req, res) => {
     if (carriers) { const list = carriers.split(',').map(c=>c.trim()).filter(Boolean); if (list.length) { where.push(`carrier = ANY($${idx++})`); params.push(list); } }
     if (periods) { const list = periods.split(',').map(p=>p.trim()).filter(Boolean); if (list.length) { where.push(`payment_period = ANY($${idx++})`); params.push(list); } }
     if (classifications) { const list = classifications.split(',').map(c=>c.trim()).filter(Boolean); if (list.length) { where.push(`classification = ANY($${idx++})`); params.push(list); } }
-    if (planTypes) { const list = planTypes.split(',').map(p=>p.trim()).filter(Boolean); if (list.length) { where.push(`plan_type = ANY($${idx++})`); params.push(list); } }
+    if (planTypes) { const list = planTypes.split(',').map(p=>p.trim()).filter(Boolean); if (list.length) { where.push(`COALESCE(plan_type,'') = ANY($${idx++})`); params.push(list); } }
     const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
     const rows = await pool.query(`
       SELECT agent_name,
@@ -185,20 +179,31 @@ router.get('/filters', requireAuth, async (req, res) => {
     const pool = getPool();
     const isAdmin = req.user.role === 'admin';
     const baseWhere = isAdmin ? '' : `WHERE agent_name ILIKE '%${req.user.name}%'`;
-    const planWhere = isAdmin
-      ? `WHERE plan_type IS NOT NULL AND plan_type != ''`
-      : `WHERE agent_name ILIKE '%${req.user.name}%' AND plan_type IS NOT NULL AND plan_type != ''`;
-    const [agents, carriers, periods, planTypes] = await Promise.all([
+
+    const [agents, carriers, periods] = await Promise.all([
       pool.query(`SELECT DISTINCT agent_name FROM commission_records ${baseWhere} ORDER BY agent_name`),
       pool.query(`SELECT DISTINCT carrier FROM commission_records ${baseWhere} ORDER BY carrier`),
-      pool.query(`SELECT DISTINCT payment_period FROM commission_records ${baseWhere} ORDER BY payment_period DESC`),
-      pool.query(`SELECT DISTINCT plan_type FROM commission_records ${planWhere} ORDER BY plan_type`)
+      pool.query(`SELECT DISTINCT payment_period FROM commission_records ${baseWhere} ORDER BY payment_period DESC`)
     ]);
+
+    // plan_type may not exist yet — try it separately and fallback to empty
+    let planTypes = [];
+    try {
+      const planWhere = isAdmin
+        ? `WHERE plan_type IS NOT NULL AND plan_type != ''`
+        : `WHERE agent_name ILIKE '%${req.user.name}%' AND plan_type IS NOT NULL AND plan_type != ''`;
+      const pt = await pool.query(`SELECT DISTINCT plan_type FROM commission_records ${planWhere} ORDER BY plan_type`);
+      planTypes = pt.rows.map(p => p.plan_type).filter(Boolean);
+    } catch (e) {
+      // column doesn't exist yet — that's fine, return empty
+      console.log('plan_type column not yet available:', e.message);
+    }
+
     res.json({
-      agents: agents.rows.map(a=>a.agent_name).filter(Boolean),
-      carriers: carriers.rows.map(c=>c.carrier).filter(Boolean),
-      periods: periods.rows.map(p=>p.payment_period).filter(Boolean),
-      planTypes: planTypes.rows.map(p=>p.plan_type).filter(Boolean)
+      agents: agents.rows.map(a => a.agent_name).filter(Boolean),
+      carriers: carriers.rows.map(c => c.carrier).filter(Boolean),
+      periods: periods.rows.map(p => p.payment_period).filter(Boolean),
+      planTypes
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
