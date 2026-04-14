@@ -92,6 +92,11 @@ function isBSIFile(filename) {
   const f = filename.toLowerCase().replace(/\s+/g, '_');
   return f.includes('statement-health_experts') || f.includes('statement_health_experts');
 }
+function isSolisFile(filename) {
+  const f = filename.toLowerCase().replace(/[\s()]/g, '_');
+  return f.includes('commissions_ledger') || f.includes('solis');
+}
+
 function isAPLFile(filename) {
   const f = filename.toLowerCase().replace(/[\s()]/g, '_');
   return f.includes('commission-statement') || f.includes('commission_statement_2026') && !f.includes('2737247') ||
@@ -529,6 +534,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       if (f.includes('statement-health_experts') || f.includes('statement_health_experts')) return 'BSI';
       if (f.includes('the_health_experts_insurance_statement') || f.includes('the_health_experst_insurance') || (f.includes('yahoska') && f.includes('katy'))) return 'NHP';
       if (f.includes('commission-statement') || f.includes('integrity') || f.includes('apl')) return 'APL';
+      if (f.includes('commissions_ledger') || f.includes('solis')) return 'Solis';
       if (f.includes('commissiondata') || f.includes('humana')) return 'Humana';
       if (f.includes('devoted')) return 'Devoted';
       if (f.includes('aetna') || f.includes('producerstatement')) return 'Aetna';
@@ -544,6 +550,8 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       records = parseNHPRows(wb);
     } else if (isHumanaFile(req.file.originalname)) {
       records = parseHumanaRows(wb, req.file.originalname);
+    } else if (isSolisFile(req.file.originalname)) {
+      records = parseSolisRows(wb, req.file.originalname);
     } else if (isAPLFile(req.file.originalname)) {
       records = parseAPLRows(wb);
     } else {
@@ -694,6 +702,77 @@ function parseAPLRows(wb) {
       period: period || paymentDate,
       policyNumber,
       payee: payee || 'APL',
+      raw: row
+    });
+  }
+  return records;
+}
+
+function parseSolisRows(wb, filename) {
+  const records = [];
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const range = XLSX.utils.decode_range(ws['!ref']);
+
+  // Find header row
+  let headerRow = -1;
+  for (let r = range.s.r; r <= Math.min(range.s.r + 10, range.e.r); r++) {
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const cell = ws[XLSX.utils.encode_cell({ r, c })];
+      if (cell && String(cell.v || '').toLowerCase().includes('member name')) {
+        headerRow = r;
+        break;
+      }
+    }
+    if (headerRow >= 0) break;
+  }
+  if (headerRow < 0) return records;
+
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true, range: headerRow });
+
+  // Extract period from filename
+  function getYear(fn) {
+    const m = fn.match(/20(\d{2})/);
+    return m ? '20' + m[1] : new Date().getFullYear().toString();
+  }
+
+  for (const row of rows) {
+    const client = String(row['Member Name'] || '').trim();
+    const agent = normalizeAgentName(String(row['Agent Name'] || '').trim());
+    const commission = parseFloat(row['Payment Amt']) || 0;
+    const effectiveDate = formatDate(row['Commission Eff. Date'] || row['Member Enrollment Date']);
+    const paymentType = String(row['Payment Type'] || '').toLowerCase();
+    const policyNumber = String(row['Plan Member ID'] || '').trim();
+
+    if (!client || commission === 0) continue;
+
+    const classification = commission < 0 ? 'Chargeback'
+      : paymentType.includes('initial') ? 'New Business'
+      : paymentType.includes('renewal') ? 'Renewal'
+      : paymentType.includes('chargeback') ? 'Chargeback'
+      : 'Agency Override';
+
+    // Use Commission Eff. Date month+year as period
+    const effRaw = row['Commission Eff. Date'];
+    let period = '';
+    if (effRaw) {
+      const d = new Date(effRaw);
+      if (!isNaN(d)) {
+        period = String(d.getFullYear()) + String(d.getMonth() + 1).padStart(2, '0');
+      }
+    }
+
+    records.push({
+      agent: agent || 'The Health Experts Insurance',
+      carrier: 'Solis',
+      planType: 'Solis Med Adv',
+      client,
+      effectiveDate,
+      premium: 0,
+      commission,
+      classification,
+      period,
+      policyNumber,
+      payee: 'Solis',
       raw: row
     });
   }
