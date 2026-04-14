@@ -237,29 +237,61 @@ function parseUHCRows(wb) {
   return records;
 }
 
-function parseBSIRows(rows) {
+function parseBSIRows(wb) {
   const records = [];
-  let dataStarted = false;
-  for (const row of rows) {
-    const vals = Object.values(row);
-    if (!dataStarted) {
-      const str = vals.map(v => String(v || '').toLowerCase()).join('|');
-      if (str.includes('agent') && str.includes('client') && str.includes('commission')) {
-        dataStarted = true;
-        continue;
-      }
-      continue;
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const range = XLSX.utils.decode_range(ws['!ref']);
+
+  // Find header row containing Agent, Client Name, Commission
+  let headerRow = -1;
+  for (let r = range.s.r; r <= Math.min(range.s.r + 15, range.e.r); r++) {
+    const rowVals = [];
+    for (let c = range.s.c; c <= range.e.c; c++) {
+      const cell = ws[XLSX.utils.encode_cell({ r, c })];
+      if (cell) rowVals.push(String(cell.v || '').toLowerCase());
     }
-    const agent = normalizeAgentName(String(vals[1] || '').trim());
-    const company = String(vals[2] || '').trim();
-    const policyNumber = String(vals[3] || '').trim();
-    const client = String(vals[4] || '').trim();
-    const effectiveDate = formatDate(vals[5]);
-    const commission = parseFloat(vals[6]) || 0;
+    const str = rowVals.join('|');
+    if (str.includes('agent') && str.includes('client') && str.includes('commission')) {
+      headerRow = r;
+      break;
+    }
+  }
+  if (headerRow < 0) return records;
+
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true, range: headerRow });
+
+  // Find actual column names (case-insensitive)
+  const firstRow = rows[0] || {};
+  const keyMap = {};
+  Object.keys(firstRow).forEach(k => { keyMap[k.toLowerCase().replace(/[^a-z]/g, '')] = k; });
+
+  const findCol = (terms) => {
+    for (const t of terms) {
+      if (keyMap[t]) return keyMap[t];
+      const found = Object.keys(keyMap).find(k => k.includes(t));
+      if (found) return keyMap[found];
+    }
+    return null;
+  };
+
+  const agentCol = findCol(['agent']);
+  const companyCol = findCol(['company', 'carrier', 'companyname']);
+  const policyCol = findCol(['policy', 'policynumber']);
+  const clientCol = findCol(['clientname', 'client', 'membername', 'member', 'insured']);
+  const effDateCol = findCol(['effectivedate', 'effective', 'effdate']);
+  const commissionCol = findCol(['commission', 'amount', 'comp']);
+
+  for (const row of rows) {
+    const agent = normalizeAgentName(String(agentCol ? row[agentCol] : '').trim());
+    const company = String(companyCol ? row[companyCol] : '').trim();
+    const policyNumber = String(policyCol ? row[policyCol] : '').trim();
+    const client = String(clientCol ? row[clientCol] : '').trim();
+    const effectiveDate = formatDate(effDateCol ? row[effDateCol] : '');
+    const commission = parseFloat(commissionCol ? row[commissionCol] : 0) || 0;
     if (!client) continue;
     const carrier = normalizeBSICarrier(company);
     records.push({
-      agent: agent || 'Unknown',
+      agent: agent || 'The Health Experts Insurance',
       carrier,
       planType: derivePlanType(carrier, '', policyNumber, ''),
       client,
@@ -269,11 +301,13 @@ function parseBSIRows(rows) {
       classification: commission < 0 ? 'Chargeback' : 'Agency Override',
       period: 'Unknown',
       policyNumber,
+      payee: 'BSI',
       raw: row
     });
   }
   return records;
 }
+
 
 function parseNHPRows(wb) {
   const records = [];
@@ -392,8 +426,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     if (isUHCFile(req.file.originalname)) {
       records = parseUHCRows(wb);
     } else if (isBSIFile(req.file.originalname)) {
-      const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
-      records = parseBSIRows(rows);
+      records = parseBSIRows(wb);
     } else if (isNHPFile(req.file.originalname)) {
       records = parseNHPRows(wb);
     } else if (isAPLFile(req.file.originalname)) {
