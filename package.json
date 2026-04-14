@@ -18,7 +18,8 @@
     "bcryptjs": "^2.4.3",
     "jsonwebtoken": "^9.0.2",
     "dotenv": "^16.4.5",
-    "@anthropic-ai/sdk": "^0.20.1"
+    "@anthropic-ai/sdk": "^0.20.1",
+    "pdf-parse": "^1.1.1"
   },
   "browserslist": {
     "production": [">0.2%", "not dead", "not op_mini all"],
