@@ -70,21 +70,74 @@ export default function MissingRenewals({ user }) {
       const targetNorm = normPeriod(selectedPeriod);
       const allRecData = await apiFetch(`/records?limit=5000`);
       const allRecs = (allRecData.records || []).filter(r => {
+        if (!r.payment_period) return false;
+        // Direct match
+        if (r.payment_period === selectedPeriod) return true;
+        // Normalized YYYYMM match
         const n = normPeriod(r.payment_period);
-        return n && targetNorm && n === targetNorm;
+        if (n && targetNorm && n === targetNorm) return true;
+        // Match on MM/YYYY or MM/DD/YYYY
+        const recNorm = (() => {
+          const s = String(r.payment_period).trim();
+          const m1 = s.match(/^(\d{1,2})\/(\d{4})$/);
+          if (m1) return m1[2] + m1[1].padStart(2,'0');
+          const m2 = s.match(/^(\d{1,2})\/\d{2}\/(\d{4})$/);
+          if (m2) return m2[2] + m2[1].padStart(2,'0');
+          return null;
+        })();
+        return recNorm && targetNorm && recNorm === targetNorm;
       });
 
-      // Build set of paid clients: lowercase name + carrier
+      // Normalize name: handle both "FIRST LAST" and "LAST, FIRST" formats
+      function normalizeName(name) {
+        if (!name) return '';
+        const s = String(name).toLowerCase().trim();
+        // If has comma, it's "Last, First" — convert to "first last"
+        if (s.includes(',')) {
+          const [last, first] = s.split(',').map(p => p.trim());
+          return `${first} ${last}`.replace(/\s+/g, ' ').trim();
+        }
+        return s.replace(/\s+/g, ' ').trim();
+      }
+
+      function normalizeCarrier(c) {
+        const s = String(c || '').toLowerCase();
+        if (s.includes('united') || s.includes('uhc')) return 'unitedhealthcare';
+        if (s.includes('humana')) return 'humana';
+        if (s.includes('aetna')) return 'aetna';
+        if (s.includes('devoted')) return 'devoted';
+        if (s.includes('cigna')) return 'cigna';
+        if (s.includes('oscar')) return 'oscar health';
+        if (s.includes('florida blue') || s.includes('bcbs')) return 'florida blue';
+        if (s.includes('gold kidney')) return 'gold kidney';
+        if (s.includes('simply')) return 'simply';
+        if (s.includes('molina')) return 'molina';
+        return s;
+      }
+
+      // Build set of paid clients using normalized names
       const paidSet = new Set(allRecs.map(r =>
-        `${String(r.client_full_name || '').toLowerCase().trim()}|${String(r.carrier || '').toLowerCase()}`
+        `${normalizeName(r.client_full_name)}|${normalizeCarrier(r.carrier)}`
       ));
+
+      // Also build a set with just last name + carrier for fuzzy matching
+      const paidLastNameSet = new Set(allRecs.map(r => {
+        const name = normalizeName(r.client_full_name);
+        const lastName = name.split(' ').pop();
+        return `${lastName}|${normalizeCarrier(r.carrier)}`;
+      }));
 
       const missing = [];
       const found = [];
 
       for (const client of bobClients) {
-        const key = `${String(client.client_full_name || '').toLowerCase().trim()}|${String(client.carrier || '').toLowerCase()}`;
-        if (paidSet.has(key)) {
+        const normName = normalizeName(client.client_full_name);
+        const normCarrier = normalizeCarrier(client.carrier);
+        const key = `${normName}|${normCarrier}`;
+        const lastName = normName.split(' ').pop();
+        const lastKey = `${lastName}|${normCarrier}`;
+
+        if (paidSet.has(key) || paidLastNameSet.has(lastKey)) {
           found.push(client);
         } else {
           missing.push(client);
