@@ -97,6 +97,12 @@ export default function MissingRenewals({ user }) {
       const checkDate = periodToDate(selectedPeriod);
       const built = [];
 
+      console.log('[MR DEBUG] targetNorm:', targetNorm);
+      console.log('[MR DEBUG] allRecs count:', allRecs.length);
+      console.log('[MR DEBUG] bobClients count:', bobClients.length);
+      console.log('[MR DEBUG] sample rec periods:', allRecs.slice(0,3).map(r => r.payment_period));
+      console.log('[MR DEBUG] recMap keys sample:', Object.keys(recMap).slice(0,5));
+
       for (const client of bobClients) {
         const nc = normCarrier(client.carrier);
 
@@ -107,11 +113,35 @@ export default function MissingRenewals({ user }) {
         const effYear = effDate ? effDate.getFullYear() : null;
         if (checkYear && effYear && effYear >= checkYear) continue;
 
-        const key = normName(client.client_full_name) + '|' + nc;
-        const lastName = normName(client.client_full_name).split(' ').pop();
-        const lastKey = lastName + '|' + nc;
-
-        const matchedRecs = recMap[key] || lastNameMap[lastKey] || [];
+        // Try all name variants for matching
+        const variants = nameVariants(client.client_full_name);
+        if (client.client_full_name?.toUpperCase().includes('HECTOR')) {
+          console.log('[MR DEBUG HECTOR] variants:', variants);
+          console.log('[MR DEBUG HECTOR] nc:', nc);
+          console.log('[MR DEBUG HECTOR] keys to try:', variants.map(v => v + '|' + nc));
+          console.log('[MR DEBUG HECTOR] recMap has:', variants.map(v => v + '|' + nc).filter(k => recMap[k]));
+        }
+        let matchedRecs = [];
+        for (const v of variants) {
+          if (recMap[v + '|' + nc] && recMap[v + '|' + nc].length) {
+            matchedRecs = recMap[v + '|' + nc];
+            break;
+          }
+        }
+        // Also try last-name-only map with variants
+        if (!matchedRecs.length) {
+          for (const v of variants) {
+            const vParts = v.split(' ').filter(p => p.length > 1);
+            for (const part of vParts) {
+              const lk = part + '|' + nc;
+              if (lastNameMap[lk] && lastNameMap[lk].length) {
+                matchedRecs = lastNameMap[lk];
+                break;
+              }
+            }
+            if (matchedRecs.length) break;
+          }
+        }
         const commission = matchedRecs.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0);
 
         built.push({
@@ -140,11 +170,35 @@ export default function MissingRenewals({ user }) {
   function normName(name) {
     if (!name) return '';
     const s = String(name).toLowerCase().trim();
+    // Handle LAST, FIRST format
     if (s.includes(',')) {
       const [last, first] = s.split(',').map(p => p.trim());
       return `${first} ${last}`.replace(/\s+/g, ' ').trim();
     }
     return s.replace(/\s+/g, ' ').trim();
+  }
+
+  // Generate all name variants to try matching
+  function nameVariants(name) {
+    if (!name) return [];
+    const s = normName(name);
+    const parts = s.split(' ').filter(Boolean);
+    if (parts.length < 2) return [s];
+    const variants = new Set();
+    variants.add(s);
+    // Strip trailing single letter (middle initial like HECTOR P)
+    const noInitial = parts.filter(p => p.length > 1).join(' ');
+    if (noInitial !== s) variants.add(noInitial);
+    // Try reversed: if "PROANO ALCIVAR HECTOR" → "HECTOR PROANO ALCIVAR"
+    const reversed = [...parts].reverse().join(' ');
+    variants.add(reversed);
+    // Reversed without initial
+    const reversedNoInitial = parts.filter(p => p.length > 1).reverse().join(' ');
+    variants.add(reversedNoInitial);
+    // Last word only (surname matching)
+    const significantParts = parts.filter(p => p.length > 1);
+    if (significantParts.length) variants.add(significantParts[significantParts.length - 1]);
+    return [...variants];
   }
 
   function normCarrier(c) {
