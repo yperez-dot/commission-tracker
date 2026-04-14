@@ -287,4 +287,13 @@ router.post('/build-from-statements', requireAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// DELETE a single BOB client
+router.delete('/:id', requireAuth, async (req, res) => {
+  try {
+    const pool = getPool();
+    await pool.query('DELETE FROM book_of_business WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 module.exports = router;
