@@ -70,7 +70,7 @@ function PayoutRow({ p, isPaid, paidDate, onTogglePaid, onExport }) {
           <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
             <thead>
               <tr>
-                {['Client','Carrier','Effective','Period','Amount'].map(h => (
+                {['Client','Carrier','Effective','Period','Statement','Amount'].map(h => (
                   <th key={h} style={{ textAlign: h === 'Amount' ? 'right' : 'left', padding: '6px 8px', color: 'var(--text-muted)', fontWeight: 500, fontSize: 11, borderBottom: '1px solid var(--border)' }}>{h}</th>
                 ))}
               </tr>
@@ -82,6 +82,7 @@ function PayoutRow({ p, isPaid, paidDate, onTogglePaid, onExport }) {
                   <td style={{ padding: '5px 8px', color: 'var(--text-muted)', fontSize: 11 }}>{r.carrier}</td>
                   <td style={{ padding: '5px 8px', color: 'var(--text-muted)', fontSize: 11 }}>{r.effective_date || '—'}</td>
                   <td style={{ padding: '5px 8px', color: 'var(--text-muted)', fontSize: 11 }}>{r.payment_period || '—'}</td>
+                  <td style={{ padding: '5px 8px', color: 'var(--text-muted)', fontSize: 11, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={r.upload_name}>{r.upload_name ? r.upload_name.replace('.xlsx','').replace('.xls','').replace(/_/g,' ') : '—'}</td>
                   <td style={{ padding: '5px 8px', textAlign: 'right', fontWeight: 600, color: parseFloat(r.commission) < 0 ? '#E24B4A' : '#1D9E75' }}>{fmt(r.commission)}</td>
                 </tr>
               ))}
@@ -106,16 +107,25 @@ export default function Payroll({ user }) {
   const [paidDates, setPaidDates] = useState({});
   const [tab, setTab] = useState('payroll');
   const [history, setHistory] = useState([]);
+  const [filterAgent, setFilterAgent] = useState('');
 
   useEffect(() => {
     // Load available periods from NHP records
     apiFetch('/records/filters').then(d => {
-      const validPeriods = (d.periods || []).filter(p => {
+      const valid = (d.periods || []).filter(p => {
         if (!p || p === 'Unknown') return false;
         const s = String(p);
         return s.match(/^\d{6}$/) || s.match(/^\d{2}\/\d{4}$/) || s.match(/^\d{2}\/\d{2}\/\d{4}$/);
       });
-      setPeriods(validPeriods);
+      // Deduplicate by label
+      const seen = new Set();
+      const deduped = valid.filter(p => {
+        const label = formatPeriodLabel(p);
+        if (!label || seen.has(label)) return false;
+        seen.add(label);
+        return true;
+      });
+      setPeriods(deduped);
     }).catch(console.error);
 
     // Load history from localStorage
@@ -163,6 +173,7 @@ export default function Payroll({ user }) {
     setPayouts([]);
     setPaidStatus({});
     setPaidDates({});
+    setFilterAgent('');
     if (period) loadPayouts(period);
   }
 
@@ -246,12 +257,12 @@ export default function Payroll({ user }) {
     <div>
       <div className="page-header">
         <div className="page-title">Payroll</div>
-        <div className="page-sub">NHP agent payout statements — track who you owe and mark as paid</div>
+        <div className="page-sub">Agent payout statements — track who you owe and mark as paid</div>
       </div>
       <div className="page-body">
 
         <div style={{ display: 'flex', gap: 8, marginBottom: 14, borderBottom: '1px solid var(--border)' }}>
-          <button style={tabStyle('payroll')} onClick={() => setTab('payroll')}>NHP Statements</button>
+          <button style={tabStyle('payroll')} onClick={() => setTab('payroll')}>Agent Statements</button>
           <button style={tabStyle('history')} onClick={() => setTab('history')}>
             Payment History {history.length > 0 && <span style={{ background: '#185FA5', color: '#fff', borderRadius: 99, fontSize: 10, padding: '1px 6px', marginLeft: 4 }}>{history.length}</span>}
           </button>
@@ -309,9 +320,20 @@ export default function Payroll({ user }) {
                   </div>
                 )}
 
-                <div className="card" style={{ padding: 0 }}>
+                {/* Agent filter */}
+              {payouts.length > 0 && (
+                <div style={{ marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <select className="filter-select" value={filterAgent} onChange={e => setFilterAgent(e.target.value)}>
+                    <option value="">All agents</option>
+                    {payouts.map(p => <option key={p.agent} value={p.agent}>{p.agent}</option>)}
+                  </select>
+                  {filterAgent && <button onClick={() => setFilterAgent('')} style={{ fontSize: 11, color: '#E24B4A', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>Clear</button>}
+                </div>
+              )}
+
+              <div className="card" style={{ padding: 0 }}>
                   <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <span style={{ fontSize: 13, fontWeight: 600 }}>Agent payouts — {payouts.length} agent{payouts.length !== 1 ? 's' : ''}</span>
+                    <span style={{ fontSize: 13, fontWeight: 600 }}>Agent payouts — {payouts.filter(p => !filterAgent || p.agent === filterAgent).length} agent{payouts.filter(p => !filterAgent || p.agent === filterAgent).length !== 1 ? 's' : ''}</span>
                   </div>
                   {payouts.length === 0 ? (
                     <div className="empty-state">
@@ -319,7 +341,7 @@ export default function Payroll({ user }) {
                       <div className="empty-title">No payouts for this period</div>
                       <div className="empty-sub">No Agent Commission records found for {periodLabel}. Make sure you've uploaded the NHP statement for this month.</div>
                     </div>
-                  ) : payouts.map(p => (
+                  ) : payouts.filter(p => !filterAgent || p.agent === filterAgent).map(p => (
                     <PayoutRow
                       key={p.agent}
                       p={p}
