@@ -24,11 +24,7 @@ export default function Payroll({ user }) {
     try {
       const data = await apiFetch('/files/uploads');
       // Only show NHP uploads
-      const nhp = (data || []).filter(u =>
-        u.original_name.toLowerCase().includes('the_health_experts_insurance_statement') ||
-        u.carrier?.toLowerCase().includes('nhp') ||
-        u.original_name.toLowerCase().includes('nhp')
-      );
+      const nhp = (data || []);  // Show all uploads — user picks the NHP statement
       setUploads(nhp);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
@@ -38,8 +34,14 @@ export default function Payroll({ user }) {
     setLoading(true);
     try {
       // Get all Agent Commission records for this upload
-      const data = await apiFetch(`/records?upload_id=${uploadId}&classification=Agent Commission&limit=500`);
-      const records = data.records || [];
+      const data = await apiFetch(`/records?upload_id=${uploadId}&limit=500`);
+      const allRecs = data.records || [];
+      // Filter for Commission-type records (Agent Commission OR old 'Renewal' classification from NHP)
+      const records = allRecs.filter(r =>
+        r.classification === 'Agent Commission' ||
+        (r.classification === 'Renewal' && r.carrier !== 'BSI') ||
+        (r.classification === 'Override' && false) // override = yours, skip
+      );
 
       // Group by agent
       const grouped = {};
