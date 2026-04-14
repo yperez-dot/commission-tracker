@@ -76,6 +76,7 @@ export default function AllData({ user, initialFilters = {} }) {
   const [selCarriers, setSelCarriers] = useState(initialFilters.carrier ? [initialFilters.carrier] : []);
   const [selPeriods, setSelPeriods] = useState(initialFilters.period ? [initialFilters.period] : []);
   const [selTypes, setSelTypes] = useState(initialFilters.classification ? [initialFilters.classification] : []);
+  const [selPayees, setSelPayees] = useState([]);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(0);
   const [selected, setSelected] = useState(new Set());
@@ -111,13 +112,14 @@ export default function AllData({ user, initialFilters = {} }) {
       if (selCarriers.length > 1) params.set('carriers', selCarriers.join(','));
       if (selPeriods.length > 1) params.set('periods', selPeriods.join(','));
       if (selTypes.length > 1) params.set('classifications', selTypes.join(','));
+      if (selPayees.length === 1) params.set('payee', selPayees[0]);
       const data = await apiFetch(`/records?${params}`);
       setRecords(data.records || []);
       setTotal(data.total || 0);
       setSelected(new Set());
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
-  }, [selAgents, selCarriers, selPeriods, selTypes]);
+  }, [selAgents, selCarriers, selPeriods, selTypes, selPayees]);
 
   useEffect(() => { setPage(0); loadRecords(0); }, [loadRecords]);
 
@@ -128,7 +130,7 @@ export default function AllData({ user, initialFilters = {} }) {
   }
 
   function clearAll() {
-    setSelAgents([]); setSelCarriers([]); setSelPeriods([]); setSelTypes([]);
+    setSelAgents([]); setSelCarriers([]); setSelPeriods([]); setSelTypes([]); setSelPayees([]);
     setPage(0);
   }
 
@@ -161,7 +163,7 @@ export default function AllData({ user, initialFilters = {} }) {
   }
 
   const grandTotal = records.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0);
-  const hasFilters = selAgents.length || selCarriers.length || selPeriods.length || selTypes.length;
+  const hasFilters = selAgents.length || selCarriers.length || selPeriods.length || selTypes.length || selPayees.length;
 
   function exportCSV() {
     const headers = ['Agent', 'Carrier', 'Client', 'Effective Date', 'Premium', 'Commission', 'Type', 'Period'];
@@ -215,6 +217,7 @@ export default function AllData({ user, initialFilters = {} }) {
           <MultiSelect label="Carriers" options={filterOptions.carriers || []} selected={selCarriers} onChange={setSelCarriers} />
           <MultiSelect label="Periods" options={(filterOptions.periods || []).filter(p => p && p !== 'Unknown')} selected={selPeriods} onChange={setSelPeriods} />
           <MultiSelect label="Types" options={classificationTypes} selected={selTypes} onChange={setSelTypes} />
+          <MultiSelect label="Payee" options={filterOptions.payees || []} selected={selPayees} onChange={setSelPayees} />
           {hasFilters && (
             <button onClick={clearAll} style={{ padding: '6px 10px', borderRadius: 6, border: '1px solid #E24B4A', background: 'none', color: '#E24B4A', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
               Clear all
@@ -239,7 +242,7 @@ export default function AllData({ user, initialFilters = {} }) {
         {/* Active filter pills */}
         {hasFilters && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
-            {[...selAgents, ...selCarriers, ...selPeriods, ...selTypes].map(f => (
+            {[...selAgents, ...selCarriers, ...selPeriods, ...selTypes, ...selPayees].map(f => (
               <span key={f} style={{ background: '#185FA5', color: '#fff', borderRadius: 4, padding: '2px 10px', fontSize: 11, fontWeight: 600 }}>{f}</span>
             ))}
           </div>
