@@ -231,8 +231,16 @@ export default function Upload({ user }) {
 
         {/* Upload list */}
         <div className="card" style={{ padding: 0 }}>
-          <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-            Uploaded files ({uploads.length})
+          <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 }}>
+            <input type="checkbox" checked={selectedUploads.size === uploads.length && uploads.length > 0} onChange={selectAllUploads} style={{ cursor: 'pointer' }} />
+            <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', flex: 1 }}>
+              Uploaded files ({uploads.length})
+            </span>
+            {selectedUploads.size > 0 && (
+              <button onClick={bulkDeleteUploads} disabled={bulkDeleting} style={{ background: '#E24B4A', color: '#fff', border: 'none', borderRadius: 6, padding: '5px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+                {bulkDeleting ? 'Deleting...' : `Delete ${selectedUploads.size} selected`}
+              </button>
+            )}
           </div>
           {uploads.length === 0 ? (
             <div className="empty-state">
