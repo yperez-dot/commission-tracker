@@ -14,6 +14,7 @@ export default function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState('dashboard');
+  const [pageParams, setPageParams] = useState({});
 
   const checkAuth = useCallback(async () => {
     try {
@@ -44,10 +45,12 @@ export default function App() {
     localStorage.removeItem('he_user');
     setUser(null);
     setPage('dashboard');
+    setPageParams({});
   }
 
-  function navigate(p) {
+  function navigate(p, params = {}) {
     setPage(p);
+    setPageParams(params);
     localStorage.setItem('he_page', p);
   }
 
@@ -71,9 +74,9 @@ export default function App() {
   ];
 
   const pages = {
-    dashboard: <Dashboard user={user} />,
+    dashboard: <Dashboard user={user} onNavigate={navigate} />,
     upload: <Upload user={user} />,
-    alldata: <AllData user={user} />,
+    alldata: <AllData user={user} initialFilters={pageParams} />,
     bob: <BookOfBusiness user={user} />,
     renewals: <MissingRenewals user={user} />,
     reconciliation: <Reconciliation user={user} />,
