@@ -14,20 +14,19 @@ router.get('/', requireAuth, async (req, res) => {
     const pool = getPool();
     const { agent, agents, carrier, carriers, period, periods, classification, classifications, planType, payee, upload_id, limit = 500, offset = 0 } = req.query;
     let where = [], params = [], idx = 1;
-    if (req.user.role === 'agent') { where.push(`agent_name ILIKE $${idx++}`); params.push(`%${req.user.name}%`); }
-    // Single or multi select for each filter
-    if (agents) { const list = agents.split(',').map(a=>a.trim()).filter(Boolean); if (list.length) { where.push(`agent_name = ANY($${idx++})`); params.push(list); } }
-    else if (agent) { where.push(`agent_name = $${idx++}`); params.push(agent); }
-    if (carriers) { const list = carriers.split(',').map(c=>c.trim()).filter(Boolean); if (list.length) { where.push(`carrier = ANY($${idx++})`); params.push(list); } }
-    else if (carrier) { where.push(`carrier = $${idx++}`); params.push(carrier); }
-    if (periods) { const list = periods.split(',').map(p=>p.trim()).filter(Boolean); if (list.length) { where.push(`payment_period = ANY($${idx++})`); params.push(list); } }
-    else if (period) { where.push(`payment_period = $${idx++}`); params.push(period); }
-    if (classifications) { const list = classifications.split(',').map(c=>c.trim()).filter(Boolean); if (list.length) { where.push(`classification = ANY($${idx++})`); params.push(list); } }
-    else if (classification) { where.push(`classification = $${idx++}`); params.push(classification); }
-    if (planType) { where.push(`COALESCE(plan_type,'') = $${idx++}`); params.push(planType); }
-    if (upload_id) { where.push(`upload_id = $${idx++}`); params.push(parseInt(upload_id)); }
+    if (req.user.role === 'agent') { where.push(`cr.agent_name ILIKE $${idx++}`); params.push(`%${req.user.name}%`); }
+    if (agents) { const list = agents.split(',').map(a=>a.trim()).filter(Boolean); if (list.length) { where.push(`cr.agent_name = ANY($${idx++})`); params.push(list); } }
+    else if (agent) { where.push(`cr.agent_name = $${idx++}`); params.push(agent); }
+    if (carriers) { const list = carriers.split(',').map(c=>c.trim()).filter(Boolean); if (list.length) { where.push(`cr.carrier = ANY($${idx++})`); params.push(list); } }
+    else if (carrier) { where.push(`cr.carrier = $${idx++}`); params.push(carrier); }
+    if (periods) { const list = periods.split(',').map(p=>p.trim()).filter(Boolean); if (list.length) { where.push(`cr.payment_period = ANY($${idx++})`); params.push(list); } }
+    else if (period) { where.push(`cr.payment_period = $${idx++}`); params.push(period); }
+    if (classifications) { const list = classifications.split(',').map(c=>c.trim()).filter(Boolean); if (list.length) { where.push(`cr.classification = ANY($${idx++})`); params.push(list); } }
+    else if (classification) { where.push(`cr.classification = $${idx++}`); params.push(classification); }
+    if (planType) { where.push(`COALESCE(cr.plan_type,'') = $${idx++}`); params.push(planType); }
+    if (upload_id) { where.push(`cr.upload_id = $${idx++}`); params.push(parseInt(upload_id)); }
     if (payee) { where.push(`cr.payee = $${idx++}`); params.push(payee); }
-    const wc = where.length ? 'WHERE ' + where.join(' AND ').replace(/(?<![a-z_])(agent_name|carrier|payment_period|classification|plan_type|upload_id)/g, 'cr.$1') : '';
+    const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
     const records = await pool.query(
       `SELECT cr.id, cr.agent_name, cr.carrier,
         COALESCE(cr.plan_type, '') as plan_type,
