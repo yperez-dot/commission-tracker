@@ -9,11 +9,13 @@ function requireAdmin(req, res, next) {
   next();
 }
 
+// ─── GET / — list records with filters ───────────────────────────────────────
 router.get('/', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
     const { agent, agents, carrier, carriers, period, periods, classification, classifications, planType, payee, search, upload_id, limit = 500, offset = 0 } = req.query;
     let where = [], params = [], idx = 1;
+
     if (req.user.role === 'agent') { where.push(`cr.agent_name ILIKE $${idx++}`); params.push(`%${req.user.name}%`); }
     if (agents) { const list = agents.split(',').map(a=>a.trim()).filter(Boolean); if (list.length) { where.push(`cr.agent_name = ANY($${idx++})`); params.push(list); } }
     else if (agent) { where.push(`cr.agent_name = $${idx++}`); params.push(agent); }
@@ -27,17 +29,26 @@ router.get('/', requireAuth, async (req, res) => {
     if (upload_id) { where.push(`cr.upload_id = $${idx++}`); params.push(parseInt(upload_id)); }
     if (payee) { where.push(`cr.payee = $${idx++}`); params.push(payee); }
     if (search) { where.push(`(cr.client_full_name ILIKE $${idx} OR cr.agent_name ILIKE $${idx} OR cr.carrier ILIKE $${idx})`); params.push(`%${search}%`); idx++; }
+
     const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
+
     const records = await pool.query(
       `SELECT cr.id, cr.agent_name, cr.carrier,
         COALESCE(cr.plan_type, '') as plan_type,
         cr.client_full_name, cr.effective_date, cr.premium, cr.commission,
         cr.classification, cr.payment_period, cr.policy_number, cr.created_at,
         cr.upload_id, cr.payee, u.original_name as upload_name
-       FROM commission_records cr LEFT JOIN uploads u ON cr.upload_id = u.id ${wc} ORDER BY cr.created_at DESC LIMIT $${idx++} OFFSET $${idx++}`,
+       FROM commission_records cr LEFT JOIN uploads u ON cr.upload_id = u.id
+       ${wc} ORDER BY cr.created_at DESC LIMIT $${idx++} OFFSET $${idx++}`,
       [...params, parseInt(limit), parseInt(offset)]
     );
-    const total = await pool.query(`SELECT COUNT(*) as count FROM commission_records ${wc}`, params);
+
+    // Use cr alias on count query so WHERE cr.column refs work
+    const total = await pool.query(
+      `SELECT COUNT(*) as count FROM commission_records cr ${wc}`,
+      params
+    );
+
     res.json({ records: records.rows, total: parseInt(total.rows[0].count) });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -77,7 +88,7 @@ router.post('/bulk-delete', requireAuth, requireAdmin, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ─── Summary — no table alias, WHERE uses bare column names ──────────────────
+// ─── Summary ──────────────────────────────────────────────────────────────────
 router.get('/summary', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
@@ -115,7 +126,7 @@ router.get('/summary', requireAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ─── KPI — no table alias, WHERE uses bare column names ──────────────────────
+// ─── KPI ──────────────────────────────────────────────────────────────────────
 router.get('/kpi', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
