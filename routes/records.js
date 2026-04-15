@@ -15,7 +15,7 @@ function getAgency(req) {
   if (req.user.role !== 'admin') return null;
   const override = req.headers['x-agency-override'];
   if (override !== undefined) return override || null;
-  return getAgency(req) || null;
+  return req.user.agency || null;
 }
 
 router.get('/', requireAuth, async (req, res) => {
