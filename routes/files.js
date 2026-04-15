@@ -943,13 +943,26 @@ async function parseMOOPDF(filePath, filename) {
     console.log('[MOO v2] BU sample:', buSample ? buSample.slice(0,80) : 'NONE');
 
     let currentAgent = 'Broker Society Insurance';
+    let currentMGA = '';
 
     for (const line of lines) {
       // Track agent from PRODUCTION line
-      const prodM = line.match(/PRODUCTION #:\s*\d+\s*NAME:\s*(.+)/i);
-      if (prodM) {
-        currentAgent = prodM[1].trim().replace(/\w/g, c => c.toUpperCase());
+      // Track MGA
+      if (/^MGA:\s/i.test(line)) {
+        currentMGA = line.replace(/^MGA:\s*/i,'').trim()
+          .replace(/\b\w/g, c => c.toUpperCase());
         continue;
+      }
+
+      // Track agent — extract just the name, stop before table headers
+      const prodM = line.match(/PRODUCTION #:\s*\d+\s+NAME:\s+([A-Z][A-Z\s\-\.]+)/i);
+      if (prodM) {
+        let rawName = prodM[1].trim();
+        // Strip table header junk that may be concatenated
+        rawName = rawName.replace(/\s+M\s+A\s+O.*/,'').replace(/\s+POLICY\s+INSURED.*/,'').trim();
+        currentAgent = rawName.replace(/\b\w/g, c => c.toUpperCase());
+        continue;
+      }
       }
 
       const isUnited = /^BU\d{7,}/.test(line);
@@ -997,6 +1010,7 @@ async function parseMOOPDF(filePath, filename) {
         client, effectiveDate, premium: 0, commission, classification,
         period, policyNumber,
         payee: 'Broker Society Insurance',
+        mga: currentMGA,
         raw: {}
       });
     }
@@ -1098,13 +1112,14 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     const uploadId = uploadResult.rows[0].id;
 
     try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS plan_type TEXT DEFAULT ''`); } catch(e) {}
+    try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS mga TEXT DEFAULT ''`); } catch(e) {}
     try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS payee TEXT DEFAULT ''`); } catch(e) {}
 
     for (const r of records) {
       await pool.query(
-        `INSERT INTO commission_records (upload_id, agent_name, carrier, plan_type, client_full_name, effective_date, premium, commission, classification, payment_period, policy_number, payee, raw_data)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
-        [uploadId, r.agent, r.carrier, r.planType || '', r.client, r.effectiveDate, r.premium || 0, r.commission || 0, r.classification, r.period, r.policyNumber, r.payee || '', JSON.stringify(r.raw)]
+        `INSERT INTO commission_records (upload_id, agent_name, carrier, plan_type, client_full_name, effective_date, premium, commission, classification, payment_period, policy_number, payee, mga, raw_data)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+        [uploadId, r.agent, r.carrier, r.planType || '', r.client, r.effectiveDate, r.premium || 0, r.commission || 0, r.classification, r.period, r.policyNumber, r.payee || '', r.mga || '', JSON.stringify(r.raw)]
       );
     }
 
