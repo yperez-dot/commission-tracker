@@ -798,6 +798,14 @@ async function parseMutualOmahaPDF(filePath, filename) {
     const periodMatch = text.match(/For Period Ending\s+(\d{2})\/(\d{2})\/(\d{4})/);
     const period = periodMatch ? periodMatch[3] + periodMatch[1] : '';
 
+    // DEBUG — log first 3000 chars and all lines to see raw structure
+    console.log('=== MOO PDF DEBUG: first 3000 chars ===');
+    console.log(text.slice(0, 3000));
+    console.log('=== MOO PDF DEBUG: all lines ===');
+    const allLines = text.split('\n').map(l => l.trim()).filter(Boolean);
+    allLines.slice(0, 80).forEach((l, i) => console.log(`LINE ${i}: [${l}]`));
+    console.log('=== END DEBUG ===');
+
     let currentAgent = '';
     let currentMGA = '';
     let pendingRecords = [];   // records staged for current producer
