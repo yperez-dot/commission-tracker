@@ -44,7 +44,6 @@ function formatDate(value) {
   return String(value);
 }
 
-// Find the real header row by scanning for known column names
 function findHeaderRow(ws) {
   const range = XLSX.utils.decode_range(ws['!ref']);
   const clientKeywords = ['member', 'client', 'subscriber', 'insured', 'firstname', 'lastname', 'name'];
@@ -62,13 +61,11 @@ function findHeaderRow(ws) {
   return 0;
 }
 
-// Parse BOB rows from a sheet, handling files with disclaimer rows at top
 function parseBOBSheet(ws) {
   const headerRow = findHeaderRow(ws);
   const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true, range: headerRow });
   if (!rows.length) return null;
 
-  // Normalize all header keys to lowercase for matching
   const firstRow = rows[0];
   const keyMap = {};
   Object.keys(firstRow).forEach(k => { keyMap[k.toLowerCase().replace(/\s+/g, '')] = k; });
@@ -76,14 +73,12 @@ function parseBOBSheet(ws) {
   const findKey = (terms) => {
     for (const t of terms) {
       if (keyMap[t]) return keyMap[t];
-      // partial match
       const found = Object.keys(keyMap).find(k => k.includes(t));
       if (found) return keyMap[found];
     }
     return null;
   };
 
-  // UHC BOB has separate first/last name columns
   const firstNameCol = findKey(['memberfirstname', 'firstname', 'first']);
   const lastNameCol = findKey(['memberlastname', 'lastname', 'last']);
   const clientCol = findKey(['membername', 'clientname', 'subscribername', 'name', 'client', 'member', 'subscriber']);
@@ -94,7 +89,6 @@ function parseBOBSheet(ws) {
   const statusCol = findKey(['memberstatus', 'planstatus', 'status']);
 
   return rows.map(row => {
-    // Build full name from first+last if no combined name col
     let clientName = '';
     if (firstNameCol && lastNameCol) {
       const first = String(row[firstNameCol] || '').trim();
@@ -103,7 +97,6 @@ function parseBOBSheet(ws) {
     } else if (clientCol) {
       clientName = String(row[clientCol] || '').trim();
     }
-
     return {
       client: clientName,
       agent: agentCol ? normalizeAgentName(String(row[agentCol] || '').trim()) : '',
@@ -115,6 +108,7 @@ function parseBOBSheet(ws) {
   }).filter(r => r.client && r.client.length > 1);
 }
 
+// ─── GET all BOB clients ──────────────────────────────────────────────────────
 router.get('/', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
@@ -135,6 +129,7 @@ router.get('/', requireAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ─── GET summary ──────────────────────────────────────────────────────────────
 router.get('/summary', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
@@ -156,6 +151,7 @@ router.get('/summary', requireAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ─── PATCH single client ──────────────────────────────────────────────────────
 router.patch('/:id', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
@@ -174,6 +170,7 @@ router.patch('/:id', requireAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ─── POST check-renewals ──────────────────────────────────────────────────────
 router.post('/check-renewals', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
@@ -182,16 +179,12 @@ router.post('/check-renewals', requireAuth, async (req, res) => {
     const isAdmin = req.user.role === 'admin';
     const af = isAdmin ? '' : `AND agent_name ILIKE '%${req.user.name}%'`;
 
-    // Normalize period to YYYYMM for flexible matching
     function normalizePeriod(p) {
       if (!p) return null;
       const s = String(p).trim();
-      // Already YYYYMM
       if (s.match(/^\d{6}$/)) return s;
-      // MM/DD/YYYY or MM/YYYY
       const mmyyyy = s.match(/^(\d{1,2})\/(?:\d{2}\/)?(\d{4})$/);
       if (mmyyyy) return mmyyyy[2] + mmyyyy[1].padStart(2,'0');
-      // Month name like FEB2026 or FEB 2026
       const months = {jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12'};
       const named = s.toLowerCase().match(/^([a-z]{3})\s*(\d{4})$/);
       if (named && months[named[1]]) return named[2] + months[named[1]];
@@ -199,20 +192,14 @@ router.post('/check-renewals', requireAuth, async (req, res) => {
     }
 
     const targetNorm = normalizePeriod(period);
-
-    // Get all commission records — filter by normalized period
     const allRecords = await pool.query(
-      `SELECT LOWER(TRIM(client_full_name)) as client_key, carrier, agent_name, commission, payment_period
-       FROM commission_records WHERE commission > 0 ${af}`
+      `SELECT LOWER(TRIM(client_full_name)) as client_key, carrier, agent_name, commission, payment_period FROM commission_records WHERE commission > 0 ${af}`
     );
-
-    // Match records whose period normalizes to the same YYYYMM
     const matchingRecords = allRecords.rows.filter(r => {
       const norm = normalizePeriod(r.payment_period);
       return norm && targetNorm && norm === targetNorm;
     });
 
-    // Normalize name: handle both "FIRST LAST" and "LAST, FIRST" formats
     function normName(name) {
       if (!name) return '';
       const s = String(name).toLowerCase().trim();
@@ -230,7 +217,6 @@ router.post('/check-renewals', requireAuth, async (req, res) => {
       return s;
     }
 
-    // Build paid sets using normalized names
     const paidSet = new Set(matchingRecords.map(r => `${normName(r.client_key)}|${normCarrier(r.carrier)}`));
     const paidLastNameSet = new Set(matchingRecords.map(r => {
       const n = normName(r.client_key);
@@ -256,7 +242,6 @@ router.post('/check-renewals', requireAuth, async (req, res) => {
       }
     }
 
-    // Update last commission info for matched clients
     for (const rec of matchingRecords) {
       await pool.query(
         `UPDATE book_of_business SET last_commission_date = $1, last_commission_amount = $2, updated_at = NOW()
@@ -265,14 +250,11 @@ router.post('/check-renewals', requireAuth, async (req, res) => {
       );
     }
 
-    res.json({
-      missingCount, recoveredCount, period,
-      checkedClients: bobClients.rows.length,
-      matchedRecords: matchingRecords.length
-    });
+    res.json({ missingCount, recoveredCount, period, checkedClients: bobClients.rows.length, matchedRecords: matchingRecords.length });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ─── POST upload BOB export ───────────────────────────────────────────────────
 router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   try {
@@ -324,44 +306,120 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
   }
 });
 
+// ─── POST build-from-statements (upsert — safe to run multiple times) ─────────
 router.post('/build-from-statements', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
     const isAdmin = req.user.role === 'admin';
     const af = isAdmin ? '' : `AND agent_name ILIKE '%${req.user.name}%'`;
+
+    // Get best record per client+carrier (most recent, with effective date preferred)
     const records = await pool.query(
-      `SELECT DISTINCT ON (LOWER(TRIM(client_full_name)), carrier) client_full_name, carrier, agent_name, effective_date, commission, payment_period FROM commission_records WHERE client_full_name != '' AND commission > 0 ${af} ORDER BY LOWER(TRIM(client_full_name)), carrier, created_at DESC`
+      `SELECT DISTINCT ON (LOWER(TRIM(client_full_name)), LOWER(carrier))
+         client_full_name, carrier, agent_name, effective_date, commission, payment_period
+       FROM commission_records
+       WHERE client_full_name != '' AND client_full_name IS NOT NULL AND commission > 0 ${af}
+       ORDER BY LOWER(TRIM(client_full_name)), LOWER(carrier),
+         CASE WHEN effective_date IS NOT NULL AND effective_date != '' THEN 0 ELSE 1 END,
+         created_at DESC`
     );
-    let added = 0, skipped = 0;
+
+    let added = 0, updated = 0;
     for (const rec of records.rows) {
       const existing = await pool.query(
-        `SELECT id FROM book_of_business WHERE LOWER(TRIM(client_full_name)) = LOWER($1) AND carrier = $2`,
+        `SELECT id, effective_date FROM book_of_business
+         WHERE LOWER(TRIM(client_full_name)) = LOWER($1) AND LOWER(carrier) = LOWER($2)
+         LIMIT 1`,
         [rec.client_full_name, rec.carrier]
       );
+
       if (existing.rows.length === 0) {
+        // Insert new
         await pool.query(
-          `INSERT INTO book_of_business (agent_name, carrier, client_full_name, effective_date, last_commission_date, last_commission_amount, source, status) VALUES ($1, $2, $3, $4, $5, $6, 'statement', 'active')`,
+          `INSERT INTO book_of_business
+             (agent_name, carrier, client_full_name, effective_date, last_commission_date, last_commission_amount, source, status)
+           VALUES ($1, $2, $3, $4, $5, $6, 'statement', 'active')`,
           [rec.agent_name, rec.carrier, rec.client_full_name, rec.effective_date, rec.payment_period, rec.commission]
         );
         added++;
-      } else { skipped++; }
+      } else {
+        // Update existing — fill in missing effective_date and refresh commission info
+        const existingEffDate = existing.rows[0].effective_date;
+        const newEffDate = rec.effective_date && rec.effective_date !== '' ? rec.effective_date : existingEffDate;
+        await pool.query(
+          `UPDATE book_of_business SET
+             agent_name = COALESCE(NULLIF($1,''), agent_name),
+             effective_date = COALESCE(NULLIF($2,''), effective_date),
+             last_commission_date = $3,
+             last_commission_amount = $4,
+             updated_at = NOW()
+           WHERE id = $5`,
+          [rec.agent_name, newEffDate, rec.payment_period, rec.commission, existing.rows[0].id]
+        );
+        updated++;
+      }
     }
-    res.json({ added, skipped, total: added + skipped });
+
+    res.json({ added, updated, total: added + updated });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// Bulk delete by carrier
+// ─── POST reset-and-rebuild — clears ALL BOB and rebuilds fresh ───────────────
+router.post('/reset-and-rebuild', requireAuth, async (req, res) => {
+  try {
+    const pool = getPool();
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
+
+    // Delete all BOB records
+    const deleted = await pool.query('DELETE FROM book_of_business');
+
+    // Rebuild from statements using upsert logic
+    const records = await pool.query(
+      `SELECT DISTINCT ON (LOWER(TRIM(client_full_name)), LOWER(carrier))
+         client_full_name, carrier, agent_name, effective_date, commission, payment_period
+       FROM commission_records
+       WHERE client_full_name != '' AND client_full_name IS NOT NULL AND commission > 0
+       ORDER BY LOWER(TRIM(client_full_name)), LOWER(carrier),
+         CASE WHEN effective_date IS NOT NULL AND effective_date != '' THEN 0 ELSE 1 END,
+         created_at DESC`
+    );
+
+    let added = 0;
+    for (const rec of records.rows) {
+      await pool.query(
+        `INSERT INTO book_of_business
+           (agent_name, carrier, client_full_name, effective_date, last_commission_date, last_commission_amount, source, status)
+         VALUES ($1, $2, $3, $4, $5, $6, 'statement', 'active')`,
+        [rec.agent_name, rec.carrier, rec.client_full_name, rec.effective_date, rec.payment_period, rec.commission]
+      );
+      added++;
+    }
+
+    res.json({ deleted: deleted.rowCount, added, message: `Cleared ${deleted.rowCount} duplicates and rebuilt ${added} clean clients.` });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─── POST bulk-delete by carrier ──────────────────────────────────────────────
 router.post('/bulk-delete', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
-    const { carrier } = req.body;
-    if (!carrier) return res.status(400).json({ error: 'Carrier required' });
+    const { carrier, ids } = req.body;
+
+    // Delete by array of IDs (for checkbox bulk select)
+    if (ids && Array.isArray(ids) && ids.length > 0) {
+      const placeholders = ids.map((_, i) => `$${i + 1}`).join(',');
+      const result = await pool.query(`DELETE FROM book_of_business WHERE id IN (${placeholders})`, ids);
+      return res.json({ success: true, deleted: result.rowCount });
+    }
+
+    // Delete all by carrier
+    if (!carrier) return res.status(400).json({ error: 'Carrier or ids required' });
     const result = await pool.query('DELETE FROM book_of_business WHERE carrier = $1', [carrier]);
     res.json({ success: true, deleted: result.rowCount });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// DELETE a single BOB client
+// ─── DELETE single client ─────────────────────────────────────────────────────
 router.delete('/:id', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
