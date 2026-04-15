@@ -63,8 +63,6 @@ function derivePlanType(carrier, rawPlanType, policyNumber, lob) {
   if (carrier === 'Simply') return 'Simply Med Adv';
   if (carrier === 'Molina') return 'Molina Med Adv';
   if (carrier === 'WellCare') return 'WellCare Med Adv';
-  if (carrier === 'Mutual of Omaha') return 'Mutual of Omaha Life';
-  if (carrier === 'United of Omaha') return 'United of Omaha Life';
 
   if (lb === 'aca') return `${carrier} ACA`;
   if (lb === 'ma') return `${carrier} Med Adv`;
@@ -95,7 +93,6 @@ function detectCarrierFromFilename(filename) {
   if (f.includes('avmed') || f.includes('av_med')) return 'AvMed';
   if (f.includes('doctors') || f.includes('doctor_')) return 'Doctors';
   if (f.includes('contracts_commissionstatements') || f.includes('contracts_commission')) return 'AvMed';
-  if (f.includes('moo') || f.includes('mutual_of_omaha') || f.includes('mutualomaha')) return 'Mutual of Omaha';
   return 'Unknown';
 }
 
@@ -127,28 +124,20 @@ function isHumanaFile(filename) {
   return (f.includes('commissiondata') || f.includes('yahoska_perez_med_comm') || f.includes('humana'))
     && !f.includes('yourfmo') && !f.endsWith('.pdf');
 }
+
 function isYourFMOFile(filename) {
   const f = filename.toLowerCase().replace(/\s+/g, '_');
   return f.includes('yourfmo') && !f.endsWith('.pdf');
 }
+
 function isHumanaPDF(filename) {
   const f = filename.toLowerCase();
   return f.endsWith('.pdf') && (f.includes('humana') || f.includes('commissionstatement') || f.includes('yourfmo'));
 }
+
 function isYourFMOXLSX(filename) {
   const f = filename.toLowerCase().replace(/\s+/g, '_');
   return f.includes('commissions_commissiondetails') || f.includes('commissiondetails_88892');
-}
-
-// ─── NEW: Mutual of Omaha PDF detector ───────────────────────────────────────
-function isMutualOmahaPDF(filename) {
-  const f = filename.toLowerCase();
-  return f.endsWith('.pdf') && (
-    f.includes('moo') ||
-    f.includes('mutual') ||
-    f.includes('mutual_of_omaha') ||
-    f.includes('mutualomaha')
-  );
 }
 
 // ─── Date formatting ─────────────────────────────────────────────────────────
@@ -267,6 +256,8 @@ function parseUHCRows(wb) {
 }
 
 // ─── Humana parser — SpreadsheetML XML ───────────────────────────────────────
+// Humana CommissionData files are SpreadsheetML XML disguised as .xls.
+// XLSX.js cannot parse them. We read the raw file buffer as UTF-8 XML.
 
 function parseHumanaRows(wb, filename, rawBuffer) {
   const records = [];
@@ -278,6 +269,7 @@ function parseHumanaRows(wb, filename, rawBuffer) {
     }
 
     const content = rawBuffer.toString('utf-8');
+    // Humana uses broken XML declaration — fix it
     const fixedXml = content.replace('<xml version>', '<?xml version="1.0"?>');
 
     const monthMap = {
@@ -285,6 +277,7 @@ function parseHumanaRows(wb, filename, rawBuffer) {
       jul:'07', aug:'08', sep:'09', oct:'10', nov:'11', dec:'12'
     };
 
+    // Extract rows via regex — no external XML deps needed
     const rowRegex = /<Row[^>]*>([\s\S]*?)<\/Row>/g;
     const cellRegex = /<Cell[^>]*>[\s\S]*?<Data[^>]*>([\s\S]*?)<\/Data>[\s\S]*?<\/Cell>/g;
 
@@ -335,12 +328,15 @@ function parseHumanaRows(wb, filename, rawBuffer) {
       const effDateRaw = get(effIdx).trim();
       const fyr        = get(fyrIdx).trim().toUpperCase();
       const policyNum  = get(grpNbrIdx).trim();
-      const commRunDt  = get(commRunIdx).trim();
+      const commRunDt  = get(commRunIdx).trim();  // e.g. "2025-03-19T00:00:00.000"
       const blkBus     = get(blkBusIdx).trim().toUpperCase();
       const product    = get(productIdx).trim().toUpperCase();
 
       if (!client || commission === 0) continue;
 
+      // Period: CommRunDt year + MonthPaid month
+      // e.g. CommRunDt=2025-03-19, MonthPaid=MAR → 202503
+      // e.g. CommRunDt=2025-03-19, MonthPaid=JAN → 202501 (retroactive)
       let period = '';
       if (monthPaid && monthMap[monthPaid] && commRunDt) {
         const yearMatch = commRunDt.match(/^(\d{4})/);
@@ -348,10 +344,12 @@ function parseHumanaRows(wb, filename, rawBuffer) {
         period = year + monthMap[monthPaid];
       }
 
+      // EffDate ISO string → MM/DD/YYYY
       let effectiveDate = '';
       const em = effDateRaw.match(/^(\d{4})-(\d{2})-(\d{2})/);
       if (em) effectiveDate = `${em[2]}/${em[3]}/${em[1]}`;
 
+      // Plan type from BlkBusCd + Product
       let planType = 'Humana Med Adv';
       if (blkBus === 'IN' || product === 'DENTAL') planType = 'Humana Dental';
       else if (product === 'PDP' || policyNum.toLowerCase().includes('_pdp')) planType = 'Humana PDP';
@@ -644,7 +642,6 @@ function parseSolisRows(wb, filename) {
       : isNewEnrollment ? 'New Business'
       : paymentType.includes('renewal') ? 'Renewal'
       : 'Agency Override';
-
     let period = '';
     if (effRaw) {
       const d = new Date(effRaw);
@@ -710,6 +707,7 @@ function parseRows(rows, mapping, filename) {
     };
   }).filter(r => r.commission > 0 || r.premium > 0 || r.client);
 }
+
 
 // ─── Humana PDF parser ───────────────────────────────────────────────────────
 async function parseHumanaPDF(filePath, filename) {
@@ -785,128 +783,6 @@ async function parseHumanaPDF(filePath, filename) {
   return records;
 }
 
-// ─── Mutual of Omaha PDF parser ───────────────────────────────────────────────
-async function parseMutualOmahaPDF(filePath, filename) {
-  const records = [];
-  try {
-    const dataBuffer = fs.readFileSync(filePath);
-    const data = await pdfParse(dataBuffer);
-    const text = data.text;
-
-    // Extract period from "For Period Ending MM/DD/YYYY"
-    // The date may be on a separate line from "For Period Ending"
-    const periodMatch = text.match(/For Period Ending\s*\n?\s*(\d{2})\/(\d{2})\/(\d{4})/);
-    const period = periodMatch ? periodMatch[3] + periodMatch[1] : '';
-    console.log('MOO period detected:', period);
-
-    // Extract MGA from anywhere in text
-    const mgaMatch = text.match(/MGA:\s+([A-Z][A-Z\s]+?)(?:\s{3,}|PRODUCTION)/);
-    const currentMGA = mgaMatch ? mgaMatch[1].trim() : 'Brokers Alliance';
-    console.log('MOO MGA detected:', currentMGA);
-
-    // The key insight: each producer section is one giant line in the PDF.
-    // Split by PRODUCTION # to get one chunk per producer.
-    // Pattern: "PRODUCTION #: XXXXXXX    NAME: AGENT NAME   ...policies..."
-    const producerChunks = text.split(/PRODUCTION\s*#:\s*\d+/);
-    console.log('MOO producer chunks found:', producerChunks.length - 1);
-
-    for (let ci = 1; ci < producerChunks.length; ci++) {
-      const chunk = producerChunks[ci];
-
-      // Extract agent name — appears right after PRODUCTION #: XXXXXX
-      const nameMatch = chunk.match(/NAME:\s*([A-Z][A-Z\s\-\.]+?)(?:\s{3,}|M\s+A\s+O|POLICY)/);
-      const agentName = nameMatch ? nameMatch[1].trim() : 'Unknown';
-
-      // Check if this producer has payable commission
-      // "PRODUCER COMMISSION PAYABLE   $XX.XX" — if $.00, skip
-      const payableMatch = chunk.match(/PRODUCER COMMISSION PAYABLE\s+\$([\d,]+\.\d{2})/);
-      if (payableMatch) {
-        const payableAmt = parseFloat(payableMatch[1].replace(/,/g, ''));
-        if (payableAmt === 0) {
-          console.log(`MOO skipping ${agentName} — $0.00 payable`);
-          continue;
-        }
-      } else if (chunk.includes('PRODUCER COMMISSION PAYABLE') && chunk.includes('$.00')) {
-        console.log(`MOO skipping ${agentName} — $.00 payable`);
-        continue;
-      }
-
-      // Find all policy entries in this chunk
-      // Policy numbers: BU####### (United) or ######-## (Mutual health)
-      const policyRegex = /(BU\d{7,}|\d{6}-\d{2})\s+([A-Z][A-Z\s,\.]+?)\s{2,}([A-Z]{2})\s+(\d{2}\/\d{2}\/\d{4})\s+\S+\s+(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})/g;
-      let policyMatch;
-
-      while ((policyMatch = policyRegex.exec(chunk)) !== null) {
-        const policyNumber = policyMatch[1];
-        const clientRaw = policyMatch[2].trim();
-        const effectiveDate = policyMatch[5] || policyMatch[4] || '';
-        const isUnited = policyNumber.startsWith('BU');
-        const lineCarrier = isUnited ? 'United of Omaha' : 'Mutual of Omaha';
-
-        // Convert "LAST, FIRST" → "First Last"
-        const clientName = clientRaw.includes(',')
-          ? clientRaw.split(',').reverse().map(p => p.trim()).join(' ')
-          : clientRaw;
-
-        // Get the segment after this policy number to find dollar amounts
-        const afterPolicy = chunk.slice(policyMatch.index + policyMatch[0].length, policyMatch.index + policyMatch[0].length + 300);
-
-        // Find all dollar amounts in this segment
-        const dollarAmounts = afterPolicy.match(/\$[\d,]*\.\d{2}/g) || [];
-
-        let commission = 0;
-        if (dollarAmounts.length >= 2) {
-          // second-to-last = commission amount; last = advance/reclaim
-          const commStr = dollarAmounts[dollarAmounts.length - 2];
-          commission = parseFloat(commStr.replace(/[$,]/g, ''));
-        } else if (dollarAmounts.length === 1) {
-          commission = parseFloat(dollarAmounts[0].replace(/[$,]/g, ''));
-        }
-
-        // Check for negative (chargeback) — NNN.NN- pattern
-        if (afterPolicy.match(/([\d,]+\.\d{2})-/)) {
-          commission = -Math.abs(commission);
-        }
-
-        if (commission === 0) continue;
-
-        // Activity type
-        const activity = afterPolicy.includes('NEW COV ISS') ? 'New Business'
-          : afterPolicy.includes('NEW ISS') ? 'New Business'
-          : afterPolicy.includes('REISS') ? 'New Business'
-          : afterPolicy.includes('BFY PAYMENT') ? 'Renewal'
-          : afterPolicy.includes('REVERSAL') ? 'Chargeback'
-          : afterPolicy.includes('LAPSE') ? 'Chargeback'
-          : commission < 0 ? 'Chargeback'
-          : 'Renewal';
-
-        console.log(`MOO record: ${agentName} | ${clientName} | ${policyNumber} | $${commission} | ${activity}`);
-
-        records.push({
-          agent: agentName,
-          carrier: lineCarrier,
-          planType: lineCarrier === 'Mutual of Omaha' ? 'Mutual of Omaha Life' : 'United of Omaha Life',
-          client: clientName,
-          effectiveDate,
-          premium: 0,
-          commission,
-          classification: activity,
-          period,
-          policyNumber,
-          payee: 'Mutual of Omaha',
-          mga: currentMGA,
-          raw: {}
-        });
-      }
-    }
-
-    console.log('MOO total records parsed:', records.length);
-  } catch (err) {
-    console.error('parseMutualOmahaPDF error:', err.message);
-  }
-  return records;
-}
-
 // ─── YourFMO Excel parser ────────────────────────────────────────────────────
 function parseYourFMORows(wb, filename) {
   const records = [];
@@ -955,6 +831,7 @@ function parseYourFMORows(wb, filename) {
   return records;
 }
 
+
 // ─── YourFMO CommissionDetails XLSX parser ──────────────────────────────────
 function parseYourFMOXLSXRows(wb) {
   const records = [];
@@ -970,9 +847,11 @@ function parseYourFMOXLSXRows(wb) {
     const fyr       = String(row['First Year/Renewal'] || '').trim();
     const commType  = String(row['Commission Type'] || '').trim();
     const carrier   = String(row['Carrier'] || 'Humana').trim();
+    const status    = String(row['Status'] || '').trim().toLowerCase();
 
     if (!client || commission === 0) continue;
 
+    // Period from Statement Date
     let period = '';
     const stmtDate = row['Statement Date'];
     if (stmtDate) {
@@ -980,14 +859,17 @@ function parseYourFMOXLSXRows(wb) {
       if (!isNaN(d)) period = String(d.getFullYear()) + String(d.getMonth()+1).padStart(2,'0');
     }
 
+    // Effective date
     const effectiveDate = formatDate(row['Effective Date']);
 
+    // Classification
     const classification = commission < 0 ? 'Chargeback'
       : fyr === 'First Year' ? 'New Business'
       : fyr === 'Renewal Year' ? 'Renewal'
       : commType.toLowerCase().includes('override') ? 'Agency Override'
       : 'Agent Commission';
 
+    // Normalize carrier
     const carrierNorm = carrier.toLowerCase().includes('humana') ? 'Humana'
       : carrier.toLowerCase().includes('united') ? 'UnitedHealthcare'
       : carrier.toLowerCase().includes('aetna') ? 'Aetna'
@@ -1010,6 +892,8 @@ function parseYourFMOXLSXRows(wb) {
   }
   return records;
 }
+
+
 
 // ─── Upload route ─────────────────────────────────────────────────────────────
 
@@ -1039,23 +923,11 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       if (f.includes('commissiondata') || f.includes('humana')) return 'Humana';
       if (f.includes('devoted')) return 'Devoted';
       if (f.includes('aetna') || f.includes('producerstatement')) return 'Aetna';
-      if (f.includes('moo') || f.includes('mutual')) return 'Mutual of Omaha';
       return 'Direct';
     };
     const defaultPayee = determinePayee(req.file.originalname);
 
-    // ─── Carrier detection order — Mutual of Omaha BEFORE generic PDF fallback ───
-    if (isMutualOmahaPDF(req.file.originalname)) {
-      if (!pdfParse) {
-        try { fs.unlinkSync(req.file.path); } catch(e) {}
-        return res.status(500).json({ error: 'PDF parsing not available — pdf-parse package not installed.' });
-      }
-      records = await parseMutualOmahaPDF(req.file.path, req.file.originalname);
-      if (!records.length) {
-        try { fs.unlinkSync(req.file.path); } catch(e) {}
-        return res.status(400).json({ error: 'No records found in PDF. Verify this is a Mutual of Omaha commission statement.' });
-      }
-    } else if (isYourFMOXLSX(req.file.originalname)) {
+    if (isYourFMOXLSX(req.file.originalname)) {
       records = parseYourFMOXLSXRows(wb);
     } else if (isHumanaPDF(req.file.originalname)) {
       if (!pdfParse) {
@@ -1076,6 +948,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     } else if (isYourFMOFile(req.file.originalname)) {
       records = parseYourFMORows(wb, req.file.originalname);
     } else if (isHumanaFile(req.file.originalname)) {
+      // Read raw buffer BEFORE XLSX tries to parse — Humana files are SpreadsheetML XML
       const rawBuffer = fs.readFileSync(req.file.path);
       records = parseHumanaRows(wb, req.file.originalname, rawBuffer);
     } else if (isSolisFile(req.file.originalname)) {
@@ -1141,6 +1014,7 @@ router.get('/uploads', requireAuth, async (req, res) => {
 
     let query, params = [];
     if (req.user.role === 'agent') {
+      // Agent sees only their own uploads
       query = `SELECT u.*, usr.name as uploaded_by_name
                FROM uploads u
                LEFT JOIN users usr ON u.uploaded_by = usr.id
@@ -1148,6 +1022,7 @@ router.get('/uploads', requireAuth, async (req, res) => {
                ORDER BY u.uploaded_at DESC`;
       params = [req.user.id];
     } else if (agency) {
+      // Agency admin — show uploads that contain records for this agency's payee
       query = `SELECT DISTINCT u.*, usr.name as uploaded_by_name
                FROM uploads u
                LEFT JOIN users usr ON u.uploaded_by = usr.id
@@ -1158,6 +1033,7 @@ router.get('/uploads', requireAuth, async (req, res) => {
                ORDER BY u.uploaded_at DESC`;
       params = [`%${agency}%`];
     } else {
+      // Super admin — see everything
       query = `SELECT u.*, usr.name as uploaded_by_name
                FROM uploads u
                LEFT JOIN users usr ON u.uploaded_by = usr.id
