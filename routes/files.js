@@ -8,6 +8,8 @@ const Anthropic = require('@anthropic-ai/sdk');
 const { getPool } = require('../db/database');
 const { requireAuth } = require('./auth');
 const { normalizeAgentName } = require('../normalize');
+let pdfParse;
+try { pdfParse = require('pdf-parse'); } catch(e) { console.log('pdf-parse not installed'); }
 
 const UPLOADS_DIR = path.join('/tmp', 'uploads');
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
@@ -16,7 +18,14 @@ const storage = multer.diskStorage({
   destination: UPLOADS_DIR,
   filename: (req, file, cb) => cb(null, `${Date.now()}_${file.originalname.replace(/\s+/g, '_')}`)
 });
-const upload = multer({ storage, limits: { fileSize: 20 * 1024 * 1024 } });
+const upload = multer({
+  storage,
+  limits: { fileSize: 20 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const allowed = /\.(xlsx|xls|csv|pdf)$/i;
+    cb(null, allowed.test(file.originalname));
+  }
+});
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 // ─── Plan type derivation ────────────────────────────────────────────────────
@@ -82,11 +91,8 @@ function detectCarrierFromFilename(filename) {
   if (f.includes('florida_blue') || f.includes('bcbs') || f.includes('floridablue')) return 'Florida Blue';
   if (f.includes('oscar')) return 'Oscar Health';
   if (f.includes('avmed') || f.includes('av_med')) return 'AVMED';
-  if (f.includes('doctors') || f.includes('doctor_')) return 'DOCTORS';
-  if (f.includes('sunshine')) return 'Sunshine Health';
-  if (f.includes('gold_kidney') || f.includes('goldkidney')) return 'Gold Kidney';
-  if (f.includes('simply')) return 'Simply';
-  if (f.includes('ambetter')) return 'Ambetter';
+  if (f.includes('doctors') || f.includes('doctor_')) return 'Doctors';
+  if (f.includes('contracts_commissionstatements') || f.includes('contracts_commission')) return 'AVMED';
   return 'Unknown';
 }
 
@@ -115,7 +121,23 @@ function isNHPFile(filename) {
 }
 function isHumanaFile(filename) {
   const f = filename.toLowerCase().replace(/\s+/g, '_');
-  return f.includes('commissiondata') || f.includes('yahoska_perez_med_comm') || f.includes('humana');
+  return (f.includes('commissiondata') || f.includes('yahoska_perez_med_comm') || f.includes('humana'))
+    && !f.includes('yourfmo') && !f.endsWith('.pdf');
+}
+
+function isYourFMOFile(filename) {
+  const f = filename.toLowerCase().replace(/\s+/g, '_');
+  return f.includes('yourfmo') && !f.endsWith('.pdf');
+}
+
+function isHumanaPDF(filename) {
+  const f = filename.toLowerCase();
+  return f.endsWith('.pdf') && (f.includes('humana') || f.includes('commissionstatement') || f.includes('yourfmo'));
+}
+
+function isYourFMOXLSX(filename) {
+  const f = filename.toLowerCase().replace(/\s+/g, '_');
+  return f.includes('commissions_commissiondetails') || f.includes('commissiondetails_88892');
 }
 
 // ─── Date formatting ─────────────────────────────────────────────────────────
@@ -609,8 +631,6 @@ function parseSolisRows(wb, filename) {
 
     if (!client || commission === 0) continue;
 
-    // Solis labels AEP new enrollments as "Renewal Compensation"
-    // Override: if eff date is in the current year, it's a new enrollment
     const effRaw = row['Commission Eff. Date'];
     const effYearCheck = effRaw ? new Date(effRaw).getFullYear() : null;
     const currentYear = new Date().getFullYear();
@@ -688,6 +708,191 @@ function parseRows(rows, mapping, filename) {
   }).filter(r => r.commission > 0 || r.premium > 0 || r.client);
 }
 
+
+// ─── Humana PDF parser ───────────────────────────────────────────────────────
+async function parseHumanaPDF(filePath, filename) {
+  const records = [];
+  try {
+    const dataBuffer = fs.readFileSync(filePath);
+    const data = await pdfParse(dataBuffer);
+    const text = data.text;
+    const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+
+    const dateMatch = text.match(/Statement Date:\s*(\d{2})\/(\d{2})\/(\d{4})/);
+    let period = dateMatch ? dateMatch[3] + dateMatch[1] : '';
+
+    let agentName = 'The Health Experts Insurance';
+    for (const line of lines) {
+      if (line.includes('Agent Number:') || line.includes('NPN:')) {
+        const m = line.match(/^([A-Za-z\s\.]+?)\s*\(/);
+        if (m) agentName = normalizeAgentName(m[1].trim()) || agentName;
+        break;
+      }
+    }
+
+    let section = '';
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (['NEW BUSINESS', 'RENEWAL BUSINESS', 'ADJUSTMENT'].includes(line)) {
+        section = line;
+        continue;
+      }
+      if (!line.match(/^\d{11,}/)) continue;
+
+      const policyMatch = line.match(/^(\d{11,}[A-Z_]*)/);
+      const policyFull = policyMatch ? policyMatch[1] : '';
+      const policyNumber = policyFull.split('_')[0];
+      const isOverride = /override/i.test(line);
+      const isAdjustment = /adjustment/i.test(line);
+      const context = lines.slice(i, i + 5).join(' ');
+      const isHRA = /HRA|BONUS/i.test(context);
+
+      const afterPolicy = line.slice(policyFull.length).trim();
+      const clientMatch = afterPolicy.match(/^([A-Za-z\s,\.]+?)\s+(Override|Adjustment|New Business|Renewal)/i);
+      const client = clientMatch ? clientMatch[1].trim() : afterPolicy.split(/\s{2,}/)[0].trim();
+
+      const dates = line.match(/(\d{2}\/\d{2}\/\d{4})/g) || [];
+      const effectiveDate = dates[1] || dates[0] || '';
+
+      const amountsRaw = line.match(/\(?\$[\d,]+\.\d{2}\)?/g) || [];
+      if (!amountsRaw.length) continue;
+      const lastAmt = amountsRaw[amountsRaw.length - 1];
+      const isNegative = lastAmt.startsWith('(');
+      let commission = parseFloat(lastAmt.replace(/[($,)]/g, ''));
+      if (isNegative) commission = -commission;
+      if (commission === 0) continue;
+
+      let classification;
+      if (isHRA) classification = 'HRA/Bonus';
+      else if (commission < 0) classification = 'Chargeback';
+      else if (isAdjustment) classification = 'Agent Commission';
+      else if (section === 'NEW BUSINESS') classification = 'New Business';
+      else if (section === 'RENEWAL BUSINESS') classification = 'Renewal';
+      else if (isOverride) classification = 'Agency Override';
+      else classification = 'Agent Commission';
+
+      records.push({
+        agent: agentName, carrier: 'Humana', planType: 'Humana Med Adv',
+        client, effectiveDate, premium: 0, commission, classification,
+        period, policyNumber,
+        payee: filename.toLowerCase().includes('yourfmo') ? 'YourFMO' : 'Humana',
+        raw: {}
+      });
+    }
+  } catch(err) { console.error('parseHumanaPDF error:', err.message); }
+  return records;
+}
+
+// ─── YourFMO Excel parser ────────────────────────────────────────────────────
+function parseYourFMORows(wb, filename) {
+  const records = [];
+  try {
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true });
+    const headerStr = String(rows[0]?.[0] || '');
+    const dateMatch = headerStr.match(/Statement Date:\s*(\d{2})\/(\d{2})\/(\d{4})/);
+    let period = dateMatch ? dateMatch[3] + dateMatch[1] : '';
+    let agentName = 'The Health Experts Insurance';
+    for (const row of rows) {
+      const cell = String(row[0] || '');
+      if (cell.includes('Agent Number:') || cell.includes('NPN:')) {
+        const m = cell.match(/^([A-Za-z\s]+?)\s*\(/);
+        if (m) agentName = normalizeAgentName(m[1].trim()) || agentName;
+        break;
+      }
+    }
+    for (const row of rows) {
+      const cell0 = String(row[0] || '').trim();
+      const cell1 = String(row[1] || '').trim();
+      if (!cell0.match(/^\d{11,}/)) continue;
+      const parts0 = cell0.split(/\s{2,}/);
+      const policyNumber = (parts0[0] || '').split('_')[0].trim();
+      const client = parts0[1] || '';
+      const transType = parts0[2] || '';
+      const dateMatches = cell1.match(/(\d{2}\/\d{2}\/\d{4})/g) || [];
+      const effectiveDate = dateMatches[1] || dateMatches[0] || '';
+      const amounts = cell1.match(/\$([\d,]+\.\d{2})/g) || [];
+      const commission = amounts.length ? parseFloat(amounts[0].replace(/[$,]/g,'')) : 0;
+      if (!client || commission === 0) continue;
+      const isHRA = /HRA|BONUS/i.test(cell0);
+      const classification = isHRA ? 'HRA/Bonus'
+        : commission < 0 ? 'Chargeback'
+        : transType.toLowerCase().includes('adjustment') ? 'Agent Commission'
+        : transType.toLowerCase().includes('new') ? 'New Business'
+        : transType.toLowerCase().includes('renewal') ? 'Renewal'
+        : 'Agent Commission';
+      records.push({
+        agent: agentName, carrier: 'Humana', planType: 'Humana Med Adv',
+        client: client.trim(), effectiveDate, premium: 0, commission,
+        classification, period, policyNumber, payee: 'YourFMO', raw: {}
+      });
+    }
+  } catch(err) { console.error('parseYourFMORows error:', err.message); }
+  return records;
+}
+
+
+// ─── YourFMO CommissionDetails XLSX parser ──────────────────────────────────
+function parseYourFMOXLSXRows(wb) {
+  const records = [];
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
+  if (!rows.length) return records;
+
+  for (const row of rows) {
+    const client    = String(row['Insured Name'] || '').trim();
+    const agentRaw  = String(row['Writing Agent'] || '').trim();
+    const commission= parseFloat(row['Commission ($)']) || 0;
+    const policyNum = String(row['Policy #'] || row['Carrier Policy ID'] || '').trim().split('_')[0];
+    const fyr       = String(row['First Year/Renewal'] || '').trim();
+    const commType  = String(row['Commission Type'] || '').trim();
+    const carrier   = String(row['Carrier'] || 'Humana').trim();
+    const status    = String(row['Status'] || '').trim().toLowerCase();
+
+    if (!client || commission === 0) continue;
+
+    // Period from Statement Date
+    let period = '';
+    const stmtDate = row['Statement Date'];
+    if (stmtDate) {
+      const d = new Date(stmtDate);
+      if (!isNaN(d)) period = String(d.getFullYear()) + String(d.getMonth()+1).padStart(2,'0');
+    }
+
+    // Effective date
+    const effectiveDate = formatDate(row['Effective Date']);
+
+    // Classification
+    const classification = commission < 0 ? 'Chargeback'
+      : fyr === 'First Year' ? 'New Business'
+      : fyr === 'Renewal Year' ? 'Renewal'
+      : commType.toLowerCase().includes('override') ? 'Agency Override'
+      : 'Agent Commission';
+
+    // Normalize carrier
+    const carrierNorm = carrier.toLowerCase().includes('humana') ? 'Humana'
+      : carrier.toLowerCase().includes('united') ? 'UnitedHealthcare'
+      : carrier.toLowerCase().includes('aetna') ? 'Aetna'
+      : carrier;
+
+    records.push({
+      agent: normalizeAgentName(agentRaw) || 'The Health Experts Insurance',
+      carrier: carrierNorm,
+      planType: derivePlanType(carrierNorm, '', policyNum, ''),
+      client,
+      effectiveDate,
+      premium: 0,
+      commission,
+      classification,
+      period,
+      policyNumber: policyNum,
+      payee: 'YourFMO',
+      raw: row
+    });
+  }
+  return records;
+}
+
 // ─── Upload route ─────────────────────────────────────────────────────────────
 
 router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
@@ -712,6 +917,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       if (f.includes('the_health_experts_insurance_statement') || f.includes('the_health_experst_insurance') || (f.includes('yahoska') && f.includes('katy'))) return 'NHP';
       if (f.includes('commission-statement') || f.includes('integrity') || f.includes('apl')) return 'APL';
       if (f.includes('commissions_ledger') || f.includes('solis')) return 'Solis';
+      if (f.includes('yourfmo') || f.includes('commissiondetails')) return 'YourFMO';
       if (f.includes('commissiondata') || f.includes('humana')) return 'Humana';
       if (f.includes('devoted')) return 'Devoted';
       if (f.includes('aetna') || f.includes('producerstatement')) return 'Aetna';
@@ -719,12 +925,26 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     };
     const defaultPayee = determinePayee(req.file.originalname);
 
-    if (isUHCFile(req.file.originalname)) {
+    if (isYourFMOXLSX(req.file.originalname)) {
+      records = parseYourFMOXLSXRows(wb);
+    } else if (isHumanaPDF(req.file.originalname)) {
+      if (!pdfParse) {
+        try { fs.unlinkSync(req.file.path); } catch(e) {}
+        return res.status(500).json({ error: 'PDF parsing not available — pdf-parse package not installed on server.' });
+      }
+      records = await parseHumanaPDF(req.file.path, req.file.originalname);
+      if (!records.length) {
+        try { fs.unlinkSync(req.file.path); } catch(e) {}
+        return res.status(400).json({ error: 'No records found in PDF. Check that it is a Humana commission statement.' });
+      }
+    } else if (isUHCFile(req.file.originalname)) {
       records = parseUHCRows(wb);
     } else if (isBSIFile(req.file.originalname)) {
       records = parseBSIRows(wb, req.file.originalname);
     } else if (isNHPFile(req.file.originalname)) {
       records = parseNHPRows(wb);
+    } else if (isYourFMOFile(req.file.originalname)) {
+      records = parseYourFMORows(wb, req.file.originalname);
     } else if (isHumanaFile(req.file.originalname)) {
       // Read raw buffer BEFORE XLSX tries to parse — Humana files are SpreadsheetML XML
       const rawBuffer = fs.readFileSync(req.file.path);
