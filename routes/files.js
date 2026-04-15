@@ -905,30 +905,54 @@ async function parseMOOPDF(filePath, filename) {
   if (!pdfParse) { console.error('pdf-parse not installed'); return records; }
   try {
     const dataBuffer = fs.readFileSync(filePath);
-    const data = await pdfParse(dataBuffer);
+    const data = await pdfParse(dataBuffer, { normalizeWhitespace: true });
     const text = data.text;
-    const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
 
-    // Period from "For Period Ending MM/DD/YYYY"
+    // pdf-parse sometimes concatenates words — split on known patterns
+    // Normalize: insert newlines before BU policy numbers and production lines
+    const normalized = text
+      .replace(/(BU\d{7,})/g, '\n$1')
+      .replace(/(\d{6}-\d{2})\s/g, '\n$1 ')
+      .replace(/(PRODUCTION #:)/g, '\n$1')
+      .replace(/(For Period Ending)/g, '\n$1');
+
+    const lines = normalized.split('\n').map(l => l.trim()).filter(Boolean);
+
+    // Period
     let period = '';
-    const dateM = text.match(/For Period Ending (\d{2})\/(\d{2})\/(\d{4})/);
-    if (dateM) period = dateM[3] + dateM[1];
-    console.log('[MOO] period:', period, 'lines:', lines.length);
-    console.log('[MOO] first 5 lines:', lines.slice(0,5));
-    console.log('[MOO] sample BU line:', lines.find(l => /^BU\d+/.test(l)) || 'NONE FOUND');
+    const dateM = text.match(/For\s*Period\s*Ending\s*(\d{2})[\/\s](\d{2})[\/\s](\d{4})/);
+    if (dateM) {
+      period = dateM[3] + dateM[1];
+    } else {
+      // Try alternate format in concatenated text
+      const dateM2 = text.match(/(\d{2})\/( \d{2})\/(\d{4})/);
+      if (dateM2) period = dateM2[3] + dateM2[1];
+      // Last resort — find 04/13/2026 style
+      const dateM3 = text.match(/0(\d)\/\d{2}\/(202\d)/);
+      if (!period && dateM3) period = dateM3[2] + '0' + dateM3[1];
+    }
+
+    // Try to get period from filename e.g. MOO_4_13.pdf → 202604
+    if (!period) {
+      const fnM = filename.match(/_(\d{1,2})_/);
+      if (fnM) period = '2026' + fnM[1].padStart(2,'0');
+    }
+
+    console.log('[MOO v2] period:', period, 'lines:', lines.length);
+    const buSample = lines.find(l => /^BU\d+/.test(l));
+    console.log('[MOO v2] BU sample:', buSample ? buSample.slice(0,80) : 'NONE');
 
     let currentAgent = 'Broker Society Insurance';
 
     for (const line of lines) {
-      // Track current agent
-      const prodM = line.match(/^PRODUCTION #:\s*\d+\s+NAME:\s+(.+)/);
+      // Track agent from PRODUCTION line
+      const prodM = line.match(/PRODUCTION #:\s*\d+\s*NAME:\s*(.+)/i);
       if (prodM) {
-        currentAgent = prodM[1].trim().replace(/\b\w/g, c => c.toUpperCase());
+        currentAgent = prodM[1].trim().replace(/\w/g, c => c.toUpperCase());
         continue;
       }
 
-      // Data rows: BU + digits (United of Omaha life) or XXXXXX-XX (Mutual health)
-      const isUnited = /^BU\d+/.test(line);
+      const isUnited = /^BU\d{7,}/.test(line);
       const isMutual = /^\d{6}-\d{2}/.test(line);
       if (!isUnited && !isMutual) continue;
 
@@ -936,8 +960,8 @@ async function parseMOOPDF(filePath, filename) {
       const policyM = line.match(/^([A-Z]{0,2}\d+(?:-\d+)?)/);
       const policyNumber = policyM ? policyM[1] : '';
 
-      // Client name — before state code (2 uppercase letters followed by date)
-      const clientM = line.match(/^[A-Z0-9-]+\s+([A-Z][A-Z\s,\.\'-]+?)\s+[A-Z]{2}\s+\d{2}\/\d{2}\/\d{4}/);
+      // Client name
+      const clientM = line.match(/^[A-Z0-9-]+\s+([A-Z][A-Z\s,\.'\-]+?)\s+[A-Z]{2}\s+\d{2}\/\d{2}\/\d{4}/);
       const client = clientM ? clientM[1].trim() : '';
 
       // Dates
@@ -950,45 +974,33 @@ async function parseMOOPDF(filePath, filename) {
         if (line.includes(act)) { activityType = act; break; }
       }
 
-      // Commission — first dollar amount on the line is commissionable value
+      // Commission amounts
       const amountsRaw = line.match(/\$(\d[\d,]*\.\d{2})-?/g) || [];
       if (!amountsRaw.length) continue;
 
       const firstAmt = amountsRaw[0];
-      const isNeg = firstAmt.endsWith('-') || activityType.includes('REV') || activityType.includes('REVERSAL') || activityType.includes('CANC');
+      const isNeg = firstAmt.endsWith('-') || ['NEW ISS REV','BFY REVERSAL','CANC EFF ISS'].includes(activityType);
       let commission = parseFloat(firstAmt.replace(/[$,-]/g, ''));
       if (isNeg) commission = -commission;
       if (commission === 0) continue;
 
-      // Classify
       let classification;
-      if (commission < 0) {
-        classification = 'Chargeback';
-      } else if (['NEW COV ISS','NEW ISS PYMT','REISS/REBILL'].includes(activityType)) {
-        classification = 'New Business';
-      } else if (activityType === 'BFY PAYMENT') {
-        classification = 'Renewal';
-      } else {
-        classification = 'Agent Commission';
-      }
-
-      const carrier = isMutual ? 'Mutual of Omaha' : 'United of Omaha';
+      if (commission < 0) classification = 'Chargeback';
+      else if (['NEW COV ISS','NEW ISS PYMT','REISS/REBILL'].includes(activityType)) classification = 'New Business';
+      else if (activityType === 'BFY PAYMENT') classification = 'Renewal';
+      else classification = 'Agent Commission';
 
       records.push({
         agent: currentAgent,
-        carrier,
+        carrier: isMutual ? 'Mutual of Omaha' : 'United of Omaha',
         planType: isMutual ? 'Mutual Health' : 'United Life & Annuity',
-        client,
-        effectiveDate,
-        premium: 0,
-        commission,
-        classification,
-        period,
-        policyNumber,
+        client, effectiveDate, premium: 0, commission, classification,
+        period, policyNumber,
         payee: 'Broker Society Insurance',
         raw: {}
       });
     }
+    console.log('[MOO v2] parsed records:', records.length);
   } catch(err) { console.error('parseMOOPDF error:', err.message); }
   return records;
 }
