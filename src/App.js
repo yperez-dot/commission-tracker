@@ -9,6 +9,7 @@ import Agents from './pages/Agents';
 import Reconciliation from './pages/Reconciliation';
 import BookOfBusiness from './pages/BookOfBusiness';
 import Payroll from './pages/Payroll';
+import AdminUsers from './pages/AdminUsers';
 import './App.css';
 
 export default function App() {
@@ -72,7 +73,10 @@ export default function App() {
     { id: 'renewals', label: 'Missing Renewals', icon: '!' },
     { id: 'reconciliation', label: 'Reconciliation', icon: '⇄' },
     { id: 'payroll', label: 'Payroll', icon: '$' },
-    ...(user.role === 'admin' ? [{ id: 'agents', label: 'Agents', icon: '●' }] : [])
+    ...(user.role === 'admin' ? [
+      { id: 'agents', label: 'Agents', icon: '●' },
+      { id: 'users', label: 'User Accounts', icon: '👤' },
+    ] : [])
   ];
 
   const pages = {
@@ -83,7 +87,8 @@ export default function App() {
     renewals: <MissingRenewals user={user} />,
     reconciliation: <Reconciliation user={user} />,
     payroll: <Payroll user={user} />,
-    agents: <Agents user={user} />
+    agents: <Agents user={user} />,
+    users: <AdminUsers user={user} />
   };
 
   return (
