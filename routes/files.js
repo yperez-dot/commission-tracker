@@ -90,9 +90,9 @@ function detectCarrierFromFilename(filename) {
   if (f.includes('ambetter')) return 'Ambetter';
   if (f.includes('florida_blue') || f.includes('bcbs') || f.includes('floridablue')) return 'Florida Blue';
   if (f.includes('oscar')) return 'Oscar Health';
-  if (f.includes('avmed') || f.includes('av_med')) return 'AVMED';
+  if (f.includes('avmed') || f.includes('av_med')) return 'AvMed';
   if (f.includes('doctors') || f.includes('doctor_')) return 'Doctors';
-  if (f.includes('contracts_commissionstatements') || f.includes('contracts_commission')) return 'AVMED';
+  if (f.includes('contracts_commissionstatements') || f.includes('contracts_commission')) return 'AvMed';
   return 'Unknown';
 }
 
