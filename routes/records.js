@@ -16,7 +16,11 @@ router.get('/', requireAuth, async (req, res) => {
     const { agent, agents, carrier, carriers, period, periods, classification, classifications, planType, payee, search, upload_id, limit = 500, offset = 0 } = req.query;
     let where = [], params = [], idx = 1;
 
-    if (req.user.role === 'agent') { where.push(`cr.agent_name ILIKE $${idx++}`); params.push(`%${req.user.name}%`); }
+    if (req.user.role === 'agent') {
+      where.push(`cr.agent_name ILIKE $${idx++}`); params.push(`%${req.user.name}%`);
+    } else if (req.user.role === 'admin' && req.user.agency) {
+      where.push(`cr.payee ILIKE $${idx++}`); params.push(`%${req.user.agency}%`);
+    }
     if (agents) { const list = agents.split(',').map(a=>a.trim()).filter(Boolean); if (list.length) { where.push(`cr.agent_name = ANY($${idx++})`); params.push(list); } }
     else if (agent) { where.push(`cr.agent_name = $${idx++}`); params.push(agent); }
     if (carriers) { const list = carriers.split(',').map(c=>c.trim()).filter(Boolean); if (list.length) { where.push(`cr.carrier = ANY($${idx++})`); params.push(list); } }
@@ -95,7 +99,11 @@ router.get('/summary', requireAuth, async (req, res) => {
     const { agents, carriers, periods, classifications, planTypes } = req.query;
     let where = [], params = [], idx = 1;
 
-    if (req.user.role === 'agent') { where.push(`agent_name ILIKE $${idx++}`); params.push(`%${req.user.name}%`); }
+    if (req.user.role === 'agent') {
+      where.push(`agent_name ILIKE $${idx++}`); params.push(`%${req.user.name}%`);
+    } else if (req.user.role === 'admin' && req.user.agency) {
+      where.push(`payee ILIKE $${idx++}`); params.push(`%${req.user.agency}%`);
+    }
     if (agents) { const list = agents.split(',').map(a=>a.trim()).filter(Boolean); if (list.length) { where.push(`agent_name = ANY($${idx++})`); params.push(list); } }
     if (carriers) { const list = carriers.split(',').map(c=>c.trim()).filter(Boolean); if (list.length) { where.push(`carrier = ANY($${idx++})`); params.push(list); } }
     if (periods) { const list = periods.split(',').map(p=>p.trim()).filter(Boolean); if (list.length) { where.push(`payment_period = ANY($${idx++})`); params.push(list); } }
@@ -111,7 +119,7 @@ router.get('/summary', requireAuth, async (req, res) => {
       pool.query(`SELECT COUNT(DISTINCT carrier) as count FROM commission_records ${wc}`, params),
       pool.query(`SELECT agent_name, SUM(commission) as total, COUNT(*) as count FROM commission_records ${wc} GROUP BY agent_name ORDER BY total DESC`, params),
       pool.query(`SELECT carrier, SUM(commission) as total, COUNT(*) as count FROM commission_records ${wc} GROUP BY carrier ORDER BY total DESC`, params),
-      pool.query(`SELECT payment_period as period, SUM(commission) as total, COUNT(*) as count FROM commission_records ${wc} GROUP BY payment_period ORDER BY payment_period ASC`, params),
+      pool.query(`SELECT payment_period as period, SUM(commission) as total, COUNT(*) as count, ABS(SUM(CASE WHEN commission < 0 THEN commission ELSE 0 END)) as chargebacks FROM commission_records ${wc} GROUP BY payment_period ORDER BY payment_period ASC`, params),
     ]);
 
     res.json({
@@ -133,7 +141,11 @@ router.get('/kpi', requireAuth, async (req, res) => {
     const { agents, carriers, periods, classifications, planTypes } = req.query;
     let where = [], params = [], idx = 1;
 
-    if (req.user.role === 'agent') { where.push(`agent_name ILIKE $${idx++}`); params.push(`%${req.user.name}%`); }
+    if (req.user.role === 'agent') {
+      where.push(`agent_name ILIKE $${idx++}`); params.push(`%${req.user.name}%`);
+    } else if (req.user.role === 'admin' && req.user.agency) {
+      where.push(`payee ILIKE $${idx++}`); params.push(`%${req.user.agency}%`);
+    }
     if (agents) { const list = agents.split(',').map(a=>a.trim()).filter(Boolean); if (list.length) { where.push(`agent_name = ANY($${idx++})`); params.push(list); } }
     if (carriers) { const list = carriers.split(',').map(c=>c.trim()).filter(Boolean); if (list.length) { where.push(`carrier = ANY($${idx++})`); params.push(list); } }
     if (periods) { const list = periods.split(',').map(p=>p.trim()).filter(Boolean); if (list.length) { where.push(`payment_period = ANY($${idx++})`); params.push(list); } }
@@ -193,7 +205,11 @@ router.get('/missing-renewals', requireAuth, async (req, res) => {
     const pool = getPool();
     const { lastPeriod, thisPeriod } = req.query;
     if (!lastPeriod || !thisPeriod) return res.status(400).json({ error: 'lastPeriod and thisPeriod required' });
-    const af = req.user.role === 'admin' ? '' : `AND agent_name ILIKE '%${req.user.name}%'`;
+    const af = req.user.role === 'agent'
+      ? `AND agent_name ILIKE '%${req.user.name}%'`
+      : (req.user.role === 'admin' && req.user.agency)
+        ? `AND payee ILIKE '%${req.user.agency}%'`
+        : '';
     const [lastMonth, thisMonth] = await Promise.all([
       pool.query(`SELECT agent_name, carrier, client_full_name, commission FROM commission_records WHERE payment_period = $1 ${af}`, [lastPeriod]),
       pool.query(`SELECT agent_name, carrier, client_full_name, commission FROM commission_records WHERE payment_period = $1 ${af}`, [thisPeriod])
@@ -209,8 +225,9 @@ router.get('/missing-renewals', requireAuth, async (req, res) => {
 router.get('/filters', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
-    const isAdmin = req.user.role === 'admin';
-    const baseWhere = isAdmin ? '' : `WHERE agent_name ILIKE '%${req.user.name}%'`;
+    const isAdmin = req.user.role === 'admin' && !req.user.agency;
+    const agencyFilter = req.user.role === 'admin' && req.user.agency ? `payee ILIKE '%${req.user.agency}%'` : null;
+    const baseWhere = isAdmin ? '' : agencyFilter ? `WHERE ${agencyFilter}` : `WHERE agent_name ILIKE '%${req.user.name}%'`;
 
     const [agents, carriers, periods] = await Promise.all([
       pool.query(`SELECT DISTINCT agent_name FROM commission_records ${baseWhere} ORDER BY agent_name`),
@@ -220,7 +237,7 @@ router.get('/filters', requireAuth, async (req, res) => {
 
     let planTypes = [];
     try {
-      const planWhere = isAdmin
+      const planWhere = (isAdmin || agencyFilter)
         ? `WHERE plan_type IS NOT NULL AND plan_type != ''`
         : `WHERE agent_name ILIKE '%${req.user.name}%' AND plan_type IS NOT NULL AND plan_type != ''`;
       const pt = await pool.query(`SELECT DISTINCT plan_type FROM commission_records ${planWhere} ORDER BY plan_type`);
@@ -229,7 +246,7 @@ router.get('/filters', requireAuth, async (req, res) => {
 
     let payees = [];
     try {
-      const payeeWhere = isAdmin
+      const payeeWhere = (isAdmin || agencyFilter)
         ? `WHERE payee IS NOT NULL AND payee != ''`
         : `WHERE agent_name ILIKE '%${req.user.name}%' AND payee IS NOT NULL AND payee != ''`;
       const py = await pool.query(`SELECT DISTINCT payee FROM commission_records ${payeeWhere} ORDER BY payee`);
