@@ -26,6 +26,9 @@ export default function BookOfBusiness({ user }) {
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [confirmCarrierDelete, setConfirmCarrierDelete] = useState(null);
   const [deleting, setDeleting] = useState(null);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [confirmReset, setConfirmReset] = useState(false);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -104,6 +107,39 @@ export default function BookOfBusiness({ user }) {
     } catch (e) { console.error(e); }
   }
 
+  async function bulkDelete() {
+    if (!selectedIds.length) return;
+    setBulkDeleting(true);
+    try {
+      await apiFetch('/bob/bulk-delete', { method: 'POST', body: JSON.stringify({ ids: selectedIds }) });
+      setSelectedIds([]);
+      loadData(); loadClients();
+    } catch (e) { console.error(e); }
+    finally { setBulkDeleting(false); }
+  }
+
+  async function resetAndRebuild() {
+    setConfirmReset(false);
+    setBuildStatus('building');
+    try {
+      const result = await apiFetch('/bob/reset-and-rebuild', { method: 'POST' });
+      setBuildStatus(`✓ Reset complete — removed duplicates, rebuilt ${result.added} clean clients.`);
+      loadData(); loadClients();
+    } catch (e) { setBuildStatus('Error: ' + e.message); }
+  }
+
+  function toggleSelect(id) {
+    setSelectedIds(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
+  }
+
+  function toggleSelectAll() {
+    if (selectedIds.length === filteredClients.length) {
+      setSelectedIds([]);
+    } else {
+      setSelectedIds(filteredClients.map(c => c.id));
+    }
+  }
+
   async function handleBOBUpload(e) {
     const file = e.target.files[0];
     if (!file || !uploadCarrier) return;
@@ -166,6 +202,19 @@ export default function BookOfBusiness({ user }) {
             <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
               <button onClick={()=>setConfirmCarrierDelete(null)} className="btn">Cancel</button>
               <button onClick={()=>deleteCarrier(confirmCarrierDelete)} className="btn btn-danger">Delete all</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmReset && (
+        <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.5)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center'}}>
+          <div style={{background:'var(--bg)',borderRadius:12,padding:24,width:400,boxShadow:'0 8px 32px rgba(0,0,0,0.2)',border:'1px solid var(--border)'}}>
+            <div style={{fontWeight:500,fontSize:15,marginBottom:8,color:'var(--red)'}}>⚠️ Reset & Rebuild BOB?</div>
+            <div style={{fontSize:13,color:'var(--text-muted)',marginBottom:16}}>This will <strong>delete all {summary?.totalActive||0} current BOB records</strong> and rebuild cleanly from your uploaded statements — no duplicates. Any manual status changes (Termed, Deceased) will be lost.</div>
+            <div style={{display:'flex',gap:8,justifyContent:'flex-end'}}>
+              <button onClick={()=>setConfirmReset(false)} className="btn">Cancel</button>
+              <button onClick={resetAndRebuild} className="btn btn-danger">Yes, reset & rebuild</button>
             </div>
           </div>
         </div>
@@ -236,6 +285,16 @@ export default function BookOfBusiness({ user }) {
               )}
             </div>
 
+            {selectedIds.length > 0 && (
+              <div style={{display:'flex',alignItems:'center',gap:10,padding:'8px 12px',background:'var(--accent-light)',border:'0.5px solid var(--border)',borderRadius:8,marginBottom:8}}>
+                <span style={{fontSize:13,fontWeight:500,color:'var(--accent-dark)'}}>{selectedIds.length} selected</span>
+                <button onClick={bulkDelete} disabled={bulkDeleting} className="btn btn-danger" style={{fontSize:12,padding:'4px 12px'}}>
+                  {bulkDeleting ? 'Deleting...' : `✕ Delete ${selectedIds.length}`}
+                </button>
+                <button onClick={()=>setSelectedIds([])} style={{background:'none',border:'none',cursor:'pointer',fontSize:12,color:'var(--text-muted)'}}>Clear selection</button>
+              </div>
+            )}
+
             <div className="card" style={{padding:0}}>
               {filteredClients.length===0 ? (
                 <div className="empty-state">
@@ -260,7 +319,14 @@ export default function BookOfBusiness({ user }) {
                     </thead>
                     <tbody>
                       {filteredClients.map((c,i) => (
-                        <tr key={c.id} style={{background: c.status==='inactive' ? 'var(--bg-subtle)' : 'transparent'}}>
+                        <tr key={c.id} style={{background: selectedIds.includes(c.id) ? 'var(--accent-light)' : c.status==='inactive' ? 'var(--bg-subtle)' : 'transparent'}}>
+                          <td style={{paddingLeft:12}}>
+                            <input type="checkbox"
+                              checked={selectedIds.includes(c.id)}
+                              onChange={()=>toggleSelect(c.id)}
+                              style={{cursor:'pointer',accentColor:'var(--accent)'}}
+                            />
+                          </td>
                           <td style={{color:'var(--text-muted)',fontSize:11}}>{i+1}</td>
                           <td style={{fontWeight:500}}>
                             {search.trim()
@@ -368,7 +434,12 @@ export default function BookOfBusiness({ user }) {
               <p style={{fontSize:13,color:'var(--text-muted)',marginBottom:12}}>
                 Automatically populate your Book of Business from all commission records already uploaded.
               </p>
-              <button className="btn btn-primary" onClick={buildFromStatements}>Build BOB from statements →</button>
+              <div style={{display:'flex',gap:8,flexWrap:'wrap'}}>
+                <button className="btn btn-primary" onClick={buildFromStatements} disabled={loading}>Build BOB from statements →</button>
+                <button onClick={()=>setConfirmReset(true)} style={{background:'none',border:'0.5px solid var(--red)',borderRadius:7,padding:'7px 14px',fontSize:13,cursor:'pointer',color:'var(--red)',fontWeight:500}}>
+                  ⚠️ Reset & rebuild clean
+                </button>
+              </div>
             </div>
 
             <div className="card">
