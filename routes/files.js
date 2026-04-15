@@ -800,6 +800,8 @@ async function parseMutualOmahaPDF(filePath, filename) {
 
     let currentAgent = '';
     let currentMGA = '';
+    let pendingRecords = [];   // records staged for current producer
+    let producerPayable = true; // assume payable until we see $.00
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
@@ -811,10 +813,38 @@ async function parseMutualOmahaPDF(filePath, filename) {
         continue;
       }
 
-      // Capture agent name from "NAME: FIRST LAST" line (appears after PRODUCTION #)
+      // New producer section — flush previous producer's records if they were payable
       const nameMatch = line.match(/NAME:\s+(.+)$/i);
       if (nameMatch) {
+        // Flush pending records from previous producer if they were payable
+        if (producerPayable && pendingRecords.length > 0) {
+          for (const r of pendingRecords) records.push(r);
+        }
+        // Reset for new producer
         currentAgent = nameMatch[1].trim();
+        pendingRecords = [];
+        producerPayable = true; // reset — assume payable until proven otherwise
+        continue;
+      }
+
+      // "PRODUCER COMMISSION PAYABLE   $.00" — mark this producer as NOT payable
+      if (line.includes('PRODUCER COMMISSION PAYABLE')) {
+        // Check if the payable amount is $0 — look at this line and the next
+        const checkLines = [line, lines[i + 1] || ''].join(' ');
+        const amountMatch = checkLines.match(/PRODUCER COMMISSION PAYABLE\s+\$([\d,]+\.\d{2})/);
+        if (amountMatch) {
+          const payableAmount = parseFloat(amountMatch[1].replace(/,/g, ''));
+          producerPayable = payableAmount !== 0;
+        } else if (checkLines.includes('$.00')) {
+          producerPayable = false;
+        }
+        // If payable, flush now (we have the confirmation)
+        if (producerPayable && pendingRecords.length > 0) {
+          for (const r of pendingRecords) records.push(r);
+          pendingRecords = [];
+        } else {
+          pendingRecords = []; // discard — not payable
+        }
         continue;
       }
 
@@ -841,23 +871,23 @@ async function parseMutualOmahaPDF(filePath, filename) {
       if (!clientName || clientName.length < 2) continue;
 
       // Extract all dollar amounts from the line
-      // Statement layout: ... COMMISSIONABLE VALUE ... COMMISSION AMOUNT ... ADVANCE/RECLAIM
+      // Layout: COMMISSIONABLE VALUE ... COMMISSION AMOUNT ... ADVANCE/RECLAIM
       // We want COMMISSION AMOUNT = second-to-last dollar figure
       const dollarAmounts = rest.match(/\$[\d,]*\.\d{2}/g) || [];
 
       let commission = 0;
       if (dollarAmounts.length >= 2) {
-        // Second-to-last = commission amount; last = advance/reclaim
         const commStr = dollarAmounts[dollarAmounts.length - 2];
         commission = parseFloat(commStr.replace(/[$,]/g, ''));
       } else if (dollarAmounts.length === 1) {
         commission = parseFloat(dollarAmounts[0].replace(/[$,]/g, ''));
       }
 
-      // Chargebacks are written as NNN.NN- in the raw text
+      // Chargebacks written as NNN.NN- in raw text
       const negMatch = rest.match(/([\d,]+\.\d{2})-/);
       if (negMatch) commission = -Math.abs(commission);
 
+      // Skip individual lines with $0 commission
       if (commission === 0) continue;
 
       // Activity type from statement keywords
@@ -874,7 +904,8 @@ async function parseMutualOmahaPDF(filePath, filename) {
       const dates = rest.match(/\d{2}\/\d{2}\/\d{4}/g) || [];
       const effectiveDate = dates[1] || dates[0] || '';
 
-      records.push({
+      // Stage record — don't push yet until we confirm producer is payable
+      pendingRecords.push({
         agent: currentAgent || 'Unknown',
         carrier: lineCarrier,
         planType: lineCarrier === 'Mutual of Omaha' ? 'Mutual of Omaha Life' : 'United of Omaha Life',
@@ -890,6 +921,12 @@ async function parseMutualOmahaPDF(filePath, filename) {
         raw: {}
       });
     }
+
+    // Flush any remaining pending records at end of file
+    if (producerPayable && pendingRecords.length > 0) {
+      for (const r of pendingRecords) records.push(r);
+    }
+
   } catch (err) {
     console.error('parseMutualOmahaPDF error:', err.message);
   }
