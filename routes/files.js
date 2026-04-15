@@ -792,149 +792,115 @@ async function parseMutualOmahaPDF(filePath, filename) {
     const dataBuffer = fs.readFileSync(filePath);
     const data = await pdfParse(dataBuffer);
     const text = data.text;
-    const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
 
     // Extract period from "For Period Ending MM/DD/YYYY"
-    const periodMatch = text.match(/For Period Ending\s+(\d{2})\/(\d{2})\/(\d{4})/);
+    // The date may be on a separate line from "For Period Ending"
+    const periodMatch = text.match(/For Period Ending\s*\n?\s*(\d{2})\/(\d{2})\/(\d{4})/);
     const period = periodMatch ? periodMatch[3] + periodMatch[1] : '';
+    console.log('MOO period detected:', period);
 
-    // DEBUG — log first 3000 chars and all lines to see raw structure
-    console.log('=== MOO PDF DEBUG: first 3000 chars ===');
-    console.log(text.slice(0, 3000));
-    console.log('=== MOO PDF DEBUG: all lines ===');
-    const allLines = text.split('\n').map(l => l.trim()).filter(Boolean);
-    allLines.slice(0, 80).forEach((l, i) => console.log(`LINE ${i}: [${l}]`));
-    console.log('=== END DEBUG ===');
+    // Extract MGA from anywhere in text
+    const mgaMatch = text.match(/MGA:\s+([A-Z][A-Z\s]+?)(?:\s{3,}|PRODUCTION)/);
+    const currentMGA = mgaMatch ? mgaMatch[1].trim() : 'Brokers Alliance';
+    console.log('MOO MGA detected:', currentMGA);
 
-    let currentAgent = '';
-    let currentMGA = '';
-    let pendingRecords = [];   // records staged for current producer
-    let producerPayable = true; // assume payable until we see $.00
+    // The key insight: each producer section is one giant line in the PDF.
+    // Split by PRODUCTION # to get one chunk per producer.
+    // Pattern: "PRODUCTION #: XXXXXXX    NAME: AGENT NAME   ...policies..."
+    const producerChunks = text.split(/PRODUCTION\s*#:\s*\d+/);
+    console.log('MOO producer chunks found:', producerChunks.length - 1);
 
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
+    for (let ci = 1; ci < producerChunks.length; ci++) {
+      const chunk = producerChunks[ci];
 
-      // Capture MGA name from "MGA: NAME" line
-      const mgaMatch = line.match(/^MGA:\s+(.+)$/i);
-      if (mgaMatch) {
-        currentMGA = mgaMatch[1].trim();
+      // Extract agent name — appears right after PRODUCTION #: XXXXXX
+      const nameMatch = chunk.match(/NAME:\s*([A-Z][A-Z\s\-\.]+?)(?:\s{3,}|M\s+A\s+O|POLICY)/);
+      const agentName = nameMatch ? nameMatch[1].trim() : 'Unknown';
+
+      // Check if this producer has payable commission
+      // "PRODUCER COMMISSION PAYABLE   $XX.XX" — if $.00, skip
+      const payableMatch = chunk.match(/PRODUCER COMMISSION PAYABLE\s+\$([\d,]+\.\d{2})/);
+      if (payableMatch) {
+        const payableAmt = parseFloat(payableMatch[1].replace(/,/g, ''));
+        if (payableAmt === 0) {
+          console.log(`MOO skipping ${agentName} — $0.00 payable`);
+          continue;
+        }
+      } else if (chunk.includes('PRODUCER COMMISSION PAYABLE') && chunk.includes('$.00')) {
+        console.log(`MOO skipping ${agentName} — $.00 payable`);
         continue;
       }
 
-      // New producer section — flush previous producer's records if they were payable
-      const nameMatch = line.match(/NAME:\s+(.+)$/i);
-      if (nameMatch) {
-        // Flush pending records from previous producer if they were payable
-        if (producerPayable && pendingRecords.length > 0) {
-          for (const r of pendingRecords) records.push(r);
+      // Find all policy entries in this chunk
+      // Policy numbers: BU####### (United) or ######-## (Mutual health)
+      const policyRegex = /(BU\d{7,}|\d{6}-\d{2})\s+([A-Z][A-Z\s,\.]+?)\s{2,}([A-Z]{2})\s+(\d{2}\/\d{2}\/\d{4})\s+\S+\s+(\d{2}\/\d{2}\/\d{4})\s+(\d{2}\/\d{2}\/\d{4})/g;
+      let policyMatch;
+
+      while ((policyMatch = policyRegex.exec(chunk)) !== null) {
+        const policyNumber = policyMatch[1];
+        const clientRaw = policyMatch[2].trim();
+        const effectiveDate = policyMatch[5] || policyMatch[4] || '';
+        const isUnited = policyNumber.startsWith('BU');
+        const lineCarrier = isUnited ? 'United of Omaha' : 'Mutual of Omaha';
+
+        // Convert "LAST, FIRST" → "First Last"
+        const clientName = clientRaw.includes(',')
+          ? clientRaw.split(',').reverse().map(p => p.trim()).join(' ')
+          : clientRaw;
+
+        // Get the segment after this policy number to find dollar amounts
+        const afterPolicy = chunk.slice(policyMatch.index + policyMatch[0].length, policyMatch.index + policyMatch[0].length + 300);
+
+        // Find all dollar amounts in this segment
+        const dollarAmounts = afterPolicy.match(/\$[\d,]*\.\d{2}/g) || [];
+
+        let commission = 0;
+        if (dollarAmounts.length >= 2) {
+          // second-to-last = commission amount; last = advance/reclaim
+          const commStr = dollarAmounts[dollarAmounts.length - 2];
+          commission = parseFloat(commStr.replace(/[$,]/g, ''));
+        } else if (dollarAmounts.length === 1) {
+          commission = parseFloat(dollarAmounts[0].replace(/[$,]/g, ''));
         }
-        // Reset for new producer
-        currentAgent = nameMatch[1].trim();
-        pendingRecords = [];
-        producerPayable = true; // reset — assume payable until proven otherwise
-        continue;
-      }
 
-      // "PRODUCER COMMISSION PAYABLE   $.00" — mark this producer as NOT payable
-      if (line.includes('PRODUCER COMMISSION PAYABLE')) {
-        // Check if the payable amount is $0 — look at this line and the next
-        const checkLines = [line, lines[i + 1] || ''].join(' ');
-        const amountMatch = checkLines.match(/PRODUCER COMMISSION PAYABLE\s+\$([\d,]+\.\d{2})/);
-        if (amountMatch) {
-          const payableAmount = parseFloat(amountMatch[1].replace(/,/g, ''));
-          producerPayable = payableAmount !== 0;
-        } else if (checkLines.includes('$.00')) {
-          producerPayable = false;
+        // Check for negative (chargeback) — NNN.NN- pattern
+        if (afterPolicy.match(/([\d,]+\.\d{2})-/)) {
+          commission = -Math.abs(commission);
         }
-        // If payable, flush now (we have the confirmation)
-        if (producerPayable && pendingRecords.length > 0) {
-          for (const r of pendingRecords) records.push(r);
-          pendingRecords = [];
-        } else {
-          pendingRecords = []; // discard — not payable
-        }
-        continue;
+
+        if (commission === 0) continue;
+
+        // Activity type
+        const activity = afterPolicy.includes('NEW COV ISS') ? 'New Business'
+          : afterPolicy.includes('NEW ISS') ? 'New Business'
+          : afterPolicy.includes('REISS') ? 'New Business'
+          : afterPolicy.includes('BFY PAYMENT') ? 'Renewal'
+          : afterPolicy.includes('REVERSAL') ? 'Chargeback'
+          : afterPolicy.includes('LAPSE') ? 'Chargeback'
+          : commission < 0 ? 'Chargeback'
+          : 'Renewal';
+
+        console.log(`MOO record: ${agentName} | ${clientName} | ${policyNumber} | $${commission} | ${activity}`);
+
+        records.push({
+          agent: agentName,
+          carrier: lineCarrier,
+          planType: lineCarrier === 'Mutual of Omaha' ? 'Mutual of Omaha Life' : 'United of Omaha Life',
+          client: clientName,
+          effectiveDate,
+          premium: 0,
+          commission,
+          classification: activity,
+          period,
+          policyNumber,
+          payee: 'Mutual of Omaha',
+          mga: currentMGA,
+          raw: {}
+        });
       }
-
-      // Policy lines start with BU####### (United of Omaha) or ######-## (Mutual of Omaha health)
-      const policyMatch = line.match(/^(BU\d{7,}|\d{6}-\d{2})\s+(.+)/);
-      if (!policyMatch) continue;
-
-      const policyNumber = policyMatch[1];
-      const rest = policyMatch[2];
-      const isUnited = policyNumber.startsWith('BU');
-      const lineCarrier = isUnited ? 'United of Omaha' : 'Mutual of Omaha';
-
-      // Client name — everything before the 2-letter state code
-      const insuredMatch = rest.match(/^([A-Z][A-Z\s,\.]+?)\s{2,}([A-Z]{2})\s/);
-      const clientRaw = insuredMatch
-        ? insuredMatch[1].trim()
-        : rest.split(/\s{2,}/)[0].trim();
-
-      // Convert "LAST, FIRST" → "First Last" for readability
-      const clientName = clientRaw.includes(',')
-        ? clientRaw.split(',').reverse().map(p => p.trim()).join(' ')
-        : clientRaw;
-
-      if (!clientName || clientName.length < 2) continue;
-
-      // Extract all dollar amounts from the line
-      // Layout: COMMISSIONABLE VALUE ... COMMISSION AMOUNT ... ADVANCE/RECLAIM
-      // We want COMMISSION AMOUNT = second-to-last dollar figure
-      const dollarAmounts = rest.match(/\$[\d,]*\.\d{2}/g) || [];
-
-      let commission = 0;
-      if (dollarAmounts.length >= 2) {
-        const commStr = dollarAmounts[dollarAmounts.length - 2];
-        commission = parseFloat(commStr.replace(/[$,]/g, ''));
-      } else if (dollarAmounts.length === 1) {
-        commission = parseFloat(dollarAmounts[0].replace(/[$,]/g, ''));
-      }
-
-      // Chargebacks written as NNN.NN- in raw text
-      const negMatch = rest.match(/([\d,]+\.\d{2})-/);
-      if (negMatch) commission = -Math.abs(commission);
-
-      // Skip individual lines with $0 commission
-      if (commission === 0) continue;
-
-      // Activity type from statement keywords
-      const activity = rest.includes('NEW COV ISS') ? 'New Business'
-        : rest.includes('NEW ISS') ? 'New Business'
-        : rest.includes('REISS') ? 'New Business'
-        : rest.includes('BFY PAYMENT') ? 'Renewal'
-        : rest.includes('REVERSAL') ? 'Chargeback'
-        : rest.includes('LAPSE') ? 'Chargeback'
-        : commission < 0 ? 'Chargeback'
-        : 'Renewal';
-
-      // Dates in the line — [0] = activity date, [1] = issue/effective date
-      const dates = rest.match(/\d{2}\/\d{2}\/\d{4}/g) || [];
-      const effectiveDate = dates[1] || dates[0] || '';
-
-      // Stage record — don't push yet until we confirm producer is payable
-      pendingRecords.push({
-        agent: currentAgent || 'Unknown',
-        carrier: lineCarrier,
-        planType: lineCarrier === 'Mutual of Omaha' ? 'Mutual of Omaha Life' : 'United of Omaha Life',
-        client: clientName,
-        effectiveDate,
-        premium: 0,
-        commission,
-        classification: activity,
-        period,
-        policyNumber,
-        payee: 'Mutual of Omaha',
-        mga: currentMGA || 'Brokers Alliance',
-        raw: {}
-      });
     }
 
-    // Flush any remaining pending records at end of file
-    if (producerPayable && pendingRecords.length > 0) {
-      for (const r of pendingRecords) records.push(r);
-    }
-
+    console.log('MOO total records parsed:', records.length);
   } catch (err) {
     console.error('parseMutualOmahaPDF error:', err.message);
   }
