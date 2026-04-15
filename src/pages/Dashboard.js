@@ -52,7 +52,7 @@ function VerticalBarChart({ data, loading }) {
     <div style={{display:'flex',alignItems:'flex-end',gap:6,height:200,paddingBottom:28,paddingTop:16,position:'relative',overflowX:'auto'}}>
       <div style={{position:'absolute',left:0,top:0,bottom:28,display:'flex',flexDirection:'column',justifyContent:'space-between',pointerEvents:'none'}}>
         {[1,0.5,0].map(f => (
-          <span key={f} style={{fontSize:10,color:C.textLight,lineHeight:1}}>{fmtK(max*f)}</span>
+          <span key={f} style={{fontSize:12,color:C.textMuted,lineHeight:1}}>{fmtK(max*f)}</span>
         ))}
       </div>
       <div style={{flex:1,display:'flex',alignItems:'flex-end',gap:4,paddingLeft:38,height:'100%'}}>
@@ -64,9 +64,9 @@ function VerticalBarChart({ data, loading }) {
           const isRecent = i >= data.length-4;
           return (
             <div key={i} style={{flex:1,minWidth:36,maxWidth:80,display:'flex',flexDirection:'column',alignItems:'center',height:'100%',justifyContent:'flex-end'}}>
-              <span style={{fontSize:10,fontWeight:400,color:isNeg?C.red:C.text,marginBottom:4,whiteSpace:'nowrap'}}>{fmtK(val)}</span>
+              <span style={{fontSize:12,fontWeight:500,color:isNeg?C.red:C.text,marginBottom:4,whiteSpace:'nowrap'}}>{fmtK(val)}</span>
               <div style={{width:'55%',height:`${pct}%`,minHeight:3,background:isNeg?C.red:isRecent?C.barActive:C.barMuted,borderRadius:'3px 3px 0 0',transition:'height 0.4s ease'}}/>
-              <span style={{fontSize:10,color:C.textMuted,marginTop:6,textAlign:'center',whiteSpace:'nowrap',overflow:'hidden',maxWidth:'100%',textOverflow:'ellipsis'}}>{label}</span>
+              <span style={{fontSize:13,color:C.text,marginTop:6,textAlign:'center',whiteSpace:'nowrap',overflow:'hidden',maxWidth:'100%',textOverflow:'ellipsis'}}>{label}</span>
             </div>
           );
         })}
@@ -89,8 +89,8 @@ function HBar({ data, color, onClickItem, loading }) {
         return (
           <div key={i} onClick={()=>onClickItem&&onClickItem(d)} style={{cursor:onClickItem?'pointer':'default'}}>
             <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
-              <span style={{fontSize:12,color:onClickItem?C.accentDark:C.text,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'65%',fontWeight:500}} title={name}>{name}</span>
-              <span style={{fontSize:12,fontWeight:500,color:isNeg?C.red:C.text}}>{fmt(val)}</span>
+              <span style={{fontSize:14,color:C.text,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'65%',fontWeight:500}} title={name}>{name}</span>
+              <span style={{fontSize:14,fontWeight:500,color:isNeg?C.red:C.text}}>{fmt(val)}</span>
             </div>
             <div style={{background:C.accentLight,borderRadius:3,height:4,overflow:'hidden'}}>
               <div style={{width:`${pct}%`,background:isNeg?C.red:color,height:'100%',borderRadius:3,transition:'width 0.5s ease'}}/>
@@ -318,8 +318,8 @@ export default function Dashboard({ user, onNavigate }) {
                       onMouseEnter={e=>e.currentTarget.style.background=C.bgSubtle}
                       onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
                       <td style={{padding:'9px 12px',color:C.textMuted,fontSize:11}}>{i+1}</td>
-                      <td style={{padding:'9px 12px',fontWeight:500,color:C.accentDark}}>{a.agent_name}</td>
-                      <td style={{padding:'9px 12px',fontWeight:500,color:a.total_commission<0?C.red:C.green}}>{fmt(a.total_commission)}</td>
+                      <td style={{padding:'9px 12px',fontWeight:500,color:C.text,fontSize:13}}>{a.agent_name}</td>
+                      <td style={{padding:'9px 12px',fontWeight:500,color:a.total_commission<0?C.red:C.green,fontSize:13}}>{fmt(a.total_commission)}</td>
                       <td style={{padding:'9px 12px',color:C.text}}>{a.total_count.toLocaleString()}</td>
                       <td style={{padding:'9px 12px',color:C.text}}>{fmtPct(a.distribution_pct)}</td>
                       <td style={{padding:'9px 12px',color:a.advance_amount>0?C.accentDark:C.text}}>{fmt(a.advance_amount)}</td>
