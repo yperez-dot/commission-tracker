@@ -1118,10 +1118,48 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
   }
 });
 
+// Agency filter helper
+function getAgency(req) {
+  if (req.user.role !== 'admin') return null;
+  const override = req.headers['x-agency-override'];
+  if (override !== undefined) return override || null;
+  return req.user.agency || null;
+}
+
 router.get('/uploads', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
-    const result = await pool.query(`SELECT u.*, usr.name as uploaded_by_name FROM uploads u LEFT JOIN users usr ON u.uploaded_by = usr.id ORDER BY u.uploaded_at DESC`);
+    const agency = getAgency(req);
+
+    let query, params = [];
+    if (req.user.role === 'agent') {
+      // Agent sees only their own uploads
+      query = `SELECT u.*, usr.name as uploaded_by_name
+               FROM uploads u
+               LEFT JOIN users usr ON u.uploaded_by = usr.id
+               WHERE u.uploaded_by = $1
+               ORDER BY u.uploaded_at DESC`;
+      params = [req.user.id];
+    } else if (agency) {
+      // Agency admin — show uploads that contain records for this agency's payee
+      query = `SELECT DISTINCT u.*, usr.name as uploaded_by_name
+               FROM uploads u
+               LEFT JOIN users usr ON u.uploaded_by = usr.id
+               WHERE u.id IN (
+                 SELECT DISTINCT upload_id FROM commission_records
+                 WHERE payee ILIKE $1
+               )
+               ORDER BY u.uploaded_at DESC`;
+      params = [`%${agency}%`];
+    } else {
+      // Super admin — see everything
+      query = `SELECT u.*, usr.name as uploaded_by_name
+               FROM uploads u
+               LEFT JOIN users usr ON u.uploaded_by = usr.id
+               ORDER BY u.uploaded_at DESC`;
+    }
+
+    const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
