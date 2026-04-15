@@ -1117,7 +1117,7 @@ async function parseMOOPDF(filePath, filename) {
 
     // Insert newlines before key markers to handle pdf-parse concatenation
     const normalized = text
-      .replace(/(BU\d{7,})/g, '\n$1')
+      .replace(/(BU\s?\d{7,})/g, function(m) { return '\n' + m.replace(/\s/g,''); })
       .replace(/(\d{6}-\d{2})\s/g, '\n$1 ')
       .replace(/(PRODUCTION #:)/g, '\nPRODUCTION #:')
       .replace(/(MGA:)/g, '\nMGA:');
@@ -1157,7 +1157,7 @@ async function parseMOOPDF(filePath, filename) {
       }
 
       // Data rows: BU (United) or XXXXXX-XX (Mutual health)
-      const isUnited = /^BU\d{7,}/.test(line);
+      const isUnited = /^BU\d{7,}/.test(line) || /^BU\s?\d{7,}/.test(line);
       const isMutual = /^\d{6}-\d{2}/.test(line);
       if (!isUnited && !isMutual) { continue; }
 
