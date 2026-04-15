@@ -10,6 +10,14 @@ function requireAdmin(req, res, next) {
 }
 
 // ─── GET / — list records with filters ───────────────────────────────────────
+// Resolve effective agency — JWT agency OR X-Agency-Override header (admin only)
+function getAgency(req) {
+  if (req.user.role !== 'admin') return null;
+  const override = req.headers['x-agency-override'];
+  if (override !== undefined) return override || null;
+  return getAgency(req) || null;
+}
+
 router.get('/', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
@@ -18,8 +26,8 @@ router.get('/', requireAuth, async (req, res) => {
 
     if (req.user.role === 'agent') {
       where.push(`cr.agent_name ILIKE $${idx++}`); params.push(`%${req.user.name}%`);
-    } else if (req.user.role === 'admin' && req.user.agency) {
-      where.push(`cr.payee ILIKE $${idx++}`); params.push(`%${req.user.agency}%`);
+    } else if (req.user.role === 'admin' && getAgency(req)) {
+      where.push(`cr.payee ILIKE $${idx++}`); params.push(`%${getAgency(req)}%`);
     }
     if (agents) { const list = agents.split(',').map(a=>a.trim()).filter(Boolean); if (list.length) { where.push(`cr.agent_name = ANY($${idx++})`); params.push(list); } }
     else if (agent) { where.push(`cr.agent_name = $${idx++}`); params.push(agent); }
@@ -101,8 +109,8 @@ router.get('/summary', requireAuth, async (req, res) => {
 
     if (req.user.role === 'agent') {
       where.push(`agent_name ILIKE $${idx++}`); params.push(`%${req.user.name}%`);
-    } else if (req.user.role === 'admin' && req.user.agency) {
-      where.push(`payee ILIKE $${idx++}`); params.push(`%${req.user.agency}%`);
+    } else if (req.user.role === 'admin' && getAgency(req)) {
+      where.push(`payee ILIKE $${idx++}`); params.push(`%${getAgency(req)}%`);
     }
     if (agents) { const list = agents.split(',').map(a=>a.trim()).filter(Boolean); if (list.length) { where.push(`agent_name = ANY($${idx++})`); params.push(list); } }
     if (carriers) { const list = carriers.split(',').map(c=>c.trim()).filter(Boolean); if (list.length) { where.push(`carrier = ANY($${idx++})`); params.push(list); } }
@@ -143,8 +151,8 @@ router.get('/kpi', requireAuth, async (req, res) => {
 
     if (req.user.role === 'agent') {
       where.push(`agent_name ILIKE $${idx++}`); params.push(`%${req.user.name}%`);
-    } else if (req.user.role === 'admin' && req.user.agency) {
-      where.push(`payee ILIKE $${idx++}`); params.push(`%${req.user.agency}%`);
+    } else if (req.user.role === 'admin' && getAgency(req)) {
+      where.push(`payee ILIKE $${idx++}`); params.push(`%${getAgency(req)}%`);
     }
     if (agents) { const list = agents.split(',').map(a=>a.trim()).filter(Boolean); if (list.length) { where.push(`agent_name = ANY($${idx++})`); params.push(list); } }
     if (carriers) { const list = carriers.split(',').map(c=>c.trim()).filter(Boolean); if (list.length) { where.push(`carrier = ANY($${idx++})`); params.push(list); } }
@@ -207,8 +215,8 @@ router.get('/missing-renewals', requireAuth, async (req, res) => {
     if (!lastPeriod || !thisPeriod) return res.status(400).json({ error: 'lastPeriod and thisPeriod required' });
     const af = req.user.role === 'agent'
       ? `AND agent_name ILIKE '%${req.user.name}%'`
-      : (req.user.role === 'admin' && req.user.agency)
-        ? `AND payee ILIKE '%${req.user.agency}%'`
+      : (req.user.role === 'admin' && getAgency(req))
+        ? `AND payee ILIKE '%${getAgency(req)}%'`
         : '';
     const [lastMonth, thisMonth] = await Promise.all([
       pool.query(`SELECT agent_name, carrier, client_full_name, commission FROM commission_records WHERE payment_period = $1 ${af}`, [lastPeriod]),
@@ -225,8 +233,8 @@ router.get('/missing-renewals', requireAuth, async (req, res) => {
 router.get('/filters', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
-    const isAdmin = req.user.role === 'admin' && !req.user.agency;
-    const agencyFilter = req.user.role === 'admin' && req.user.agency ? `payee ILIKE '%${req.user.agency}%'` : null;
+    const isAdmin = req.user.role === 'admin' && !getAgency(req);
+    const agencyFilter = req.user.role === 'admin' && getAgency(req) ? `payee ILIKE '%${getAgency(req)}%'` : null;
     const baseWhere = isAdmin ? '' : agencyFilter ? `WHERE ${agencyFilter}` : `WHERE agent_name ILIKE '%${req.user.name}%'`;
 
     const [agents, carriers, periods] = await Promise.all([
