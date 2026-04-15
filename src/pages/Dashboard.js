@@ -15,7 +15,7 @@ const MY_AGENTS = [
   'Gina Berenguer','Jill Taylor','Katy Robles','Osmary Orozco',
   'Sabri Perez','The Health Experts Insurance','Yahoska Perez',
 ];
-const CLASSIFICATION_TYPES = ['New Business','Renewal','Agent Commission','Agency Override','Chargeback'];
+const CLASSIFICATION_TYPES = ['New Business','Renewal','Agent Commission','Agency Override','Chargeback','HRA/Bonus'];
 
 const C = {
   accent: '#C9A96E',
