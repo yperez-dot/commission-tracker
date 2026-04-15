@@ -109,6 +109,14 @@ function parseBOBSheet(ws) {
 }
 
 // ─── GET all BOB clients ──────────────────────────────────────────────────────
+// Resolve effective agency
+function getAgency(req) {
+  if (req.user.role !== 'admin') return null;
+  const override = req.headers['x-agency-override'];
+  if (override !== undefined) return override || null;
+  return getAgency(req) || null;
+}
+
 router.get('/', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
@@ -133,11 +141,11 @@ router.get('/', requireAuth, async (req, res) => {
 router.get('/summary', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
-    const isAdmin = req.user.role === 'admin' && !req.user.agency;
+    const isAdmin = req.user.role === 'admin' && !getAgency(req);
     const af = req.user.role === 'agent'
       ? `AND agent_name ILIKE '%${req.user.name}%'`
-      : (req.user.role === 'admin' && req.user.agency)
-        ? `AND agent_name IN (SELECT DISTINCT agent_name FROM commission_records WHERE payee ILIKE '%${req.user.agency}%')`
+      : (req.user.role === 'admin' && getAgency(req))
+        ? `AND agent_name IN (SELECT DISTINCT agent_name FROM commission_records WHERE payee ILIKE '%${getAgency(req)}%')`
         : '';
     const total = await pool.query(`SELECT COUNT(*) as count FROM book_of_business WHERE status = 'active' ${af}`);
     const missing = await pool.query(`SELECT COUNT(*) as count, COALESCE(SUM(last_commission_amount),0) as at_risk FROM book_of_business WHERE months_missing > 0 AND status = 'active' ${af}`);
@@ -180,11 +188,11 @@ router.post('/check-renewals', requireAuth, async (req, res) => {
     const pool = getPool();
     const { period } = req.body;
     if (!period) return res.status(400).json({ error: 'Period required' });
-    const isAdmin = req.user.role === 'admin' && !req.user.agency;
+    const isAdmin = req.user.role === 'admin' && !getAgency(req);
     const af = req.user.role === 'agent'
       ? `AND agent_name ILIKE '%${req.user.name}%'`
-      : (req.user.role === 'admin' && req.user.agency)
-        ? `AND agent_name IN (SELECT DISTINCT agent_name FROM commission_records WHERE payee ILIKE '%${req.user.agency}%')`
+      : (req.user.role === 'admin' && getAgency(req))
+        ? `AND agent_name IN (SELECT DISTINCT agent_name FROM commission_records WHERE payee ILIKE '%${getAgency(req)}%')`
         : '';
 
     function normalizePeriod(p) {
@@ -318,11 +326,11 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
 router.post('/build-from-statements', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
-    const isAdmin = req.user.role === 'admin' && !req.user.agency;
+    const isAdmin = req.user.role === 'admin' && !getAgency(req);
     const af = req.user.role === 'agent'
       ? `AND agent_name ILIKE '%${req.user.name}%'`
-      : (req.user.role === 'admin' && req.user.agency)
-        ? `AND agent_name IN (SELECT DISTINCT agent_name FROM commission_records WHERE payee ILIKE '%${req.user.agency}%')`
+      : (req.user.role === 'admin' && getAgency(req))
+        ? `AND agent_name IN (SELECT DISTINCT agent_name FROM commission_records WHERE payee ILIKE '%${getAgency(req)}%')`
         : '';
 
     // Get best record per client+carrier (most recent, with effective date preferred)
