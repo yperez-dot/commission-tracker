@@ -135,6 +135,11 @@ function isHumanaPDF(filename) {
   return f.endsWith('.pdf') && (f.includes('humana') || f.includes('commissionstatement') || f.includes('yourfmo'));
 }
 
+
+function isMOOFile(filename) {
+  const f = filename.toLowerCase();
+  return f.endsWith('.pdf') && (f.includes('moo') || f.includes('mutual_of_omaha') || f.includes('mutual-of-omaha'));
+}
 function isYourFMOXLSX(filename) {
   const f = filename.toLowerCase().replace(/\s+/g, '_');
   return f.includes('commissions_commissiondetails') || f.includes('commissiondetails_88892');
@@ -919,6 +924,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       if (f.includes('the_health_experts_insurance_statement') || f.includes('the_health_experst_insurance') || (f.includes('yahoska') && f.includes('katy'))) return 'NHP';
       if (f.includes('commission-statement') || f.includes('integrity') || f.includes('apl')) return 'APL';
       if (f.includes('commissions_ledger') || f.includes('solis')) return 'Solis';
+      if (f.includes('moo') || f.includes('mutual_of_omaha')) return 'Broker Society Insurance';
       if (f.includes('yourfmo') || f.includes('commissiondetails')) return 'YourFMO';
       if (f.includes('commissiondata') || f.includes('humana')) return 'Humana';
       if (f.includes('devoted')) return 'Devoted';
@@ -927,7 +933,17 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     };
     const defaultPayee = determinePayee(req.file.originalname);
 
-    if (isYourFMOXLSX(req.file.originalname)) {
+    if (isMOOFile(req.file.originalname)) {
+      if (!pdfParse) {
+        try { fs.unlinkSync(req.file.path); } catch(e) {}
+        return res.status(500).json({ error: 'PDF parsing not available on server.' });
+      }
+      records = await parseMOOPDF(req.file.path, req.file.originalname);
+      if (!records.length) {
+        try { fs.unlinkSync(req.file.path); } catch(e) {}
+        return res.status(400).json({ error: 'No records found in MOO PDF.' });
+      }
+    } else if (isYourFMOXLSX(req.file.originalname)) {
       records = parseYourFMOXLSXRows(wb);
     } else if (isHumanaPDF(req.file.originalname)) {
       if (!pdfParse) {
@@ -1087,6 +1103,113 @@ function heuristicMapping(headers) {
     policyNumber: find(['policy', 'member id', 'contract', 'certificate']),
     planType: find(['plan type', 'product', 'line', 'benefit'])
   };
+}
+
+
+// ─── Mutual of Omaha PDF parser ──────────────────────────────────────────────
+async function parseMOOPDF(filePath, filename) {
+  const records = [];
+  if (!pdfParse) { console.error('pdf-parse not installed'); return records; }
+  try {
+    const dataBuffer = fs.readFileSync(filePath);
+    const data = await pdfParse(dataBuffer, { normalizeWhitespace: true });
+    const text = data.text;
+
+    // Insert newlines before key markers to handle pdf-parse concatenation
+    const normalized = text
+      .replace(/(BU\d{7,})/g, '\n$1')
+      .replace(/(\d{6}-\d{2})\s/g, '\n$1 ')
+      .replace(/(PRODUCTION #:)/g, '\nPRODUCTION #:')
+      .replace(/(MGA:)/g, '\nMGA:');
+
+    const lines = normalized.split('\n').map(function(l) { return l.trim(); }).filter(Boolean);
+
+    // Period from filename e.g. MOO_4_10.pdf → 202604
+    let period = '';
+    const dateM = text.match(/For\s*Period\s*Ending\s*(\d{2})\/(\d{2})\/(\d{4})/);
+    if (dateM) { period = dateM[3] + dateM[1]; }
+    if (!period) {
+      const fnM = filename.match(/_(\d{1,2})_/);
+      if (fnM) { period = '2026' + fnM[1].padStart(2, '0'); }
+    }
+    console.log('[MOO] period:', period, 'lines:', lines.length);
+
+    let currentAgent = 'Broker Society Insurance';
+    let currentMGA = '';
+
+    for (let li = 0; li < lines.length; li++) {
+      const line = lines[li];
+
+      // Track MGA
+      const mgaM = line.match(/^MGA:\s*(.+)/i);
+      if (mgaM) {
+        currentMGA = mgaM[1].trim().replace(/\b\w/g, function(c) { return c.toUpperCase(); });
+        continue;
+      }
+
+      // Track agent
+      const prodM = line.match(/PRODUCTION #:\s*\d+\s+NAME:\s+([A-Z][A-Z\s\-\.]+)/i);
+      if (prodM) {
+        let rawName = prodM[1].trim();
+        rawName = rawName.replace(/\s+M\s+A\s+O.*/i, '').replace(/\s+POLICY\s+INSURED.*/i, '').trim();
+        currentAgent = rawName.replace(/\b\w/g, function(c) { return c.toUpperCase(); });
+        continue;
+      }
+
+      // Data rows: BU (United) or XXXXXX-XX (Mutual health)
+      const isUnited = /^BU\d{7,}/.test(line);
+      const isMutual = /^\d{6}-\d{2}/.test(line);
+      if (!isUnited && !isMutual) { continue; }
+
+      const policyM = line.match(/^([A-Z]{0,2}\d+(?:-\d+)?)/);
+      const policyNumber = policyM ? policyM[1] : '';
+
+      const clientM = line.match(/^[A-Z0-9-]+\s+([A-Z][A-Z\s,\.'\-]+?)\s+[A-Z]{2}\s+\d{2}\/\d{2}\/\d{4}/);
+      const client = clientM ? clientM[1].trim() : '';
+
+      const dates = line.match(/(\d{2}\/\d{2}\/\d{4})/g) || [];
+      const effectiveDate = dates[1] || dates[0] || '';
+
+      let activityType = '';
+      const actTypes = ['NEW COV ISS','NEW ISS PYMT','NEW ISS REV','BFY REVERSAL','REISS/REBILL','CANC EFF ISS','BFY PAYMENT','LAPSE'];
+      for (let ai = 0; ai < actTypes.length; ai++) {
+        if (line.includes(actTypes[ai])) { activityType = actTypes[ai]; break; }
+      }
+
+      const amountsRaw = line.match(/\$(\d[\d,]*\.\d{2})-?/g) || [];
+      if (!amountsRaw.length) { continue; }
+
+      const firstAmt = amountsRaw[0];
+      const isNeg = firstAmt.endsWith('-') || activityType === 'NEW ISS REV' || activityType === 'BFY REVERSAL' || activityType === 'CANC EFF ISS';
+      let commission = parseFloat(firstAmt.replace(/[$,-]/g, ''));
+      if (isNeg) { commission = -commission; }
+      if (commission === 0) { continue; }
+
+      let classification;
+      if (commission < 0) { classification = 'Chargeback'; }
+      else if (activityType === 'NEW COV ISS' || activityType === 'NEW ISS PYMT' || activityType === 'REISS/REBILL') { classification = 'New Business'; }
+      else if (activityType === 'BFY PAYMENT') { classification = 'Renewal'; }
+      else { classification = 'Agent Commission'; }
+
+      records.push({
+        agent: currentAgent,
+        carrier: isMutual ? 'Mutual of Omaha' : 'United of Omaha',
+        planType: isMutual ? 'Mutual Health' : 'United Life & Annuity',
+        client: client,
+        effectiveDate: effectiveDate,
+        premium: 0,
+        commission: commission,
+        classification: classification,
+        period: period,
+        policyNumber: policyNumber,
+        payee: 'Broker Society Insurance',
+        mga: currentMGA,
+        raw: {}
+      });
+    }
+    console.log('[MOO] parsed:', records.length, 'records');
+  } catch(err) { console.error('parseMOOPDF error:', err.message); }
+  return records;
 }
 
 module.exports = router;
