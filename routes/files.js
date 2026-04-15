@@ -908,86 +908,66 @@ async function parseMOOPDF(filePath, filename) {
     const data = await pdfParse(dataBuffer, { normalizeWhitespace: true });
     const text = data.text;
 
-    // pdf-parse sometimes concatenates words — split on known patterns
-    // Normalize: insert newlines before BU policy numbers and production lines
+    // Insert newlines before policy numbers and key markers
     const normalized = text
       .replace(/(BU\d{7,})/g, '\n$1')
       .replace(/(\d{6}-\d{2})\s/g, '\n$1 ')
       .replace(/(PRODUCTION #:)/g, '\n$1')
+      .replace(/(MGA:)/g, '\nMGA:')
       .replace(/(For Period Ending)/g, '\n$1');
 
     const lines = normalized.split('\n').map(l => l.trim()).filter(Boolean);
 
-    // Period
+    // Period from filename e.g. MOO_4_13.pdf → 202604
     let period = '';
-    const dateM = text.match(/For\s*Period\s*Ending\s*(\d{2})[\/\s](\d{2})[\/\s](\d{4})/);
-    if (dateM) {
-      period = dateM[3] + dateM[1];
-    } else {
-      // Try alternate format in concatenated text
-      const dateM2 = text.match(/(\d{2})\/( \d{2})\/(\d{4})/);
-      if (dateM2) period = dateM2[3] + dateM2[1];
-      // Last resort — find 04/13/2026 style
-      const dateM3 = text.match(/0(\d)\/\d{2}\/(202\d)/);
-      if (!period && dateM3) period = dateM3[2] + '0' + dateM3[1];
-    }
-
-    // Try to get period from filename e.g. MOO_4_13.pdf → 202604
+    const dateM = text.match(/For\s*Period\s*Ending\s*(\d{2})\/(\d{2})\/(\d{4})/);
+    if (dateM) period = dateM[3] + dateM[1];
     if (!period) {
       const fnM = filename.match(/_(\d{1,2})_/);
-      if (fnM) period = '2026' + fnM[1].padStart(2,'0');
+      if (fnM) period = '2026' + fnM[1].padStart(2, '0');
     }
 
-    console.log('[MOO v2] period:', period, 'lines:', lines.length);
-    const buSample = lines.find(l => /^BU\d+/.test(l));
-    console.log('[MOO v2] BU sample:', buSample ? buSample.slice(0,80) : 'NONE');
+    console.log('[MOO] period:', period, 'lines:', lines.length);
 
     let currentAgent = 'Broker Society Insurance';
     let currentMGA = '';
 
     for (const line of lines) {
-      // Track agent from PRODUCTION line
       // Track MGA
       if (/^MGA:\s/i.test(line)) {
-        currentMGA = line.replace(/^MGA:\s*/i,'').trim()
+        currentMGA = line.replace(/^MGA:\s*/i, '').trim()
           .replace(/\b\w/g, c => c.toUpperCase());
         continue;
       }
 
-      // Track agent — extract just the name, stop before table headers
+      // Track agent name
       const prodM = line.match(/PRODUCTION #:\s*\d+\s+NAME:\s+([A-Z][A-Z\s\-\.]+)/i);
       if (prodM) {
         let rawName = prodM[1].trim();
-        // Strip table header junk that may be concatenated
-        rawName = rawName.replace(/\s+M\s+A\s+O.*/,'').replace(/\s+POLICY\s+INSURED.*/,'').trim();
+        rawName = rawName.replace(/\s+M\s+A\s+O.*/i, '').replace(/\s+POLICY\s+INSURED.*/i, '').trim();
         currentAgent = rawName.replace(/\b\w/g, c => c.toUpperCase());
         continue;
       }
-      }
 
+      // Data rows: BU (United) or XXXXXX-XX (Mutual health)
       const isUnited = /^BU\d{7,}/.test(line);
       const isMutual = /^\d{6}-\d{2}/.test(line);
       if (!isUnited && !isMutual) continue;
 
-      // Policy number
       const policyM = line.match(/^([A-Z]{0,2}\d+(?:-\d+)?)/);
       const policyNumber = policyM ? policyM[1] : '';
 
-      // Client name
       const clientM = line.match(/^[A-Z0-9-]+\s+([A-Z][A-Z\s,\.'\-]+?)\s+[A-Z]{2}\s+\d{2}\/\d{2}\/\d{4}/);
       const client = clientM ? clientM[1].trim() : '';
 
-      // Dates
       const dates = line.match(/(\d{2}\/\d{2}\/\d{4})/g) || [];
       const effectiveDate = dates[1] || dates[0] || '';
 
-      // Activity type
       let activityType = '';
       for (const act of ['NEW COV ISS','NEW ISS PYMT','NEW ISS REV','BFY REVERSAL','REISS/REBILL','CANC EFF ISS','BFY PAYMENT','LAPSE']) {
         if (line.includes(act)) { activityType = act; break; }
       }
 
-      // Commission amounts
       const amountsRaw = line.match(/\$(\d[\d,]*\.\d{2})-?/g) || [];
       if (!amountsRaw.length) continue;
 
@@ -1014,10 +994,11 @@ async function parseMOOPDF(filePath, filename) {
         raw: {}
       });
     }
-    console.log('[MOO v2] parsed records:', records.length);
+    console.log('[MOO] parsed:', records.length, 'records');
   } catch(err) { console.error('parseMOOPDF error:', err.message); }
   return records;
 }
+
 
 // ─── Upload route ─────────────────────────────────────────────────────────────
 
