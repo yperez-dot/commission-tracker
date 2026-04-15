@@ -195,10 +195,10 @@ export default function Upload({ user }) {
               <div>
                 <div style={{ fontSize: 32, marginBottom: 8 }}>📂</div>
                 <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Drop carrier statement here</div>
-                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>Supports .xlsx, .xls, .csv — any carrier format</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>Supports .xlsx, .xls, .csv, .pdf — any carrier format</div>
                 <label style={{ background: 'var(--blue)', color: '#fff', borderRadius: 6, padding: '8px 20px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
                   Choose file
-                  <input type="file" accept=".xlsx,.xls,.csv" multiple style={{ display: 'none' }}
+                  <input type="file" accept=".xlsx,.xls,.csv,.pdf" multiple style={{ display: 'none' }}
                     onChange={async e => {
                       const files = Array.from(e.target.files);
                       for (const f of files) { await handleFile(f); }
