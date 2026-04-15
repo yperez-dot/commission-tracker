@@ -44,29 +44,48 @@ function formatPeriod(p) {
   return null;
 }
 
-function VerticalBarChart({ data, loading }) {
-  if (loading) return <div style={{height:200,display:'flex',alignItems:'center',justifyContent:'center',color:C.textMuted,fontSize:12}}>Loading...</div>;
-  if (!data||!data.length) return <div style={{height:200,display:'flex',alignItems:'center',justifyContent:'center',color:C.textMuted,fontSize:12}}>No data</div>;
-  const max = Math.max(...data.map(d => Math.abs(parseFloat(d.total)||0)));
+function VerticalBarChart({ data, loading, metric }) {
+  if (loading) return <div style={{height:220,display:'flex',alignItems:'center',justifyContent:'center',color:C.textMuted,fontSize:12}}>Loading...</div>;
+  if (!data||!data.length) return <div style={{height:220,display:'flex',alignItems:'center',justifyContent:'center',color:C.textMuted,fontSize:12}}>No data</div>;
+
+  const getValue = (d) => {
+    if (metric === 'chargebacks') return Math.abs(parseFloat(d.chargebacks)||0);
+    if (metric === 'apps') return parseFloat(d.count)||0;
+    return parseFloat(d.total)||0;
+  };
+
+  const isNegValue = (d) => metric === 'commission' && (parseFloat(d.total)||0) < 0;
+  const max = Math.max(...data.map(d => getValue(d)), 1);
+
+  const fmtVal = (d) => {
+    const v = getValue(d);
+    if (metric === 'apps') return v.toLocaleString();
+    const raw = metric === 'commission' ? (parseFloat(d.total)||0) : v;
+    return fmtK(raw);
+  };
+
   return (
-    <div style={{display:'flex',alignItems:'flex-end',gap:6,height:200,paddingBottom:28,paddingTop:16,position:'relative',overflowX:'auto'}}>
-      <div style={{position:'absolute',left:0,top:0,bottom:28,display:'flex',flexDirection:'column',justifyContent:'space-between',pointerEvents:'none'}}>
+    <div style={{display:'flex',alignItems:'flex-end',gap:4,height:220,paddingBottom:32,paddingTop:20,position:'relative',overflowX:'auto'}}>
+      <div style={{position:'absolute',left:0,top:0,bottom:32,display:'flex',flexDirection:'column',justifyContent:'space-between',pointerEvents:'none',width:38}}>
         {[1,0.5,0].map(f => (
-          <span key={f} style={{fontSize:12,color:C.textMuted,lineHeight:1}}>{fmtK(max*f)}</span>
+          <span key={f} style={{fontSize:11,color:C.textMuted,lineHeight:1}}>
+            {metric==='apps' ? Math.round(max*f) : fmtK(max*f)}
+          </span>
         ))}
       </div>
-      <div style={{flex:1,display:'flex',alignItems:'flex-end',gap:4,paddingLeft:38,height:'100%'}}>
+      <div style={{flex:1,display:'flex',alignItems:'flex-end',gap:4,paddingLeft:42,height:'100%'}}>
         {data.map((d,i) => {
-          const val = parseFloat(d.total)||0;
-          const pct = max>0?(Math.abs(val)/max)*100:0;
+          const val = getValue(d);
+          const pct = max>0?(val/max)*100:0;
           const label = formatPeriod(d.period||d.payment_period)||d.period||'';
-          const isNeg = val<0;
+          const isNeg = isNegValue(d);
           const isRecent = i >= data.length-4;
+          const barColor = metric==='chargebacks' ? C.red : isNeg ? C.red : isRecent ? C.barActive : C.barMuted;
           return (
-            <div key={i} style={{flex:1,minWidth:36,maxWidth:80,display:'flex',flexDirection:'column',alignItems:'center',height:'100%',justifyContent:'flex-end'}}>
-              <span style={{fontSize:12,fontWeight:500,color:isNeg?C.red:C.text,marginBottom:4,whiteSpace:'nowrap'}}>{fmtK(val)}</span>
-              <div style={{width:'55%',height:`${pct}%`,minHeight:3,background:isNeg?C.red:isRecent?C.barActive:C.barMuted,borderRadius:'3px 3px 0 0',transition:'height 0.4s ease'}}/>
-              <span style={{fontSize:13,color:C.text,marginTop:6,textAlign:'center',whiteSpace:'nowrap',overflow:'hidden',maxWidth:'100%',textOverflow:'ellipsis'}}>{label}</span>
+            <div key={i} style={{flex:1,minWidth:44,maxWidth:90,display:'flex',flexDirection:'column',alignItems:'center',height:'100%',justifyContent:'flex-end'}}>
+              <span style={{fontSize:12,fontWeight:500,color:isNeg||metric==='chargebacks'?C.red:C.text,marginBottom:4,whiteSpace:'nowrap'}}>{fmtVal(d)}</span>
+              <div style={{width:'60%',height:`${Math.max(pct,0)}%`,minHeight:3,background:barColor,borderRadius:'3px 3px 0 0',transition:'height 0.4s ease'}}/>
+              <span style={{fontSize:12,color:C.text,marginTop:8,textAlign:'center',whiteSpace:'nowrap'}}>{label}</span>
             </div>
           );
         })}
@@ -144,6 +163,8 @@ export default function Dashboard({ user, onNavigate }) {
   const [periodData, setPeriodData] = useState([]);
   const [allFilters, setAllFilters] = useState({ agents:[], carriers:[], periods:[], planTypes:[] });
   const [loading, setLoading] = useState(false);
+  const [chartMetric, setChartMetric] = useState('commission');
+  const [chartRange, setChartRange] = useState(12);
   const [selAgents, setSelAgents] = useState([]);
   const [selCarriers, setSelCarriers] = useState([]);
   const [selPeriods, setSelPeriods] = useState([]);
@@ -169,7 +190,7 @@ export default function Dashboard({ user, onNavigate }) {
       const [s, k] = await Promise.all([apiFetch(`/records/summary?${params}`), apiFetch(`/records/kpi?${params}`)]);
       setSummary(s); setKpi(k);
       if (s?.byPeriod) {
-        setPeriodData([...s.byPeriod].filter(p=>p.period&&p.period!=='Unknown'&&String(p.period).match(/^\d{6}$/)).sort((a,b)=>String(a.period).localeCompare(String(b.period))).slice(-12));
+        setPeriodData([...s.byPeriod].filter(p=>p.period&&p.period!=='Unknown'&&String(p.period).match(/^\d{6}$/)).sort((a,b)=>String(a.period).localeCompare(String(b.period))).slice(-chartRange));
       }
     } catch(e){ console.error(e); }
     finally { setLoading(false); }
@@ -272,14 +293,35 @@ export default function Dashboard({ user, onNavigate }) {
 
         <div style={{padding:'0 24px 24px',flex:1,display:'flex',flexDirection:'column',gap:14}}>
           <div style={card}>
-            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:4}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10,flexWrap:'wrap',gap:8}}>
               <div style={{fontSize:13,fontWeight:500,color:C.text}}>Commission & Count</div>
-              <div style={{display:'flex',alignItems:'center',gap:12,fontSize:11,color:C.textLight}}>
-                <span style={{display:'flex',alignItems:'center',gap:4}}><span style={{width:8,height:8,borderRadius:2,background:C.barActive,display:'inline-block'}}/> Commission</span>
-                <span style={{color:C.text}}>{periodData.length>0&&formatPeriod(periodData[0]?.period)} – {formatPeriod(periodData[periodData.length-1]?.period)}</span>}
+              <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+                {/* Metric toggle */}
+                <div style={{display:'flex',borderRadius:6,border:`0.5px solid ${C.border}`,overflow:'hidden'}}>
+                  {[['commission','Commission'],['chargebacks','Chargebacks'],['apps','App Count']].map(([m,l])=>(
+                    <button key={m} onClick={()=>setChartMetric(m)} style={{
+                      padding:'4px 10px',fontSize:11,border:'none',cursor:'pointer',fontWeight:chartMetric===m?500:400,
+                      background:chartMetric===m?C.accent:'transparent',
+                      color:chartMetric===m?C.sidebar:C.textMuted,transition:'all 0.15s'
+                    }}>{l}</button>
+                  ))}
+                </div>
+                {/* Range selector */}
+                <div style={{display:'flex',borderRadius:6,border:`0.5px solid ${C.border}`,overflow:'hidden'}}>
+                  {[[6,'6mo'],[12,'12mo'],[24,'24mo']].map(([r,l])=>(
+                    <button key={r} onClick={()=>setChartRange(r)} style={{
+                      padding:'4px 10px',fontSize:11,border:'none',cursor:'pointer',fontWeight:chartRange===r?500:400,
+                      background:chartRange===r?C.bgSubtle:'transparent',
+                      color:chartRange===r?C.text:C.textMuted,transition:'all 0.15s'
+                    }}>{l}</button>
+                  ))}
+                </div>
+                <span style={{fontSize:11,color:C.textLight}}>
+                  {periodData.length>0 ? `${formatPeriod(periodData[0]?.period)} – ${formatPeriod(periodData[periodData.length-1]?.period)}` : ''}
+                </span>
               </div>
             </div>
-            <VerticalBarChart data={periodData} loading={loading}/>
+            <VerticalBarChart data={periodData} loading={loading} metric={chartMetric}/>
           </div>
 
           <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:14}}>
