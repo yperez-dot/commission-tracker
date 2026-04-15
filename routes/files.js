@@ -130,11 +130,6 @@ function isYourFMOFile(filename) {
   return f.includes('yourfmo') && !f.endsWith('.pdf');
 }
 
-function isMOOFile(filename) {
-  const f = filename.toLowerCase();
-  return f.endsWith('.pdf') && (f.includes('moo') || f.includes('mutual') || f.includes('mutual_of_omaha'));
-}
-
 function isHumanaPDF(filename) {
   const f = filename.toLowerCase();
   return f.endsWith('.pdf') && (f.includes('humana') || f.includes('commissionstatement') || f.includes('yourfmo'));
@@ -899,106 +894,6 @@ function parseYourFMOXLSXRows(wb) {
 }
 
 
-// ─── Mutual of Omaha PDF parser ──────────────────────────────────────────────
-async function parseMOOPDF(filePath, filename) {
-  const records = [];
-  if (!pdfParse) { console.error('pdf-parse not installed'); return records; }
-  try {
-    const dataBuffer = fs.readFileSync(filePath);
-    const data = await pdfParse(dataBuffer, { normalizeWhitespace: true });
-    const text = data.text;
-
-    // Insert newlines before policy numbers and key markers
-    const normalized = text
-      .replace(/(BU\d{7,})/g, '\n$1')
-      .replace(/(\d{6}-\d{2})\s/g, '\n$1 ')
-      .replace(/(PRODUCTION #:)/g, '\n$1')
-      .replace(/(MGA:)/g, '\nMGA:')
-      .replace(/(For Period Ending)/g, '\n$1');
-
-    const lines = normalized.split('\n').map(l => l.trim()).filter(Boolean);
-
-    // Period from filename e.g. MOO_4_13.pdf → 202604
-    let period = '';
-    const dateM = text.match(/For\s*Period\s*Ending\s*(\d{2})\/(\d{2})\/(\d{4})/);
-    if (dateM) period = dateM[3] + dateM[1];
-    if (!period) {
-      const fnM = filename.match(/_(\d{1,2})_/);
-      if (fnM) period = '2026' + fnM[1].padStart(2, '0');
-    }
-
-    console.log('[MOO] period:', period, 'lines:', lines.length);
-
-    let currentAgent = 'Broker Society Insurance';
-    let currentMGA = '';
-
-    for (const line of lines) {
-      // Track MGA
-      if (/^MGA:\s/i.test(line)) {
-        currentMGA = line.replace(/^MGA:\s*/i, '').trim()
-          .replace(/\b\w/g, c => c.toUpperCase());
-        continue;
-      }
-
-      // Track agent name
-      const prodM = line.match(/PRODUCTION #:\s*\d+\s+NAME:\s+([A-Z][A-Z\s\-\.]+)/i);
-      if (prodM) {
-        let rawName = prodM[1].trim();
-        rawName = rawName.replace(/\s+M\s+A\s+O.*/i, '').replace(/\s+POLICY\s+INSURED.*/i, '').trim();
-        currentAgent = rawName.replace(/\b\w/g, c => c.toUpperCase());
-        continue;
-      }
-
-      // Data rows: BU (United) or XXXXXX-XX (Mutual health)
-      const isUnited = /^BU\d{7,}/.test(line);
-      const isMutual = /^\d{6}-\d{2}/.test(line);
-      if (!isUnited && !isMutual) continue;
-
-      const policyM = line.match(/^([A-Z]{0,2}\d+(?:-\d+)?)/);
-      const policyNumber = policyM ? policyM[1] : '';
-
-      const clientM = line.match(/^[A-Z0-9-]+\s+([A-Z][A-Z\s,\.'\-]+?)\s+[A-Z]{2}\s+\d{2}\/\d{2}\/\d{4}/);
-      const client = clientM ? clientM[1].trim() : '';
-
-      const dates = line.match(/(\d{2}\/\d{2}\/\d{4})/g) || [];
-      const effectiveDate = dates[1] || dates[0] || '';
-
-      let activityType = '';
-      for (const act of ['NEW COV ISS','NEW ISS PYMT','NEW ISS REV','BFY REVERSAL','REISS/REBILL','CANC EFF ISS','BFY PAYMENT','LAPSE']) {
-        if (line.includes(act)) { activityType = act; break; }
-      }
-
-      const amountsRaw = line.match(/\$(\d[\d,]*\.\d{2})-?/g) || [];
-      if (!amountsRaw.length) continue;
-
-      const firstAmt = amountsRaw[0];
-      const isNeg = firstAmt.endsWith('-') || ['NEW ISS REV','BFY REVERSAL','CANC EFF ISS'].includes(activityType);
-      let commission = parseFloat(firstAmt.replace(/[$,-]/g, ''));
-      if (isNeg) commission = -commission;
-      if (commission === 0) continue;
-
-      let classification;
-      if (commission < 0) classification = 'Chargeback';
-      else if (['NEW COV ISS','NEW ISS PYMT','REISS/REBILL'].includes(activityType)) classification = 'New Business';
-      else if (activityType === 'BFY PAYMENT') classification = 'Renewal';
-      else classification = 'Agent Commission';
-
-      records.push({
-        agent: currentAgent,
-        carrier: isMutual ? 'Mutual of Omaha' : 'United of Omaha',
-        planType: isMutual ? 'Mutual Health' : 'United Life & Annuity',
-        client, effectiveDate, premium: 0, commission, classification,
-        period, policyNumber,
-        payee: 'Broker Society Insurance',
-        mga: currentMGA,
-        raw: {}
-      });
-    }
-    console.log('[MOO] parsed:', records.length, 'records');
-  } catch(err) { console.error('parseMOOPDF error:', err.message); }
-  return records;
-}
-
 
 // ─── Upload route ─────────────────────────────────────────────────────────────
 
@@ -1032,17 +927,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     };
     const defaultPayee = determinePayee(req.file.originalname);
 
-    if (isMOOFile(req.file.originalname)) {
-      if (!pdfParse) {
-        try { fs.unlinkSync(req.file.path); } catch(e) {}
-        return res.status(500).json({ error: 'PDF parsing not available — pdf-parse not installed.' });
-      }
-      records = await parseMOOPDF(req.file.path, req.file.originalname);
-      if (!records.length) {
-        try { fs.unlinkSync(req.file.path); } catch(e) {}
-        return res.status(400).json({ error: 'No records found in MOO PDF.' });
-      }
-    } else if (isYourFMOXLSX(req.file.originalname)) {
+    if (isYourFMOXLSX(req.file.originalname)) {
       records = parseYourFMOXLSXRows(wb);
     } else if (isHumanaPDF(req.file.originalname)) {
       if (!pdfParse) {
