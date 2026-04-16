@@ -54,11 +54,12 @@ export default function Login({ onLogin }) {
         padding: '48px 44px',
         position: 'relative',
         zIndex: 1,
-        animation: 'fadeUp 0.6s ease forwards',
+        animation: 'fadeUp 0.5s ease both',
+        animationFillMode: 'forwards',
       }}>
         <style>{`
           @keyframes fadeUp {
-            from { opacity: 0; transform: translateY(16px); }
+            from { opacity: 0; transform: translateY(12px); }
             to { opacity: 1; transform: translateY(0); }
           }
           @keyframes spin { to { transform: rotate(360deg); } }
@@ -210,7 +211,7 @@ export default function Login({ onLogin }) {
           borderTop: '0.5px solid rgba(201,169,110,0.12)',
           textAlign: 'center',
           fontSize: 11,
-          color: 'rgba(240,234,216,0.2)',
+          color: 'rgba(240,234,216,0.4)',
           letterSpacing: '0.5px',
           lineHeight: 1.8
         }}>
