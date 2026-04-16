@@ -158,6 +158,7 @@ function FilterGroup({ title, items, selected, onToggle, onSelectAll, onClearAll
 }
 
 export default function Dashboard({ user, onNavigate }) {
+  const agencyView = user.agency || '';
   const [summary, setSummary] = useState(null);
   const [kpi, setKpi] = useState(null);
   const [periodData, setPeriodData] = useState([]);
@@ -201,14 +202,14 @@ export default function Dashboard({ user, onNavigate }) {
       }
     } catch(e){ console.error(e); }
     finally { setLoading(false); }
-  }, [buildParams, user.agency]);
+  }, [buildParams, agencyView]);
 
   // Re-fetch data AND filters when agency switches, clear filters to avoid stale state
   useEffect(() => {
     setSelAgents([]); setSelCarriers([]); setSelPeriods([]); setSelTypes([]); setSelPlanTypes([]);
     apiFetch('/records/filters').then(d => setAllFilters(d)).catch(console.error);
     loadData();
-  }, [user.agency]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [agencyView]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { loadData(); }, [loadData]);
 
