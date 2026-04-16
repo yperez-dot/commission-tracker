@@ -125,10 +125,10 @@ function agencyFilter(req, alias) {
   const col = alias ? alias + '.carrier' : 'carrier';
   if (!agency) return null;
   if (agency.toLowerCase().includes('broker society')) {
-    return col + " IN ('Mutual of Omaha', 'United of Omaha')";
+    return col + " IN ('Mutual of Omaha', 'United of Omaha', 'Fidelity Life', 'Instabrain', 'F&G', 'Fidelity & Guaranty', 'American Amicable', 'Transamerica', 'Ethos', 'American Home Life', 'National Life Group')";
   }
-  // Health Experts: exclude BSI carriers
-  return col + " NOT IN ('Mutual of Omaha', 'United of Omaha')";
+  // Health Experts: exclude all BSI carriers
+  return col + " NOT IN ('Mutual of Omaha', 'United of Omaha', 'Fidelity Life', 'Instabrain', 'F&G', 'Fidelity & Guaranty', 'American Amicable', 'Transamerica', 'Ethos', 'American Home Life', 'National Life Group')";
 }
 
 router.get('/', requireAuth, async (req, res) => {
