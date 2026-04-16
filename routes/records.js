@@ -2,8 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { getPool } = require('../db/database');
 const { requireAuth } = require('./auth');
-const { normalizeAllRecords } = require('../normalize');
-
+const { normalizeAllRecords } = require('./normalize');
 function requireAdmin(req, res, next) {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
   next();
