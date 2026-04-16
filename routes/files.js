@@ -7,8 +7,7 @@ const fs = require('fs');
 const Anthropic = require('@anthropic-ai/sdk');
 const { getPool } = require('../db/database');
 const { requireAuth } = require('./auth');
-const { normalizeAgentName } = require('./normalize');
-let pdfParse;
+const { normalizeAgentName } = require('./normalize');let pdfParse;
 try { pdfParse = require('pdf-parse'); } catch(e) { console.log('pdf-parse not installed'); }
 
 const UPLOADS_DIR = path.join('/tmp', 'uploads');
