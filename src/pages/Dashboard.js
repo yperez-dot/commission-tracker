@@ -164,6 +164,13 @@ export default function Dashboard({ user, onNavigate }) {
   const [allFilters, setAllFilters] = useState({ agents:[], carriers:[], periods:[], planTypes:[] });
   const [loading, setLoading] = useState(false);
   const [chartMetric, setChartMetric] = useState('commission');
+  const [kpiSortCol, setKpiSortCol] = useState('total_commission');
+  const [kpiSortDir, setKpiSortDir] = useState('desc');
+
+  function handleKpiSort(col) {
+    if (kpiSortCol === col) setKpiSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setKpiSortCol(col); setKpiSortDir('desc'); }
+  }
   const [chartRange, setChartRange] = useState(12);
   const [selAgents, setSelAgents] = useState([]);
   const [selCarriers, setSelCarriers] = useState([]);
@@ -349,15 +356,38 @@ export default function Dashboard({ user, onNavigate }) {
               <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
                 <thead>
                   <tr style={{background:C.bgSubtle}}>
-                    {['#','Agent Name','Total','Total Count','Distribution %','Advance','Chargeback','Chargeback Ratio','Net Sales','Net Apps','Adv Count','CB Count'].map(h=>(
-                      <th key={h} style={{padding:'9px 12px',textAlign:'left',fontWeight:500,fontSize:11,color:C.textMuted,borderBottom:`0.5px solid ${C.border}`,whiteSpace:'nowrap'}}>{h}</th>
+                    {[
+                      ['#', null],
+                      ['Agent Name','agent_name'],
+                      ['Total','total_commission'],
+                      ['Count','total_count'],
+                      ['Distribution %','distribution_pct'],
+                      ['Advance','advance_amount'],
+                      ['Chargeback','chargeback_amount'],
+                      ['CB Ratio','chargeback_ratio'],
+                      ['Net Sales','net_sales'],
+                      ['Net Apps','new_apps'],
+                      ['Adv Count','advance_count'],
+                      ['CB Count','chargeback_count']
+                    ].map(([h, col]) => (
+                      <th key={h} onClick={col ? ()=>handleKpiSort(col) : undefined}
+                        style={{padding:'9px 12px',textAlign:'left',fontWeight:500,fontSize:11,color:C.textMuted,
+                          borderBottom:`0.5px solid ${C.border}`,whiteSpace:'nowrap',
+                          cursor:col?'pointer':'default',userSelect:'none'}}>
+                        {h} {col && (kpiSortCol===col ? (kpiSortDir==='asc'?'↑':'↓') : <span style={{opacity:0.3}}>↕</span>)}
+                      </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {loading?<tr><td colSpan={12} style={{textAlign:'center',padding:32,color:C.textMuted}}>Loading...</td></tr>
                   :!(kpi?.agents?.length)?<tr><td colSpan={12} style={{textAlign:'center',padding:32,color:C.textMuted}}>No data</td></tr>
-                  :kpi.agents.map((a,i)=>(
+                  :[...(kpi.agents||[])].sort((a,b) => {
+                      const av = a[kpiSortCol] ?? 0;
+                      const bv = b[kpiSortCol] ?? 0;
+                      if (typeof av === 'string') return kpiSortDir==='asc' ? av.localeCompare(bv) : bv.localeCompare(av);
+                      return kpiSortDir==='asc' ? av - bv : bv - av;
+                    }).map((a,i)=>(
                     <tr key={i} onClick={()=>drillDown({agent:a.agent_name})} style={{cursor:'pointer',borderBottom:`0.5px solid ${C.border}`}}
                       onMouseEnter={e=>e.currentTarget.style.background=C.bgSubtle}
                       onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
@@ -376,7 +406,8 @@ export default function Dashboard({ user, onNavigate }) {
                       <td style={{padding:'9px 12px',color:C.text}}>{a.advance_count}</td>
                       <td style={{padding:'9px 12px',color:a.chargeback_count>0?C.red:C.text,fontWeight:a.chargeback_count>0?500:400}}>{a.chargeback_count}</td>
                     </tr>
-                  ))}
+                  ))
+                  }
                 </tbody>
                 {kpi?.totals&&!loading&&(
                   <tfoot>
