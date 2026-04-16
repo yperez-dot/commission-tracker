@@ -113,8 +113,22 @@ function parseBOBSheet(ws) {
 function getAgency(req) {
   if (req.user.role !== 'admin') return null;
   const override = req.headers['x-agency-override'];
-  if (override !== undefined) return override || null;
-  return req.user.agency || null;
+  const agency = override !== undefined ? (override || null) : (req.user.agency || null);
+  return agency;
+}
+
+// Returns SQL filter clause for agency isolation — based on carrier
+// BSI carriers: Mutual of Omaha, United of Omaha
+// THEI carriers: everything else
+function agencyFilter(req, alias) {
+  const agency = getAgency(req);
+  const col = alias ? alias + '.carrier' : 'carrier';
+  if (!agency) return null;
+  if (agency.toLowerCase().includes('broker society')) {
+    return col + " IN ('Mutual of Omaha', 'United of Omaha')";
+  }
+  // Health Experts: exclude BSI carriers
+  return col + " NOT IN ('Mutual of Omaha', 'United of Omaha')";
 }
 
 router.get('/', requireAuth, async (req, res) => {
