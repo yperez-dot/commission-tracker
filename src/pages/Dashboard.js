@@ -171,7 +171,9 @@ export default function Dashboard({ user, onNavigate }) {
   const [selTypes, setSelTypes] = useState([]);
   const [selPlanTypes, setSelPlanTypes] = useState([]);
 
-  useEffect(() => { apiFetch('/records/filters').then(d=>setAllFilters(d)).catch(console.error); }, []);
+  useEffect(() => {
+    apiFetch('/records/filters').then(d => setAllFilters(d)).catch(console.error);
+  }, [user.agency]); // re-fetch filters when agency view changes
 
   const buildParams = useCallback(() => {
     const p = new URLSearchParams();
