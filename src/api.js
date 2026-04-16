@@ -13,9 +13,12 @@ function clearToken() {
 
 async function apiFetch(path, options = {}) {
   const token = getToken();
-  const agencyOverride = window.__olicomm_agency_override !== undefined
+  const switcherValue = window.__olicomm_agency_override !== undefined
     ? window.__olicomm_agency_override
     : (localStorage.getItem('olicomm_agency_view') || '');
+  // Fall back to user's own agency if no switcher active
+  const storedUser = JSON.parse(localStorage.getItem('he_user') || '{}');
+  const agencyOverride = switcherValue || storedUser.agency || '';
 
   const res = await fetch(`${BASE}/api${path}`, {
     ...options,
@@ -40,9 +43,12 @@ async function apiFetch(path, options = {}) {
 
 async function apiUpload(path, formData) {
   const token = getToken();
-  const agencyOverride = window.__olicomm_agency_override !== undefined
+  const switcherValue = window.__olicomm_agency_override !== undefined
     ? window.__olicomm_agency_override
     : (localStorage.getItem('olicomm_agency_view') || '');
+  // Fall back to user's own agency if no switcher active
+  const storedUser = JSON.parse(localStorage.getItem('he_user') || '{}');
+  const agencyOverride = switcherValue || storedUser.agency || '';
 
   const res = await fetch(`${BASE}/api${path}`, {
     method: 'POST',
