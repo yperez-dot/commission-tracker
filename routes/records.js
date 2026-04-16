@@ -64,7 +64,8 @@ router.get('/', requireAuth, async (req, res) => {
         COALESCE(cr.plan_type, '') as plan_type,
         cr.client_full_name, cr.effective_date, cr.premium, cr.commission,
         cr.classification, cr.payment_period, cr.policy_number, cr.created_at,
-        cr.upload_id, cr.payee, u.original_name as upload_name
+        cr.upload_id, cr.payee, COALESCE(cr.mga, '') as mga,
+        cr.raw_data, u.original_name as upload_name
        FROM commission_records cr LEFT JOIN uploads u ON cr.upload_id = u.id
        ${wc} ORDER BY cr.created_at DESC LIMIT $${idx++} OFFSET $${idx++}`,
       [...params, parseInt(limit), parseInt(offset)]
