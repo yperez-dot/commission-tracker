@@ -213,6 +213,12 @@ export default function AllData({ user, initialFilters = {} }) {
   };
 
   const hasMGA = records.some(r => r.mga && r.mga.trim());
+  const hasCommSplit = records.some(r => {
+    try { const raw = typeof r.raw_data === 'string' ? JSON.parse(r.raw_data) : r.raw_data; return raw && raw.agentComm !== undefined; } catch(e) { return false; }
+  });
+  function getCommSplit(r) {
+    try { const raw = typeof r.raw_data === 'string' ? JSON.parse(r.raw_data) : r.raw_data; return raw || {}; } catch(e) { return {}; }
+  }
   const columns = [
     { col: 'agent_name',      label: 'Agent' },
     { col: 'carrier',         label: 'Carrier' },
@@ -224,6 +230,8 @@ export default function AllData({ user, initialFilters = {} }) {
     { col: 'payment_period',  label: 'Period' },
     { col: 'payee',           label: 'Payee' },
     ...(hasMGA ? [{ col: 'mga', label: 'MGA' }] : []),
+    ...(hasCommSplit ? [{ col: 'agent_comm', label: 'Agent Comm' }] : []),
+    ...(hasCommSplit ? [{ col: 'agency_comm', label: 'Agency Comm' }] : []),
   ];
 
   return (
@@ -351,6 +359,12 @@ export default function AllData({ user, initialFilters = {} }) {
                           <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.payment_period || '—'}</td>
                           <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.payee || '—'}</td>
                           {hasMGA && <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.mga || '—'}</td>}
+                          {hasCommSplit && (() => { const s = getCommSplit(r); return (
+                            <>
+                              <td style={{ fontWeight: 500, color: s.agentComm > 0 ? 'var(--green)' : 'var(--text-muted)' }}>{s.agentComm !== undefined ? fmt(s.agentComm) : '—'}</td>
+                              <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{s.agencyComm !== undefined ? fmt(s.agencyComm) : '—'}</td>
+                            </>
+                          );})()}
                           {user.role === 'admin' && (
                             <td>
                               <button onClick={() => { setDeleteTarget(r); setConfirmDelete('single'); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14, padding: '2px 6px' }}>✕</button>
@@ -365,7 +379,7 @@ export default function AllData({ user, initialFilters = {} }) {
                       {user.role === 'admin' && <td></td>}
                       <td colSpan={6} style={{ padding: '10px 12px', fontSize: 13 }}>Page total ({records.length})</td>
                       <td style={{ padding: '10px 12px', fontSize: 13, color: grandTotal < 0 ? 'var(--red)' : 'var(--green)' }}>{fmt(grandTotal)}</td>
-                      <td colSpan={user.role === 'admin' ? 5 : 4}></td>
+                      <td colSpan={user.role === 'admin' ? (5 + (hasCommSplit ? 2 : 0)) : (4 + (hasCommSplit ? 2 : 0))}></td>
                     </tr>
                   </tfoot>
                 </table>
