@@ -72,9 +72,14 @@ export default function App() {
   }
 
   if (loading) return (
-    <div className="loading-screen">
-      <div className="logo-mark">HE</div>
-      <p>Loading...</p>
+    <div style={{
+      minHeight:'100vh', background:'#1A1209',
+      display:'flex', alignItems:'center', justifyContent:'center',
+      flexDirection:'column', gap:12
+    }}>
+      <div style={{ fontSize:36, fontWeight:'bold', color:'#C9A96E', fontFamily:'Georgia, serif', letterSpacing:'-1px' }}>OliComm</div>
+      <div style={{ width:20, height:20, border:'2px solid rgba(201,169,110,0.3)', borderTopColor:'#C9A96E', borderRadius:'50%', animation:'spin 0.7s linear infinite' }}/>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 
@@ -121,7 +126,7 @@ export default function App() {
             <div className="logo-sub">Commission Tracker</div>
           </div>
         </div>
-        {user.role === 'admin' && (
+        {user.role === 'admin' && !user.agency && (
           <div style={{padding:'8px 10px',borderBottom:'1px solid rgba(255,255,255,0.07)'}}>
             <div style={{fontSize:9,fontWeight:500,color:'rgba(255,255,255,0.35)',textTransform:'uppercase',letterSpacing:'0.7px',marginBottom:5}}>Viewing</div>
             <select
