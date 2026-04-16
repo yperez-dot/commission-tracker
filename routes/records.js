@@ -14,8 +14,22 @@ function requireAdmin(req, res, next) {
 function getAgency(req) {
   if (req.user.role !== 'admin') return null;
   const override = req.headers['x-agency-override'];
-  if (override !== undefined) return override || null;
-  return req.user.agency || null;
+  const agency = override !== undefined ? (override || null) : (req.user.agency || null);
+  return agency;
+}
+
+// Returns SQL filter clause for agency isolation — based on carrier
+// BSI carriers: Mutual of Omaha, United of Omaha
+// THEI carriers: everything else
+function agencyFilter(req, alias) {
+  const agency = getAgency(req);
+  const col = alias ? alias + '.carrier' : 'carrier';
+  if (!agency) return null;
+  if (agency.toLowerCase().includes('broker society')) {
+    return col + " IN ('Mutual of Omaha', 'United of Omaha')";
+  }
+  // Health Experts: exclude BSI carriers
+  return col + " NOT IN ('Mutual of Omaha', 'United of Omaha')";
 }
 
 router.get('/', requireAuth, async (req, res) => {
@@ -26,8 +40,9 @@ router.get('/', requireAuth, async (req, res) => {
 
     if (req.user.role === 'agent') {
       where.push(`cr.agent_name ILIKE $${idx++}`); params.push(`%${req.user.name}%`);
-    } else if (req.user.role === 'admin' && getAgency(req)) {
-      where.push(`cr.payee ILIKE $${idx++}`); params.push(`%${getAgency(req)}%`);
+    } else if (req.user.role === 'admin') {
+      const af = agencyFilter(req, 'cr');
+      if (af) { where.push(af); }
     }
     if (agents) { const list = agents.split(',').map(a=>a.trim()).filter(Boolean); if (list.length) { where.push(`cr.agent_name = ANY($${idx++})`); params.push(list); } }
     else if (agent) { where.push(`cr.agent_name = $${idx++}`); params.push(agent); }
@@ -109,8 +124,9 @@ router.get('/summary', requireAuth, async (req, res) => {
 
     if (req.user.role === 'agent') {
       where.push(`agent_name ILIKE $${idx++}`); params.push(`%${req.user.name}%`);
-    } else if (req.user.role === 'admin' && getAgency(req)) {
-      where.push(`payee ILIKE $${idx++}`); params.push(`%${getAgency(req)}%`);
+    } else if (req.user.role === 'admin') {
+      const af = agencyFilter(req, null);
+      if (af) { where.push(af); }
     }
     if (agents) { const list = agents.split(',').map(a=>a.trim()).filter(Boolean); if (list.length) { where.push(`agent_name = ANY($${idx++})`); params.push(list); } }
     if (carriers) { const list = carriers.split(',').map(c=>c.trim()).filter(Boolean); if (list.length) { where.push(`carrier = ANY($${idx++})`); params.push(list); } }
@@ -151,8 +167,9 @@ router.get('/kpi', requireAuth, async (req, res) => {
 
     if (req.user.role === 'agent') {
       where.push(`agent_name ILIKE $${idx++}`); params.push(`%${req.user.name}%`);
-    } else if (req.user.role === 'admin' && getAgency(req)) {
-      where.push(`payee ILIKE $${idx++}`); params.push(`%${getAgency(req)}%`);
+    } else if (req.user.role === 'admin') {
+      const af = agencyFilter(req, null);
+      if (af) { where.push(af); }
     }
     if (agents) { const list = agents.split(',').map(a=>a.trim()).filter(Boolean); if (list.length) { where.push(`agent_name = ANY($${idx++})`); params.push(list); } }
     if (carriers) { const list = carriers.split(',').map(c=>c.trim()).filter(Boolean); if (list.length) { where.push(`carrier = ANY($${idx++})`); params.push(list); } }
@@ -213,11 +230,10 @@ router.get('/missing-renewals', requireAuth, async (req, res) => {
     const pool = getPool();
     const { lastPeriod, thisPeriod } = req.query;
     if (!lastPeriod || !thisPeriod) return res.status(400).json({ error: 'lastPeriod and thisPeriod required' });
+    const _af = agencyFilter(req, null);
     const af = req.user.role === 'agent'
       ? `AND agent_name ILIKE '%${req.user.name}%'`
-      : (req.user.role === 'admin' && getAgency(req))
-        ? `AND payee ILIKE '%${getAgency(req)}%'`
-        : '';
+      : _af ? `AND ${_af}` : '';
     const [lastMonth, thisMonth] = await Promise.all([
       pool.query(`SELECT agent_name, carrier, client_full_name, commission FROM commission_records WHERE payment_period = $1 ${af}`, [lastPeriod]),
       pool.query(`SELECT agent_name, carrier, client_full_name, commission FROM commission_records WHERE payment_period = $1 ${af}`, [thisPeriod])
@@ -233,9 +249,11 @@ router.get('/missing-renewals', requireAuth, async (req, res) => {
 router.get('/filters', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
-    const isAdmin = req.user.role === 'admin' && !getAgency(req);
-    const agencyFilter = req.user.role === 'admin' && getAgency(req) ? `payee ILIKE '%${getAgency(req)}%'` : null;
-    const baseWhere = isAdmin ? '' : agencyFilter ? `WHERE ${agencyFilter}` : `WHERE agent_name ILIKE '%${req.user.name}%'`;
+    const _agFilter = agencyFilter(req, null);
+    const isAdmin = req.user.role === 'admin' && !_agFilter;
+    const baseWhere = req.user.role === 'agent'
+      ? `WHERE agent_name ILIKE '%${req.user.name}%'`
+      : _agFilter ? `WHERE ${_agFilter}` : '';
 
     const [agents, carriers, periods] = await Promise.all([
       pool.query(`SELECT DISTINCT agent_name FROM commission_records ${baseWhere} ORDER BY agent_name`),
@@ -245,7 +263,7 @@ router.get('/filters', requireAuth, async (req, res) => {
 
     let planTypes = [];
     try {
-      const planWhere = (isAdmin || agencyFilter)
+      const planWhere = (isAdmin || _agFilter)
         ? `WHERE plan_type IS NOT NULL AND plan_type != ''`
         : `WHERE agent_name ILIKE '%${req.user.name}%' AND plan_type IS NOT NULL AND plan_type != ''`;
       const pt = await pool.query(`SELECT DISTINCT plan_type FROM commission_records ${planWhere} ORDER BY plan_type`);
@@ -254,7 +272,7 @@ router.get('/filters', requireAuth, async (req, res) => {
 
     let payees = [];
     try {
-      const payeeWhere = (isAdmin || agencyFilter)
+      const payeeWhere = (isAdmin || _agFilter)
         ? `WHERE payee IS NOT NULL AND payee != ''`
         : `WHERE agent_name ILIKE '%${req.user.name}%' AND payee IS NOT NULL AND payee != ''`;
       const py = await pool.query(`SELECT DISTINCT payee FROM commission_records ${payeeWhere} ORDER BY payee`);
