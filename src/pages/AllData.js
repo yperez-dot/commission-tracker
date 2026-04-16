@@ -186,8 +186,8 @@ export default function AllData({ user, initialFilters = {} }) {
   const hasFilters = selAgents.length || selCarriers.length || selPeriods.length || selTypes.length || selPayees.length || search.trim();
 
   function exportCSV() {
-    const headers = ['Agent', 'Carrier', 'Client', 'Effective Date', 'Premium', 'Commission', 'Type', 'Period', 'Payee', 'MGA'];
-    const rows = records.map(r => [r.agent_name, r.carrier, r.client_full_name, r.effective_date, r.premium, r.commission, r.classification, r.payment_period, r.payee, r.mga]);
+    const headers = ['Agent', 'Carrier', 'Client', 'Policy #', 'Effective Date', 'Premium', 'Commission', 'Type', 'Period', 'Payee', 'MGA'];
+    const rows = records.map(r => [r.agent_name, r.carrier, r.client_full_name, r.policy_number, r.effective_date, r.premium, r.commission, r.classification, r.payment_period, r.payee, r.mga]);
     const csv = [headers, ...rows].map(r => r.map(v => `"${String(v||'').replace(/"/g,'""')}"`).join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
@@ -223,15 +223,17 @@ export default function AllData({ user, initialFilters = {} }) {
     { col: 'agent_name',      label: 'Agent' },
     { col: 'carrier',         label: 'Carrier' },
     { col: 'client_full_name',label: 'Client' },
+    { col: 'policy_number',   label: 'Policy #' },
     { col: 'effective_date',  label: 'Effective' },
     { col: 'premium',         label: 'Premium' },
     { col: 'commission',      label: 'Commission' },
+    ...(hasCommSplit ? [{ col: 'comm_rate', label: 'Comm Rate' }] : []),
+    ...(hasCommSplit ? [{ col: 'agent_comm', label: 'Agent Comm' }] : []),
+    ...(hasCommSplit ? [{ col: 'agency_comm', label: 'Agency Comm' }] : []),
     { col: 'classification',  label: 'Type' },
     { col: 'payment_period',  label: 'Period' },
     { col: 'payee',           label: 'Payee' },
     ...(hasMGA ? [{ col: 'mga', label: 'MGA' }] : []),
-    ...(hasCommSplit ? [{ col: 'agent_comm', label: 'Agent Comm' }] : []),
-    ...(hasCommSplit ? [{ col: 'agency_comm', label: 'Agency Comm' }] : []),
   ];
 
   return (
@@ -348,9 +350,17 @@ export default function AllData({ user, initialFilters = {} }) {
                           <td style={{ fontWeight: 500 }}>{r.agent_name}</td>
                           <td style={{ fontSize: 12 }}>{r.carrier}</td>
                           <td>{r.client_full_name || '—'}</td>
+                          <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.policy_number || '—'}</td>
                           <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{r.effective_date || '—'}</td>
                           <td>{r.premium ? fmt(r.premium) : '—'}</td>
                           <td style={{ fontWeight: 500, color: parseFloat(r.commission) < 0 ? 'var(--red)' : 'var(--green)' }}>{fmt(r.commission)}</td>
+                          {hasCommSplit && (() => { const s = getCommSplit(r); return (
+                            <>
+                              <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{s.commRate !== undefined ? `${s.commRate}%` : '—'}</td>
+                              <td style={{ fontWeight: 500, color: s.agentComm > 0 ? 'var(--green)' : 'var(--text-muted)' }}>{s.agentComm !== undefined ? fmt(s.agentComm) : '—'}</td>
+                              <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{s.agencyComm !== undefined ? fmt(s.agencyComm) : '—'}</td>
+                            </>
+                          );})()}
                           <td>
                             <span className={`badge ${badgeClass(r.classification)}`}>
                               {r.classification || '—'}
@@ -359,12 +369,6 @@ export default function AllData({ user, initialFilters = {} }) {
                           <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.payment_period || '—'}</td>
                           <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.payee || '—'}</td>
                           {hasMGA && <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.mga || '—'}</td>}
-                          {hasCommSplit && (() => { const s = getCommSplit(r); return (
-                            <>
-                              <td style={{ fontWeight: 500, color: s.agentComm > 0 ? 'var(--green)' : 'var(--text-muted)' }}>{s.agentComm !== undefined ? fmt(s.agentComm) : '—'}</td>
-                              <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{s.agencyComm !== undefined ? fmt(s.agencyComm) : '—'}</td>
-                            </>
-                          );})()}
                           {user.role === 'admin' && (
                             <td>
                               <button onClick={() => { setDeleteTarget(r); setConfirmDelete('single'); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14, padding: '2px 6px' }}>✕</button>
@@ -379,7 +383,7 @@ export default function AllData({ user, initialFilters = {} }) {
                       {user.role === 'admin' && <td></td>}
                       <td colSpan={6} style={{ padding: '10px 12px', fontSize: 13 }}>Page total ({records.length})</td>
                       <td style={{ padding: '10px 12px', fontSize: 13, color: grandTotal < 0 ? 'var(--red)' : 'var(--green)' }}>{fmt(grandTotal)}</td>
-                      <td colSpan={user.role === 'admin' ? (5 + (hasCommSplit ? 2 : 0)) : (4 + (hasCommSplit ? 2 : 0))}></td>
+                      <td colSpan={user.role === 'admin' ? (6 + (hasCommSplit ? 3 : 0)) : (5 + (hasCommSplit ? 3 : 0))}></td>
                     </tr>
                   </tfoot>
                 </table>
