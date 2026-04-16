@@ -187,7 +187,7 @@ export default function AllData({ user, initialFilters = {} }) {
   const hasFilters = selAgents.length || selCarriers.length || selPeriods.length || selTypes.length || selPayees.length || search.trim();
 
   function exportCSV() {
-    const headers = ['Agent', 'Carrier', 'Client', 'Policy #', 'Effective Date', 'Premium', 'Commission', 'Type', 'Period', 'Payee', 'MGA'];
+    const headers = ['Agent', 'Carrier', 'Client', 'Policy #', 'Effective Date', 'Premium', 'Comm Value', 'Type', 'Period', 'Payee', 'MGA'];
     const rows = records.map(r => [r.agent_name, r.carrier, r.client_full_name, r.policy_number, r.effective_date, r.premium, r.commission, r.classification, r.payment_period, r.payee, r.mga]);
     const csv = [headers, ...rows].map(r => r.map(v => `"${String(v||'').replace(/"/g,'""')}"`).join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
@@ -227,14 +227,14 @@ export default function AllData({ user, initialFilters = {} }) {
     { col: 'policy_number',   label: 'Policy #' },
     { col: 'effective_date',  label: 'Effective' },
     { col: 'premium',         label: 'Premium' },
-    { col: 'commission',      label: 'Commission' },
+    { col: 'commission',      label: 'Comm Value' },
     ...(hasCommSplit ? [{ col: 'comm_rate', label: 'Comm Rate' }] : []),
     ...(hasCommSplit ? [{ col: 'agent_comm', label: 'Agent Comm' }] : []),
     ...(hasCommSplit ? [{ col: 'agency_comm', label: 'Agency Comm' }] : []),
     { col: 'classification',  label: 'Type' },
     { col: 'payment_period',  label: 'Period' },
-    { col: 'payee',           label: 'Payee' },
     ...(hasMGA ? [{ col: 'mga', label: 'MGA' }] : []),
+    { col: 'payee',           label: 'Payee' },
   ];
 
   return (
@@ -261,7 +261,7 @@ export default function AllData({ user, initialFilters = {} }) {
                 ['Payee', policyModal.payee],
                 ['MGA', policyModal.mga],
                 ['Premium', policyModal.premium ? fmt(policyModal.premium) : '—'],
-                ['Commission', fmt(policyModal.commission)],
+                ['Comm Value', fmt(policyModal.commission)],
               ].map(([label, val]) => val && val !== '—' ? (
                 <div key={label}>
                   <div style={{fontSize:10,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:2}}>{label}</div>
@@ -431,8 +431,8 @@ export default function AllData({ user, initialFilters = {} }) {
                             </span>
                           </td>
                           <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.payment_period || '—'}</td>
-                          <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.payee || '—'}</td>
                           {hasMGA && <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.mga || '—'}</td>}
+                          <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.payee || '—'}</td>
                           {user.role === 'admin' && (
                             <td>
                               <button onClick={() => { setDeleteTarget(r); setConfirmDelete('single'); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14, padding: '2px 6px' }}>✕</button>
