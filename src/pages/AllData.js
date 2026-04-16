@@ -210,6 +210,7 @@ export default function AllData({ user, initialFilters = {} }) {
     single: { title: 'Delete this record?', sub: deleteTarget ? `${deleteTarget.client_full_name} · ${deleteTarget.carrier} · ${fmt(deleteTarget.commission)}` : '', btn: 'Delete' }
   };
 
+  const hasMGA = records.some(r => r.mga && r.mga.trim());
   const columns = [
     { col: 'agent_name',      label: 'Agent' },
     { col: 'carrier',         label: 'Carrier' },
@@ -220,7 +221,7 @@ export default function AllData({ user, initialFilters = {} }) {
     { col: 'classification',  label: 'Type' },
     { col: 'payment_period',  label: 'Period' },
     { col: 'payee',           label: 'Payee' },
-    { col: 'mga',             label: 'MGA' },
+    ...(hasMGA ? [{ col: 'mga', label: 'MGA' }] : []),
   ];
 
   return (
@@ -347,7 +348,7 @@ export default function AllData({ user, initialFilters = {} }) {
                           </td>
                           <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.payment_period || '—'}</td>
                           <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.payee || '—'}</td>
-                          <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.mga || '—'}</td>
+                          {hasMGA && <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.mga || '—'}</td>}
                           {user.role === 'admin' && (
                             <td>
                               <button onClick={() => { setDeleteTarget(r); setConfirmDelete('single'); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14, padding: '2px 6px' }}>✕</button>
