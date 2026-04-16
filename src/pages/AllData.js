@@ -92,7 +92,9 @@ export default function AllData({ user, initialFilters = {} }) {
 
   useEffect(() => {
     apiFetch('/records/filters').then(d => setFilterOptions(d)).catch(console.error);
-  }, []);
+    setSelAgents([]); setSelCarriers([]); setSelPeriods([]); setSelTypes([]); setSelPayees([]);
+    setPage(0);
+  }, [user.agency]);
 
   useEffect(() => {
     if (initialFilters.agent) setSelAgents([initialFilters.agent]);
@@ -122,7 +124,7 @@ export default function AllData({ user, initialFilters = {} }) {
       setSelected(new Set());
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
-  }, [selAgents, selCarriers, selPeriods, selTypes, selPayees, search]);
+  }, [selAgents, selCarriers, selPeriods, selTypes, selPayees, search, user.agency]);
 
   useEffect(() => { setPage(0); loadRecords(0); }, [loadRecords]);
 
