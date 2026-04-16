@@ -209,7 +209,7 @@ export default function Dashboard({ user, onNavigate }) {
     setSelAgents([]); setSelCarriers([]); setSelPeriods([]); setSelTypes([]); setSelPlanTypes([]);
     apiFetch('/records/filters').then(d => setAllFilters(d)).catch(console.error);
     loadData();
-  }, [agencyView]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [agencyView]);
 
   useEffect(() => { loadData(); }, [loadData]);
 
