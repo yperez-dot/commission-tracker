@@ -87,6 +87,7 @@ export default function AllData({ user, initialFilters = {} }) {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const PAGE_SIZE = 100;
+  const [policyModal, setPolicyModal] = useState(null);
 
   const classificationTypes = ['New Business', 'Renewal', 'Agent Commission', 'Agency Override', 'Chargeback', 'HRA/Bonus'];
 
@@ -238,6 +239,65 @@ export default function AllData({ user, initialFilters = {} }) {
 
   return (
     <>
+      {policyModal && (
+        <div onClick={()=>setPolicyModal(null)} style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.45)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center'}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:'var(--bg)',borderRadius:12,padding:28,width:520,maxWidth:'95vw',border:'0.5px solid var(--border)',boxShadow:'0 8px 32px rgba(0,0,0,0.15)',maxHeight:'85vh',overflowY:'auto'}}>
+            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:18}}>
+              <div>
+                <div style={{fontSize:11,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:4}}>Policy Record</div>
+                <div style={{fontSize:16,fontWeight:500,color:'var(--text)'}}>{policyModal.policy_number || '—'}</div>
+              </div>
+              <button onClick={()=>setPolicyModal(null)} style={{background:'none',border:'none',cursor:'pointer',fontSize:20,color:'var(--text-muted)'}}>×</button>
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'10px 20px',fontSize:13}}>
+              {[
+                ['Client', policyModal.client_full_name],
+                ['Agent', policyModal.agent_name],
+                ['Carrier', policyModal.carrier],
+                ['Plan Type', policyModal.plan_type],
+                ['Effective Date', policyModal.effective_date],
+                ['Period', policyModal.payment_period],
+                ['Type', policyModal.classification],
+                ['Payee', policyModal.payee],
+                ['MGA', policyModal.mga],
+                ['Premium', policyModal.premium ? fmt(policyModal.premium) : '—'],
+                ['Commission', fmt(policyModal.commission)],
+              ].map(([label, val]) => val && val !== '—' ? (
+                <div key={label}>
+                  <div style={{fontSize:10,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:2}}>{label}</div>
+                  <div style={{fontWeight:500,color:'var(--text)'}}>{val}</div>
+                </div>
+              ) : null)}
+              {(() => {
+                const s = policyModal.raw_data ? (typeof policyModal.raw_data === 'string' ? JSON.parse(policyModal.raw_data) : policyModal.raw_data) : {};
+                return s.commRate ? (
+                  <>
+                    <div>
+                      <div style={{fontSize:10,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:2}}>Comm Rate</div>
+                      <div style={{fontWeight:500,color:'var(--text)'}}>{s.commRate}%</div>
+                    </div>
+                    <div>
+                      <div style={{fontSize:10,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:2}}>Comm Value</div>
+                      <div style={{fontWeight:500,color:'var(--text)'}}>{fmt(s.commValue)}</div>
+                    </div>
+                    <div>
+                      <div style={{fontSize:10,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:2}}>Agent Comm</div>
+                      <div style={{fontWeight:500,color:'var(--green)'}}>{fmt(s.agentComm)}</div>
+                    </div>
+                    <div>
+                      <div style={{fontSize:10,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:2}}>Agency Comm</div>
+                      <div style={{fontWeight:500,color:'var(--text)'}}>{fmt(s.agencyComm)}</div>
+                    </div>
+                  </>
+                ) : null;
+              })()}
+            </div>
+            <div style={{marginTop:16,paddingTop:12,borderTop:'0.5px solid var(--border)',fontSize:11,color:'var(--text-muted)'}}>
+              Upload: {policyModal.upload_name || '—'}
+            </div>
+          </div>
+        </div>
+      )}
       <div className="page-header">
         <div className="page-title">All Data</div>
         <div className="page-sub">All commission records across all carriers and periods</div>
@@ -350,7 +410,11 @@ export default function AllData({ user, initialFilters = {} }) {
                           <td style={{ fontWeight: 500 }}>{r.agent_name}</td>
                           <td style={{ fontSize: 12 }}>{r.carrier}</td>
                           <td>{r.client_full_name || '—'}</td>
-                          <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.policy_number || '—'}</td>
+                          <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                            {r.policy_number
+                              ? <span onClick={()=>setPolicyModal(r)} style={{cursor:'pointer',color:'var(--accent-dark)',fontWeight:500}}>{r.policy_number}</span>
+                              : '—'}
+                          </td>
                           <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{r.effective_date || '—'}</td>
                           <td>{r.premium ? fmt(r.premium) : '—'}</td>
                           <td style={{ fontWeight: 500, color: parseFloat(r.commission) < 0 ? 'var(--red)' : 'var(--green)' }}>{fmt(r.commission)}</td>
