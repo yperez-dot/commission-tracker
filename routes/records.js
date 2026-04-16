@@ -263,19 +263,15 @@ router.get('/filters', requireAuth, async (req, res) => {
 
     let planTypes = [];
     try {
-      const planWhere = (isAdmin || _agFilter)
-        ? `WHERE plan_type IS NOT NULL AND plan_type != ''`
-        : `WHERE agent_name ILIKE '%${req.user.name}%' AND plan_type IS NOT NULL AND plan_type != ''`;
-      const pt = await pool.query(`SELECT DISTINCT plan_type FROM commission_records ${planWhere} ORDER BY plan_type`);
+      const planBase = baseWhere ? baseWhere + ` AND plan_type IS NOT NULL AND plan_type != ''` : `WHERE plan_type IS NOT NULL AND plan_type != ''`;
+      const pt = await pool.query(`SELECT DISTINCT plan_type FROM commission_records ${planBase} ORDER BY plan_type`);
       planTypes = pt.rows.map(p => p.plan_type).filter(Boolean);
     } catch (e) { console.log('plan_type not available:', e.message); }
 
     let payees = [];
     try {
-      const payeeWhere = (isAdmin || _agFilter)
-        ? `WHERE payee IS NOT NULL AND payee != ''`
-        : `WHERE agent_name ILIKE '%${req.user.name}%' AND payee IS NOT NULL AND payee != ''`;
-      const py = await pool.query(`SELECT DISTINCT payee FROM commission_records ${payeeWhere} ORDER BY payee`);
+      const payeeBase = baseWhere ? baseWhere + ` AND payee IS NOT NULL AND payee != ''` : `WHERE payee IS NOT NULL AND payee != ''`;
+      const py = await pool.query(`SELECT DISTINCT payee FROM commission_records ${payeeBase} ORDER BY payee`);
       payees = py.rows.map(p => p.payee).filter(Boolean);
     } catch (e) { console.log('payee not available:', e.message); }
 
