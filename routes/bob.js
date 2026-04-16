@@ -139,6 +139,10 @@ router.get('/', requireAuth, async (req, res) => {
     let params = [];
     let idx = 1;
     if (req.user.role === 'agent') { where.push(`agent_name ILIKE $${idx++}`); params.push(`%${req.user.name}%`); }
+    else {
+      const af = agencyFilter(req, null);
+      if (af) { where.push(af); }
+    }
     if (carrier) { where.push(`carrier = $${idx++}`); params.push(carrier); }
     if (agent) { where.push(`agent_name = $${idx++}`); params.push(agent); }
     if (status) { where.push(`status = $${idx++}`); params.push(status); }
@@ -159,7 +163,7 @@ router.get('/summary', requireAuth, async (req, res) => {
     const af = req.user.role === 'agent'
       ? `AND agent_name ILIKE '%${req.user.name}%'`
       : (req.user.role === 'admin' && getAgency(req))
-        ? `AND agent_name IN (SELECT DISTINCT agent_name FROM commission_records WHERE payee ILIKE '%${getAgency(req)}%')`
+        ? `AND carrier IN (SELECT DISTINCT carrier FROM commission_records WHERE ${agencyFilter(req, null)})`
         : '';
     const total = await pool.query(`SELECT COUNT(*) as count FROM book_of_business WHERE status = 'active' ${af}`);
     const missing = await pool.query(`SELECT COUNT(*) as count, COALESCE(SUM(last_commission_amount),0) as at_risk FROM book_of_business WHERE months_missing > 0 AND status = 'active' ${af}`);
@@ -206,7 +210,7 @@ router.post('/check-renewals', requireAuth, async (req, res) => {
     const af = req.user.role === 'agent'
       ? `AND agent_name ILIKE '%${req.user.name}%'`
       : (req.user.role === 'admin' && getAgency(req))
-        ? `AND agent_name IN (SELECT DISTINCT agent_name FROM commission_records WHERE payee ILIKE '%${getAgency(req)}%')`
+        ? `AND carrier IN (SELECT DISTINCT carrier FROM commission_records WHERE ${agencyFilter(req, null)})`
         : '';
 
     function normalizePeriod(p) {
@@ -344,7 +348,7 @@ router.post('/build-from-statements', requireAuth, async (req, res) => {
     const af = req.user.role === 'agent'
       ? `AND agent_name ILIKE '%${req.user.name}%'`
       : (req.user.role === 'admin' && getAgency(req))
-        ? `AND agent_name IN (SELECT DISTINCT agent_name FROM commission_records WHERE payee ILIKE '%${getAgency(req)}%')`
+        ? `AND carrier IN (SELECT DISTINCT carrier FROM commission_records WHERE ${agencyFilter(req, null)})`
         : '';
 
     // Get best record per client+carrier (most recent, with effective date preferred)
