@@ -100,9 +100,12 @@ export default function App() {
   ];
 
   // Inject agencyView into user object so all pages filter correctly
+  // If switcher is set → use switcher value
+  // If no switcher but user has own agency (e.g. Yaceli) → use their agency
+  // If super admin with no selection → agency: '' (see all)
   const effectiveUser = agencyView
     ? { ...user, agency: agencyView }
-    : { ...user, agency: '' };
+    : { ...user, agency: user.agency || '' };
 
   const pages = {
     dashboard: <Dashboard user={effectiveUser} onNavigate={navigate} />,
