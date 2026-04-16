@@ -122,7 +122,7 @@ function HBar({ data, color, onClickItem, loading }) {
 }
 
 function FilterGroup({ title, items, selected, onToggle, onSelectAll, onClearAll, format }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(false);
   const allSel = items.length>0 && selected.length===items.length;
   const activeCount = selected.length;
   return (
@@ -347,7 +347,7 @@ export default function Dashboard({ user, onNavigate }) {
               <table style={{width:'100%',borderCollapse:'collapse',fontSize:12}}>
                 <thead>
                   <tr style={{background:C.bgSubtle}}>
-                    {['#','Agent Name','Total $','Total Count','Distribution %','Advance $','Chargeback $','Chargeback Ratio','Net Sales $','Net Apps','Adv Count','CB Count'].map(h=>(
+                    {['#','Agent Name','Total','Total Count','Distribution %','Advance','Chargeback','Chargeback Ratio','Net Sales','Net Apps','Adv Count','CB Count'].map(h=>(
                       <th key={h} style={{padding:'9px 12px',textAlign:'left',fontWeight:500,fontSize:11,color:C.textMuted,borderBottom:`0.5px solid ${C.border}`,whiteSpace:'nowrap'}}>{h}</th>
                     ))}
                   </tr>
