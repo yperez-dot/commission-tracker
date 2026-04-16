@@ -155,6 +155,14 @@ export default function BookOfBusiness({ user }) {
     e.target.value = '';
   }
 
+  const [sortCol, setSortCol] = useState('client_full_name');
+  const [sortDir, setSortDir] = useState('asc');
+
+  function handleSort(col) {
+    if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortCol(col); setSortDir('asc'); }
+  }
+
   // Filter clients by search
   const filteredClients = search.trim()
     ? clients.filter(c =>
@@ -163,6 +171,12 @@ export default function BookOfBusiness({ user }) {
         c.carrier?.toLowerCase().includes(search.toLowerCase())
       )
     : clients;
+
+  const sortedClients = [...filteredClients].sort((a, b) => {
+    const aVal = String(a[sortCol] || '').toLowerCase();
+    const bVal = String(b[sortCol] || '').toLowerCase();
+    return sortDir === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+  });
 
   const activeCount = clients.filter(c => c.status === 'active').length;
   const termedCount = clients.filter(c => c.status === 'inactive').length;
@@ -296,7 +310,7 @@ export default function BookOfBusiness({ user }) {
             )}
 
             <div className="card" style={{padding:0}}>
-              {filteredClients.length===0 ? (
+              {sortedClients.length===0 ? (
                 <div className="empty-state">
                   <div className="empty-icon">📋</div>
                   <div className="empty-title">{search ? 'No clients match your search' : tab==='termed' ? 'No termed clients' : 'No clients yet'}</div>
@@ -307,18 +321,18 @@ export default function BookOfBusiness({ user }) {
                   <table>
                     <thead>
                       <tr>
-                        <th>#</th>
-                        <th>Client</th>
-                        <th>Agent</th>
-                        <th>Carrier</th>
-                        <th>Eff. date</th>
-                        <th>Last commission</th>
-                        <th>Status</th>
+                        <th style={{width:36}}></th>
+                        <th style={{width:32,color:'var(--text-muted)',fontSize:11}}>#</th>
+                        {[['client_full_name','Client'],['agent_name','Agent'],['carrier','Carrier'],['effective_date','Eff. date'],['last_commission','Last comm'],['status','Status']].map(([col,label]) => (
+                          <th key={col} onClick={()=>handleSort(col)} style={{cursor:'pointer',userSelect:'none',whiteSpace:'nowrap'}}>
+                            {label} {sortCol===col ? (sortDir==='asc'?'↑':'↓') : <span style={{opacity:0.3}}>↕</span>}
+                          </th>
+                        ))}
                         <th></th>
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredClients.map((c,i) => (
+                      {sortedClients.map((c,i) => (
                         <tr key={c.id} style={{background: selectedIds.includes(c.id) ? 'var(--accent-light)' : c.status==='inactive' ? 'var(--bg-subtle)' : 'transparent'}}>
                           <td style={{paddingLeft:12}}>
                             <input type="checkbox"
