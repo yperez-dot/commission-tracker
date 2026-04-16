@@ -178,9 +178,7 @@ export default function Dashboard({ user, onNavigate }) {
   const [selTypes, setSelTypes] = useState([]);
   const [selPlanTypes, setSelPlanTypes] = useState([]);
 
-  useEffect(() => {
-    apiFetch('/records/filters').then(d => setAllFilters(d)).catch(console.error);
-  }, [user.agency]); // re-fetch filters when agency view changes
+
 
   const buildParams = useCallback(() => {
     const p = new URLSearchParams();
@@ -203,7 +201,14 @@ export default function Dashboard({ user, onNavigate }) {
       }
     } catch(e){ console.error(e); }
     finally { setLoading(false); }
-  }, [buildParams]);
+  }, [buildParams, user.agency]);
+
+  // Re-fetch data AND filters when agency switches, clear filters to avoid stale state
+  useEffect(() => {
+    setSelAgents([]); setSelCarriers([]); setSelPeriods([]); setSelTypes([]); setSelPlanTypes([]);
+    apiFetch('/records/filters').then(d => setAllFilters(d)).catch(console.error);
+    loadData();
+  }, [user.agency]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { loadData(); }, [loadData]);
 
