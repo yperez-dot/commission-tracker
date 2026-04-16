@@ -370,7 +370,7 @@ export default function Dashboard({ user, onNavigate }) {
                       ['Distribution %','distribution_pct'],
                       ['Advance','advance_amount'],
                       ['Chargeback','chargeback_amount'],
-                      ['CB Ratio','chargeback_ratio'],
+                      ['CB Ratio', agencyView.toLowerCase().includes('broker') ? 'cb_count_ratio' : 'chargeback_ratio'],
                       ['Net Sales','net_sales'],
                       ['Net Apps','new_apps'],
                       ['Adv Count','advance_count'],
@@ -398,14 +398,26 @@ export default function Dashboard({ user, onNavigate }) {
                       onMouseEnter={e=>e.currentTarget.style.background=C.bgSubtle}
                       onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
                       <td style={{padding:'9px 12px',color:C.textMuted,fontSize:11}}>{i+1}</td>
-                      <td style={{padding:'9px 12px',fontWeight:500,color:C.text,fontSize:13}}>{a.agent_name}</td>
+                      <td style={{padding:'9px 12px',fontWeight:500,color:C.text,fontSize:13}}>
+                        {a.agent_name}
+                        {agencyView.toLowerCase().includes('broker') && a.total_count > 0 && (
+                          <span style={{marginLeft:6,background:'var(--accent-light)',color:'var(--accent-dark)',borderRadius:10,padding:'1px 7px',fontSize:10,fontWeight:500}}>{a.total_count} pol.</span>
+                        )}
+                      </td>
                       <td style={{padding:'9px 12px',fontWeight:500,color:a.total_commission<0?C.red:C.green,fontSize:13}}>{fmt(a.total_commission)}</td>
                       <td style={{padding:'9px 12px',color:C.text}}>{a.total_count.toLocaleString()}</td>
                       <td style={{padding:'9px 12px',color:C.text}}>{fmtPct(a.distribution_pct)}</td>
                       <td style={{padding:'9px 12px',color:a.advance_amount>0?C.accentDark:C.text}}>{fmt(a.advance_amount)}</td>
                       <td style={{padding:'9px 12px',color:a.chargeback_amount>0?C.red:C.text}}>{a.chargeback_amount>0?'- ':''}{fmt(a.chargeback_amount)}</td>
                       <td style={{padding:'9px 12px'}}>
-                        <span style={{background:a.chargeback_ratio>10?'#F5EAE4':a.chargeback_ratio>5?'#F5EDD4':C.bgSubtle,color:a.chargeback_ratio>10?'#7A3D1F':a.chargeback_ratio>5?'#6B4E0A':C.textMuted,borderRadius:4,padding:'2px 7px',fontSize:11,fontWeight:500}}>{fmtPct(a.chargeback_ratio)}</span>
+                        {agencyView.toLowerCase().includes('broker') ? (
+                          (() => {
+                            const cbRatio = a.total_count > 0 ? (a.chargeback_count / a.total_count) * 100 : 0;
+                            return <span style={{background:cbRatio>10?'#F5EAE4':cbRatio>5?'#F5EDD4':C.bgSubtle,color:cbRatio>10?'#7A3D1F':cbRatio>5?'#6B4E0A':C.textMuted,borderRadius:4,padding:'2px 7px',fontSize:11,fontWeight:500}}>{fmtPct(cbRatio)}</span>;
+                          })()
+                        ) : (
+                          <span style={{background:a.chargeback_ratio>10?'#F5EAE4':a.chargeback_ratio>5?'#F5EDD4':C.bgSubtle,color:a.chargeback_ratio>10?'#7A3D1F':a.chargeback_ratio>5?'#6B4E0A':C.textMuted,borderRadius:4,padding:'2px 7px',fontSize:11,fontWeight:500}}>{fmtPct(a.chargeback_ratio)}</span>
+                        )}
                       </td>
                       <td style={{padding:'9px 12px',fontWeight:500,color:a.net_sales<0?C.red:C.green}}>{fmt(a.net_sales)}</td>
                       <td style={{padding:'9px 12px',color:C.text}}>{a.new_apps}</td>
