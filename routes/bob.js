@@ -381,9 +381,16 @@ router.post('/build-from-statements', requireAuth, async (req, res) => {
         );
         added++;
       } else {
-        // Update existing — fill in missing effective_date and refresh commission info
+        // Update existing — always use the NEWEST effective date (plan changes)
         const existingEffDate = existing.rows[0].effective_date;
-        const newEffDate = rec.effective_date && rec.effective_date !== '' ? rec.effective_date : existingEffDate;
+        let newEffDate = existingEffDate;
+        if (rec.effective_date && rec.effective_date !== '') {
+          // Parse both dates and keep the newer one
+          const parseDate = (d) => { if (!d) return null; const p = d.split('/'); if (p.length===3) return new Date(p[2], p[0]-1, p[1]); return new Date(d); };
+          const existingD = parseDate(existingEffDate);
+          const newD = parseDate(rec.effective_date);
+          if (!existingD || (newD && newD > existingD)) newEffDate = rec.effective_date;
+        }
         await pool.query(
           `UPDATE book_of_business SET
              agent_name = COALESCE(NULLIF($1,''), agent_name),
