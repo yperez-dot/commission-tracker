@@ -1208,11 +1208,14 @@ async function parseMOOPDF(filePath, filename) {
       const expectedComm = Math.round(commValue * commRate) / 100;
 
       // Agent vs agency split
+      // >50% rate: agent gets Annual Premium x 95% x 75%
+      // ≤50% rate: agency keeps all, agent gets $0
+      const annualPremium = Math.round((commValue * 100 / 75) * 100) / 100;
       let agentComm = 0;
       let agencyComm = 0;
       if (commRate > 50) {
-        agentComm = Math.round(expectedComm * 0.95 * 100) / 100;
-        agencyComm = Math.round(expectedComm * 0.05 * 100) / 100;
+        agentComm = Math.round(annualPremium * 0.95 * 0.75 * 100) / 100;
+        agencyComm = Math.round((expectedComm - agentComm) * 100) / 100;
       } else {
         agentComm = 0;
         agencyComm = expectedComm;
@@ -1230,7 +1233,7 @@ async function parseMOOPDF(filePath, filename) {
         planType: isMutual ? 'Mutual Health' : 'United Life & Annuity',
         client: client,
         effectiveDate: effectiveDate,
-        premium: Math.round((commValue * 100 / 75) * 100) / 100,  // estimated policy premium = commValue * 100/75
+        premium: annualPremium,  // estimated annual premium = commValue * 100/75
         commission: expectedComm,   // store expected commission (commValue * rate)
         classification: classification,
         period: period,
