@@ -1193,14 +1193,33 @@ async function parseMOOPDF(filePath, filename) {
       const amountsRaw = line.match(/\$(\d[\d,]*\.\d{2})-?/g) || [];
       if (!amountsRaw.length) { continue; }
 
+      // Extract comm rate %
+      const rateM = line.match(/(\d+\.?\d*)%/);
+      const commRate = rateM ? parseFloat(rateM[1]) : 0;
+
+      // commissionable value = first dollar amount
       const firstAmt = amountsRaw[0];
       const isNeg = firstAmt.endsWith('-') || activityType === 'NEW ISS REV' || activityType === 'BFY REVERSAL' || activityType === 'CANC EFF ISS';
-      let commission = parseFloat(firstAmt.replace(/[$,-]/g, ''));
-      if (isNeg) { commission = -commission; }
-      if (commission === 0) { continue; }
+      let commValue = parseFloat(firstAmt.replace(/[$,-]/g, ''));
+      if (isNeg) { commValue = -commValue; }
+      if (commValue === 0) { continue; }
+
+      // Expected commission = commValue * commRate / 100
+      const expectedComm = Math.round(commValue * commRate) / 100;
+
+      // Agent vs agency split
+      let agentComm = 0;
+      let agencyComm = 0;
+      if (commRate > 50) {
+        agentComm = Math.round(expectedComm * 0.95 * 100) / 100;
+        agencyComm = Math.round(expectedComm * 0.05 * 100) / 100;
+      } else {
+        agentComm = 0;
+        agencyComm = expectedComm;
+      }
 
       let classification;
-      if (commission < 0) { classification = 'Chargeback'; }
+      if (commValue < 0) { classification = 'Chargeback'; }
       else if (activityType === 'NEW COV ISS' || activityType === 'NEW ISS PYMT' || activityType === 'REISS/REBILL') { classification = 'New Business'; }
       else if (activityType === 'BFY PAYMENT') { classification = 'Renewal'; }
       else { classification = 'Agent Commission'; }
@@ -1211,14 +1230,14 @@ async function parseMOOPDF(filePath, filename) {
         planType: isMutual ? 'Mutual Health' : 'United Life & Annuity',
         client: client,
         effectiveDate: effectiveDate,
-        premium: 0,
-        commission: commission,
+        premium: Math.round((commValue * 100 / 75) * 100) / 100,  // estimated policy premium = commValue * 100/75
+        commission: expectedComm,   // store expected commission (commValue * rate)
         classification: classification,
         period: period,
         policyNumber: policyNumber,
         payee: 'Broker Society Insurance',
         mga: currentMGA,
-        raw: {}
+        raw: { commRate, commValue, agentComm, agencyComm }
       });
     }
     console.log('[MOO] parsed:', records.length, 'records');
