@@ -221,20 +221,19 @@ export default function AllData({ user, initialFilters = {} }) {
     try { const raw = typeof r.raw_data === 'string' ? JSON.parse(r.raw_data) : r.raw_data; return raw || {}; } catch(e) { return {}; }
   }
   const columns = [
-    { col: 'agent_name',      label: 'Agent' },
     { col: 'carrier',         label: 'Carrier' },
-    { col: 'client_full_name',label: 'Client' },
+    { col: 'agent_name',      label: 'Agent' },
     { col: 'policy_number',   label: 'Policy #' },
+    { col: 'client_full_name',label: 'Client' },
     { col: 'effective_date',  label: 'Effective' },
     { col: 'premium',         label: 'Premium' },
     { col: 'commission',      label: 'Comm Value' },
     ...(hasCommSplit ? [{ col: 'comm_rate', label: 'Comm Rate' }] : []),
     ...(hasCommSplit ? [{ col: 'agent_comm', label: 'Agent Comm' }] : []),
     ...(hasCommSplit ? [{ col: 'agency_comm', label: 'Agency Comm' }] : []),
-    { col: 'classification',  label: 'Type' },
     { col: 'payment_period',  label: 'Period' },
+    { col: 'classification',  label: 'Type' },
     ...(hasMGA ? [{ col: 'mga', label: 'MGA' }] : []),
-    { col: 'payee',           label: 'Payee' },
   ];
 
   return (
@@ -407,14 +406,14 @@ export default function AllData({ user, initialFilters = {} }) {
                             <td><input type="checkbox" checked={isSel} onChange={() => toggleSelect(r.id)} style={{ cursor: 'pointer', accentColor: 'var(--accent)' }} /></td>
                           )}
                           <td style={{ color: 'var(--text-muted)', fontSize: 11 }}>{page * PAGE_SIZE + i + 1}</td>
-                          <td style={{ fontWeight: 500 }}>{r.agent_name}</td>
                           <td style={{ fontSize: 12 }}>{r.carrier}</td>
-                          <td>{r.client_full_name || '—'}</td>
+                          <td style={{ fontWeight: 500 }}>{r.agent_name}</td>
                           <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                             {r.policy_number
                               ? <span onClick={()=>setPolicyModal(r)} style={{cursor:'pointer',color:'var(--accent-dark)',fontWeight:500}}>{r.policy_number}</span>
                               : '—'}
                           </td>
+                          <td>{r.client_full_name || '—'}</td>
                           <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{r.effective_date || '—'}</td>
                           <td>{r.premium ? fmt(r.premium) : '—'}</td>
                           <td style={{ fontWeight: 500, color: parseFloat(r.commission) < 0 ? 'var(--red)' : 'var(--green)' }}>{fmt(r.commission)}</td>
@@ -425,14 +424,13 @@ export default function AllData({ user, initialFilters = {} }) {
                               <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{s.agencyComm !== undefined ? fmt(s.agencyComm) : '—'}</td>
                             </>
                           );})()}
+                          <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.payment_period || '—'}</td>
                           <td>
                             <span className={`badge ${badgeClass(r.classification)}`}>
                               {r.classification || '—'}
                             </span>
                           </td>
-                          <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.payment_period || '—'}</td>
                           {hasMGA && <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.mga || '—'}</td>}
-                          <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.payee || '—'}</td>
                           {user.role === 'admin' && (
                             <td>
                               <button onClick={() => { setDeleteTarget(r); setConfirmDelete('single'); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14, padding: '2px 6px' }}>✕</button>
