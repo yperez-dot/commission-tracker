@@ -894,4 +894,272 @@ async function parseMutualOmahaPDF(filePath, filename) {
 }
 
 
+// ─── YourFMO Excel parser ────────────────────────────────────────────────────
+function parseYourFMORows(wb, filename) {
+  const records = [];
+  try {
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true });
+    const headerStr = String(rows[0]?.[0] || '');
+    const dateMatch = headerStr.match(/Statement Date:\s*(\d{2})\/(\d{2})\/(\d{4})/);
+    let period = dateMatch ? dateMatch[3] + dateMatch[1] : '';
+    let agentName = 'The Health Experts Insurance';
+    for (const row of rows) {
+      const cell = String(row[0] || '');
+      if (cell.includes('Agent Number:') || cell.includes('NPN:')) {
+        const m = cell.match(/^([A-Za-z\s]+?)\s*\(/);
+        if (m) agentName = normalizeAgentName(m[1].trim()) || agentName;
+        break;
+      }
+    }
+    for (const row of rows) {
+      const cell0 = String(row[0] || '').trim();
+      const cell1 = String(row[1] || '').trim();
+      if (!cell0.match(/^\d{11,}/)) continue;
+      const parts0 = cell0.split(/\s{2,}/);
+      const policyNumber = (parts0[0] || '').split('_')[0].trim();
+      const client = parts0[1] || '';
+      const transType = parts0[2] || '';
+      const dateMatches = cell1.match(/(\d{2}\/\d{2}\/\d{4})/g) || [];
+      const effectiveDate = dateMatches[1] || dateMatches[0] || '';
+      const amounts = cell1.match(/\$([\d,]+\.\d{2})/g) || [];
+      const commission = amounts.length ? parseFloat(amounts[0].replace(/[$,]/g,'')) : 0;
+      if (!client || commission === 0) continue;
+      const isHRA = /HRA|BONUS/i.test(cell0);
+      const classification = isHRA ? 'HRA/Bonus'
+        : commission < 0 ? 'Chargeback'
+        : transType.toLowerCase().includes('adjustment') ? 'Agent Commission'
+        : transType.toLowerCase().includes('new') ? 'New Business'
+        : transType.toLowerCase().includes('renewal') ? 'Renewal'
+        : 'Agent Commission';
+      records.push({
+        agent: agentName, carrier: 'Humana', planType: 'Humana Med Adv',
+        client: client.trim(), effectiveDate, premium: 0, commission,
+        classification, period, policyNumber, payee: 'YourFMO', raw: {}
+      });
+    }
+  } catch(err) { console.error('parseYourFMORows error:', err.message); }
+  return records;
+}
+
+function parseYourFMOXLSXRows(wb) {
+  const records = [];
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
+  if (!rows.length) return records;
+  for (const row of rows) {
+    const client    = String(row['Insured Name'] || '').trim();
+    const agentRaw  = String(row['Writing Agent'] || '').trim();
+    const commission= parseFloat(row['Commission ($)']) || 0;
+    const policyNum = String(row['Policy #'] || row['Carrier Policy ID'] || '').trim().split('_')[0];
+    const fyr       = String(row['First Year/Renewal'] || '').trim();
+    const commType  = String(row['Commission Type'] || '').trim();
+    const carrier   = String(row['Carrier'] || 'Humana').trim();
+    if (!client || commission === 0) continue;
+    let period = '';
+    const stmtDate = row['Statement Date'];
+    if (stmtDate) {
+      const d = new Date(stmtDate);
+      if (!isNaN(d)) period = String(d.getFullYear()) + String(d.getMonth()+1).padStart(2,'0');
+    }
+    const effectiveDate = formatDate(row['Effective Date']);
+    const classification = commission < 0 ? 'Chargeback'
+      : fyr === 'First Year' ? 'New Business'
+      : fyr === 'Renewal Year' ? 'Renewal'
+      : commType.toLowerCase().includes('override') ? 'Agency Override'
+      : 'Agent Commission';
+    const carrierNorm = carrier.toLowerCase().includes('humana') ? 'Humana'
+      : carrier.toLowerCase().includes('united') ? 'UnitedHealthcare'
+      : carrier.toLowerCase().includes('aetna') ? 'Aetna'
+      : carrier;
+    records.push({
+      agent: normalizeAgentName(agentRaw) || 'The Health Experts Insurance',
+      carrier: carrierNorm,
+      planType: derivePlanType(carrierNorm, '', policyNum, ''),
+      client, effectiveDate, premium: 0, commission, classification,
+      period, policyNumber: policyNum, payee: 'YourFMO', raw: row
+    });
+  }
+  return records;
+}
+
+// ─── Upload route ─────────────────────────────────────────────────────────────
+router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  try {
+    const pool = getPool();
+    const existing = await pool.query('SELECT id FROM uploads WHERE original_name = $1', [req.file.originalname]);
+    if (existing.rows.length > 0) {
+      try { fs.unlinkSync(req.file.path); } catch (e) {}
+      return res.status(409).json({ error: `"${req.file.originalname}" has already been uploaded. Delete it first.` });
+    }
+
+    const determinePayee = (filename) => {
+      const f = filename.toLowerCase();
+      if (f.includes('commission_statement_2737247')) return 'UnitedHealthcare';
+      if (f.includes('statement-health_experts') || f.includes('statement_health_experts')) return 'BSI';
+      if (f.includes('the_health_experts_insurance_statement') || f.includes('the_health_experst_insurance') || (f.includes('yahoska') && f.includes('katy'))) return 'NHP';
+      if (f.includes('commission-statement') || f.includes('integrity') || f.includes('apl')) return 'APL';
+      if (f.includes('commissions_ledger') || f.includes('solis')) return 'Solis';
+      if (f.includes('moo') || f.includes('mutual')) return 'Mutual of Omaha';
+      if (f.includes('yourfmo') || f.includes('commissiondetails')) return 'YourFMO';
+      if (f.includes('commissiondata') || f.includes('humana')) return 'Humana';
+      if (f.includes('devoted')) return 'Devoted';
+      if (f.includes('aetna') || f.includes('producerstatement')) return 'Aetna';
+      return 'Direct';
+    };
+    const defaultPayee = determinePayee(req.file.originalname);
+
+    let records;
+
+    if (isMutualOmahaPDF(req.file.originalname)) {
+      if (!pdfParse) {
+        try { fs.unlinkSync(req.file.path); } catch(e) {}
+        return res.status(500).json({ error: 'PDF parsing not available on server.' });
+      }
+      records = await parseMutualOmahaPDF(req.file.path, req.file.originalname);
+      if (!records.length) {
+        try { fs.unlinkSync(req.file.path); } catch(e) {}
+        return res.status(400).json({ error: 'No records found in PDF. Verify this is a Mutual of Omaha commission statement.' });
+      }
+    } else if (isHumanaPDF(req.file.originalname)) {
+      if (!pdfParse) {
+        try { fs.unlinkSync(req.file.path); } catch(e) {}
+        return res.status(500).json({ error: 'PDF parsing not available on server.' });
+      }
+      records = await parseHumanaPDF(req.file.path, req.file.originalname);
+      if (!records.length) {
+        try { fs.unlinkSync(req.file.path); } catch(e) {}
+        return res.status(400).json({ error: 'No records found in PDF.' });
+      }
+    } else {
+      const wb = XLSX.readFile(req.file.path);
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      if (isYourFMOXLSX(req.file.originalname)) {
+        records = parseYourFMOXLSXRows(wb);
+      } else if (isUHCFile(req.file.originalname)) {
+        records = parseUHCRows(wb);
+      } else if (isBSIFile(req.file.originalname)) {
+        records = parseBSIRows(wb, req.file.originalname);
+      } else if (isNHPFile(req.file.originalname)) {
+        records = parseNHPRows(wb);
+      } else if (isYourFMOFile(req.file.originalname)) {
+        records = parseYourFMORows(wb, req.file.originalname);
+      } else if (isHumanaFile(req.file.originalname)) {
+        const rawBuffer = fs.readFileSync(req.file.path);
+        records = parseHumanaRows(wb, req.file.originalname, rawBuffer);
+      } else if (isSolisFile(req.file.originalname)) {
+        records = parseSolisRows(wb, req.file.originalname);
+      } else if (isAPLFile(req.file.originalname)) {
+        records = parseAPLRows(wb);
+      } else {
+        const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
+        if (!rows.length) return res.status(400).json({ error: 'File is empty' });
+        const headers = Object.keys(rows[0]);
+        const mapping = await mapColumnsWithAI(headers, rows.slice(0, 3));
+        records = parseRows(rows, mapping, req.file.originalname);
+      }
+    }
+
+    records = records.map(r => ({ ...r, payee: r.payee || defaultPayee }));
+    if (!records.length) return res.status(400).json({ error: 'No records found in file' });
+
+    const commissionSum = records.reduce((s, r) => s + (r.commission || 0), 0);
+    const carriers = [...new Set(records.map(r => r.carrier).filter(Boolean))];
+
+    const uploadResult = await pool.query(
+      'INSERT INTO uploads (filename, original_name, carrier, row_count, commission_sum, uploaded_by) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
+      [req.file.filename, req.file.originalname, carriers.join(', '), records.length, commissionSum, req.user.id]
+    );
+    const uploadId = uploadResult.rows[0].id;
+
+    try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS plan_type TEXT DEFAULT ''`); } catch(e) {}
+    try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS mga TEXT DEFAULT ''`); } catch(e) {}
+    try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS payee TEXT DEFAULT ''`); } catch(e) {}
+
+    for (const r of records) {
+      await pool.query(
+        `INSERT INTO commission_records (upload_id, agent_name, carrier, plan_type, client_full_name, effective_date, premium, commission, classification, payment_period, policy_number, payee, mga, raw_data)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+        [uploadId, r.agent, r.carrier, r.planType || '', r.client, r.effectiveDate, r.premium || 0, r.commission || 0, r.classification, r.period, r.policyNumber, r.payee || '', r.mga || '', JSON.stringify(r.raw)]
+      );
+    }
+
+    try { fs.unlinkSync(req.file.path); } catch (e) {}
+    res.json({ uploadId, filename: req.file.originalname, rowCount: records.length, commissionSum, carriers, preview: records.slice(0, 5) });
+
+  } catch (err) {
+    console.error('Upload error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+function getAgency(req) {
+  if (req.user.role !== 'admin') return null;
+  const override = req.headers['x-agency-override'];
+  if (override !== undefined) return override || null;
+  return req.user.agency || null;
+}
+
+router.get('/uploads', requireAuth, async (req, res) => {
+  try {
+    const pool = getPool();
+    const agency = getAgency(req);
+    let query, params = [];
+    if (req.user.role === 'agent') {
+      query = `SELECT u.*, usr.name as uploaded_by_name FROM uploads u LEFT JOIN users usr ON u.uploaded_by = usr.id WHERE u.uploaded_by = $1 ORDER BY u.uploaded_at DESC`;
+      params = [req.user.id];
+    } else if (agency) {
+      query = `SELECT DISTINCT u.*, usr.name as uploaded_by_name FROM uploads u LEFT JOIN users usr ON u.uploaded_by = usr.id WHERE u.id IN (SELECT DISTINCT upload_id FROM commission_records WHERE payee ILIKE $1) ORDER BY u.uploaded_at DESC`;
+      params = [`%${agency}%`];
+    } else {
+      query = `SELECT u.*, usr.name as uploaded_by_name FROM uploads u LEFT JOIN users usr ON u.uploaded_by = usr.id ORDER BY u.uploaded_at DESC`;
+    }
+    const result = await pool.query(query, params);
+    res.json(result.rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.delete('/uploads/:id', requireAuth, async (req, res) => {
+  try {
+    const pool = getPool();
+    await pool.query('DELETE FROM uploads WHERE id = $1', [req.params.id]);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+async function mapColumnsWithAI(headers, sample) {
+  try {
+    const prompt = `You are parsing an insurance carrier commission statement Excel file.
+Column headers found: ${headers.join(', ')}
+Sample row: ${JSON.stringify(sample[0])}
+Map these columns to our schema. Respond ONLY with valid JSON, no markdown:
+{"agent":"column name or null","carrier":"column name or null","client":"column name or null","effectiveDate":"column name or null","premium":"column name or null","commission":"column name required","classification":"column name or null","period":"column name or null","policyNumber":"column name or null","planType":"column name for plan type/product type or null"}`;
+    const msg = await anthropic.messages.create({ model: 'claude-opus-4-5', max_tokens: 500, messages: [{ role: 'user', content: prompt }] });
+    const text = msg.content[0].text.replace(/```json|```/g, '').trim();
+    return JSON.parse(text);
+  } catch (e) {
+    console.error('AI mapping failed:', e.message);
+    return heuristicMapping(headers);
+  }
+}
+
+function heuristicMapping(headers) {
+  const h = headers.map(x => x.toLowerCase());
+  const find = (terms) => headers[h.findIndex(x => terms.some(t => x.includes(t)))] || null;
+  return {
+    agent: find(['writing agent', 'agent', 'producer', 'rep']),
+    carrier: find(['carrier', 'company', 'insurer', 'plan']),
+    client: find(['member', 'client', 'subscriber', 'insured', 'name']),
+    effectiveDate: find(['effective', 'eff date', 'policy date', 'start']),
+    premium: find(['prem', 'premium', 'modal', 'annualized']),
+    commission: find(['commission', 'payment', 'amount', 'earned', 'comp']),
+    classification: find(['action', 'type', 'class', 'category', 'renewal']),
+    period: find(['payment period', 'period', 'month', 'statement']),
+    policyNumber: find(['policy', 'member id', 'contract', 'certificate']),
+    planType: find(['plan type', 'product', 'line', 'benefit'])
+  };
+}
+
+
 module.exports = router;
