@@ -813,6 +813,12 @@ async function parseMutualOmahaPDF(filePath, filename) {
         ? nameMatch[1].trim().replace(/\b\w/g, c => c.toUpperCase())
         : 'Unknown';
 
+      // DEBUG: log Joan Cabrera's chunk
+      if (agentName.includes('Cabrera') || agentName.includes('CABRERA')) {
+        const cabChunk = chunk.slice(0, 500);
+        console.log('[MOO DEBUG CABRERA]', JSON.stringify(cabChunk));
+      }
+
       // Sum ALL PRODUCER COMMISSION PAYABLE amounts in this producer chunk.
       // A producer can have separate Mutual + United sections each with their own payable line.
       // Only skip if the grand total across ALL sections is zero.
