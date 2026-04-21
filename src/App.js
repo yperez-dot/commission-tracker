@@ -24,11 +24,9 @@ export default function App() {
   function handleAgencySwitch(val) {
     setAgencyView(val);
     localStorage.setItem('olicomm_agency_view', val);
-    // Signal api.js to send this as a header
     window.__olicomm_agency_override = val;
   }
 
-  // Set on mount too
   React.useEffect(() => {
     window.__olicomm_agency_override = agencyView;
   }, [agencyView]);
@@ -99,24 +97,22 @@ export default function App() {
     ] : [])
   ];
 
-  // Inject agencyView into user object so all pages filter correctly
-  // If switcher is set → use switcher value
-  // If no switcher but user has own agency (e.g. Yaceli) → use their agency
-  // If super admin with no selection → agency: '' (see all)
   const effectiveUser = agencyView
     ? { ...user, agency: agencyView }
     : { ...user, agency: user.agency || '' };
 
+  // key={agencyView} forces each page to remount when agency switches,
+  // triggering all useEffect data fetches with the new agency header
   const pages = {
-    dashboard: <Dashboard user={effectiveUser} onNavigate={navigate} />,
-    upload: <Upload user={effectiveUser} />,
-    alldata: <AllData user={effectiveUser} initialFilters={pageParams} />,
-    bob: <BookOfBusiness user={effectiveUser} />,
-    renewals: <MissingRenewals user={effectiveUser} />,
-    reconciliation: <Reconciliation user={effectiveUser} />,
-    payroll: <Payroll user={effectiveUser} />,
-    agents: <Agents user={effectiveUser} />,
-    users: <AdminUsers user={effectiveUser} />
+    dashboard: <Dashboard key={agencyView} user={effectiveUser} onNavigate={navigate} />,
+    upload: <Upload key={agencyView} user={effectiveUser} />,
+    alldata: <AllData key={agencyView} user={effectiveUser} initialFilters={pageParams} />,
+    bob: <BookOfBusiness key={agencyView} user={effectiveUser} />,
+    renewals: <MissingRenewals key={agencyView} user={effectiveUser} />,
+    reconciliation: <Reconciliation key={agencyView} user={effectiveUser} />,
+    payroll: <Payroll key={agencyView} user={effectiveUser} />,
+    agents: <Agents key={agencyView} user={effectiveUser} />,
+    users: <AdminUsers key={agencyView} user={effectiveUser} />
   };
 
   return (
