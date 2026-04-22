@@ -167,11 +167,6 @@ export default function Dashboard({ user, onNavigate }) {
   const [chartMetric, setChartMetric] = useState('commission');
   const [kpiSortCol, setKpiSortCol] = useState('total_commission');
   const [kpiSortDir, setKpiSortDir] = useState('desc');
-
-  function handleKpiSort(col) {
-    if (kpiSortCol === col) setKpiSortDir(d => d === 'asc' ? 'desc' : 'asc');
-    else { setKpiSortCol(col); setKpiSortDir('desc'); }
-  }
   const [chartRange, setChartRange] = useState(12);
   const [selAgents, setSelAgents] = useState([]);
   const [selCarriers, setSelCarriers] = useState([]);
@@ -179,7 +174,10 @@ export default function Dashboard({ user, onNavigate }) {
   const [selTypes, setSelTypes] = useState([]);
   const [selPlanTypes, setSelPlanTypes] = useState([]);
 
-
+  function handleKpiSort(col) {
+    if (kpiSortCol === col) setKpiSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setKpiSortCol(col); setKpiSortDir('desc'); }
+  }
 
   const buildParams = useCallback(() => {
     const p = new URLSearchParams();
@@ -202,13 +200,20 @@ export default function Dashboard({ user, onNavigate }) {
       }
     } catch(e){ console.error(e); }
     finally { setLoading(false); }
-  }, [buildParams, agencyView]);
+  }, [buildParams, agencyView, chartRange]);
 
-  // Re-fetch data AND filters when agency switches, clear filters to avoid stale state
+  // On load/agency switch: default to current year periods
   useEffect(() => {
-    setSelAgents([]); setSelCarriers([]); setSelPeriods([]); setSelTypes([]); setSelPlanTypes([]);
-    apiFetch('/records/filters').then(d => setAllFilters(d)).catch(console.error);
-    loadData();
+    setSelAgents([]); setSelCarriers([]); setSelTypes([]); setSelPlanTypes([]);
+    apiFetch('/records/filters').then(d => {
+      setAllFilters(d);
+      // Auto-select all periods from current year
+      const currentYear = new Date().getFullYear().toString();
+      const currentYearPeriods = (d.periods || []).filter(p =>
+        String(p).match(/^\d{6}$/) && String(p).startsWith(currentYear)
+      );
+      setSelPeriods(currentYearPeriods);
+    }).catch(console.error);
   }, [agencyView]);
 
   useEffect(() => { loadData(); }, [loadData]);
@@ -249,6 +254,8 @@ export default function Dashboard({ user, onNavigate }) {
   const totalAdv = kpi?.totals?.advance_amount||0;
   const card = {background:C.bg,borderRadius:10,border:`0.5px solid ${C.border}`,padding:'16px 20px'};
 
+  const currentYear = new Date().getFullYear().toString();
+
   return (
     <div style={{display:'flex',height:'100vh',overflow:'hidden',background:C.bgSubtle}}>
 
@@ -279,7 +286,7 @@ export default function Dashboard({ user, onNavigate }) {
           <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:16}}>
             <div>
               <div style={{fontSize:20,fontWeight:500,color:C.text}}>Dashboard</div>
-              <div style={{fontSize:13,color:C.text,marginTop:2}}>Welcome back, {user.name.split(' ')[0]} — here's your commission overview</div>
+              <div style={{fontSize:13,color:C.text,marginTop:2}}>Welcome back, {user.name.split(' ')[0]} — here's your {currentYear} commission overview</div>
             </div>
             {hasFilters && (
               <div style={{display:'flex',flexWrap:'wrap',gap:4,justifyContent:'flex-end',maxWidth:500}}>
@@ -311,7 +318,6 @@ export default function Dashboard({ user, onNavigate }) {
             <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10,flexWrap:'wrap',gap:8}}>
               <div style={{fontSize:13,fontWeight:500,color:C.text}}>Commission & Count</div>
               <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
-                {/* Metric toggle */}
                 <div style={{display:'flex',borderRadius:6,border:`0.5px solid ${C.border}`,overflow:'hidden'}}>
                   {[['commission','Commission'],['chargebacks','Chargebacks'],['apps','App Count']].map(([m,l])=>(
                     <button key={m} onClick={()=>setChartMetric(m)} style={{
@@ -321,7 +327,6 @@ export default function Dashboard({ user, onNavigate }) {
                     }}>{l}</button>
                   ))}
                 </div>
-                {/* Range selector */}
                 <div style={{display:'flex',borderRadius:6,border:`0.5px solid ${C.border}`,overflow:'hidden'}}>
                   {[[6,'6mo'],[12,'12mo'],[24,'24mo']].map(([r,l])=>(
                     <button key={r} onClick={()=>setChartRange(r)} style={{
