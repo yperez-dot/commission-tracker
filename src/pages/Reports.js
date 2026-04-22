@@ -72,57 +72,92 @@ function TrendChart({ data, keys, colors, height = 180 }) {
 function AgentDetailModal({ agent, year, records, onClose }) {
   const agentRecs = records.filter(r =>
     r.agent_name === agent && String(r.payment_period || '').startsWith(year)
+    && parseFloat(r.commission) !== 0  // exclude $0 records
+    && r.carrier !== 'Unknown'          // exclude unknown carrier records
   ).sort((a,b) => (b.payment_period||'').localeCompare(a.payment_period||''));
 
   const total = agentRecs.reduce((s,r) => s+(parseFloat(r.commission)||0), 0);
-  const nb = agentRecs.filter(r=>r.classification==='New Business').reduce((s,r)=>s+(parseFloat(r.commission)||0),0);
-  const ren = agentRecs.filter(r=>r.classification==='Renewal').reduce((s,r)=>s+(parseFloat(r.commission)||0),0);
+  const nb = agentRecs.filter(r=>r.classification==='New Business').reduce((s,r)=>s+(Math.max(0,parseFloat(r.commission)||0)),0);
+  const ren = agentRecs.filter(r=>r.classification==='Renewal').reduce((s,r)=>s+(Math.max(0,parseFloat(r.commission)||0)),0);
   const cb = agentRecs.filter(r=>parseFloat(r.commission)<0).reduce((s,r)=>s+Math.abs(parseFloat(r.commission)||0),0);
 
+  // Prevent body scroll when modal is open
+  React.useEffect(() => {
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = ''; };
+  }, []);
+
   return (
-    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', zIndex:1000, display:'flex', alignItems:'center', justifyContent:'center', padding:20 }} onClick={onClose}>
-      <div style={{ background:'var(--card-bg)', borderRadius:12, width:'90%', maxWidth:800, maxHeight:'85vh', overflow:'hidden', display:'flex', flexDirection:'column' }} onClick={e=>e.stopPropagation()}>
-        <div style={{ padding:'16px 20px', borderBottom:'1px solid var(--border)', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+    <div style={{
+      position:'fixed', top:0, left:0, right:0, bottom:0,
+      background:'rgba(0,0,0,0.65)', zIndex:9999,
+      display:'flex', alignItems:'center', justifyContent:'center',
+      padding:24
+    }} onClick={onClose}>
+      <div style={{
+        background:'var(--card-bg)', borderRadius:12,
+        width:'100%', maxWidth:860, maxHeight:'80vh',
+        overflow:'hidden', display:'flex', flexDirection:'column',
+        boxShadow:'0 20px 60px rgba(0,0,0,0.4)'
+      }} onClick={e => e.stopPropagation()}>
+
+        {/* Header */}
+        <div style={{ padding:'16px 20px', borderBottom:'1px solid var(--border)', display:'flex', justifyContent:'space-between', alignItems:'flex-start', flexShrink:0 }}>
           <div>
-            <div style={{ fontWeight:700, fontSize:16 }}>{agent}</div>
-            <div style={{ fontSize:12, color:'var(--text-muted)', marginTop:2 }}>{year} · {agentRecs.length} records</div>
+            <div style={{ fontWeight:700, fontSize:17, color:'var(--text)' }}>{agent}</div>
+            <div style={{ fontSize:12, color:'var(--text-muted)', marginTop:3 }}>{year} · {agentRecs.length} records</div>
           </div>
-          <button onClick={onClose} style={{ background:'none', border:'none', fontSize:20, cursor:'pointer', color:'var(--text-muted)' }}>×</button>
+          <button onClick={onClose} style={{ background:'none', border:'none', fontSize:22, cursor:'pointer', color:'var(--text-muted)', lineHeight:1, padding:'0 4px' }}>×</button>
         </div>
-        <div style={{ display:'flex', gap:0, padding:'12px 20px', borderBottom:'1px solid var(--border)' }}>
-          {[['Total',total,'var(--accent-dark)'],['New Business',nb,'var(--green)'],['Renewals',ren,'#4A7C59'],['Chargebacks',-cb,'var(--red)']].map(([label,val,color])=>(
-            <div key={label} style={{ flex:1, textAlign:'center' }}>
-              <div style={{ fontSize:10, color:'var(--text-muted)', marginBottom:4 }}>{label}</div>
-              <div style={{ fontWeight:700, fontSize:15, color }}>{fmt(val)}</div>
+
+        {/* KPI strip */}
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', borderBottom:'1px solid var(--border)', flexShrink:0 }}>
+          {[['Total', total, 'var(--accent-dark)'],['New Business', nb, 'var(--green)'],['Renewals', ren, '#4A7C59'],['Chargebacks', -cb, 'var(--red)']].map(([label,val,color])=>(
+            <div key={label} style={{ padding:'12px 16px', borderRight:'0.5px solid var(--border)', textAlign:'center' }}>
+              <div style={{ fontSize:10, color:'var(--text-muted)', marginBottom:5, textTransform:'uppercase', letterSpacing:'0.5px' }}>{label}</div>
+              <div style={{ fontWeight:700, fontSize:16, color }}>{fmt(val)}</div>
             </div>
           ))}
         </div>
+
+        {/* Table */}
         <div style={{ overflowY:'auto', flex:1 }}>
-          <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
-            <thead style={{ position:'sticky', top:0, background:'var(--card-bg)' }}>
-              <tr style={{ borderBottom:'1px solid var(--border)' }}>
-                {['Period','Client','Carrier','Policy #','Type','Commission'].map(h=>(
-                  <th key={h} style={{ textAlign:h==='Commission'?'right':'left', padding:'8px 12px', fontWeight:500, color:'var(--text-muted)', fontSize:11 }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {agentRecs.map((r,i)=>(
-                <tr key={i} style={{ borderBottom:'0.5px solid var(--border)' }}>
-                  <td style={{ padding:'7px 12px', color:'var(--text-muted)', fontSize:11 }}>{periodLabel(r.payment_period)}</td>
-                  <td style={{ padding:'7px 12px', fontWeight:500 }}>{r.client_full_name}</td>
-                  <td style={{ padding:'7px 12px', color:'var(--text-muted)', fontSize:11 }}>{r.carrier}</td>
-                  <td style={{ padding:'7px 12px', color:'var(--accent-dark)', fontSize:11 }}>{r.policy_number||'—'}</td>
-                  <td style={{ padding:'7px 12px' }}>
-                    <span style={{ fontSize:10, padding:'2px 6px', borderRadius:4, background: r.classification==='New Business'?'rgba(201,169,110,0.15)':r.classification==='Renewal'?'rgba(74,124,89,0.15)':'rgba(192,57,43,0.12)', color: r.classification==='New Business'?'var(--accent-dark)':r.classification==='Renewal'?'#4A7C59':'var(--red)' }}>
-                      {r.classification}
-                    </span>
-                  </td>
-                  <td style={{ padding:'7px 12px', textAlign:'right', fontWeight:600, color:parseFloat(r.commission)<0?'var(--red)':'var(--green)' }}>{fmt(r.commission)}</td>
+          {agentRecs.length === 0 ? (
+            <div style={{ padding:40, textAlign:'center', color:'var(--text-muted)', fontSize:13 }}>No records found for {year}</div>
+          ) : (
+            <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+              <thead style={{ position:'sticky', top:0, background:'var(--card-bg)', zIndex:1 }}>
+                <tr style={{ borderBottom:'1px solid var(--border)' }}>
+                  {['Period','Client','Carrier','Policy #','Type','Commission'].map(h=>(
+                    <th key={h} style={{ textAlign:h==='Commission'?'right':'left', padding:'9px 14px', fontWeight:500, color:'var(--text-muted)', fontSize:11, whiteSpace:'nowrap' }}>{h}</th>
+                  ))}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {agentRecs.map((r,i)=>(
+                  <tr key={i} style={{ borderBottom:'0.5px solid var(--border)' }}>
+                    <td style={{ padding:'8px 14px', color:'var(--text-muted)', fontSize:11, whiteSpace:'nowrap' }}>{periodLabel(r.payment_period)}</td>
+                    <td style={{ padding:'8px 14px', fontWeight:500 }}>{r.client_full_name}</td>
+                    <td style={{ padding:'8px 14px', color:'var(--text-muted)', fontSize:11 }}>{r.carrier}</td>
+                    <td style={{ padding:'8px 14px', color:'var(--accent-dark)', fontSize:11 }}>{r.policy_number||'—'}</td>
+                    <td style={{ padding:'8px 14px' }}>
+                      <span style={{ fontSize:10, padding:'2px 7px', borderRadius:4, fontWeight:500,
+                        background: r.classification==='New Business'?'rgba(201,169,110,0.15)':r.classification==='Renewal'?'rgba(74,124,89,0.15)':'rgba(192,57,43,0.12)',
+                        color: r.classification==='New Business'?'var(--accent-dark)':r.classification==='Renewal'?'#4A7C59':'var(--red)'
+                      }}>{r.classification}</span>
+                    </td>
+                    <td style={{ padding:'8px 14px', textAlign:'right', fontWeight:600, color:parseFloat(r.commission)<0?'var(--red)':'var(--green)' }}>{fmt(r.commission)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot>
+                <tr style={{ borderTop:'1px solid var(--border)', background:'var(--bg-subtle)' }}>
+                  <td colSpan={5} style={{ padding:'9px 14px', fontWeight:600, fontSize:12 }}>Total ({agentRecs.length} records)</td>
+                  <td style={{ padding:'9px 14px', textAlign:'right', fontWeight:700, fontSize:13, color: total < 0 ? 'var(--red)' : 'var(--green)' }}>{fmt(total)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          )}
         </div>
       </div>
     </div>
@@ -134,7 +169,12 @@ function MonthlySummary({ records }) {
   const [agentSearch, setAgentSearch] = React.useState('');
   const [selectedAgent, setSelectedAgent] = React.useState(null);
 
-  const yearRecords = records.filter(r => String(r.payment_period || '').startsWith(selectedYear));
+  const yearRecords = records.filter(r =>
+    String(r.payment_period || '').startsWith(selectedYear) &&
+    parseFloat(r.commission) !== 0 &&
+    r.carrier !== 'Unknown' &&
+    r.agent_name !== 'Broker Society Insurance'
+  );
   const allAgents = [...new Set(yearRecords.map(r => r.agent_name))].sort();
   const periods = [...new Set(yearRecords.map(r => r.payment_period))].filter(Boolean).sort();
 
@@ -256,6 +296,8 @@ function MonthlySummary({ records }) {
   );
 }
 function NBvRenewals({ records }) {
+  const [selectedPeriod, setSelectedPeriod] = React.useState(null);
+  const [filterType, setFilterType] = React.useState(null);
   const periods = [...new Set(records.map(r => r.payment_period))].filter(Boolean).sort();
 
   const data = periods.map(p => {
@@ -266,15 +308,17 @@ function NBvRenewals({ records }) {
     return { period: p, 'New Business': nb, 'Renewal': ren, 'Chargeback': cb };
   });
 
+  // Records for selected period drill-down
+  const drillRecords = selectedPeriod ? records.filter(r => {
+    if (r.payment_period !== selectedPeriod) return false;
+    if (!filterType) return true;
+    if (filterType === 'Chargeback') return parseFloat(r.commission) < 0;
+    return r.classification === filterType;
+  }).sort((a,b) => Math.abs(parseFloat(b.commission)||0) - Math.abs(parseFloat(a.commission)||0)) : [];
+
   function exportCSV() {
     const header = ['Period', 'New Business', 'Renewal', 'Chargeback', 'Net'];
-    const rows = data.map(d => [
-      periodLabel(d.period),
-      d['New Business'].toFixed(2),
-      d['Renewal'].toFixed(2),
-      d['Chargeback'].toFixed(2),
-      (d['New Business'] + d['Renewal'] - d['Chargeback']).toFixed(2)
-    ]);
+    const rows = data.map(d => [periodLabel(d.period), d['New Business'].toFixed(2), d['Renewal'].toFixed(2), d['Chargeback'].toFixed(2), (d['New Business'] + d['Renewal'] - d['Chargeback']).toFixed(2)]);
     downloadCSV('NB_vs_Renewals_Trend.csv', [header, ...rows]);
   }
 
@@ -303,14 +347,56 @@ function NBvRenewals({ records }) {
         <tbody>
           {data.map(d => {
             const net = d['New Business'] + d['Renewal'] - d['Chargeback'];
+            const isSelected = selectedPeriod === d.period;
             return (
-              <tr key={d.period} style={{ borderBottom:'0.5px solid var(--border)' }}>
-                <td style={{ padding:'7px 10px', fontWeight:500 }}>{periodLabel(d.period)}</td>
-                <td style={{ padding:'7px 10px', textAlign:'right', color:'#C9A96E' }}>{fmt(d['New Business'])}</td>
-                <td style={{ padding:'7px 10px', textAlign:'right', color:'#4A7C59' }}>{fmt(d['Renewal'])}</td>
-                <td style={{ padding:'7px 10px', textAlign:'right', color:'var(--red)' }}>{d['Chargeback'] > 0 ? fmt(d['Chargeback']) : '—'}</td>
-                <td style={{ padding:'7px 10px', textAlign:'right', fontWeight:600, color: net >= 0 ? 'var(--green)' : 'var(--red)' }}>{fmt(net)}</td>
-              </tr>
+              <React.Fragment key={d.period}>
+                <tr onClick={() => { setSelectedPeriod(isSelected ? null : d.period); setFilterType(null); }}
+                  style={{ borderBottom:'0.5px solid var(--border)', cursor:'pointer', background: isSelected ? 'rgba(201,169,110,0.08)' : 'transparent' }}
+                  onMouseEnter={e => e.currentTarget.style.background = isSelected ? 'rgba(201,169,110,0.08)' : 'var(--bg-subtle)'}
+                  onMouseLeave={e => e.currentTarget.style.background = isSelected ? 'rgba(201,169,110,0.08)' : 'transparent'}>
+                  <td style={{ padding:'7px 10px', fontWeight:500 }}>{periodLabel(d.period)} {isSelected ? '▲' : '▼'}</td>
+                  <td onClick={e=>{e.stopPropagation();setSelectedPeriod(d.period);setFilterType('New Business');}} style={{ padding:'7px 10px', textAlign:'right', color:'#C9A96E', cursor:'zoom-in' }}>{fmt(d['New Business'])}</td>
+                  <td onClick={e=>{e.stopPropagation();setSelectedPeriod(d.period);setFilterType('Renewal');}} style={{ padding:'7px 10px', textAlign:'right', color:'#4A7C59', cursor:'zoom-in' }}>{fmt(d['Renewal'])}</td>
+                  <td onClick={e=>{e.stopPropagation();setSelectedPeriod(d.period);setFilterType('Chargeback');}} style={{ padding:'7px 10px', textAlign:'right', color:'var(--red)', cursor:'zoom-in' }}>{d['Chargeback'] > 0 ? fmt(d['Chargeback']) : '—'}</td>
+                  <td style={{ padding:'7px 10px', textAlign:'right', fontWeight:600, color: net >= 0 ? 'var(--green)' : 'var(--red)' }}>{fmt(net)}</td>
+                </tr>
+                {isSelected && (
+                  <tr>
+                    <td colSpan={5} style={{ padding:0, background:'var(--bg-subtle)' }}>
+                      <div style={{ padding:'10px 14px' }}>
+                        <div style={{ display:'flex', gap:6, marginBottom:10 }}>
+                          {[null,'New Business','Renewal','Chargeback'].map(t => (
+                            <button key={t||'all'} onClick={() => setFilterType(t)} style={{ padding:'3px 10px', borderRadius:5, fontSize:11, cursor:'pointer', fontWeight:500, border: filterType===t?'none':'0.5px solid var(--border)', background: filterType===t?'var(--accent)':'none', color: filterType===t?'var(--sidebar-bg)':'var(--text)' }}>
+                              {t || 'All'}
+                            </button>
+                          ))}
+                          <span style={{ marginLeft:'auto', fontSize:11, color:'var(--text-muted)', alignSelf:'center' }}>{drillRecords.length} records</span>
+                        </div>
+                        <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11 }}>
+                          <thead><tr style={{ borderBottom:'0.5px solid var(--border)' }}>
+                            {['Agent','Client','Carrier','Policy #','Type','Commission'].map(h=>(
+                              <th key={h} style={{ textAlign:h==='Commission'?'right':'left', padding:'5px 8px', fontWeight:500, color:'var(--text-muted)' }}>{h}</th>
+                            ))}
+                          </tr></thead>
+                          <tbody>
+                            {drillRecords.slice(0,50).map((r,i)=>(
+                              <tr key={i} style={{ borderBottom:'0.5px solid var(--border)' }}>
+                                <td style={{ padding:'5px 8px' }}>{r.agent_name}</td>
+                                <td style={{ padding:'5px 8px', fontWeight:500 }}>{r.client_full_name}</td>
+                                <td style={{ padding:'5px 8px', color:'var(--text-muted)' }}>{r.carrier}</td>
+                                <td style={{ padding:'5px 8px', color:'var(--accent-dark)' }}>{r.policy_number||'—'}</td>
+                                <td style={{ padding:'5px 8px' }}>{r.classification}</td>
+                                <td style={{ padding:'5px 8px', textAlign:'right', fontWeight:600, color:parseFloat(r.commission)<0?'var(--red)':'var(--green)' }}>{fmt(r.commission)}</td>
+                              </tr>
+                            ))}
+                            {drillRecords.length > 50 && <tr><td colSpan={6} style={{ padding:'5px 8px', color:'var(--text-muted)', fontSize:11 }}>+ {drillRecords.length - 50} more records</td></tr>}
+                          </tbody>
+                        </table>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </React.Fragment>
             );
           })}
         </tbody>
@@ -321,7 +407,133 @@ function NBvRenewals({ records }) {
 
 // ─── Report 3: Year-over-Year ────────────────────────────────────────────────
 function YearOverYear({ records }) {
+  const [selected, setSelected] = React.useState(null); // { year, month }
   const years = [...new Set(records.map(r => String(r.payment_period || '').slice(0, 4)))].filter(y => y.match(/^\d{4}$/) && parseInt(y) >= 2020).sort();
+
+  const byYearMonth = {};
+  for (const r of records) {
+    const p = String(r.payment_period || '');
+    if (!p.match(/^\d{6}$/)) continue;
+    const year = p.slice(0, 4);
+    const month = parseInt(p.slice(4, 6)) - 1;
+    if (!byYearMonth[year]) byYearMonth[year] = Array(12).fill(0);
+    byYearMonth[year][month] += parseFloat(r.commission) || 0;
+  }
+
+  const drillRecords = selected ? records.filter(r => {
+    const p = String(r.payment_period || '');
+    return p === `${selected.year}${String(selected.month + 1).padStart(2,'0')}`;
+  }).sort((a,b) => Math.abs(parseFloat(b.commission)||0) - Math.abs(parseFloat(a.commission)||0)) : [];
+
+  const colors = ['#C9A96E', '#4A7C59', '#5B8DB8', '#C0392B'];
+
+  function exportCSV() {
+    const header = ['Month', ...years];
+    const rows = MONTHS.map((m, i) => [m, ...years.map(y => (byYearMonth[y]?.[i] || 0).toFixed(2))]);
+    const totals = ['Total', ...years.map(y => (byYearMonth[y] || []).reduce((s, v) => s + v, 0).toFixed(2))];
+    downloadCSV('Year_Over_Year.csv', [header, ...rows, totals]);
+  }
+
+  return (
+    <div>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14 }}>
+        <div style={{ display:'flex', gap:16 }}>
+          {years.map((y, i) => (
+            <div key={y} style={{ display:'flex', alignItems:'center', gap:6, fontSize:12 }}>
+              <div style={{ width:10, height:10, background:colors[i % colors.length], borderRadius:2 }} />
+              <span style={{ color:'var(--text-muted)' }}>{y}</span>
+            </div>
+          ))}
+        </div>
+        <button onClick={exportCSV} style={{ background:'none', border:'0.5px solid var(--border)', borderRadius:6, padding:'5px 14px', fontSize:12, cursor:'pointer', color:'var(--text)' }}>↓ Export CSV</button>
+      </div>
+      <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+        <thead>
+          <tr style={{ borderBottom:'1px solid var(--border)' }}>
+            <th style={{ textAlign:'left', padding:'7px 10px', fontWeight:500, color:'var(--text-muted)', fontSize:11 }}>Month</th>
+            {years.map((y, i) => (
+              <th key={y} style={{ textAlign:'right', padding:'7px 10px', fontWeight:500, color:colors[i % colors.length], fontSize:11 }}>{y}</th>
+            ))}
+            {years.length > 1 && <th style={{ textAlign:'right', padding:'7px 10px', fontWeight:500, color:'var(--text-muted)', fontSize:11 }}>Change</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {MONTHS.map((m, mi) => {
+            const vals = years.map(y => byYearMonth[y]?.[mi] || 0);
+            const change = years.length >= 2 ? vals[vals.length - 1] - vals[vals.length - 2] : null;
+            return (
+              <React.Fragment key={m}>
+                <tr style={{ borderBottom:'0.5px solid var(--border)' }}>
+                  <td style={{ padding:'7px 10px', fontWeight:500 }}>{m}</td>
+                  {vals.map((v, j) => {
+                    const isSelected = selected?.year === years[j] && selected?.month === mi;
+                    return (
+                      <td key={j} onClick={() => v !== 0 && setSelected(isSelected ? null : { year: years[j], month: mi })}
+                        style={{ padding:'7px 10px', textAlign:'right', color: v < 0 ? 'var(--red)' : v === 0 ? 'var(--text-muted)' : colors[j % colors.length], cursor: v !== 0 ? 'pointer' : 'default', fontWeight: isSelected ? 700 : 400, background: isSelected ? 'rgba(201,169,110,0.08)' : 'transparent', borderRadius:4 }}>
+                        {v !== 0 ? fmt(v) : '—'}
+                      </td>
+                    );
+                  })}
+                  {change !== null && (
+                    <td style={{ padding:'7px 10px', textAlign:'right', fontWeight:500, color: change >= 0 ? 'var(--green)' : 'var(--red)', fontSize:11 }}>
+                      {change >= 0 ? '+' : ''}{fmt(change)}
+                    </td>
+                  )}
+                </tr>
+                {selected?.month === mi && drillRecords.length > 0 && (
+                  <tr>
+                    <td colSpan={years.length + 2} style={{ padding:0, background:'var(--bg-subtle)' }}>
+                      <div style={{ padding:'10px 14px' }}>
+                        <div style={{ fontSize:11, fontWeight:600, marginBottom:8, color:'var(--accent-dark)' }}>
+                          {m} {selected.year} · {drillRecords.length} records · {fmt(drillRecords.reduce((s,r)=>s+(parseFloat(r.commission)||0),0))}
+                        </div>
+                        <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11 }}>
+                          <thead><tr style={{ borderBottom:'0.5px solid var(--border)' }}>
+                            {['Agent','Client','Carrier','Policy #','Type','Commission'].map(h=>(
+                              <th key={h} style={{ textAlign:h==='Commission'?'right':'left', padding:'5px 8px', fontWeight:500, color:'var(--text-muted)' }}>{h}</th>
+                            ))}
+                          </tr></thead>
+                          <tbody>
+                            {drillRecords.slice(0,50).map((r,i)=>(
+                              <tr key={i} style={{ borderBottom:'0.5px solid var(--border)' }}>
+                                <td style={{ padding:'5px 8px' }}>{r.agent_name}</td>
+                                <td style={{ padding:'5px 8px', fontWeight:500 }}>{r.client_full_name}</td>
+                                <td style={{ padding:'5px 8px', color:'var(--text-muted)' }}>{r.carrier}</td>
+                                <td style={{ padding:'5px 8px', color:'var(--accent-dark)' }}>{r.policy_number||'—'}</td>
+                                <td style={{ padding:'5px 8px' }}>{r.classification}</td>
+                                <td style={{ padding:'5px 8px', textAlign:'right', fontWeight:600, color:parseFloat(r.commission)<0?'var(--red)':'var(--green)' }}>{fmt(r.commission)}</td>
+                              </tr>
+                            ))}
+                            {drillRecords.length > 50 && <tr><td colSpan={6} style={{ padding:'5px 8px', color:'var(--text-muted)' }}>+ {drillRecords.length - 50} more records</td></tr>}
+                          </tbody>
+                        </table>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </React.Fragment>
+            );
+          })}
+        </tbody>
+        <tfoot>
+          <tr style={{ borderTop:'1px solid var(--border)', background:'var(--bg-subtle)' }}>
+            <td style={{ padding:'8px 10px', fontWeight:600 }}>Total</td>
+            {years.map((y, i) => {
+              const total = (byYearMonth[y] || []).reduce((s, v) => s + v, 0);
+              return <td key={y} style={{ padding:'8px 10px', textAlign:'right', fontWeight:700, color: total < 0 ? 'var(--red)' : 'var(--green)' }}>{fmt(total)}</td>;
+            })}
+            {years.length > 1 && (() => {
+              const last = (byYearMonth[years[years.length-1]] || []).reduce((s,v)=>s+v,0);
+              const prev = (byYearMonth[years[years.length-2]] || []).reduce((s,v)=>s+v,0);
+              const diff = last - prev;
+              return <td style={{ padding:'8px 10px', textAlign:'right', fontWeight:700, color: diff >= 0 ? 'var(--green)' : 'var(--red)' }}>{diff >= 0?'+':''}{fmt(diff)}</td>;
+            })()}
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  );
+}
 
   const byYearMonth = {};
   for (const r of records) {
@@ -408,7 +620,101 @@ function YearOverYear({ records }) {
 
 // ─── Report 4: Chargeback Rate by Agent ─────────────────────────────────────
 function ChargebackReport({ records }) {
+  const [selectedAgent, setSelectedAgent] = React.useState(null);
   const agents = [...new Set(records.map(r => r.agent_name))].sort();
+
+  const data = agents.map(agent => {
+    const recs = records.filter(r => r.agent_name === agent);
+    const gross = recs.filter(r => parseFloat(r.commission) > 0).reduce((s, r) => s + (parseFloat(r.commission) || 0), 0);
+    const cb = recs.filter(r => parseFloat(r.commission) < 0).reduce((s, r) => s + Math.abs(parseFloat(r.commission) || 0), 0);
+    const cbCount = recs.filter(r => parseFloat(r.commission) < 0).length;
+    const cbRate = gross > 0 ? (cb / gross) * 100 : 0;
+    const cbRecords = recs.filter(r => parseFloat(r.commission) < 0).sort((a,b) => parseFloat(a.commission) - parseFloat(b.commission));
+    return { agent, gross, cb, cbCount, cbRate, net: gross - cb, count: recs.length, cbRecords };
+  }).filter(d => d.count > 0).sort((a, b) => b.cbRate - a.cbRate);
+
+  const maxCbRate = Math.max(...data.map(d => d.cbRate), 1);
+
+  function exportCSV() {
+    const header = ['Agent', 'Gross Commission', 'Chargebacks', 'CB Count', 'CB Rate %', 'Net'];
+    const rows = data.map(d => [d.agent, d.gross.toFixed(2), d.cb.toFixed(2), d.cbCount, d.cbRate.toFixed(1)+'%', d.net.toFixed(2)]);
+    downloadCSV('Chargeback_Report.csv', [header, ...rows]);
+  }
+
+  return (
+    <div>
+      <div style={{ display:'flex', justifyContent:'flex-end', marginBottom:10 }}>
+        <button onClick={exportCSV} style={{ background:'none', border:'0.5px solid var(--border)', borderRadius:6, padding:'5px 14px', fontSize:12, cursor:'pointer', color:'var(--text)' }}>↓ Export CSV</button>
+      </div>
+      <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+        <thead>
+          <tr style={{ borderBottom:'1px solid var(--border)' }}>
+            {['#','Agent','Gross','Chargebacks','CB Rate','Net',''].map((h,i) => (
+              <th key={i} style={{ textAlign: i<=1?'left':'right', padding:'7px 10px', fontWeight:500, color:'var(--text-muted)', fontSize:11 }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {data.map((d, i) => (
+            <React.Fragment key={d.agent}>
+              <tr onClick={() => setSelectedAgent(selectedAgent === d.agent ? null : d.agent)}
+                style={{ borderBottom:'0.5px solid var(--border)', background: selectedAgent === d.agent ? 'rgba(201,169,110,0.08)' : d.cbRate > 20 ? 'rgba(192,57,43,0.04)' : 'transparent', cursor: d.cbCount > 0 ? 'pointer' : 'default' }}>
+                <td style={{ padding:'7px 10px', color:'var(--text-muted)', fontSize:11 }}>{i+1}</td>
+                <td style={{ padding:'7px 10px', fontWeight:600, color:'var(--accent-dark)' }}>{d.agent} {d.cbCount > 0 ? (selectedAgent===d.agent?'▲':'▼') : ''}</td>
+                <td style={{ padding:'7px 10px', textAlign:'right', color:'var(--green)' }}>{fmt(d.gross)}</td>
+                <td style={{ padding:'7px 10px', textAlign:'right', color: d.cb > 0 ? 'var(--red)' : 'var(--text-muted)' }}>
+                  {d.cb > 0 ? `-${fmt(d.cb)}` : '—'}
+                  {d.cbCount > 0 && <span style={{ fontSize:10, color:'var(--text-muted)', marginLeft:4 }}>({d.cbCount}x)</span>}
+                </td>
+                <td style={{ padding:'7px 10px', textAlign:'right' }}>
+                  <div style={{ display:'flex', alignItems:'center', justifyContent:'flex-end', gap:8 }}>
+                    <span style={{ fontWeight:600, color: d.cbRate > 20 ? 'var(--red)' : d.cbRate > 10 ? '#E67E22' : 'var(--green)', fontSize:12 }}>{pct(d.cbRate)}</span>
+                    <div style={{ width:60, height:5, background:'var(--border)', borderRadius:3, overflow:'hidden' }}>
+                      <div style={{ width:`${(d.cbRate/maxCbRate)*100}%`, height:'100%', background: d.cbRate > 20 ? 'var(--red)' : d.cbRate > 10 ? '#E67E22' : 'var(--green)', borderRadius:3 }} />
+                    </div>
+                  </div>
+                </td>
+                <td style={{ padding:'7px 10px', textAlign:'right', fontWeight:600, color: d.net >= 0 ? 'var(--text)' : 'var(--red)' }}>{fmt(d.net)}</td>
+                <td style={{ padding:'7px 10px' }}>
+                  {d.cbRate > 20 && <span style={{ fontSize:10, background:'rgba(192,57,43,0.12)', color:'var(--red)', borderRadius:4, padding:'2px 6px', fontWeight:500 }}>⚠ High</span>}
+                </td>
+              </tr>
+              {selectedAgent === d.agent && d.cbRecords.length > 0 && (
+                <tr>
+                  <td colSpan={7} style={{ padding:0, background:'var(--bg-subtle)' }}>
+                    <div style={{ padding:'10px 14px' }}>
+                      <div style={{ fontSize:11, fontWeight:600, marginBottom:8, color:'var(--red)' }}>
+                        Chargeback records · {d.cbRecords.length} total · -{fmt(d.cb)}
+                      </div>
+                      <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11 }}>
+                        <thead><tr style={{ borderBottom:'0.5px solid var(--border)' }}>
+                          {['Period','Client','Carrier','Policy #','Amount'].map(h=>(
+                            <th key={h} style={{ textAlign:h==='Amount'?'right':'left', padding:'5px 8px', fontWeight:500, color:'var(--text-muted)' }}>{h}</th>
+                          ))}
+                        </tr></thead>
+                        <tbody>
+                          {d.cbRecords.map((r,j)=>(
+                            <tr key={j} style={{ borderBottom:'0.5px solid var(--border)' }}>
+                              <td style={{ padding:'5px 8px', color:'var(--text-muted)' }}>{periodLabel(r.payment_period)}</td>
+                              <td style={{ padding:'5px 8px', fontWeight:500 }}>{r.client_full_name}</td>
+                              <td style={{ padding:'5px 8px', color:'var(--text-muted)' }}>{r.carrier}</td>
+                              <td style={{ padding:'5px 8px', color:'var(--accent-dark)' }}>{r.policy_number||'—'}</td>
+                              <td style={{ padding:'5px 8px', textAlign:'right', fontWeight:600, color:'var(--red)' }}>{fmt(r.commission)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </td>
+                </tr>
+              )}
+            </React.Fragment>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
   const data = agents.map(agent => {
     const recs = records.filter(r => r.agent_name === agent);
