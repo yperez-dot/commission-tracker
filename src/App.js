@@ -18,7 +18,7 @@ export default function App() {
   const [page, setPage] = useState('dashboard');
   const [pageParams, setPageParams] = useState({});
   const [agencyView, setAgencyView] = useState(
-    user?.role === 'admin' ? (localStorage.getItem('olicomm_agency_view') || 'The Health Experts Insurance') : ''
+    localStorage.getItem('olicomm_agency_view') || 'The Health Experts Insurance'
   );
 
   function handleAgencySwitch(val) {
