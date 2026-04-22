@@ -96,7 +96,6 @@ export default function App() {
     { id: 'payroll', label: 'Payroll', icon: '$' },
     { id: 'reports', label: 'Reports', icon: '📊' },
     ...(user.role === 'admin' ? [
-      { id: 'agents', label: 'Agents', icon: '●' },
       { id: 'users', label: 'User Accounts', icon: '👤' },
     ] : [])
   ];
