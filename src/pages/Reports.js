@@ -70,17 +70,27 @@ function TrendChart({ data, keys, colors, height = 180 }) {
 
 // ─── Report 1: Monthly Commission Summary ────────────────────────────────────
 function MonthlySummary({ records }) {
-  const agents = [...new Set(records.map(r => r.agent_name))].sort();
-  const periods = [...new Set(records.map(r => r.payment_period))].filter(Boolean).sort();
+  const allYears = [...new Set(records.map(r => String(r.payment_period || '').slice(0,4)).filter(y => y.match(/^\d{4}$/)))].sort().reverse();
+  const [selectedYear, setSelectedYear] = React.useState(allYears[0] || '');
+  const [agentSearch, setAgentSearch] = React.useState('');
 
-  // Build pivot: agent → period → total
+  const yearRecords = records.filter(r => String(r.payment_period || '').startsWith(selectedYear));
+  const allAgents = [...new Set(yearRecords.map(r => r.agent_name))].sort();
+  const periods = [...new Set(yearRecords.map(r => r.payment_period))].filter(Boolean).sort();
+
+  // Filter agents by search
+  const filteredAgents = agentSearch
+    ? allAgents.filter(a => a.toLowerCase().includes(agentSearch.toLowerCase()))
+    : allAgents;
+
+  // Build pivot
   const pivot = {};
-  for (const r of records) {
+  for (const r of yearRecords) {
     if (!pivot[r.agent_name]) pivot[r.agent_name] = {};
     pivot[r.agent_name][r.payment_period] = (pivot[r.agent_name][r.payment_period] || 0) + (parseFloat(r.commission) || 0);
   }
 
-  const agentTotals = agents.map(a => ({
+  const agentTotals = filteredAgents.map(a => ({
     agent: a,
     total: Object.values(pivot[a] || {}).reduce((s, v) => s + v, 0)
   })).sort((a, b) => b.total - a.total);
@@ -92,15 +102,39 @@ function MonthlySummary({ records }) {
       ...periods.map(p => (pivot[agent]?.[p] || 0).toFixed(2)),
       Object.values(pivot[agent] || {}).reduce((s, v) => s + v, 0).toFixed(2)
     ]);
-    downloadCSV('Monthly_Commission_Summary.csv', [header, ...rows]);
+    downloadCSV(`Monthly_Commission_Summary_${selectedYear}.csv`, [header, ...rows]);
   }
 
-  const maxTotal = Math.max(...agentTotals.map(a => a.total), 1);
+  const maxTotal = Math.max(...agentTotals.map(a => Math.abs(a.total)), 1);
 
   return (
     <div>
-      <div style={{ display:'flex', justifyContent:'flex-end', marginBottom:10 }}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12, flexWrap:'wrap', gap:10 }}>
+        <div style={{ display:'flex', gap:6, flexWrap:'wrap' }}>
+          {allYears.map(y => (
+            <button key={y} onClick={() => setSelectedYear(y)} style={{
+              padding:'5px 14px', borderRadius:6, fontSize:12, cursor:'pointer', fontWeight:500,
+              border: selectedYear===y ? 'none' : '0.5px solid var(--border)',
+              background: selectedYear===y ? 'var(--accent)' : 'none',
+              color: selectedYear===y ? 'var(--sidebar-bg)' : 'var(--text)'
+            }}>{y}</button>
+          ))}
+        </div>
         <button onClick={exportCSV} style={{ background:'none', border:'0.5px solid var(--border)', borderRadius:6, padding:'5px 14px', fontSize:12, cursor:'pointer', color:'var(--text)' }}>↓ Export CSV</button>
+      </div>
+      <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:14 }}>
+        <input
+          value={agentSearch}
+          onChange={e => setAgentSearch(e.target.value)}
+          placeholder="Search agent..."
+          style={{ padding:'6px 10px', borderRadius:6, border:'0.5px solid var(--border)', background:'var(--card-bg)', color:'var(--text)', fontSize:12, width:220, outline:'none' }}
+        />
+        {agentSearch && (
+          <button onClick={() => setAgentSearch('')} style={{ fontSize:11, color:'var(--red)', background:'none', border:'none', cursor:'pointer', fontWeight:500 }}>Clear</button>
+        )}
+        <span style={{ fontSize:11, color:'var(--text-muted)' }}>
+          {agentSearch ? `${agentTotals.length} of ${allAgents.length} agents` : `${allAgents.length} agents`}
+        </span>
       </div>
       <div style={{ overflowX:'auto' }}>
         <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
@@ -413,7 +447,7 @@ export default function Reports({ user }) {
           <div style={{ display:'flex', gap:0 }}>
             {reports.map(r => <button key={r.id} style={tabStyle(r.id)} onClick={() => setActiveReport(r.id)}>{r.label}</button>)}
           </div>
-          {activeReport !== 'yoy' && (
+          {activeReport !== 'yoy' && activeReport !== 'monthly' && (
             <select value={yearFilter} onChange={e => setYearFilter(e.target.value)}
               style={{ fontSize:12, padding:'4px 8px', borderRadius:6, border:'0.5px solid var(--border)', background:'var(--card-bg)', color:'var(--text)', cursor:'pointer', marginBottom:4 }}>
               <option value="all">All years</option>
