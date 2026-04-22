@@ -68,11 +68,71 @@ function TrendChart({ data, keys, colors, height = 180 }) {
   );
 }
 
-// ─── Report 1: Monthly Commission Summary ────────────────────────────────────
+// ─── Agent Detail Modal ──────────────────────────────────────────────────────
+function AgentDetailModal({ agent, year, records, onClose }) {
+  const agentRecs = records.filter(r =>
+    r.agent_name === agent && String(r.payment_period || '').startsWith(year)
+  ).sort((a,b) => (b.payment_period||'').localeCompare(a.payment_period||''));
+
+  const total = agentRecs.reduce((s,r) => s+(parseFloat(r.commission)||0), 0);
+  const nb = agentRecs.filter(r=>r.classification==='New Business').reduce((s,r)=>s+(parseFloat(r.commission)||0),0);
+  const ren = agentRecs.filter(r=>r.classification==='Renewal').reduce((s,r)=>s+(parseFloat(r.commission)||0),0);
+  const cb = agentRecs.filter(r=>parseFloat(r.commission)<0).reduce((s,r)=>s+Math.abs(parseFloat(r.commission)||0),0);
+
+  return (
+    <div style={{ position:'fixed', inset:0, background:'rgba(0,0,0,0.5)', zIndex:1000, display:'flex', alignItems:'center', justifyContent:'center', padding:20 }} onClick={onClose}>
+      <div style={{ background:'var(--card-bg)', borderRadius:12, width:'90%', maxWidth:800, maxHeight:'85vh', overflow:'hidden', display:'flex', flexDirection:'column' }} onClick={e=>e.stopPropagation()}>
+        <div style={{ padding:'16px 20px', borderBottom:'1px solid var(--border)', display:'flex', justifyContent:'space-between', alignItems:'center' }}>
+          <div>
+            <div style={{ fontWeight:700, fontSize:16 }}>{agent}</div>
+            <div style={{ fontSize:12, color:'var(--text-muted)', marginTop:2 }}>{year} · {agentRecs.length} records</div>
+          </div>
+          <button onClick={onClose} style={{ background:'none', border:'none', fontSize:20, cursor:'pointer', color:'var(--text-muted)' }}>×</button>
+        </div>
+        <div style={{ display:'flex', gap:0, padding:'12px 20px', borderBottom:'1px solid var(--border)' }}>
+          {[['Total',total,'var(--accent-dark)'],['New Business',nb,'var(--green)'],['Renewals',ren,'#4A7C59'],['Chargebacks',-cb,'var(--red)']].map(([label,val,color])=>(
+            <div key={label} style={{ flex:1, textAlign:'center' }}>
+              <div style={{ fontSize:10, color:'var(--text-muted)', marginBottom:4 }}>{label}</div>
+              <div style={{ fontWeight:700, fontSize:15, color }}>{fmt(val)}</div>
+            </div>
+          ))}
+        </div>
+        <div style={{ overflowY:'auto', flex:1 }}>
+          <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+            <thead style={{ position:'sticky', top:0, background:'var(--card-bg)' }}>
+              <tr style={{ borderBottom:'1px solid var(--border)' }}>
+                {['Period','Client','Carrier','Policy #','Type','Commission'].map(h=>(
+                  <th key={h} style={{ textAlign:h==='Commission'?'right':'left', padding:'8px 12px', fontWeight:500, color:'var(--text-muted)', fontSize:11 }}>{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {agentRecs.map((r,i)=>(
+                <tr key={i} style={{ borderBottom:'0.5px solid var(--border)' }}>
+                  <td style={{ padding:'7px 12px', color:'var(--text-muted)', fontSize:11 }}>{periodLabel(r.payment_period)}</td>
+                  <td style={{ padding:'7px 12px', fontWeight:500 }}>{r.client_full_name}</td>
+                  <td style={{ padding:'7px 12px', color:'var(--text-muted)', fontSize:11 }}>{r.carrier}</td>
+                  <td style={{ padding:'7px 12px', color:'var(--accent-dark)', fontSize:11 }}>{r.policy_number||'—'}</td>
+                  <td style={{ padding:'7px 12px' }}>
+                    <span style={{ fontSize:10, padding:'2px 6px', borderRadius:4, background: r.classification==='New Business'?'rgba(201,169,110,0.15)':r.classification==='Renewal'?'rgba(74,124,89,0.15)':'rgba(192,57,43,0.12)', color: r.classification==='New Business'?'var(--accent-dark)':r.classification==='Renewal'?'#4A7C59':'var(--red)' }}>
+                      {r.classification}
+                    </span>
+                  </td>
+                  <td style={{ padding:'7px 12px', textAlign:'right', fontWeight:600, color:parseFloat(r.commission)<0?'var(--red)':'var(--green)' }}>{fmt(r.commission)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
 function MonthlySummary({ records }) {
   const allYears = [...new Set(records.map(r => String(r.payment_period || '').slice(0,4)).filter(y => y.match(/^\d{4}$/)))].sort().reverse();
   const [selectedYear, setSelectedYear] = React.useState(allYears[0] || '');
   const [agentSearch, setAgentSearch] = React.useState('');
+  const [selectedAgent, setSelectedAgent] = React.useState(null);
 
   const yearRecords = records.filter(r => String(r.payment_period || '').startsWith(selectedYear));
   const allAgents = [...new Set(yearRecords.map(r => r.agent_name))].sort();
@@ -151,7 +211,11 @@ function MonthlySummary({ records }) {
           <tbody>
             {agentTotals.map(({ agent, total }) => (
               <tr key={agent} style={{ borderBottom:'0.5px solid var(--border)' }}>
-                <td style={{ padding:'8px 10px', fontWeight:500, color:'var(--text)', position:'sticky', left:0, background:'var(--card-bg)' }}>{agent}</td>
+                <td style={{ padding:'8px 10px', position:'sticky', left:0, background:'var(--card-bg)' }}>
+                  <button onClick={() => setSelectedAgent(agent)} style={{ background:'none', border:'none', cursor:'pointer', fontWeight:500, color:'var(--accent-dark)', fontSize:12, textAlign:'left', padding:0, textDecoration:'underline', textDecorationStyle:'dotted' }}>
+                    {agent}
+                  </button>
+                </td>
                 {periods.map(p => {
                   const val = pivot[agent]?.[p] || 0;
                   return (
@@ -180,11 +244,17 @@ function MonthlySummary({ records }) {
           </tfoot>
         </table>
       </div>
+      {selectedAgent && (
+        <AgentDetailModal
+          agent={selectedAgent}
+          year={selectedYear}
+          records={records}
+          onClose={() => setSelectedAgent(null)}
+        />
+      )}
     </div>
   );
 }
-
-// ─── Report 2: New Business vs Renewals Trend ────────────────────────────────
 function NBvRenewals({ records }) {
   const periods = [...new Set(records.map(r => r.payment_period))].filter(Boolean).sort();
 
