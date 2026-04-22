@@ -117,6 +117,113 @@ function isBSIFile(filename) {
   const f = filename.toLowerCase().replace(/\s+/g, '_');
   return f.includes('statement-health_experts') || f.includes('statement_health_experts');
 }
+function isMOOExcel(filename) {
+  const f = filename.toLowerCase();
+  return (f.includes('moo') || f.includes('mutual_of_omaha') || f.includes('mutualomaha') || f.includes('moo_statement'))
+    && (f.endsWith('.xlsx') || f.endsWith('.xls'));
+}
+
+// Prod Num → Agent Name lookup built from MOO statements
+const MOO_PROD_NAMES = {
+  '968819':  'Yasser Fermin',
+  '970159':  'Yamile Dominguez',
+  '976782':  'Niurllys Carrera',
+  '1058350': 'Eric Del Valle',
+  '1070848': 'Mohamed Ali Elbially',
+  '1075989': 'Nanette Rosabal-Hernandez',
+  '1082299': 'Miguel Osle',
+  '1089121': 'Sebastian Quintero',
+  '1091926': 'Jose Balboa',
+  '1101147': 'Alison Torrez',
+  '1119656': 'Aldo Marchant',
+  '1120105': 'Alonso Ayllon',
+  '1141855': 'Cory Abbondandolo',
+  '1167747': 'Francisco Duran',
+  '1177474': 'Zoila Linares',
+  '1177514': 'Timothy Brittan',
+  '1177570': 'Leonardo Aguilar',
+  '1179563': 'Kevin Gonzalez',
+  '1185706': 'Nora Zamora Rivera',
+  '1186104': 'Joan Cabrera',
+  '1198664': 'Leandro Garriga',
+  '1201698': 'Jorge Eduardo Arce Sarmiento',
+  '1204216': 'Michael Zeno',
+  '1204800': 'Ricardo Rodriguez',
+  '1226393': 'Juan Gomez',
+  '1228343': 'Jose Rojo Irizarry',
+  '1250189': 'Ana Diaz',
+  '1261361': 'Bryan Hernandez',
+};
+
+function parseMOOExcelRows(wb, filename) {
+  const records = [];
+  try {
+    // Use DETAILS sheet if available, otherwise first sheet
+    const sheetName = wb.SheetNames.find(s => s.toUpperCase() === 'DETAILS') || wb.SheetNames[0];
+    const ws = wb.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
+    if (!rows.length) return records;
+
+    // Extract period from filename e.g. MOO_STATEMENT_1.xlsx → try activity date
+    let period = '';
+    const fnMatch = filename.match(/(20\d{2})(0[1-9]|1[0-2])/);
+    if (fnMatch) period = fnMatch[1] + fnMatch[2];
+
+    for (const row of rows) {
+      const commAmt = parseFloat(row['Comm Amt']) || 0;
+      if (commAmt === 0) continue; // skip held/unpaid records
+
+      const prodNum = String(row['Prod Num'] || '').trim();
+      const agentName = MOO_PROD_NAMES[prodNum] || `Producer ${prodNum}`;
+      const clientRaw = String(row['Insureds Name'] || '').trim();
+      // Convert "LAST FIRST" all-caps → "First Last"
+      const clientName = clientRaw === clientRaw.toUpperCase() && clientRaw.length > 2
+        ? clientRaw.toLowerCase().replace(/\b\w/g, c => c.toUpperCase())
+        : clientRaw;
+
+      const company = String(row['Company'] || '').trim();
+      const carrier = company.toUpperCase() === 'MUTUAL' ? 'Mutual of Omaha' : 'United of Omaha';
+      const policyNumber = String(row['Policy'] || '').trim();
+      const activityDate = String(row['Activity Date'] || '').trim();
+      const issueDate = String(row['Issue Date'] || '').trim();
+      const effectiveDate = issueDate || activityDate;
+      const activityType = String(row['Activity Type'] || '').trim().toUpperCase();
+      const mga = String(row['MGA Name'] || '').trim();
+
+      // Period from activity date MM/DD/YYYY → YYYYMM
+      if (!period && activityDate.match(/\d{2}\/\d{2}\/\d{4}/)) {
+        const parts = activityDate.split('/');
+        period = parts[2] + parts[0];
+      }
+
+      const classification = commAmt < 0 ? 'Chargeback'
+        : activityType.includes('NEW COV ISS') || activityType.includes('NEW ISS') || activityType.includes('REISS') ? 'New Business'
+        : activityType.includes('BFY PAYMENT') ? 'Renewal'
+        : activityType.includes('REVERSAL') || activityType.includes('LAPSE') ? 'Chargeback'
+        : 'Renewal';
+
+      records.push({
+        agent: agentName,
+        carrier,
+        planType: carrier === 'Mutual of Omaha' ? 'Mutual of Omaha Life' : 'United of Omaha Life',
+        client: clientName,
+        effectiveDate: formatDate(effectiveDate),
+        premium: parseFloat(row['Comm Premium']) || 0,
+        commission: commAmt,
+        classification,
+        period,
+        policyNumber,
+        payee: 'Mutual of Omaha',
+        mga: mga || 'Brokers Alliance',
+        raw: row
+      });
+    }
+  } catch (err) {
+    console.error('parseMOOExcelRows error:', err.message);
+  }
+  return records;
+}
+
 function isDoctorsFile(filename) {
   const f = filename.toLowerCase().replace(/[\s()]/g, '_');
   return (f.includes('doctor') || f.startsWith('drs')) && !f.includes('solis');
@@ -1029,7 +1136,14 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
 
     let records;
 
-    if (isMutualOmahaPDF(req.file.originalname)) {
+    if (isMOOExcel(req.file.originalname)) {
+      const wb = XLSX.readFile(req.file.path);
+      records = parseMOOExcelRows(wb, req.file.originalname);
+      if (!records.length) {
+        try { fs.unlinkSync(req.file.path); } catch(e) {}
+        return res.status(400).json({ error: 'No payable records found in MOO Excel statement.' });
+      }
+    } else if (isMutualOmahaPDF(req.file.originalname)) {
       if (!pdfParse) {
         try { fs.unlinkSync(req.file.path); } catch(e) {}
         return res.status(500).json({ error: 'PDF parsing not available on server.' });
