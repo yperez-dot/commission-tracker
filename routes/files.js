@@ -1244,11 +1244,12 @@ router.get('/uploads', requireAuth, async (req, res) => {
       params = [req.user.id];
     } else if (agency) {
       const isBSI = agency.toLowerCase().includes('broker society');
+      const bsiCarriers = ['Mutual of Omaha','United of Omaha','Fidelity Life','Instabrain','F&G','Fidelity & Guaranty','American Amicable','Transamerica','Ethos','American Home Life','National Life Group'];
       const carrierClause = isBSI
-        ? `carrier && ARRAY['Mutual of Omaha','United of Omaha','Fidelity Life','Instabrain','F&G','American Amicable','Transamerica','National Life Group']`
-        : `NOT (carrier && ARRAY['Mutual of Omaha','United of Omaha','Fidelity Life','Instabrain','F&G','American Amicable','Transamerica','National Life Group'])`;
+        ? `carrier = ANY($1)`
+        : `carrier != ALL($1)`;
       query = `SELECT DISTINCT u.*, usr.name as uploaded_by_name FROM uploads u LEFT JOIN users usr ON u.uploaded_by = usr.id WHERE u.id IN (SELECT DISTINCT upload_id FROM commission_records WHERE ${carrierClause}) ORDER BY u.uploaded_at DESC`;
-      params = [];
+      params = [bsiCarriers];
     } else {
       query = `SELECT u.*, usr.name as uploaded_by_name FROM uploads u LEFT JOIN users usr ON u.uploaded_by = usr.id ORDER BY u.uploaded_at DESC`;
     }
