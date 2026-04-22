@@ -821,7 +821,9 @@ async function parseMutualOmahaPDF(filePath, filename) {
         console.log('[MOO DEBUG CABRERA 600-900]', JSON.stringify(chunk.slice(600, 900)));
         console.log('[MOO DEBUG CABRERA 900-1200]', JSON.stringify(chunk.slice(900, 1200)));
         console.log('[MOO DEBUG CABRERA HAS PAYABLE]', chunk.includes('PRODUCER COMMISSION PAYABLE'));
-        console.log('[MOO DEBUG CABRERA PAYABLE IDX]', chunk.indexOf('PRODUCER COMMISSION PAYABLE'));
+        const pidx = chunk.indexOf('PRODUCER COMMISSION PAYABLE');
+        console.log('[MOO DEBUG CABRERA PAYABLE IDX]', pidx);
+        if (pidx >= 0) console.log('[MOO DEBUG CABRERA PAYABLE CONTEXT]', JSON.stringify(chunk.slice(pidx, pidx + 100)));
       }
 
       // Sum ALL PRODUCER COMMISSION PAYABLE amounts in this producer chunk.
