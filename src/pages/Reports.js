@@ -88,15 +88,15 @@ function AgentDetailModal({ agent, year, records, onClose }) {
     return () => { document.body.style.overflow = prev; };
   }, []);
 
-  const BG = '#1E160E';
-  const BG2 = '#261C12';
-  const BG3 = '#2E2216';
-  const BORDER = 'rgba(201,169,110,0.12)';
-  const TEXT = '#EDE4D6';
-  const MUTED = 'rgba(237,228,214,0.4)';
-  const GOLD = '#C9A96E';
-  const GREEN = '#5BAD7F';
-  const RED = '#D96060';
+  const BG = '#FFFFFF';
+  const BG2 = '#F8F6F3';
+  const BG3 = '#F0EDE8';
+  const BORDER = 'rgba(0,0,0,0.08)';
+  const TEXT = '#1A1209';
+  const MUTED = '#8B7355';
+  const GOLD = '#8B6914';
+  const GREEN = '#2D7A4F';
+  const RED = '#C0392B';
 
   function exportModal() {
     const header = ['Period','Client','Carrier','Policy #','Type','Commission'];
@@ -145,7 +145,7 @@ function AgentDetailModal({ agent, year, records, onClose }) {
             </div>
           </div>
           <div style={{ display:'flex', alignItems:'center', gap:8 }}>
-            <button onClick={exportModal} style={{ background:`${GOLD}18`, border:`1px solid ${GOLD}44`, borderRadius:8, padding:'7px 14px', fontSize:11, cursor:'pointer', color:GOLD, fontWeight:600, display:'flex', alignItems:'center', gap:6 }}>
+            <button onClick={exportModal} style={{ background:'#F0EDE8', border:'1px solid #D4C5A9', borderRadius:8, padding:'7px 14px', fontSize:12, cursor:'pointer', color:GOLD, fontWeight:600, display:'flex', alignItems:'center', gap:6 }}>
               ↓ Export CSV
             </button>
             <button onClick={onClose} style={{ background:BG3, border:`1px solid ${BORDER}`, borderRadius:8, width:34, height:34, fontSize:16, cursor:'pointer', color:MUTED, display:'flex', alignItems:'center', justifyContent:'center', transition:'all 0.15s' }}
@@ -169,38 +169,38 @@ function AgentDetailModal({ agent, year, records, onClose }) {
           {agentRecs.length === 0 ? (
             <div style={{ padding:56, textAlign:'center', color:MUTED, fontSize:13 }}>No records for {year}</div>
           ) : (
-            <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
+            <table style={{ width:'100%', borderCollapse:'collapse', fontSize:14 }}>
               <thead style={{ position:'sticky', top:0, zIndex:2 }}>
                 <tr style={{ background:BG3, borderBottom:`1px solid ${BORDER}` }}>
-                  {[['Period',72],['Client',null],['Carrier',130],['Policy #',110],['Type',120],['Commission',110]].map(([h,w],i)=>(
-                    <th key={h} style={{ textAlign:h==='Commission'?'right':'left', padding:'10px 16px', fontWeight:500, color:MUTED, fontSize:10, textTransform:'uppercase', letterSpacing:'0.6px', width:w||undefined, whiteSpace:'nowrap' }}>{h}</th>
+                  {[['Period',80],['Client',null],['Carrier',140],['Policy #',120],['Type',130],['Commission',120]].map(([h,w],i)=>(
+                    <th key={h} style={{ textAlign:h==='Commission'?'right':'left', padding:'11px 18px', fontWeight:600, color:MUTED, fontSize:11, textTransform:'uppercase', letterSpacing:'0.6px', width:w||undefined, whiteSpace:'nowrap' }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {agentRecs.map((r,i)=>(
                   <tr key={i} style={{ borderBottom:`1px solid ${BORDER}`, background: i%2===0 ? BG : BG2, transition:'background 0.1s' }}
-                    onMouseEnter={e=>e.currentTarget.style.background=BG3}
+                    onMouseEnter={e=>e.currentTarget.style.background='#EEF4FF'}
                     onMouseLeave={e=>e.currentTarget.style.background=i%2===0?BG:BG2}>
-                    <td style={{ padding:'10px 16px', color:MUTED, fontSize:11, whiteSpace:'nowrap' }}>{periodLabel(r.payment_period)}</td>
-                    <td style={{ padding:'10px 16px', fontWeight:600, color:TEXT }}>{r.client_full_name}</td>
-                    <td style={{ padding:'10px 16px', color:MUTED, fontSize:11 }}>{r.carrier}</td>
-                    <td style={{ padding:'10px 16px', color:GOLD, fontSize:11, fontFamily:'ui-monospace, monospace' }}>{r.policy_number||'—'}</td>
-                    <td style={{ padding:'10px 16px' }}>
-                      <span style={{ fontSize:10, padding:'3px 8px', borderRadius:5, fontWeight:600,
-                        background: r.classification==='New Business'?`${GOLD}22`:r.classification==='Renewal'?`${GREEN}22`:`${RED}22`,
+                    <td style={{ padding:'11px 18px', color:MUTED, fontSize:13, whiteSpace:'nowrap' }}>{periodLabel(r.payment_period)}</td>
+                    <td style={{ padding:'11px 18px', fontWeight:600, color:TEXT, fontSize:14 }}>{r.client_full_name}</td>
+                    <td style={{ padding:'11px 18px', color:'#555', fontSize:13 }}>{r.carrier}</td>
+                    <td style={{ padding:'11px 18px', color:GOLD, fontSize:13, fontFamily:'ui-monospace, monospace', fontWeight:500 }}>{r.policy_number||'—'}</td>
+                    <td style={{ padding:'11px 18px' }}>
+                      <span style={{ fontSize:12, padding:'4px 10px', borderRadius:5, fontWeight:600,
+                        background: r.classification==='New Business'?'#FFF3D6':r.classification==='Renewal'?'#E8F5EE':'#FDECEA',
                         color: r.classification==='New Business'?GOLD:r.classification==='Renewal'?GREEN:RED,
-                        border: `1px solid ${r.classification==='New Business'?GOLD+'33':r.classification==='Renewal'?GREEN+'33':RED+'33'}`
+                        border: `1px solid ${r.classification==='New Business'?'#E8D5A0':r.classification==='Renewal'?'#A8D5B5':'#F5B8B0'}`
                       }}>{r.classification}</span>
                     </td>
-                    <td style={{ padding:'10px 16px', textAlign:'right', fontWeight:700, color:parseFloat(r.commission)<0?RED:GREEN, fontFamily:'ui-monospace, monospace', fontSize:13 }}>{fmt(r.commission)}</td>
+                    <td style={{ padding:'11px 18px', textAlign:'right', fontWeight:700, color:parseFloat(r.commission)<0?RED:GREEN, fontFamily:'ui-monospace, monospace', fontSize:15 }}>{fmt(r.commission)}</td>
                   </tr>
                 ))}
               </tbody>
               <tfoot>
                 <tr style={{ borderTop:`2px solid ${BORDER}`, background:BG3 }}>
-                  <td colSpan={5} style={{ padding:'12px 16px', fontWeight:500, fontSize:11, color:MUTED, textTransform:'uppercase', letterSpacing:'0.5px' }}>Total · {agentRecs.length} records</td>
-                  <td style={{ padding:'12px 16px', textAlign:'right', fontWeight:700, fontSize:15, color: total < 0 ? RED : GOLD, fontFamily:'ui-monospace, monospace' }}>{fmt(total)}</td>
+                  <td colSpan={5} style={{ padding:'12px 18px', fontWeight:600, fontSize:13, color:MUTED }}>Total · {agentRecs.length} records</td>
+                  <td style={{ padding:'12px 18px', textAlign:'right', fontWeight:700, fontSize:16, color: total < 0 ? RED : GREEN, fontFamily:'ui-monospace, monospace' }}>{fmt(total)}</td>
                 </tr>
               </tfoot>
             </table>
