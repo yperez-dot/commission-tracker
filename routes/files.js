@@ -173,8 +173,8 @@ function parseMOOExcelRows(wb, filename) {
       const commAmt = parseFloat(row['Comm Amt']) || 0;
       if (commAmt === 0) continue; // skip held/unpaid records
 
-      const prodNum = String(row['Prod Num'] || '').trim();
-      const agentName = MOO_PROD_NAMES[prodNum] || `Producer ${prodNum}`;
+      const prodNum = String(row['Prod Num'] || '').trim().replace(/^0+/, '');
+      const agentName = MOO_PROD_NAMES[prodNum] || MOO_PROD_NAMES[String(row['Prod Num']).trim()] || `Producer ${String(row['Prod Num']).trim()}`;
       const clientRaw = String(row['Insureds Name'] || '').trim();
       // Convert "LAST FIRST" all-caps → "First Last"
       const clientName = clientRaw === clientRaw.toUpperCase() && clientRaw.length > 2
