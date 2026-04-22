@@ -83,13 +83,15 @@ export default function App() {
 
   if (!user) return <Login onLogin={handleLogin} />;
 
+  const isBSI = agencyView.toLowerCase().includes('broker society');
+
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: '◼' },
     { id: 'upload', label: 'Upload', icon: '↑' },
     { id: 'alldata', label: 'All Data', icon: '≡' },
     { id: 'bob', label: 'Book of Business', icon: '◉' },
     { id: 'renewals', label: 'Missing Renewals', icon: '!' },
-    { id: 'reconciliation', label: 'Reconciliation', icon: '⇄' },
+    ...(!isBSI ? [{ id: 'reconciliation', label: 'Reconciliation', icon: '⇄' }] : []),
     { id: 'payroll', label: 'Payroll', icon: '$' },
     ...(user.role === 'admin' ? [
       { id: 'agents', label: 'Agents', icon: '●' },
