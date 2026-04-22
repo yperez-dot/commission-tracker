@@ -28,6 +28,17 @@ const upload = multer({
 });
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
+// ─── BSI split rules ──────────────────────────────────────────────────────────
+const NO_SPLIT_AGENTS = ['patsy pernia', 'josseline silber', 'jessica sifontes', 'eduardo pernia'];
+const ACA_CARRIERS_LIST = ['oscar health', 'oscar', 'cigna', 'florida blue', 'ambetter'];
+function shouldSplit(agentName, carrier) {
+  const agent = String(agentName || '').toLowerCase().trim();
+  const car = String(carrier || '').toLowerCase().trim();
+  if (NO_SPLIT_AGENTS.some(a => agent.includes(a))) return false;
+  if (ACA_CARRIERS_LIST.some(c => car.includes(c))) return false;
+  return true;
+}
+
 // ─── Plan type derivation ────────────────────────────────────────────────────
 
 function derivePlanType(carrier, rawPlanType, policyNumber, lob) {
@@ -105,6 +116,10 @@ function isUHCFile(filename) {
 function isBSIFile(filename) {
   const f = filename.toLowerCase().replace(/\s+/g, '_');
   return f.includes('statement-health_experts') || f.includes('statement_health_experts');
+}
+function isDoctorsFile(filename) {
+  const f = filename.toLowerCase().replace(/[\s()]/g, '_');
+  return (f.includes('doctor') || f.startsWith('drs')) && !f.includes('solis');
 }
 function isSolisFile(filename) {
   const f = filename.toLowerCase().replace(/[\s()]/g, '_');
@@ -530,6 +545,7 @@ function parseNHPRows(wb) {
     const recordType = nhpType.toLowerCase().includes('commission') ? 'Agent Commission' : 'Agency Override';
     const planType = derivePlanType(carrier, '', policyNumber, lob);
 
+    const nhpNet = shouldSplit(agent || '', carrier) ? Math.round(commission * 0.5 * 100) / 100 : commission;
     records.push({
       agent: agent || 'Unknown',
       carrier,
@@ -537,7 +553,7 @@ function parseNHPRows(wb) {
       client,
       effectiveDate,
       premium: 0,
-      commission,
+      commission: nhpNet,
       classification: commission < 0 ? 'Chargeback' : recordType,
       period: period || 'Unknown',
       policyNumber,
@@ -653,6 +669,7 @@ function parseSolisRows(wb, filename) {
       }
     }
 
+    const solisNet = shouldSplit(agent, 'Solis') ? Math.round(commission * 0.5 * 100) / 100 : commission;
     records.push({
       agent: agent || 'The Health Experts Insurance',
       carrier: 'Solis',
@@ -660,7 +677,7 @@ function parseSolisRows(wb, filename) {
       client,
       effectiveDate,
       premium: 0,
-      commission,
+      commission: solisNet,
       classification,
       period,
       policyNumber,
@@ -1048,6 +1065,8 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       } else if (isHumanaFile(req.file.originalname)) {
         const rawBuffer = fs.readFileSync(req.file.path);
         records = parseHumanaRows(wb, req.file.originalname, rawBuffer);
+      } else if (isDoctorsFile(req.file.originalname)) {
+        records = parseSolisRows(wb, req.file.originalname);
       } else if (isSolisFile(req.file.originalname)) {
         records = parseSolisRows(wb, req.file.originalname);
       } else if (isAPLFile(req.file.originalname)) {
@@ -1165,5 +1184,58 @@ function heuristicMapping(headers) {
   };
 }
 
+
+// ─── Retroactive BSI split migration ─────────────────────────────────────────
+router.post('/apply-bsi-split', requireAuth, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
+  try {
+    const pool = getPool();
+    await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS bsi_split_applied BOOLEAN DEFAULT FALSE`).catch(() => {});
+
+    const records = await pool.query(`
+      SELECT cr.id, cr.agent_name, cr.carrier, cr.commission, u.original_name
+      FROM commission_records cr
+      JOIN uploads u ON cr.upload_id = u.id
+      WHERE (
+        u.original_name ILIKE '%solis%' OR
+        u.original_name ILIKE '%commissions_ledger%' OR
+        u.original_name ILIKE '%doctor%' OR
+        u.original_name ILIKE '%the_health_experts_insurance_statement%' OR
+        u.original_name ILIKE '%yahoska%katy%' OR
+        u.original_name ILIKE '%nhp%'
+      )
+      AND (bsi_split_applied IS NULL OR bsi_split_applied = FALSE)
+      AND commission > 0
+    `);
+
+    const NO_SPLIT = ['patsy pernia', 'josseline silber', 'jessica sifontes', 'eduardo pernia'];
+    const ACA = ['oscar health', 'oscar', 'cigna', 'florida blue', 'ambetter'];
+    let updated = 0, skipped = 0;
+
+    for (const r of records.rows) {
+      const agent = String(r.agent_name || '').toLowerCase();
+      const carrier = String(r.carrier || '').toLowerCase();
+      const isNoSplit = NO_SPLIT.some(a => agent.includes(a));
+      const isACA = ACA.some(c => carrier.includes(c));
+
+      if (!isNoSplit && !isACA) {
+        const net = Math.round(r.commission * 0.5 * 100) / 100;
+        await pool.query(
+          `UPDATE commission_records SET commission = $1, bsi_split_applied = TRUE WHERE id = $2`,
+          [net, r.id]
+        );
+        updated++;
+      } else {
+        await pool.query(`UPDATE commission_records SET bsi_split_applied = TRUE WHERE id = $1`, [r.id]);
+        skipped++;
+      }
+    }
+
+    res.json({ success: true, updated, skipped, message: `Applied 50% BSI split to ${updated} records. Skipped ${skipped} (ACA or no-split agents).` });
+  } catch (err) {
+    console.error('BSI split migration error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 module.exports = router;
