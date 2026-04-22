@@ -9,6 +9,7 @@ import Agents from './pages/Agents';
 import Reconciliation from './pages/Reconciliation';
 import BookOfBusiness from './pages/BookOfBusiness';
 import Payroll from './pages/Payroll';
+import Reports from './pages/Reports';
 import AdminUsers from './pages/AdminUsers';
 import './App.css';
 
@@ -93,6 +94,7 @@ export default function App() {
     { id: 'renewals', label: 'Missing Renewals', icon: '!' },
     ...(!isBSI ? [{ id: 'reconciliation', label: 'Reconciliation', icon: '⇄' }] : []),
     { id: 'payroll', label: 'Payroll', icon: '$' },
+    { id: 'reports', label: 'Reports', icon: '📊' },
     ...(user.role === 'admin' ? [
       { id: 'agents', label: 'Agents', icon: '●' },
       { id: 'users', label: 'User Accounts', icon: '👤' },
@@ -113,6 +115,7 @@ export default function App() {
     renewals: <MissingRenewals key={agencyView} user={effectiveUser} />,
     reconciliation: <Reconciliation key={agencyView} user={effectiveUser} />,
     payroll: <Payroll key={agencyView} user={effectiveUser} />,
+    reports: <Reports key={agencyView} user={effectiveUser} />,
     agents: <Agents key={agencyView} user={effectiveUser} />,
     users: <AdminUsers key={agencyView} user={effectiveUser} />
   };
