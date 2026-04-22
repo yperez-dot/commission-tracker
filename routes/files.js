@@ -308,7 +308,39 @@ function formatDate(value) {
   return String(value);
 }
 
-// ─── Carrier normalizers ─────────────────────────────────────────────────────
+// ─── Period normalization ─────────────────────────────────────────────────────
+// Converts any period value to YYYYMM format, handles Excel serial dates
+function normalizePeriod(value) {
+  if (!value && value !== 0) return 'Unknown';
+  const s = String(value).trim();
+
+  // Already YYYYMM
+  if (s.match(/^\d{6}$/) && parseInt(s.slice(0,4)) > 1900) return s;
+
+  // Already YYYYMMDD → take YYYYMM
+  if (s.match(/^\d{8}$/) && parseInt(s.slice(0,4)) > 1900) return s.slice(0,6);
+
+  // MM/DD/YYYY or M/D/YYYY
+  const mdy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (mdy) return mdy[3] + mdy[1].padStart(2,'0');
+
+  // YYYY-MM-DD
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return iso[1] + iso[2];
+
+  // Excel serial number (e.g. 46127 or 46127.25)
+  const num = parseFloat(s);
+  if (!isNaN(num) && num > 40000 && num < 60000) {
+    const date = new Date((num - 25569) * 86400 * 1000);
+    if (!isNaN(date.getTime()) && date.getUTCFullYear() > 1990 && date.getUTCFullYear() < 2100) {
+      return String(date.getUTCFullYear()) + String(date.getUTCMonth()+1).padStart(2,'0');
+    }
+  }
+
+  return 'Unknown';
+}
+
+
 
 function normalizeBSICarrier(company) {
   const c = String(company || '').toLowerCase();
@@ -614,33 +646,7 @@ function parseNHPRows(wb) {
     const policyNumber = String(row['Policy Number'] || '').trim();
     const effectiveDate = formatDate(row['Policy Effective Date']);
     const rawPeriod = row['Commission Month'];
-    let period = '';
-    if (rawPeriod instanceof Date || (typeof rawPeriod === 'object' && rawPeriod !== null)) {
-      const dt = new Date(rawPeriod);
-      if (!isNaN(dt)) period = String(dt.getUTCFullYear()) + String(dt.getUTCMonth()+1).padStart(2,'0');
-    } else if (typeof rawPeriod === 'number') {
-      const s = String(rawPeriod);
-      if (s.match(/^\d{8}$/) && parseInt(s.slice(0,4)) > 1900) {
-        period = s.slice(0,6);
-      } else if (s.match(/^\d{6}$/) && parseInt(s.slice(0,4)) > 1900) {
-        period = s;
-      } else {
-        const dt = new Date((rawPeriod - 25569) * 86400 * 1000);
-        if (!isNaN(dt) && dt.getUTCFullYear() < 2100) {
-          period = String(dt.getUTCFullYear()) + String(dt.getUTCMonth()+1).padStart(2,'0');
-        }
-      }
-    } else if (typeof rawPeriod === 'string') {
-      const s = rawPeriod.trim();
-      if (s.match(/^\d{6}$/)) period = s;
-      else if (s.match(/^\d{8}$/)) period = s.slice(0,6);
-      else if (s.match(/^\d{4}-\d{2}-\d{2}/)) period = s.replace(/-/g,'').slice(0,6);
-      else {
-        const months = {jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12'};
-        const m = s.toLowerCase().match(/^([a-z]{3})/);
-        if (m && months[m[1]]) period = new Date().getFullYear() + months[m[1]];
-      }
-    }
+    const period = normalizePeriod(rawPeriod);
     const nhpType = String(row['Type'] || '').trim();
     const lob = String(row['LOB'] || '').trim();
     const commission = nhpType.toLowerCase().includes('commission')
@@ -696,11 +702,7 @@ function parseAPLRows(wb) {
       : carrier.toLowerCase().includes('cigna') ? 'Cigna'
       : carrier;
 
-    let period = '';
-    if (paymentDate) {
-      const parts = paymentDate.split('/');
-      if (parts.length === 3) period = parts[2] + parts[0].padStart(2,'0');
-    }
+    const period = normalizePeriod(row['Payment Date'] || paymentDate);
 
     const classification = commission < 0 ? 'Chargeback'
       : transactionType.toLowerCase().includes('override') ? 'Agency Override'
@@ -717,7 +719,7 @@ function parseAPLRows(wb) {
       premium: 0,
       commission,
       classification,
-      period: period || paymentDate,
+      period: period,
       policyNumber,
       payee: payee || 'APL',
       raw: row
@@ -1299,6 +1301,28 @@ function heuristicMapping(headers) {
   };
 }
 
+
+// ─── Fix bad period values in DB ─────────────────────────────────────────────
+router.post('/fix-periods', requireAuth, async (req, res) => {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
+  try {
+    const pool = getPool();
+    const records = await pool.query(
+      `SELECT id, payment_period FROM commission_records WHERE payment_period NOT SIMILAR TO '[0-9]{6}' OR payment_period IS NULL`
+    );
+    let fixed = 0;
+    for (const r of records.rows) {
+      const cleaned = normalizePeriod(r.payment_period);
+      if (cleaned !== r.payment_period) {
+        await pool.query('UPDATE commission_records SET payment_period = $1 WHERE id = $2', [cleaned, r.id]);
+        fixed++;
+      }
+    }
+    res.json({ success: true, fixed, total: records.rows.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ─── Retroactive BSI split migration ─────────────────────────────────────────
 router.post('/apply-bsi-split', requireAuth, async (req, res) => {
