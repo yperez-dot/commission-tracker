@@ -534,90 +534,6 @@ function YearOverYear({ records }) {
     </div>
   );
 }
-
-  const byYearMonth = {};
-  for (const r of records) {
-    const p = String(r.payment_period || '');
-    if (!p.match(/^\d{6}$/)) continue;
-    const year = p.slice(0, 4);
-    const month = parseInt(p.slice(4, 6)) - 1;
-    if (!byYearMonth[year]) byYearMonth[year] = Array(12).fill(0);
-    byYearMonth[year][month] += parseFloat(r.commission) || 0;
-  }
-
-  const colors = ['#C9A96E', '#4A7C59', '#5B8DB8', '#C0392B'];
-
-  function exportCSV() {
-    const header = ['Month', ...years];
-    const rows = MONTHS.map((m, i) => [m, ...years.map(y => (byYearMonth[y]?.[i] || 0).toFixed(2))]);
-    const totals = ['Total', ...years.map(y => (byYearMonth[y] || []).reduce((s, v) => s + v, 0).toFixed(2))];
-    downloadCSV('Year_Over_Year.csv', [header, ...rows, totals]);
-  }
-
-  return (
-    <div>
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:14 }}>
-        <div style={{ display:'flex', gap:16 }}>
-          {years.map((y, i) => (
-            <div key={y} style={{ display:'flex', alignItems:'center', gap:6, fontSize:12 }}>
-              <div style={{ width:10, height:10, background:colors[i % colors.length], borderRadius:2 }} />
-              <span style={{ color:'var(--text-muted)' }}>{y}</span>
-            </div>
-          ))}
-        </div>
-        <button onClick={exportCSV} style={{ background:'none', border:'0.5px solid var(--border)', borderRadius:6, padding:'5px 14px', fontSize:12, cursor:'pointer', color:'var(--text)' }}>↓ Export CSV</button>
-      </div>
-      <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
-        <thead>
-          <tr style={{ borderBottom:'1px solid var(--border)' }}>
-            <th style={{ textAlign:'left', padding:'7px 10px', fontWeight:500, color:'var(--text-muted)', fontSize:11 }}>Month</th>
-            {years.map((y, i) => (
-              <th key={y} style={{ textAlign:'right', padding:'7px 10px', fontWeight:500, color:colors[i % colors.length], fontSize:11 }}>{y}</th>
-            ))}
-            {years.length > 1 && <th style={{ textAlign:'right', padding:'7px 10px', fontWeight:500, color:'var(--text-muted)', fontSize:11 }}>Change</th>}
-          </tr>
-        </thead>
-        <tbody>
-          {MONTHS.map((m, i) => {
-            const vals = years.map(y => byYearMonth[y]?.[i] || 0);
-            const change = years.length >= 2 ? vals[vals.length - 1] - vals[vals.length - 2] : null;
-            return (
-              <tr key={m} style={{ borderBottom:'0.5px solid var(--border)' }}>
-                <td style={{ padding:'7px 10px', fontWeight:500 }}>{m}</td>
-                {vals.map((v, j) => (
-                  <td key={j} style={{ padding:'7px 10px', textAlign:'right', color: v < 0 ? 'var(--red)' : v === 0 ? 'var(--text-muted)' : 'var(--text)' }}>
-                    {v !== 0 ? fmt(v) : '—'}
-                  </td>
-                ))}
-                {change !== null && (
-                  <td style={{ padding:'7px 10px', textAlign:'right', fontWeight:500, color: change >= 0 ? 'var(--green)' : 'var(--red)', fontSize:11 }}>
-                    {change >= 0 ? '+' : ''}{fmt(change)}
-                  </td>
-                )}
-              </tr>
-            );
-          })}
-        </tbody>
-        <tfoot>
-          <tr style={{ borderTop:'1px solid var(--border)', background:'var(--bg-subtle)' }}>
-            <td style={{ padding:'8px 10px', fontWeight:600 }}>Total</td>
-            {years.map((y, i) => {
-              const total = (byYearMonth[y] || []).reduce((s, v) => s + v, 0);
-              return <td key={y} style={{ padding:'8px 10px', textAlign:'right', fontWeight:700, color: total < 0 ? 'var(--red)' : 'var(--green)' }}>{fmt(total)}</td>;
-            })}
-            {years.length > 1 && (() => {
-              const last = (byYearMonth[years[years.length-1]] || []).reduce((s,v)=>s+v,0);
-              const prev = (byYearMonth[years[years.length-2]] || []).reduce((s,v)=>s+v,0);
-              const diff = last - prev;
-              return <td style={{ padding:'8px 10px', textAlign:'right', fontWeight:700, color: diff >= 0 ? 'var(--green)' : 'var(--red)' }}>{diff >= 0?'+':''}{fmt(diff)}</td>;
-            })()}
-          </tr>
-        </tfoot>
-      </table>
-    </div>
-  );
-}
-
 // ─── Report 4: Chargeback Rate by Agent ─────────────────────────────────────
 function ChargebackReport({ records }) {
   const [selectedAgent, setSelectedAgent] = React.useState(null);
@@ -716,8 +632,6 @@ function ChargebackReport({ records }) {
   );
 }
 
-  const data = agents.map(agent => {
-// ─── Main Reports page ───────────────────────────────────────────────────────
 export default function Reports({ user }) {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
