@@ -813,34 +813,21 @@ async function parseMutualOmahaPDF(filePath, filename) {
         ? nameMatch[1].trim().replace(/\b\w/g, c => c.toUpperCase())
         : 'Unknown';
 
-      // DEBUG: log Joan Cabrera's chunk
-      if (agentName.includes('Cabrera') || agentName.includes('CABRERA')) {
-        console.log('[MOO DEBUG CABRERA FULL LENGTH]', chunk.length);
-        console.log('[MOO DEBUG CABRERA 0-300]', JSON.stringify(chunk.slice(0, 300)));
-        console.log('[MOO DEBUG CABRERA 300-600]', JSON.stringify(chunk.slice(300, 600)));
-        console.log('[MOO DEBUG CABRERA 600-900]', JSON.stringify(chunk.slice(600, 900)));
-        console.log('[MOO DEBUG CABRERA 900-1200]', JSON.stringify(chunk.slice(900, 1200)));
-        console.log('[MOO DEBUG CABRERA HAS PAYABLE]', chunk.includes('PRODUCER COMMISSION PAYABLE'));
-        const pidx = chunk.indexOf('PRODUCER COMMISSION PAYABLE');
-        console.log('[MOO DEBUG CABRERA PAYABLE IDX]', pidx);
-        if (pidx >= 0) console.log('[MOO DEBUG CABRERA PAYABLE CONTEXT]', JSON.stringify(chunk.slice(pidx, pidx + 100)));
-      }
-
       // Sum ALL PRODUCER COMMISSION PAYABLE amounts in this producer chunk.
       // A producer can have separate Mutual + United sections each with their own payable line.
       // Only skip if the grand total across ALL sections is zero.
       if (chunk.includes('PRODUCER COMMISSION PAYABLE')) {
-        const payRegex = /PRODUCER COMMISSION PAYABLE\s+\$(([\d,]+)\.\d{2})/g;
+        const payRegex = /PRODUCER COMMISSION PAYABLE[\s\S]{0,60}\$([\d,]+\.\d{2})/g;
         const payMatches = Array.from(chunk.matchAll(payRegex));
         if (payMatches.length > 0) {
-          const totalPayable = payMatches.reduce((sum, m) => sum + parseFloat(m[2].replace(/,/g, '')), 0);
+          const totalPayable = payMatches.reduce((sum, m) => sum + parseFloat(m[1].replace(/,/g, '')), 0);
           if (totalPayable === 0) {
             console.log('[MOO] skip $0 total:', agentName);
             continue;
           }
         } else {
           // No numeric match — check if there is ANY non-zero payable
-          const hasNonZero = /PRODUCER COMMISSION PAYABLE\s+\$[1-9]/.test(chunk);
+          const hasNonZero = /PRODUCER COMMISSION PAYABLE[\s\S]{0,60}\$[1-9]/.test(chunk);
           if (!hasNonZero) {
             console.log('[MOO] skip all $.00:', agentName);
             continue;
