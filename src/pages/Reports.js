@@ -717,65 +717,6 @@ function ChargebackReport({ records }) {
 }
 
   const data = agents.map(agent => {
-    const recs = records.filter(r => r.agent_name === agent);
-    const gross = recs.filter(r => parseFloat(r.commission) > 0).reduce((s, r) => s + (parseFloat(r.commission) || 0), 0);
-    const cb = recs.filter(r => parseFloat(r.commission) < 0).reduce((s, r) => s + Math.abs(parseFloat(r.commission) || 0), 0);
-    const cbCount = recs.filter(r => parseFloat(r.commission) < 0).length;
-    const cbRate = gross > 0 ? (cb / gross) * 100 : 0;
-    return { agent, gross, cb, cbCount, cbRate, net: gross - cb, count: recs.length };
-  }).filter(d => d.count > 0).sort((a, b) => b.cbRate - a.cbRate);
-
-  const maxCbRate = Math.max(...data.map(d => d.cbRate), 1);
-
-  function exportCSV() {
-    const header = ['Agent', 'Gross Commission', 'Chargebacks', 'CB Count', 'CB Rate %', 'Net'];
-    const rows = data.map(d => [d.agent, d.gross.toFixed(2), d.cb.toFixed(2), d.cbCount, d.cbRate.toFixed(1)+'%', d.net.toFixed(2)]);
-    downloadCSV('Chargeback_Report.csv', [header, ...rows]);
-  }
-
-  return (
-    <div>
-      <div style={{ display:'flex', justifyContent:'flex-end', marginBottom:10 }}>
-        <button onClick={exportCSV} style={{ background:'none', border:'0.5px solid var(--border)', borderRadius:6, padding:'5px 14px', fontSize:12, cursor:'pointer', color:'var(--text)' }}>↓ Export CSV</button>
-      </div>
-      <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
-        <thead>
-          <tr style={{ borderBottom:'1px solid var(--border)' }}>
-            {['#','Agent','Gross','Chargebacks','CB Rate','Net',''].map((h,i) => (
-              <th key={i} style={{ textAlign: i<=1?'left':'right', padding:'7px 10px', fontWeight:500, color:'var(--text-muted)', fontSize:11 }}>{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {data.map((d, i) => (
-            <tr key={d.agent} style={{ borderBottom:'0.5px solid var(--border)', background: d.cbRate > 20 ? 'rgba(192,57,43,0.04)' : 'transparent' }}>
-              <td style={{ padding:'7px 10px', color:'var(--text-muted)', fontSize:11 }}>{i+1}</td>
-              <td style={{ padding:'7px 10px', fontWeight:500 }}>{d.agent}</td>
-              <td style={{ padding:'7px 10px', textAlign:'right', color:'var(--green)' }}>{fmt(d.gross)}</td>
-              <td style={{ padding:'7px 10px', textAlign:'right', color: d.cb > 0 ? 'var(--red)' : 'var(--text-muted)' }}>
-                {d.cb > 0 ? `-${fmt(d.cb)}` : '—'}
-                {d.cbCount > 0 && <span style={{ fontSize:10, color:'var(--text-muted)', marginLeft:4 }}>({d.cbCount}x)</span>}
-              </td>
-              <td style={{ padding:'7px 10px', textAlign:'right' }}>
-                <div style={{ display:'flex', alignItems:'center', justifyContent:'flex-end', gap:8 }}>
-                  <span style={{ fontWeight:600, color: d.cbRate > 20 ? 'var(--red)' : d.cbRate > 10 ? '#E67E22' : 'var(--green)', fontSize:12 }}>{pct(d.cbRate)}</span>
-                  <div style={{ width:60, height:5, background:'var(--border)', borderRadius:3, overflow:'hidden' }}>
-                    <div style={{ width:`${(d.cbRate/maxCbRate)*100}%`, height:'100%', background: d.cbRate > 20 ? 'var(--red)' : d.cbRate > 10 ? '#E67E22' : 'var(--green)', borderRadius:3 }} />
-                  </div>
-                </div>
-              </td>
-              <td style={{ padding:'7px 10px', textAlign:'right', fontWeight:600, color: d.net >= 0 ? 'var(--text)' : 'var(--red)' }}>{fmt(d.net)}</td>
-              <td style={{ padding:'7px 10px' }}>
-                {d.cbRate > 20 && <span style={{ fontSize:10, background:'rgba(192,57,43,0.12)', color:'var(--red)', borderRadius:4, padding:'2px 6px', fontWeight:500 }}>⚠ High</span>}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
 // ─── Main Reports page ───────────────────────────────────────────────────────
 export default function Reports({ user }) {
   const [records, setRecords] = useState([]);
