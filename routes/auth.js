@@ -35,7 +35,6 @@ router.get('/me', requireAuth, (req, res) => {
 router.get('/users', requireAuth, requireAdmin, async (req, res) => {
   try {
     const pool = getPool();
-    // Add agency column if it doesn't exist yet
     await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS agency TEXT DEFAULT ''`).catch(() => {});
     const result = await pool.query(
       `SELECT id, name, email, role, agency, created_at FROM users ORDER BY created_at DESC`
@@ -86,10 +85,46 @@ router.patch('/users/:id/password', requireAuth, requireAdmin, async (req, res) 
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ─── Legacy endpoints (keep for backwards compat) ────────────────────────────
+// ─── BSI carrier list ─────────────────────────────────────────────────────────
+const BSI_CARRIERS = [
+  'Mutual of Omaha','United of Omaha','Fidelity Life','Instabrain',
+  'F&G','Fidelity & Guaranty','American Amicable','Transamerica',
+  'Ethos','American Home Life','National Life Group'
+];
+
+// ─── Agents list — filtered by agency when dropdown is set ───────────────────
 router.get('/agents', requireAuth, requireAdmin, async (req, res) => {
   try {
     const pool = getPool();
+
+    // Get agency from header (same as other routes)
+    const override = req.headers['x-agency-override'];
+    const agency = override !== undefined ? (override || null) : (req.user.agency || null);
+
+    if (agency) {
+      // Return agents who have commission records for this agency's carriers
+      const isBSI = agency.toLowerCase().includes('broker society');
+      const carrierList = BSI_CARRIERS.map((_, i) => `$${i + 1}`).join(',');
+      const query = isBSI
+        ? `SELECT DISTINCT u.id, u.name, u.email, u.role, u.created_at
+           FROM users u
+           WHERE u.name IN (
+             SELECT DISTINCT agent_name FROM commission_records
+             WHERE carrier = ANY($1)
+           ) OR u.role = 'admin'
+           ORDER BY u.name`
+        : `SELECT DISTINCT u.id, u.name, u.email, u.role, u.created_at
+           FROM users u
+           WHERE u.name IN (
+             SELECT DISTINCT agent_name FROM commission_records
+             WHERE carrier != ALL($1)
+           ) OR u.role = 'admin'
+           ORDER BY u.name`;
+      const result = await pool.query(query, [BSI_CARRIERS]);
+      return res.json(result.rows);
+    }
+
+    // No agency filter — return all
     const result = await pool.query('SELECT id, name, email, role, created_at FROM users ORDER BY name');
     res.json(result.rows);
   } catch (err) { res.status(500).json({ error: err.message }); }
