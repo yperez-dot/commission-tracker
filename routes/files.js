@@ -1307,18 +1307,37 @@ router.post('/fix-periods', requireAuth, async (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
   try {
     const pool = getPool();
+    // Get ALL records with non-YYYYMM periods including empty, null, 0, epoch-based
     const records = await pool.query(
-      `SELECT id, payment_period FROM commission_records WHERE payment_period NOT SIMILAR TO '[0-9]{6}' OR payment_period IS NULL`
+      `SELECT id, payment_period, effective_date, created_at 
+       FROM commission_records 
+       WHERE payment_period IS NULL 
+          OR payment_period = '' 
+          OR payment_period = '0'
+          OR payment_period = 'Unknown'
+          OR NOT (payment_period ~ '^[0-9]{6}$')`
     );
-    let fixed = 0;
+    let fixed = 0, skipped = 0;
     for (const r of records.rows) {
-      const cleaned = normalizePeriod(r.payment_period);
-      if (cleaned !== r.payment_period) {
+      let cleaned = normalizePeriod(r.payment_period);
+      // If still unknown, try to derive from effective_date or created_at
+      if (cleaned === 'Unknown' || cleaned === '197001') {
+        if (r.effective_date && r.effective_date.match(/\d{2}\/\d{2}\/\d{4}/)) {
+          const parts = r.effective_date.split('/');
+          cleaned = parts[2] + parts[0].padStart(2,'0');
+        } else if (r.created_at) {
+          const d = new Date(r.created_at);
+          cleaned = String(d.getFullYear()) + String(d.getMonth()+1).padStart(2,'0');
+        }
+      }
+      if (cleaned && cleaned !== 'Unknown' && cleaned !== r.payment_period) {
         await pool.query('UPDATE commission_records SET payment_period = $1 WHERE id = $2', [cleaned, r.id]);
         fixed++;
+      } else {
+        skipped++;
       }
     }
-    res.json({ success: true, fixed, total: records.rows.length });
+    res.json({ success: true, fixed, skipped, total: records.rows.length, message: `Fixed ${fixed} bad period records.` });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
