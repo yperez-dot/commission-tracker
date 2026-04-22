@@ -129,7 +129,7 @@ function AgentDetailModal({ agent, year, records, onClose }) {
   );
 }
 function MonthlySummary({ records }) {
-  const allYears = [...new Set(records.map(r => String(r.payment_period || '').slice(0,4)).filter(y => y.match(/^\d{4}$/)))].sort().reverse();
+  const allYears = [...new Set(records.map(r => String(r.payment_period || '').slice(0,4)).filter(y => y.match(/^\d{4}$/) && parseInt(y) >= 2020))].sort().reverse();
   const [selectedYear, setSelectedYear] = React.useState(allYears[0] || '');
   const [agentSearch, setAgentSearch] = React.useState('');
   const [selectedAgent, setSelectedAgent] = React.useState(null);
@@ -212,7 +212,7 @@ function MonthlySummary({ records }) {
             {agentTotals.map(({ agent, total }) => (
               <tr key={agent} style={{ borderBottom:'0.5px solid var(--border)' }}>
                 <td style={{ padding:'8px 10px', position:'sticky', left:0, background:'var(--card-bg)' }}>
-                  <button onClick={() => setSelectedAgent(agent)} style={{ background:'none', border:'none', cursor:'pointer', fontWeight:500, color:'var(--accent-dark)', fontSize:12, textAlign:'left', padding:0, textDecoration:'underline', textDecorationStyle:'dotted' }}>
+                  <button onClick={() => setSelectedAgent(agent)} style={{ background:'none', border:'none', cursor:'pointer', fontWeight:500, color:'var(--accent-dark)', fontSize:12, textAlign:'left', padding:0 }}>
                     {agent}
                   </button>
                 </td>
@@ -321,7 +321,7 @@ function NBvRenewals({ records }) {
 
 // ─── Report 3: Year-over-Year ────────────────────────────────────────────────
 function YearOverYear({ records }) {
-  const years = [...new Set(records.map(r => String(r.payment_period || '').slice(0, 4)))].filter(y => y.match(/^\d{4}$/)).sort();
+  const years = [...new Set(records.map(r => String(r.payment_period || '').slice(0, 4)))].filter(y => y.match(/^\d{4}$/) && parseInt(y) >= 2020).sort();
 
   const byYearMonth = {};
   for (const r of records) {
@@ -489,8 +489,8 @@ export default function Reports({ user }) {
     load();
   }, [user.agency]);
 
-  const years = [...new Set(records.map(r => String(r.payment_period || '').slice(0,4)).filter(y => y.match(/^\d{4}$/)))].sort().reverse();
-  const filtered = yearFilter === 'all' ? records : records.filter(r => String(r.payment_period || '').startsWith(yearFilter));
+  const years = [...new Set(records.map(r => String(r.payment_period || '').slice(0,4)).filter(y => y.match(/^\d{4}$/) && parseInt(y) >= 2020))].sort().reverse();
+  const filtered = yearFilter === 'all' ? records.filter(r => String(r.payment_period||'').match(/^\d{6}$/) && parseInt(String(r.payment_period).slice(0,4)) >= 2020) : records.filter(r => String(r.payment_period || '').startsWith(yearFilter));
 
   const reports = [
     { id: 'monthly', label: 'Monthly Summary' },
