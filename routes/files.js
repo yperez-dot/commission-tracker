@@ -659,7 +659,9 @@ function parseNHPRows(wb) {
     const recordType = nhpType.toLowerCase().includes('commission') ? 'Agent Commission' : 'Agency Override';
     const planType = derivePlanType(carrier, '', policyNumber, lob);
 
-    const nhpNet = shouldSplit(agent || '', carrier) ? Math.round(commission * 0.5 * 100) / 100 : commission;
+    const nhpNet = (recordType === 'Agency Override' && shouldSplit(agent || '', carrier))
+      ? Math.round(commission * 0.5 * 100) / 100
+      : commission;
     records.push({
       agent: agent || 'Unknown',
       carrier,
@@ -759,18 +761,14 @@ function parseSolisRows(wb, filename) {
 
     if (!client || commission === 0) continue;
 
-    const effRaw = row['Commission Eff. Date'];
-    const effYearCheck = effRaw ? new Date(effRaw).getFullYear() : null;
-    const currentYear = new Date().getFullYear();
-    const isNewEnrollment = effYearCheck && effYearCheck >= currentYear;
-
     const classification = commission < 0 ? 'Chargeback'
       : paymentType.includes('chargeback') ? 'Chargeback'
       : paymentType.includes('initial') ? 'New Business'
-      : isNewEnrollment ? 'New Business'
       : paymentType.includes('renewal') ? 'Renewal'
+      : paymentType.includes('new') ? 'New Business'
       : 'Agency Override';
 
+    const effRaw = row['Commission Eff. Date'];
     let period = '';
     if (effRaw) {
       const d = new Date(effRaw);
@@ -782,7 +780,6 @@ function parseSolisRows(wb, filename) {
     const isDoctor = isDoctorsFile(filename);
     const carrierName = isDoctor ? 'Doctors' : 'Solis';
     const planTypeName = isDoctor ? 'Doctors Med Adv' : 'Solis Med Adv';
-    const solisNet = shouldSplit(agent, carrierName) ? Math.round(commission * 0.5 * 100) / 100 : commission;
     records.push({
       agent: agent || 'The Health Experts Insurance',
       carrier: carrierName,
@@ -790,7 +787,7 @@ function parseSolisRows(wb, filename) {
       client,
       effectiveDate,
       premium: 0,
-      commission: solisNet,
+      commission,
       classification,
       period,
       policyNumber,
@@ -1355,13 +1352,10 @@ router.post('/apply-bsi-split', requireAuth, async (req, res) => {
     await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS bsi_split_applied BOOLEAN DEFAULT FALSE`).catch(() => {});
 
     const records = await pool.query(`
-      SELECT cr.id, cr.agent_name, cr.carrier, cr.commission, u.original_name
+      SELECT cr.id, cr.agent_name, cr.carrier, cr.commission, cr.classification, u.original_name
       FROM commission_records cr
       JOIN uploads u ON cr.upload_id = u.id
       WHERE (
-        u.original_name ILIKE '%solis%' OR
-        u.original_name ILIKE '%commissions_ledger%' OR
-        u.original_name ILIKE '%doctor%' OR
         u.original_name ILIKE '%the_health_experts_insurance_statement%' OR
         u.original_name ILIKE '%yahoska%katy%' OR
         u.original_name ILIKE '%nhp%'
@@ -1379,8 +1373,9 @@ router.post('/apply-bsi-split', requireAuth, async (req, res) => {
       const carrier = String(r.carrier || '').toLowerCase();
       const isNoSplit = NO_SPLIT.some(a => agent.includes(a));
       const isACA = ACA.some(c => carrier.includes(c));
+      const isOverride = String(r.classification || '').toLowerCase().includes('override');
 
-      if (!isNoSplit && !isACA) {
+      if (!isNoSplit && !isACA && isOverride) {
         const net = Math.round(r.commission * 0.5 * 100) / 100;
         await pool.query(
           `UPDATE commission_records SET commission = $1, bsi_split_applied = TRUE WHERE id = $2`,
