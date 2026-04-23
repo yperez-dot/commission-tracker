@@ -225,11 +225,12 @@ function parseMOOExcelRows(wb, filename) {
 }
 
 function isDoctorsFile(filename) {
-  const f = filename.toLowerCase().replace(/[\s()]/g, '_');
-  return (f.includes('doctor') || f.startsWith('drs')) && !f.includes('solis');
+  const f = filename.toLowerCase().replace(/['\s()]/g, '_');
+  return f.includes('doctor') || f.startsWith('drs') || f.startsWith('dr_s') || f.includes('dr_s_katy') || f.includes('dr_s_');
 }
 function isSolisFile(filename) {
-  const f = filename.toLowerCase().replace(/[\s()]/g, '_');
+  const f = filename.toLowerCase().replace(/['\s()]/g, '_');
+  if (isDoctorsFile(filename)) return false; // Doctors files take priority
   return f.includes('commissions_ledger') || f.includes('solis');
 }
 function isAPLFile(filename) {
@@ -778,11 +779,14 @@ function parseSolisRows(wb, filename) {
       }
     }
 
-    const solisNet = shouldSplit(agent, 'Solis') ? Math.round(commission * 0.5 * 100) / 100 : commission;
+    const isDoctor = isDoctorsFile(filename);
+    const carrierName = isDoctor ? 'Doctors' : 'Solis';
+    const planTypeName = isDoctor ? 'Doctors Med Adv' : 'Solis Med Adv';
+    const solisNet = shouldSplit(agent, carrierName) ? Math.round(commission * 0.5 * 100) / 100 : commission;
     records.push({
       agent: agent || 'The Health Experts Insurance',
-      carrier: 'Solis',
-      planType: 'Solis Med Adv',
+      carrier: carrierName,
+      planType: planTypeName,
       client,
       effectiveDate,
       premium: 0,
@@ -790,7 +794,7 @@ function parseSolisRows(wb, filename) {
       classification,
       period,
       policyNumber,
-      payee: 'Solis',
+      payee: isDoctor ? 'Doctors' : 'Solis',
       raw: row
     });
   }
