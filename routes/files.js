@@ -958,10 +958,7 @@ async function parseHumanaPDF(filePath, filename) {
 //   - "Detailed Compensation Statement (<CARRIER>)" sections
 //   - Each section: Agent | Company | Policy# | Client | EffDate | Commission
 //   - "Balance: $X" line at end of each section
-async function parseBSIPDF(filePath, filename) { console.log('[BSI_PARSE_VERSION] 48af3a3-fix1');
-  console.log('[BSI_PARSE] called with filename:', filename);
-  console.log('[BSI_PARSE] pdfParse available:', !!pdfParse);
-
+async function parseBSIPDF(filePath, filename) {
   const records = [];
   try {
     const dataBuffer = fs.readFileSync(filePath);
