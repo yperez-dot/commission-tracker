@@ -240,11 +240,10 @@ export default function BookOfBusiness({ user }) {
       </div>
       <div className="page-body">
 
-        <div className="kpi-grid" style={{marginBottom:14}}>
+        <div className="kpi-grid" style={{marginBottom:14, gridTemplateColumns: 'repeat(3, 1fr)'}}>
           <div className="kpi-card"><div className="kpi-label">Active clients</div><div className="kpi-value blue">{summary?.totalActive||0}</div></div>
           <div className="kpi-card"><div className="kpi-label">Termed / Deceased</div><div className="kpi-value">{termedCount}</div></div>
           <div className="kpi-card"><div className="kpi-label">Carriers tracked</div><div className="kpi-value">{summary?.byCarrier?.length||0}</div></div>
-          <div className="kpi-card"><div className="kpi-label">New this month</div><div className="kpi-value green">{summary?.newEnrollments||0}</div></div>
         </div>
 
         {buildStatus && (
