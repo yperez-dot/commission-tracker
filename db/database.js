@@ -106,28 +106,38 @@ async function initSchema() {
 }
 
 async function seedDefaultAdmin(client) {
-  const existing = await client.query('SELECT id FROM users WHERE email = $1', ['yahoska@healthexps.com']);
-  if (existing.rows.length === 0) {
-    const hash = bcrypt.hashSync('HealthExperts2024!', 10);
-    await client.query(
-      'INSERT INTO users (name, email, password_hash, role) VALUES ($1, $2, $3, $4)',
-      ['Yahoska Perez', 'yahoska@healthexps.com', hash, 'admin']
-    );
-    const agents = [
-      { name: 'Jill Taylor', email: 'jill@healthexps.com' },
-      { name: 'Katy Robles', email: 'katy@healthexps.com' },
-      { name: 'Gina Berenguer', email: 'gina@healthexps.com' },
-      { name: 'Osmary Orozco', email: 'osmary@healthexps.com' },
-      { name: 'Sabri Perez', email: 'sabri@healthexps.com' },
-    ];
-    const agentHash = bcrypt.hashSync('Agent2024!', 10);
-    for (const a of agents) {
+  // Seed: Yahoska + Katy only (both admins). Everyone else can be added via the
+  // User Accounts page once they're invited. Passwords were generated 2026-05-12
+  // and shared out of band — do NOT commit them as plain text again.
+  const seeds = [
+    {
+      name: 'Yahoska Perez',
+      email: 'yahoska@healthexps.com',
+      password: process.env.SEED_PASSWORD_YAHOSKA,
+      role: 'admin',
+    },
+    {
+      name: 'Katy Robles',
+      email: 'katy@healthexps.com',
+      password: process.env.SEED_PASSWORD_KATY,
+      role: 'admin',
+    },
+  ];
+
+  for (const seed of seeds) {
+    const existing = await client.query('SELECT id FROM users WHERE email = $1', [seed.email]);
+    if (existing.rows.length === 0) {
+      if (!seed.password) {
+        console.warn(`Skipping seed for ${seed.email} — no SEED_PASSWORD env var provided.`);
+        continue;
+      }
+      const hash = bcrypt.hashSync(seed.password, 10);
       await client.query(
-        'INSERT INTO users (name, email, password_hash, role) VALUES ($1, $2, $3, $4) ON CONFLICT (email) DO NOTHING',
-        [a.name, a.email, agentHash, 'agent']
+        'INSERT INTO users (name, email, password_hash, role) VALUES ($1, $2, $3, $4)',
+        [seed.name, seed.email, hash, seed.role]
       );
+      console.log(`Seeded user: ${seed.email}`);
     }
-    console.log('Default users seeded');
   }
 }
 
