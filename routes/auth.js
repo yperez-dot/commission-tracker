@@ -167,26 +167,18 @@ router.post('/admin-reset', async (req, res) => {
       });
     }
 
+    const pool = getPool();
     const yahoskaHash = bcrypt.hashSync(yahoskaPw, 10);
     const katyHash = bcrypt.hashSync(katyPw, 10);
 
-    // Upsert Yahoska
-    const ySql = `
+    const upsertSql = `
       INSERT INTO users (name, email, password_hash, role)
       VALUES ($1, $2, $3, 'admin')
       ON CONFLICT (email) DO UPDATE SET password_hash = $3, role = 'admin'
       RETURNING id, name, email, role
     `;
-    const yResult = await pool.query(ySql, ['Yahoska Perez', 'yahoska@healthexps.com', yahoskaHash]);
-
-    // Upsert Katy
-    const kSql = `
-      INSERT INTO users (name, email, password_hash, role)
-      VALUES ($1, $2, $3, 'admin')
-      ON CONFLICT (email) DO UPDATE SET password_hash = $3, role = 'admin'
-      RETURNING id, name, email, role
-    `;
-    const kResult = await pool.query(kSql, ['Katy Robles', 'katy@healthexps.com', katyHash]);
+    const yResult = await pool.query(upsertSql, ['Yahoska Perez', 'yahoska@healthexps.com', yahoskaHash]);
+    const kResult = await pool.query(upsertSql, ['Katy Robles', 'katy@healthexps.com', katyHash]);
 
     res.json({
       ok: true,
