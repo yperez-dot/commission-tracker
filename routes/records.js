@@ -179,33 +179,80 @@ router.get('/kpi', requireAuth, async (req, res) => {
 
     const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
 
-    const rows = await pool.query(`
+    // Plan-change detection (added 2026-05-12, per Yahoska + Katy):
+    //
+    //   A chargeback row where the same client got a NEW commission on a
+    //   DIFFERENT carrier within +/- 60 days = the client STAYED with the
+    //   agency, just switched carriers. NOT a true chargeback.
+    //
+    //   This SQL pre-tags each chargeback row with `is_plan_change = true`
+    //   if it finds a matching positive commission on a different carrier
+    //   within +/- 60 days, using the carrier's effective_date as the anchor.
+    //
+    //   We then count chargebacks two ways:
+    //     chargeback_amount        = ALL chargebacks (true + plan_change)
+    //     true_chargeback_amount   = only true chargebacks (lost clients)
+    //     plan_change_amount       = chargebacks that were really plan changes
+    const taggedSql = `
+      WITH tagged AS (
+        SELECT cr.*,
+          CASE
+            WHEN cr.commission < 0 AND EXISTS (
+              SELECT 1 FROM commission_records other
+              WHERE other.commission > 0
+                AND LOWER(TRIM(other.client_full_name)) = LOWER(TRIM(cr.client_full_name))
+                AND other.carrier <> cr.carrier
+                AND other.effective_date IS NOT NULL
+                AND cr.effective_date IS NOT NULL
+                AND ABS(
+                  EXTRACT(EPOCH FROM (
+                    TO_DATE(NULLIF(other.effective_date, ''), 'MM/DD/YYYY')
+                    - TO_DATE(NULLIF(cr.effective_date, ''), 'MM/DD/YYYY')
+                  )) / 86400
+                ) <= 60
+            ) THEN true
+            ELSE false
+          END as is_plan_change
+        FROM commission_records cr
+        ${wc}
+      )
       SELECT agent_name,
         COUNT(*) as total_count,
         COALESCE(SUM(commission), 0) as total_commission,
         COALESCE(SUM(CASE WHEN commission < 0 THEN ABS(commission) ELSE 0 END), 0) as chargeback_amount,
         COUNT(CASE WHEN commission < 0 THEN 1 END) as chargeback_count,
+        COALESCE(SUM(CASE WHEN commission < 0 AND is_plan_change THEN ABS(commission) ELSE 0 END), 0) as plan_change_amount,
+        COUNT(CASE WHEN commission < 0 AND is_plan_change THEN 1 END) as plan_change_count,
+        COALESCE(SUM(CASE WHEN commission < 0 AND NOT is_plan_change THEN ABS(commission) ELSE 0 END), 0) as true_chargeback_amount,
+        COUNT(CASE WHEN commission < 0 AND NOT is_plan_change THEN 1 END) as true_chargeback_count,
         COALESCE(SUM(CASE WHEN classification ILIKE '%advance%' THEN commission ELSE 0 END), 0) as advance_amount,
         COUNT(CASE WHEN classification ILIKE '%advance%' THEN 1 END) as advance_count,
         COUNT(CASE WHEN classification IN ('New Business','Renewal') THEN 1 END) as new_apps
-      FROM commission_records ${wc}
+      FROM tagged
       GROUP BY agent_name ORDER BY total_commission DESC
-    `, params);
+    `;
+    const rows = await pool.query(taggedSql, params);
 
     const totals = rows.rows.reduce((acc, r) => {
       acc.total_commission += parseFloat(r.total_commission) || 0;
       acc.total_count += parseInt(r.total_count) || 0;
       acc.chargeback_amount += parseFloat(r.chargeback_amount) || 0;
       acc.chargeback_count += parseInt(r.chargeback_count) || 0;
+      acc.true_chargeback_amount += parseFloat(r.true_chargeback_amount) || 0;
+      acc.true_chargeback_count += parseInt(r.true_chargeback_count) || 0;
+      acc.plan_change_amount += parseFloat(r.plan_change_amount) || 0;
+      acc.plan_change_count += parseInt(r.plan_change_count) || 0;
       acc.advance_amount += parseFloat(r.advance_amount) || 0;
       acc.advance_count += parseInt(r.advance_count) || 0;
       acc.new_apps += parseInt(r.new_apps) || 0;
       return acc;
-    }, { total_commission:0, total_count:0, chargeback_amount:0, chargeback_count:0, advance_amount:0, advance_count:0, new_apps:0 });
+    }, { total_commission:0, total_count:0, chargeback_amount:0, chargeback_count:0, true_chargeback_amount:0, true_chargeback_count:0, plan_change_amount:0, plan_change_count:0, advance_amount:0, advance_count:0, new_apps:0 });
 
     const agentsOut = rows.rows.map(r => {
       const total = parseFloat(r.total_commission) || 0;
       const cb = parseFloat(r.chargeback_amount) || 0;
+      const trueCb = parseFloat(r.true_chargeback_amount) || 0;
+      const planCh = parseFloat(r.plan_change_amount) || 0;
       return {
         agent_name: r.agent_name,
         total_commission: total,
@@ -215,11 +262,25 @@ router.get('/kpi', requireAuth, async (req, res) => {
         chargeback_amount: cb,
         chargeback_count: parseInt(r.chargeback_count) || 0,
         chargeback_ratio: Math.abs(total) > 0 ? (cb / Math.abs(total) * 100) : 0,
+        // New: split chargebacks into true losses vs plan-change retention
+        true_chargeback_amount: trueCb,
+        true_chargeback_count: parseInt(r.true_chargeback_count) || 0,
+        true_chargeback_ratio: Math.abs(total) > 0 ? (trueCb / Math.abs(total) * 100) : 0,
+        plan_change_amount: planCh,
+        plan_change_count: parseInt(r.plan_change_count) || 0,
+        plan_change_ratio: Math.abs(total) > 0 ? (planCh / Math.abs(total) * 100) : 0,
         net_sales: total - cb,
         new_apps: parseInt(r.new_apps) || 0,
         advance_count: parseInt(r.advance_count) || 0,
       };
     });
+
+    // Add aggregate ratios to totals
+    if (Math.abs(totals.total_commission) > 0) {
+      totals.chargeback_ratio = totals.chargeback_amount / Math.abs(totals.total_commission) * 100;
+      totals.true_chargeback_ratio = totals.true_chargeback_amount / Math.abs(totals.total_commission) * 100;
+      totals.plan_change_ratio = totals.plan_change_amount / Math.abs(totals.total_commission) * 100;
+    }
 
     res.json({ agents: agentsOut, totals });
   } catch (err) { res.status(500).json({ error: err.message }); }

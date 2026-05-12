@@ -590,21 +590,80 @@ function ChargebackReport({ records }) {
   const [selectedAgent, setSelectedAgent] = React.useState(null);
   const agents = [...new Set(records.map(r => r.agent_name))].sort();
 
+  // Plan-change detection: A chargeback is actually a 'plan change' (client
+  // retained, just switched carriers) if there's a positive commission for the
+  // same client on a DIFFERENT carrier within +/- 60 days.
+  function parseMMDDYYYY(s) {
+    if (!s) return null;
+    const m = String(s).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (!m) return null;
+    return new Date(parseInt(m[3],10), parseInt(m[1],10)-1, parseInt(m[2],10));
+  }
+  function normClient(n) { return String(n||'').toLowerCase().trim().replace(/\s+/g,' '); }
+
+  const positiveByClient = {};
+  for (const r of records) {
+    if (parseFloat(r.commission) > 0) {
+      const k = normClient(r.client_full_name);
+      if (!positiveByClient[k]) positiveByClient[k] = [];
+      positiveByClient[k].push(r);
+    }
+  }
+
+  function isPlanChange(cbRecord) {
+    const k = normClient(cbRecord.client_full_name);
+    const cbDate = parseMMDDYYYY(cbRecord.effective_date);
+    if (!cbDate) return false;
+    const positives = positiveByClient[k] || [];
+    for (const p of positives) {
+      if (p.carrier === cbRecord.carrier) continue;
+      const pDate = parseMMDDYYYY(p.effective_date);
+      if (!pDate) continue;
+      const diffDays = Math.abs((pDate - cbDate) / (1000 * 60 * 60 * 24));
+      if (diffDays <= 60) return true;
+    }
+    return false;
+  }
+
   const data = agents.map(agent => {
     const recs = records.filter(r => r.agent_name === agent);
     const gross = recs.filter(r => parseFloat(r.commission) > 0).reduce((s, r) => s + (parseFloat(r.commission) || 0), 0);
-    const cb = recs.filter(r => parseFloat(r.commission) < 0).reduce((s, r) => s + Math.abs(parseFloat(r.commission) || 0), 0);
-    const cbCount = recs.filter(r => parseFloat(r.commission) < 0).length;
+    const allCbs = recs.filter(r => parseFloat(r.commission) < 0);
+    const cb = allCbs.reduce((s, r) => s + Math.abs(parseFloat(r.commission) || 0), 0);
+    const cbCount = allCbs.length;
+    const planChangeCbs = allCbs.filter(isPlanChange);
+    const trueCbs = allCbs.filter(r => !isPlanChange(r));
+    const planChangeAmt = planChangeCbs.reduce((s, r) => s + Math.abs(parseFloat(r.commission) || 0), 0);
+    const trueCbAmt = trueCbs.reduce((s, r) => s + Math.abs(parseFloat(r.commission) || 0), 0);
     const cbRate = gross > 0 ? (cb / gross) * 100 : 0;
-    const cbRecords = recs.filter(r => parseFloat(r.commission) < 0).sort((a,b) => parseFloat(a.commission) - parseFloat(b.commission));
-    return { agent, gross, cb, cbCount, cbRate, net: gross - cb, count: recs.length, cbRecords };
-  }).filter(d => d.count > 0).sort((a, b) => b.cbRate - a.cbRate);
+    const trueCbRate = gross > 0 ? (trueCbAmt / gross) * 100 : 0;
+    const planChangeRate = gross > 0 ? (planChangeAmt / gross) * 100 : 0;
+    const cbRecords = allCbs.sort((a,b) => parseFloat(a.commission) - parseFloat(b.commission)).map(r => ({ ...r, _isPlanChange: isPlanChange(r) }));
+    return {
+      agent, gross, cb, cbCount, cbRate,
+      trueCbAmt, trueCbCount: trueCbs.length, trueCbRate,
+      planChangeAmt, planChangeCount: planChangeCbs.length, planChangeRate,
+      net: gross - cb, count: recs.length, cbRecords,
+    };
+  }).filter(d => d.count > 0).sort((a, b) => b.trueCbRate - a.trueCbRate);
 
   const maxCbRate = Math.max(...data.map(d => d.cbRate), 1);
 
   function exportCSV() {
-    const header = ['Agent', 'Gross Commission', 'Chargebacks', 'CB Count', 'CB Rate %', 'Net'];
-    const rows = data.map(d => [d.agent, d.gross.toFixed(2), d.cb.toFixed(2), d.cbCount, d.cbRate.toFixed(1)+'%', d.net.toFixed(2)]);
+    const header = [
+      'Agent', 'Gross Commission',
+      'True Chargebacks ($)', 'True CB Count', 'True CB Rate %',
+      'Plan Changes ($)', 'Plan Change Count', 'Plan Change Rate %',
+      'All Chargebacks ($)', 'All CB Count', 'All CB Rate %',
+      'Net',
+    ];
+    const rows = data.map(d => [
+      d.agent, d.gross.toFixed(2),
+      d.trueCbAmt.toFixed(2), d.trueCbCount, d.trueCbRate.toFixed(1)+'%',
+      d.planChangeAmt.toFixed(2), d.planChangeCount, d.planChangeRate.toFixed(1)+'%',
+      d.cb.toFixed(2), d.cbCount, d.cbRate.toFixed(1)+'%',
+      d.net.toFixed(2),
+    ]);
     downloadCSV('Chargeback_Report.csv', [header, ...rows]);
   }
 
@@ -616,7 +675,7 @@ function ChargebackReport({ records }) {
       <table style={{ width:'100%', borderCollapse:'collapse', fontSize:12 }}>
         <thead>
           <tr style={{ borderBottom:'1px solid var(--border)' }}>
-            {['#','Agent','Gross','Chargebacks','CB Rate','Net',''].map((h,i) => (
+            {['#','Agent','Gross','True CB','Plan Change','True CB Rate','Net',''].map((h,i) => (
               <th key={i} style={{ textAlign: i<=1?'left':'right', padding:'7px 10px', fontWeight:500, color:'var(--text-muted)', fontSize:11 }}>{h}</th>
             ))}
           </tr>
@@ -625,37 +684,44 @@ function ChargebackReport({ records }) {
           {data.map((d, i) => (
             <React.Fragment key={d.agent}>
               <tr onClick={() => setSelectedAgent(selectedAgent === d.agent ? null : d.agent)}
-                style={{ borderBottom:'0.5px solid var(--border)', background: selectedAgent === d.agent ? 'rgba(201,169,110,0.08)' : d.cbRate > 20 ? 'rgba(192,57,43,0.04)' : 'transparent', cursor: d.cbCount > 0 ? 'pointer' : 'default' }}>
+                style={{ borderBottom:'0.5px solid var(--border)', background: selectedAgent === d.agent ? 'rgba(201,169,110,0.08)' : d.trueCbRate > 20 ? 'rgba(192,57,43,0.04)' : 'transparent', cursor: d.cbCount > 0 ? 'pointer' : 'default' }}>
                 <td style={{ padding:'7px 10px', color:'var(--text-muted)', fontSize:11 }}>{i+1}</td>
                 <td style={{ padding:'7px 10px', fontWeight:600, color:'var(--accent-dark)' }}>{d.agent} {d.cbCount > 0 ? (selectedAgent===d.agent?'▲':'▼') : ''}</td>
                 <td style={{ padding:'7px 10px', textAlign:'right', color:'var(--green)' }}>{fmt(d.gross)}</td>
-                <td style={{ padding:'7px 10px', textAlign:'right', color: d.cb > 0 ? 'var(--red)' : 'var(--text-muted)' }}>
-                  {d.cb > 0 ? `-${fmt(d.cb)}` : '—'}
-                  {d.cbCount > 0 && <span style={{ fontSize:10, color:'var(--text-muted)', marginLeft:4 }}>({d.cbCount}x)</span>}
+                <td style={{ padding:'7px 10px', textAlign:'right', color: d.trueCbAmt > 0 ? 'var(--red)' : 'var(--text-muted)' }}>
+                  {d.trueCbAmt > 0 ? `-${fmt(d.trueCbAmt)}` : '—'}
+                  {d.trueCbCount > 0 && <span style={{ fontSize:10, color:'var(--text-muted)', marginLeft:4 }}>({d.trueCbCount}x)</span>}
+                </td>
+                <td style={{ padding:'7px 10px', textAlign:'right', color: d.planChangeAmt > 0 ? '#6B5744' : 'var(--text-muted)' }}>
+                  {d.planChangeAmt > 0 ? `-${fmt(d.planChangeAmt)}` : '—'}
+                  {d.planChangeCount > 0 && <span style={{ fontSize:10, color:'var(--text-muted)', marginLeft:4 }}>({d.planChangeCount}x)</span>}
                 </td>
                 <td style={{ padding:'7px 10px', textAlign:'right' }}>
                   <div style={{ display:'flex', alignItems:'center', justifyContent:'flex-end', gap:8 }}>
-                    <span style={{ fontWeight:600, color: d.cbRate > 20 ? 'var(--red)' : d.cbRate > 10 ? '#E67E22' : 'var(--green)', fontSize:12 }}>{pct(d.cbRate)}</span>
+                    <span style={{ fontWeight:600, color: d.trueCbRate > 20 ? 'var(--red)' : d.trueCbRate > 10 ? '#E67E22' : 'var(--green)', fontSize:12 }}>{pct(d.trueCbRate)}</span>
                     <div style={{ width:60, height:5, background:'var(--border)', borderRadius:3, overflow:'hidden' }}>
-                      <div style={{ width:`${(d.cbRate/maxCbRate)*100}%`, height:'100%', background: d.cbRate > 20 ? 'var(--red)' : d.cbRate > 10 ? '#E67E22' : 'var(--green)', borderRadius:3 }} />
+                      <div style={{ width:`${(d.trueCbRate/Math.max(maxCbRate,1))*100}%`, height:'100%', background: d.trueCbRate > 20 ? 'var(--red)' : d.trueCbRate > 10 ? '#E67E22' : 'var(--green)', borderRadius:3 }} />
                     </div>
                   </div>
                 </td>
                 <td style={{ padding:'7px 10px', textAlign:'right', fontWeight:600, color: d.net >= 0 ? 'var(--text)' : 'var(--red)' }}>{fmt(d.net)}</td>
                 <td style={{ padding:'7px 10px' }}>
-                  {d.cbRate > 20 && <span style={{ fontSize:10, background:'rgba(192,57,43,0.12)', color:'var(--red)', borderRadius:4, padding:'2px 6px', fontWeight:500 }}>⚠ High</span>}
+                  {d.trueCbRate > 20 && <span style={{ fontSize:10, background:'rgba(192,57,43,0.12)', color:'var(--red)', borderRadius:4, padding:'2px 6px', fontWeight:500 }}>⚠ High</span>}
                 </td>
               </tr>
               {selectedAgent === d.agent && d.cbRecords.length > 0 && (
                 <tr>
-                  <td colSpan={7} style={{ padding:0, background:'var(--bg-subtle)' }}>
+                  <td colSpan={8} style={{ padding:0, background:'var(--bg-subtle)' }}>
                     <div style={{ padding:'10px 14px' }}>
                       <div style={{ fontSize:11, fontWeight:600, marginBottom:8, color:'var(--red)' }}>
                         Chargeback records · {d.cbRecords.length} total · -{fmt(d.cb)}
+                        {d.planChangeCount > 0 && <span style={{ marginLeft:8, color:'var(--text-muted)', fontWeight:400 }}>
+                          (↑ {d.planChangeCount} retained as plan changes, -{fmt(d.planChangeAmt)})
+                        </span>}
                       </div>
                       <table style={{ width:'100%', borderCollapse:'collapse', fontSize:11 }}>
                         <thead><tr style={{ borderBottom:'0.5px solid var(--border)' }}>
-                          {['Period','Client','Carrier','Policy #','Amount'].map(h=>(
+                          {['Period','Client','Carrier','Policy #','Amount','Type'].map(h=>(
                             <th key={h} style={{ textAlign:h==='Amount'?'right':'left', padding:'5px 8px', fontWeight:500, color:'var(--text-muted)' }}>{h}</th>
                           ))}
                         </tr></thead>
@@ -667,6 +733,13 @@ function ChargebackReport({ records }) {
                               <td style={{ padding:'5px 8px', color:'var(--text-muted)' }}>{r.carrier}</td>
                               <td style={{ padding:'5px 8px', color:'var(--accent-dark)' }}>{r.policy_number||'—'}</td>
                               <td style={{ padding:'5px 8px', textAlign:'right', fontWeight:600, color:'var(--red)' }}>{fmt(r.commission)}</td>
+                              <td style={{ padding:'5px 8px' }}>
+                                {r._isPlanChange ? (
+                                  <span style={{ fontSize:10, background:'rgba(74,114,96,0.15)', color:'var(--green)', borderRadius:4, padding:'2px 6px', fontWeight:500 }}>⤵ Plan change</span>
+                                ) : (
+                                  <span style={{ fontSize:10, background:'rgba(192,57,43,0.12)', color:'var(--red)', borderRadius:4, padding:'2px 6px', fontWeight:500 }}>True CB</span>
+                                )}
+                              </td>
                             </tr>
                           ))}
                         </tbody>
