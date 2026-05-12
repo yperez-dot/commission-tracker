@@ -180,37 +180,29 @@ router.get('/kpi', requireAuth, async (req, res) => {
     const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
 
     // Plan-change detection (added 2026-05-12, per Yahoska + Katy):
-    //
     //   A chargeback row where the same client got a NEW commission on a
     //   DIFFERENT carrier within +/- 60 days = the client STAYED with the
     //   agency, just switched carriers. NOT a true chargeback.
     //
-    //   This SQL pre-tags each chargeback row with `is_plan_change = true`
-    //   if it finds a matching positive commission on a different carrier
-    //   within +/- 60 days, using the carrier's effective_date as the anchor.
-    //
-    //   We then count chargebacks two ways:
-    //     chargeback_amount        = ALL chargebacks (true + plan_change)
-    //     true_chargeback_amount   = only true chargebacks (lost clients)
-    //     plan_change_amount       = chargebacks that were really plan changes
+    //   effective_date is stored as TEXT in MM/DD/YYYY form. We cast both sides
+    //   to DATE and use a DATE - DATE -> INTEGER days difference (no EXTRACT).
+    //   Guarded by regex so we don't try to cast garbage strings.
     const taggedSql = `
       WITH tagged AS (
         SELECT cr.*,
           CASE
-            WHEN cr.commission < 0 AND EXISTS (
-              SELECT 1 FROM commission_records other
-              WHERE other.commission > 0
-                AND LOWER(TRIM(other.client_full_name)) = LOWER(TRIM(cr.client_full_name))
-                AND other.carrier <> cr.carrier
-                AND other.effective_date IS NOT NULL
-                AND cr.effective_date IS NOT NULL
-                AND ABS(
-                  EXTRACT(EPOCH FROM (
-                    TO_DATE(NULLIF(other.effective_date, ''), 'MM/DD/YYYY')
-                    - TO_DATE(NULLIF(cr.effective_date, ''), 'MM/DD/YYYY')
-                  )) / 86400
-                ) <= 60
-            ) THEN true
+            WHEN cr.commission < 0
+              AND cr.effective_date ~ '^[0-9]{1,2}/[0-9]{1,2}/[0-9]{4}\$'
+              AND EXISTS (
+                SELECT 1 FROM commission_records other
+                WHERE other.commission > 0
+                  AND LOWER(TRIM(other.client_full_name)) = LOWER(TRIM(cr.client_full_name))
+                  AND other.carrier <> cr.carrier
+                  AND other.effective_date ~ '^[0-9]{1,2}/[0-9]{1,2}/[0-9]{4}\$'
+                  AND ABS(TO_DATE(other.effective_date, 'MM/DD/YYYY')
+                          - TO_DATE(cr.effective_date,  'MM/DD/YYYY')) <= 60
+              )
+            THEN true
             ELSE false
           END as is_plan_change
         FROM commission_records cr
