@@ -1438,6 +1438,16 @@ function parseYourFMOXLSXRows(wb) {
 router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   try {
+    // Reject Mutual of Omaha / United of Omaha uploads - they belong to
+    // partner agency, not THEI's books. (Confirmed by Yahoska 2026-05-12.)
+    const fnLc = String(req.file.originalname || '').toLowerCase();
+    if (/moo|mutual.?of.?omaha|united.?of.?omaha/i.test(fnLc)) {
+      try { fs.unlinkSync(req.file.path); } catch (e) {}
+      return res.status(400).json({
+        error: 'Mutual / United of Omaha statements are not part of THEI\'s books. Upload to the partner agency\'s system instead.',
+      });
+    }
+
     const pool = getPool();
     const existing = await pool.query('SELECT id FROM uploads WHERE original_name = $1', [req.file.originalname]);
     if (existing.rows.length > 0) {
