@@ -1532,6 +1532,98 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     }
 
     records = records.map(r => ({ ...r, payee: r.payee || defaultPayee }));
+
+    // Enrich every record with OliComm schema columns (source/split/lob/etc.)
+    // for parsers that didn't already set them. BSI PDF + NHP parsers set
+    // these directly; other parsers (UHC, Humana PDF, MOO, Solis, etc.) get
+    // them computed here.
+    {
+      // Derive source from filename / payee
+      const fnLc = String(req.file.originalname || '').toLowerCase();
+      const payeeLc = String(defaultPayee || '').toLowerCase();
+      let inferredSource = 'direct_carrier';
+      if (payeeLc === 'bsi' || /statement-the|statement_-the|broker_society|bsi/.test(fnLc)) inferredSource = 'BSI';
+      else if (payeeLc === 'nhp' || /^the_health_experts_insurance_statement|nhp/.test(fnLc)) inferredSource = 'NHP';
+
+      records = records.map(r => {
+        // Don't overwrite parsers that already filled the new columns
+        if (r.source) return r;
+
+        const agentLc = String(r.agent || '').toLowerCase();
+        const carrierLc = String(r.carrier || '').toLowerCase();
+        const classification = String(r.classification || '').toLowerCase();
+        const isCommissionRow = classification.includes('agent commission') || classification === 'commission';
+        const isAcaCarrier = ACA_CARRIERS_LIST.some(c => carrierLc.includes(c));
+        const isAcaPassThroughAgent = NO_SPLIT_AGENTS.some(a => agentLc.includes(a));
+
+        // The existing parsers already store NET-after-split as `commission`.
+        // For direct carrier parsers, the carrier paid the agent (or paid agency-only)
+        // directly. Most direct-carrier statements show the agent's personal commission,
+        // which is NOT subject to a BSI split (it's the agent's own money).
+        const netCommission = parseFloat(r.commission) || 0;
+
+        let splitApplies, theiShare, bsiShare, producerPayable, grossCommission;
+
+        if (inferredSource === 'direct_carrier') {
+          // Personal commissions (Yahoska + Katy's own production) -> 100% theirs.
+          // No BSI split, no payable.
+          splitApplies = false;
+          grossCommission = netCommission;
+          theiShare = netCommission;
+          bsiShare = 0;
+          producerPayable = 0;
+        } else if (isCommissionRow) {
+          // Producer's commission flowing through THEI -> ADP payable
+          splitApplies = false;
+          grossCommission = netCommission;
+          theiShare = 0;
+          bsiShare = 0;
+          producerPayable = grossCommission;
+        } else if (isAcaCarrier) {
+          // ACA override (no split)
+          splitApplies = false;
+          grossCommission = netCommission;
+          if (isAcaAgencyPaysProducer(r.carrier) && isAcaPassThroughAgent) {
+            theiShare = 0; bsiShare = 0; producerPayable = grossCommission;
+          } else {
+            theiShare = grossCommission; bsiShare = 0; producerPayable = 0;
+          }
+        } else {
+          // Medicare agency override -> 50/50 with BSI (already-applied by existing
+          // parsers, so net commission stored equals the THEI half)
+          splitApplies = true;
+          grossCommission = Math.round(netCommission * 2 * 100) / 100;
+          theiShare = netCommission;
+          bsiShare = netCommission;
+          producerPayable = 0;
+        }
+
+        // Infer LOB
+        let lob = null;
+        const planTypeLc = String(r.planType || r.plan_type || '').toLowerCase();
+        if (/med adv|mapd|advantage/.test(planTypeLc)) lob = 'MA';
+        else if (/pdp/.test(planTypeLc)) lob = 'PDP';
+        else if (/medsupp|medigap|supplement/.test(planTypeLc)) lob = 'MedSupp';
+        else if (/aca|marketplace/.test(planTypeLc) || isAcaCarrier) lob = 'ACA';
+        else if (/dental/.test(planTypeLc)) lob = 'Dental';
+        else if (/vision/.test(planTypeLc)) lob = 'Vision';
+        else if (/life/.test(planTypeLc)) lob = 'Life';
+        else if (/humana|aetna|united|devoted|wellcare|cigna|solis|doctors|healthsun|avmed|simply|molina/.test(carrierLc)) lob = 'MA';
+
+        return {
+          ...r,
+          source: inferredSource,
+          policyWrittenDate: r.policyWrittenDate || r.effectiveDate || null,
+          grossCommission,
+          theiShare,
+          bsiShare,
+          producerPayable,
+          splitApplies,
+          lob,
+        };
+      });
+    }
+
     if (!records.length) return res.status(400).json({ error: 'No records found in file' });
 
     const commissionSum = records.reduce((s, r) => s + (r.commission || 0), 0);
