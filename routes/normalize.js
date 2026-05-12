@@ -9,10 +9,15 @@ const AGENT_ALIASES = {
   'robles katy jullie': 'Katy Robles',
   'robles katy j': 'Katy Robles',
   'robles, katy': 'Katy Robles',
-  'robles, carolina andrea': 'Katy Robles',
   'katy jullie robles': 'Katy Robles',
   'katy robles': 'Katy Robles',
   'robles, katy j': 'Katy Robles',
+
+  // Carolina Robles is a separate person (THEI ops/retention, not Katy)
+  'robles, carolina andrea': 'Carolina Robles',
+  'carolina andrea robles': 'Carolina Robles',
+  'robles, carolina': 'Carolina Robles',
+  'carolina robles': 'Carolina Robles',
 
   'taylor, jill ann': 'Jill Taylor',
   'taylor jill a': 'Jill Taylor',
@@ -102,7 +107,10 @@ const AGENT_ALIASES = {
   'munoz, christian': 'Christian Munoz',
   'christian munoz': 'Christian Munoz',
 
-  'broker society insurance': 'Broker Society Insurance',
+  // Per Yahoska 2026-05-12: BROKER SOCIETY INSURANCE rows on statements
+  // belong to Alba Hernandez, BSI's principal. Normalize to her name so
+  // it shows up in producer reports correctly.
+  'broker society insurance': 'Alba Hernandez',
 
   'tailored insurance solutions inc': 'Tailored Insurance Solutions',
   'tailored insurance solutions': 'Tailored Insurance Solutions',

@@ -951,6 +951,119 @@ async function parseHumanaPDF(filePath, filename) {
   return records;
 }
 
+// BSI PDF parser (Broker Society Insurance monthly statements)
+// Format per Yahoska's March/April 2026 samples (2026-05-12):
+//   - "<MONTH> STATEMENT <YEAR>" near top
+//   - "CARRIER SUMMARY DETAILS" block with per-carrier totals
+//   - "Detailed Compensation Statement (<CARRIER>)" sections
+//   - Each section: Agent | Company | Policy# | Client | EffDate | Commission
+//   - "Balance: $X" line at end of each section
+async function parseBSIPDF(filePath, filename) {
+  const records = [];
+  if (!pdfParse) { console.error('pdf-parse not installed'); return records; }
+  try {
+    const dataBuffer = fs.readFileSync(filePath);
+    const data = await pdfParse(dataBuffer);
+    const text = data.text;
+
+    // Period from "APRIL STATEMENT 2026" => 202604
+    const periodMatch = text.match(/(JANUARY|FEBRUARY|MARCH|APRIL|MAY|JUNE|JULY|AUGUST|SEPTEMBER|OCTOBER|NOVEMBER|DECEMBER)\s+STATEMENT\s+(\d{4})/i);
+    const monthMap = { JANUARY:'01', FEBRUARY:'02', MARCH:'03', APRIL:'04', MAY:'05', JUNE:'06', JULY:'07', AUGUST:'08', SEPTEMBER:'09', OCTOBER:'10', NOVEMBER:'11', DECEMBER:'12' };
+    const period = periodMatch ? `${periodMatch[2]}${monthMap[periodMatch[1].toUpperCase()]}` : 'Unknown';
+
+    // Find each per-carrier section
+    const sectionRegex = /Detailed Compensation Statement\s*\(([^)]+)\)/gi;
+    const sections = [];
+    let m;
+    while ((m = sectionRegex.exec(text)) !== null) {
+      sections.push({ rawCarrier: m[1].trim(), startIdx: m.index });
+    }
+
+    for (let si = 0; si < sections.length; si++) {
+      const { rawCarrier, startIdx } = sections[si];
+      const endIdx = (si + 1 < sections.length) ? sections[si + 1].startIdx : text.length;
+      const sectionText = text.slice(startIdx, endIdx);
+
+      // Normalize carrier name
+      let carrier = rawCarrier.toUpperCase().trim();
+      if (carrier === 'UHC' || carrier.includes('UNITED')) carrier = 'UnitedHealthcare';
+      else if (carrier.includes('HUMANA')) carrier = 'Humana';
+      else if (carrier === 'AETNA') carrier = 'Aetna';
+      else if (carrier.includes('DEVOTED')) carrier = 'Devoted';
+      else carrier = normalizeBSICarrier(rawCarrier);
+
+      // Match: <agent> <CARRIER_TEXT> <policy#> <client> <MM/DD/YYYY> <-?$amount>
+      // The PDF text is flattened, so this is messy. Non-greedy + bounded.
+      const rowRegex = /([A-Z][A-Z\s,'\.\-]+?)\s+(UNITED\s+HEAL?TH?\s+CARE|HUMANA|AETNA|DEVOTED)\s+([A-Z0-9_]{6,30})\s+([A-Z][A-Z\s,'\.\-]+?)\s+(\d{2}\/\d{2}\/\d{4})\s+(-?\$[\d,]+\.\d{2})/g;
+
+      let rowMatch;
+      while ((rowMatch = rowRegex.exec(sectionText)) !== null) {
+        const agentRaw = rowMatch[1].trim().replace(/\s+/g, ' ');
+        const policyNumber = rowMatch[3].trim();
+        const clientRaw = rowMatch[4].trim().replace(/\s+/g, ' ');
+        const effectiveDate = rowMatch[5];
+        const amountStr = rowMatch[6];
+        const commission = parseFloat(amountStr.replace(/[$,]/g, '')) || 0;
+
+        if (!agentRaw || !clientRaw || commission === 0) continue;
+        if (agentRaw.length < 3 || clientRaw.length < 3) continue;
+
+        const agent = normalizeAgentName(agentRaw);
+        const client = clientRaw
+          .split(/\s+/)
+          .map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
+          .join(' ');
+        const planType = derivePlanType(carrier, '', policyNumber, '');
+
+        const isChargeback = commission < 0;
+        const splitApplies = shouldSplit(agent, carrier);
+        const grossCommission = commission;
+        const theiShare = splitApplies ? Math.round(commission * 0.5 * 100) / 100 : commission;
+        const bsiShare = splitApplies ? Math.round(commission * 0.5 * 100) / 100 : 0;
+        const producerPayable = isAcaAgencyPaysProducer(carrier) ? commission : 0;
+        const lob = /humana|aetna|devoted|united.?health/i.test(carrier) ? 'MA' : 'Unknown';
+
+        records.push({
+          agent,
+          carrier,
+          planType,
+          client,
+          effectiveDate,
+          premium: 0,
+          commission: theiShare,
+          classification: isChargeback ? 'Chargeback' : 'Agency Override',
+          period,
+          policyNumber,
+          payee: 'BSI',
+          source: 'BSI',
+          policyWrittenDate: effectiveDate,
+          grossCommission,
+          theiShare,
+          bsiShare,
+          producerPayable,
+          splitApplies,
+          lob,
+          raw: { agentRaw, clientRaw, sectionCarrier: rawCarrier },
+        });
+      }
+    }
+  } catch (err) {
+    console.error('parseBSIPDF error:', err.message);
+  }
+  return records;
+}
+
+function isBSIPDF(filename) {
+  const f = filename.toLowerCase().replace(/\s+/g, '_');
+  if (!f.endsWith('.pdf')) return false;
+  return f.includes('bsi') ||
+         f.includes('broker_society') ||
+         f.includes('brokersociety') ||
+         f.includes('medicare_statement-the') ||
+         f.includes('medicare_statement_-the') ||
+         /medicare[\s_-]+statement.*the[\s_-]+health/i.test(f);
+}
+
 // ─── Mutual of Omaha PDF parser ──────────────────────────────────────────────
 async function parseMutualOmahaPDF(filePath, filename) {
   const records = [];
@@ -1185,6 +1298,16 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         try { fs.unlinkSync(req.file.path); } catch(e) {}
         return res.status(400).json({ error: 'No payable records found in MOO Excel statement.' });
       }
+    } else if (isBSIPDF(req.file.originalname)) {
+      if (!pdfParse) {
+        try { fs.unlinkSync(req.file.path); } catch(e) {}
+        return res.status(500).json({ error: 'PDF parsing not available on server.' });
+      }
+      records = await parseBSIPDF(req.file.path, req.file.originalname);
+      if (!records.length) {
+        try { fs.unlinkSync(req.file.path); } catch(e) {}
+        return res.status(400).json({ error: 'No records found in BSI PDF. Verify this is a BSI monthly statement.' });
+      }
     } else if (isMutualOmahaPDF(req.file.originalname)) {
       if (!pdfParse) {
         try { fs.unlinkSync(req.file.path); } catch(e) {}
@@ -1254,9 +1377,43 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
 
     for (const r of records) {
       await pool.query(
-        `INSERT INTO commission_records (upload_id, agent_name, carrier, plan_type, client_full_name, effective_date, premium, commission, classification, payment_period, policy_number, payee, mga, raw_data)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
-        [uploadId, r.agent, r.carrier, r.planType || '', r.client, r.effectiveDate, r.premium || 0, r.commission || 0, r.classification, r.period, r.policyNumber, r.payee || '', r.mga || '', JSON.stringify(r.raw)]
+        `INSERT INTO commission_records (
+           upload_id, agent_name, carrier, plan_type, client_full_name, effective_date,
+           premium, commission, classification, payment_period, policy_number, payee, mga,
+           raw_data,
+           source, policy_written_date, gross_commission, thei_share, bsi_share,
+           producer_payable, split_applies, lob
+         )
+         VALUES (
+           $1,$2,$3,$4,$5,$6,
+           $7,$8,$9,$10,$11,$12,$13,
+           $14,
+           $15,$16,$17,$18,$19,
+           $20,$21,$22
+         )`,
+        [
+          uploadId, r.agent, r.carrier, r.planType || '', r.client, r.effectiveDate,
+          r.premium || 0, r.commission || 0, r.classification, r.period, r.policyNumber, r.payee || '', r.mga || '',
+          JSON.stringify(r.raw),
+          // New OliComm schema columns. Parsers that don't fill these leave them null/0.
+          r.source || null,
+          // Postgres DATE requires YYYY-MM-DD. Convert MM/DD/YYYY -> YYYY-MM-DD.
+          (() => {
+            const v = r.policyWrittenDate;
+            if (!v) return null;
+            const m = String(v).match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+            if (m) return `${m[3]}-${m[1]}-${m[2]}`;
+            const m2 = String(v).match(/^(\d{4})-(\d{2})-(\d{2})/);
+            if (m2) return `${m2[1]}-${m2[2]}-${m2[3]}`;
+            return null;
+          })(),
+          r.grossCommission != null ? r.grossCommission : null,
+          r.theiShare != null ? r.theiShare : null,
+          r.bsiShare != null ? r.bsiShare : null,
+          r.producerPayable != null ? r.producerPayable : null,
+          r.splitApplies != null ? r.splitApplies : null,
+          r.lob || null,
+        ]
       );
     }
 
