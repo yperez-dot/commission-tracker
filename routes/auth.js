@@ -147,6 +147,26 @@ router.post('/agents', requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
+// ─── TEMPORARY: schema inspection endpoint (admin-only) ──────────────────────────
+router.get('/_schema/:table', async (req, res) => {
+  const provided = req.headers['x-setup-secret'];
+  if (!process.env.SETUP_SECRET || provided !== process.env.SETUP_SECRET) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  try {
+    const pool = getPool();
+    const r = await pool.query(`
+      SELECT column_name, data_type
+      FROM information_schema.columns
+      WHERE table_name = $1
+      ORDER BY ordinal_position
+    `, [req.params.table]);
+    res.json({ table: req.params.table, columns: r.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 function requireAuth(req, res, next) {
   const auth = req.headers.authorization;
   if (!auth || !auth.startsWith('Bearer ')) return res.status(401).json({ error: 'Unauthorized' });
