@@ -492,14 +492,17 @@ router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, r
       return ACA_AGENCY_PAYS_PRODUCER.some(x => c.includes(x));
     }
 
-    // Fetch all rows that still have NULL source (i.e., haven't been backfilled)
+    // ?force=true forces a re-backfill of ALL rows (use after rule corrections).
+    const force = req.query.force === 'true';
+    const whereClause = force ? '' : 'WHERE cr.source IS NULL';
+
     const sel = await pool.query(`
       SELECT cr.id, cr.agent_name, cr.carrier, cr.commission, cr.classification,
              cr.effective_date, cr.plan_type, cr.payee, cr.payment_period,
              u.original_name AS upload_name
       FROM commission_records cr
       LEFT JOIN uploads u ON u.id = cr.upload_id
-      WHERE cr.source IS NULL
+      ${whereClause}
     `);
 
     let updated = 0;
@@ -554,8 +557,17 @@ router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, r
           bsiShare = 0;
           producerPayable = 0;
         }
+      } else if (source === 'direct_carrier') {
+        // Direct carrier portal pulls show YOUR (Yahoska/Katy) PERSONAL
+        // production only. No BSI split applies — it's the writer's own money.
+        // Confirmed by Yahoska 2026-05-12.
+        splitApplies = false;
+        grossCommission = netCommission;
+        theiShare = netCommission;
+        bsiShare = 0;
+        producerPayable = 0;
       } else {
-        // Medicare override -> 50/50 BSI split (everyone, no exceptions)
+        // BSI / NHP Medicare override -> 50/50 BSI split
         splitApplies = true;
         grossCommission = Math.round(netCommission * 2 * 100) / 100;
         theiShare = netCommission;
