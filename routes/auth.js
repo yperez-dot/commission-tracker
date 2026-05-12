@@ -147,6 +147,58 @@ router.post('/agents', requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
+// ─── TEMPORARY: One-time admin reset endpoint ─────────────────────────────────
+// Used to reset admin passwords + seed Katy after the env-var migration.
+// Requires X-Setup-Secret header matching process.env.SETUP_SECRET.
+// REMOVE THIS ENDPOINT IN THE NEXT COMMIT.
+router.post('/admin-reset', async (req, res) => {
+  try {
+    const provided = req.headers['x-setup-secret'];
+    if (!process.env.SETUP_SECRET || provided !== process.env.SETUP_SECRET) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+
+    const yahoskaPw = process.env.SEED_PASSWORD_YAHOSKA;
+    const katyPw = process.env.SEED_PASSWORD_KATY;
+
+    if (!yahoskaPw || !katyPw) {
+      return res.status(500).json({
+        error: 'SEED_PASSWORD_YAHOSKA and SEED_PASSWORD_KATY env vars must be set',
+      });
+    }
+
+    const yahoskaHash = bcrypt.hashSync(yahoskaPw, 10);
+    const katyHash = bcrypt.hashSync(katyPw, 10);
+
+    // Upsert Yahoska
+    const ySql = `
+      INSERT INTO users (name, email, password_hash, role)
+      VALUES ($1, $2, $3, 'admin')
+      ON CONFLICT (email) DO UPDATE SET password_hash = $3, role = 'admin'
+      RETURNING id, name, email, role
+    `;
+    const yResult = await pool.query(ySql, ['Yahoska Perez', 'yahoska@healthexps.com', yahoskaHash]);
+
+    // Upsert Katy
+    const kSql = `
+      INSERT INTO users (name, email, password_hash, role)
+      VALUES ($1, $2, $3, 'admin')
+      ON CONFLICT (email) DO UPDATE SET password_hash = $3, role = 'admin'
+      RETURNING id, name, email, role
+    `;
+    const kResult = await pool.query(kSql, ['Katy Robles', 'katy@healthexps.com', katyHash]);
+
+    res.json({
+      ok: true,
+      reset: [yResult.rows[0], kResult.rows[0]],
+      message: 'Passwords reset. REMOVE this endpoint after use.',
+    });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 function requireAuth(req, res, next) {
   const auth = req.headers.authorization;
   if (!auth || !auth.startsWith('Bearer ')) return res.status(401).json({ error: 'Unauthorized' });
