@@ -311,10 +311,12 @@ router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, r
     ];
     const ACA_AGENCY_PAYS_PRODUCER = ['molina', 'cigna', 'ambetter', 'florida blue'];
 
+    // Decision: does the THE↔BSI 50/50 split apply?
+    // Per Yahoska 2026-05-12 clarification:
+    //   - Medicare lines always split 50/50, regardless of agent.
+    //   - ACA never splits (whether or not the agent is a pass-through producer).
     function shouldSplit(agentName, carrier) {
-      const a = String(agentName || '').toLowerCase().trim();
       const c = String(carrier || '').toLowerCase().trim();
-      if (NO_SPLIT_AGENTS.some(x => a.includes(x))) return false;
       if (ACA_CARRIERS_LIST.some(x => c.includes(x))) return false;
       return true;
     }
@@ -363,20 +365,30 @@ router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, r
       const isAcaCarrier = ACA_CARRIERS_LIST.some(c => String(carrier || '').toLowerCase().includes(c));
       let splitApplies, theiShare, bsiShare, producerPayable, grossCommission;
 
-      if (isCommissionRow || isAcaPassThroughAgent || isAcaCarrier) {
+      if (isCommissionRow) {
+        // Producer's own commission flowing through THEI (ADP payable)
         splitApplies = false;
-        grossCommission = netCommission; // no split was applied to net already
-        if (isAcaAgencyPaysProducer(carrier) || isCommissionRow) {
+        grossCommission = netCommission;
+        theiShare = 0;
+        bsiShare = 0;
+        producerPayable = grossCommission;
+      } else if (isAcaCarrier) {
+        // ACA override: no BSI split
+        splitApplies = false;
+        grossCommission = netCommission;
+        if (isAcaAgencyPaysProducer(carrier) && isAcaPassThroughAgent) {
+          // Pass-through to producer via ADP
           theiShare = 0;
           bsiShare = 0;
           producerPayable = grossCommission;
         } else {
+          // ACA but THEI keeps the override
           theiShare = grossCommission;
           bsiShare = 0;
           producerPayable = 0;
         }
       } else {
-        // Was split 50/50 -> net stored was half of gross
+        // Medicare override -> 50/50 BSI split (everyone, no exceptions)
         splitApplies = true;
         grossCommission = Math.round(netCommission * 2 * 100) / 100;
         theiShare = netCommission;

@@ -65,10 +65,21 @@ const ACA_CARRIERS_LIST = [
 // producer via ADP). For these, THEI keeps $0 — pure pass-through.
 const ACA_AGENCY_PAYS_PRODUCER = ['molina', 'cigna', 'ambetter', 'florida blue'];
 
+// Decision: does THE ↔ BSI 50/50 split apply to this commission row?
+//
+// Rule (clarified by Yahoska 2026-05-12):
+//   - ALL Medicare lines split 50/50 with BSI — every agent, no exceptions
+//   - ACA lines NEVER split with BSI (ACA doesn't go through BSI at all)
+//   - The "ACA pass-through agent" concept (Patsy/Jessica/Sabri/Jill/etc.) is
+//     a separate flag about WHO THEI owes when the carrier pays agency-only.
+//     It only kicks in for ACA carriers, not Medicare.
+//
+// So the split decision is purely: "is this an ACA carrier?"
+//
+// NOTE: NO_SPLIT_AGENTS is still used elsewhere to identify producer_payable
+// (1099 to ADP) for ACA agency-only carriers, but it does NOT affect Medicare.
 function shouldSplit(agentName, carrier) {
-  const agent = String(agentName || '').toLowerCase().trim();
   const car = String(carrier || '').toLowerCase().trim();
-  if (NO_SPLIT_AGENTS.some(a => agent.includes(a))) return false;
   if (ACA_CARRIERS_LIST.some(c => car.includes(c))) return false;
   return true;
 }
@@ -714,31 +725,40 @@ function parseNHPRows(wb) {
     //       100% to producer via ADP, no BSI split
     //   - Agency Override rows: 50/50 with BSI (per Yahoska 2026-05-12),
     //       except for ACA pass-through agents or ACA carriers
-    const isAcaPassThroughAgent = NO_SPLIT_AGENTS.some(a => String(agent).toLowerCase().includes(a));
+    // Split decision (per Yahoska 2026-05-12, corrected interpretation):
+    //   - ACA carrier (any agent) -> no BSI split. Either THEI keeps 100%
+    //     OR THEI pays producer 100% via ADP (agency-pay-only carriers).
+    //   - Medicare carrier (any agent including Patsy/Jill/Sabri/etc.) -> 50/50 BSI.
+    //   - 'Agent Commission' Type rows from NHP -> the producer's own ACA
+    //     commission flowing through THEI for ADP payout.
     const isAcaCarrier = ACA_CARRIERS_LIST.some(c => String(carrier).toLowerCase().includes(c));
+    const isAcaAgentRow = NO_SPLIT_AGENTS.some(a => String(agent).toLowerCase().includes(a));
     let splitApplies, theiShare, bsiShare, producerPayable;
 
     if (isCommissionRow) {
-      // Agent commission: producer is owed via ADP (THEI doesn't keep it)
+      // NHP 'Commission' row = producer's individual commission flowing through
+      // THEI for ADP payout. THEI is the conduit, owes producer 100%.
       splitApplies = false;
       theiShare = 0;
       bsiShare = 0;
       producerPayable = grossCommission;
-    } else if (isAcaPassThroughAgent || isAcaCarrier) {
-      // ACA override (Molina/Cigna/Ambetter/FL Blue) — THEI keeps 100% generally,
-      // but for the agency-pay-only carriers, THEI passes 100% to producer.
+    } else if (isAcaCarrier) {
+      // ACA agency override
       splitApplies = false;
-      if (isAcaAgencyPaysProducer(carrier)) {
+      if (isAcaAgencyPaysProducer(carrier) && isAcaAgentRow) {
+        // Carrier pays THEI; THEI owes producer via ADP
         theiShare = 0;
         bsiShare = 0;
         producerPayable = grossCommission;
       } else {
+        // ACA but carrier pays producer directly (or no specific producer arrangement)
+        // -> THEI keeps the override
         theiShare = grossCommission;
         bsiShare = 0;
         producerPayable = 0;
       }
     } else {
-      // Medicare agency override — 50/50 BSI split (per 2026-05-12 rules)
+      // Medicare agency override -> 50/50 BSI split (every producer, no exceptions)
       splitApplies = true;
       theiShare = Math.round(grossCommission * 0.5 * 100) / 100;
       bsiShare = Math.round(grossCommission * 0.5 * 100) / 100;
@@ -1159,9 +1179,19 @@ async function parseBSIPDF(filePath, filename) {
         const isChargeback = commission < 0;
         const splitApplies = shouldSplit(agent, carrier);
         const grossCommission = commission;
-        const theiShare = splitApplies ? Math.round(commission * 0.5 * 100) / 100 : commission;
-        const bsiShare = splitApplies ? Math.round(commission * 0.5 * 100) / 100 : 0;
-        const producerPayable = isAcaAgencyPaysProducer(carrier) ? commission : 0;
+
+        // producer_payable only kicks in for ACA agency-pay-only carriers
+        // AND when the producer is a known ACA pass-through agent.
+        const isAcaProducerHere = NO_SPLIT_AGENTS.some(a => String(agent).toLowerCase().includes(a));
+        const passThrough = isAcaAgencyPaysProducer(carrier) && isAcaProducerHere;
+
+        const theiShare = passThrough
+          ? 0
+          : (splitApplies ? Math.round(commission * 0.5 * 100) / 100 : commission);
+        const bsiShare = (passThrough || !splitApplies)
+          ? 0
+          : Math.round(commission * 0.5 * 100) / 100;
+        const producerPayable = passThrough ? commission : 0;
         const lob = /humana|aetna|devoted|united.?health/i.test(carrier) ? 'MA' : 'Unknown';
 
         records.push({

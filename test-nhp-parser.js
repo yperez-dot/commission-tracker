@@ -22,9 +22,7 @@ const ACA_CARRIERS_LIST = [
 const ACA_AGENCY_PAYS_PRODUCER = ['molina', 'cigna', 'ambetter', 'florida blue'];
 
 function shouldSplit(agentName, carrier) {
-  const agent = String(agentName || '').toLowerCase().trim();
   const car = String(carrier || '').toLowerCase().trim();
-  if (NO_SPLIT_AGENTS.some(a => agent.includes(a))) return false;
   if (ACA_CARRIERS_LIST.some(c => car.includes(c))) return false;
   return true;
 }
@@ -117,8 +115,8 @@ function parseNHPRows(wb) {
     const recordType = isCommissionRow ? 'Agent Commission' : 'Agency Override';
     const planType = derivePlanType(carrier);
 
-    const isAcaPassThroughAgent = NO_SPLIT_AGENTS.some(a => String(agent).toLowerCase().includes(a));
     const isAcaCarrier = ACA_CARRIERS_LIST.some(c => String(carrier).toLowerCase().includes(c));
+    const isAcaAgentRow = NO_SPLIT_AGENTS.some(a => String(agent).toLowerCase().includes(a));
     let splitApplies, theiShare, bsiShare, producerPayable;
 
     if (isCommissionRow) {
@@ -126,9 +124,9 @@ function parseNHPRows(wb) {
       theiShare = 0;
       bsiShare = 0;
       producerPayable = grossCommission;
-    } else if (isAcaPassThroughAgent || isAcaCarrier) {
+    } else if (isAcaCarrier) {
       splitApplies = false;
-      if (isAcaAgencyPaysProducer(carrier)) {
+      if (isAcaAgencyPaysProducer(carrier) && isAcaAgentRow) {
         theiShare = 0;
         bsiShare = 0;
         producerPayable = grossCommission;
