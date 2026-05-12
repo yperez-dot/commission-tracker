@@ -203,14 +203,30 @@ router.patch('/:id', requireAuth, async (req, res) => {
 router.post('/check-renewals', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
-    const { period } = req.body;
+    const { period, scope } = req.body;
     if (!period) return res.status(400).json({ error: 'Period required' });
     const isAdmin = req.user.role === 'admin' && !getAgency(req);
-    const af = req.user.role === 'agent'
-      ? `AND agent_name ILIKE '%${req.user.name}%'`
-      : (req.user.role === 'admin' && getAgency(req))
-        ? `AND carrier IN (SELECT DISTINCT carrier FROM commission_records WHERE ${agencyFilter(req, null)})`
-        : '';
+
+    // Default scope for THEI admins: check ONLY Yahoska + Katy's BOB
+    // (their personal production). Pass scope='all' to check everyone.
+    // Per Yahoska 2026-05-12: "We only check for mine and Katy's BOB."
+    const THEI_PRINCIPAL_FILTER = `AND (
+      LOWER(agent_name) LIKE '%yahoska%'
+      OR LOWER(agent_name) LIKE '%katy%'
+      OR LOWER(agent_name) LIKE '%perez, yahoska%'
+      OR LOWER(agent_name) LIKE '%robles, katy%'
+    )`;
+
+    let af = '';
+    if (req.user.role === 'agent') {
+      af = `AND agent_name ILIKE '%${req.user.name}%'`;
+    } else if (req.user.role === 'admin' && getAgency(req)) {
+      af = `AND carrier IN (SELECT DISTINCT carrier FROM commission_records WHERE ${agencyFilter(req, null)})`;
+    } else if (scope === 'all') {
+      af = ''; // explicit opt-in to check entire BOB
+    } else {
+      af = THEI_PRINCIPAL_FILTER; // default: Yahoska + Katy only
+    }
 
     function normalizePeriod(p) {
       if (!p) return null;

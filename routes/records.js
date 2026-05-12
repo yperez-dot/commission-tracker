@@ -228,12 +228,30 @@ router.get('/kpi', requireAuth, async (req, res) => {
 router.get('/missing-renewals', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
-    const { lastPeriod, thisPeriod } = req.query;
+    const { lastPeriod, thisPeriod, scope } = req.query;
     if (!lastPeriod || !thisPeriod) return res.status(400).json({ error: 'lastPeriod and thisPeriod required' });
     const _af = agencyFilter(req, null);
-    const af = req.user.role === 'agent'
-      ? `AND agent_name ILIKE '%${req.user.name}%'`
-      : _af ? `AND ${_af}` : '';
+
+    // Default scope: only Yahoska + Katy's personal production.
+    // Pass scope='all' to override and check the entire BOB.
+    // Per Yahoska 2026-05-12: "We only check for mine and Katy's BOB."
+    const THEI_PRINCIPAL_FILTER = `AND (
+      LOWER(agent_name) LIKE '%yahoska%'
+      OR LOWER(agent_name) LIKE '%katy%'
+      OR LOWER(agent_name) LIKE '%perez, yahoska%'
+      OR LOWER(agent_name) LIKE '%robles, katy%'
+    )`;
+
+    let af;
+    if (req.user.role === 'agent') {
+      af = `AND agent_name ILIKE '%${req.user.name}%'`;
+    } else if (_af) {
+      af = `AND ${_af}`;
+    } else if (scope === 'all') {
+      af = '';
+    } else {
+      af = THEI_PRINCIPAL_FILTER;
+    }
     const [lastMonth, thisMonth] = await Promise.all([
       pool.query(`SELECT agent_name, carrier, client_full_name, commission FROM commission_records WHERE payment_period = $1 ${af}`, [lastPeriod]),
       pool.query(`SELECT agent_name, carrier, client_full_name, commission FROM commission_records WHERE payment_period = $1 ${af}`, [thisPeriod])
