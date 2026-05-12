@@ -96,6 +96,49 @@ async function initSchema() {
 
       ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS plan_type TEXT;
       ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS payee TEXT DEFAULT '';
+
+      -- Migration 2026-05-12 — OliComm business rules columns
+      -- See projects/olicomm/business-rules.md for the full reasoning
+
+      -- Where did this row come from?
+      -- 'BSI'           = parsed from BSI monthly PDF
+      -- 'NHP'           = parsed from NHP semi-monthly Excel
+      -- 'direct_carrier'= pulled directly from a carrier portal (UHC, Humana, etc.)
+      -- 'manual'        = entered by hand via the UI
+      ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS source TEXT;
+
+      -- Date the underlying policy was originally written.
+      -- Used to determine BSI 50/50 split eligibility:
+      --   policy_written_date < 2025-07-01 → no BSI split (legacy)
+      --   policy_written_date >= 2025-07-01 → BSI split applies
+      ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS policy_written_date DATE;
+
+      -- Full gross commission $$ before any split (the carrier/upline paid us this)
+      ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS gross_commission NUMERIC(12,2);
+
+      -- Net $$ that THEI actually keeps after the BSI split (= gross if no split)
+      ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS thei_share NUMERIC(12,2);
+
+      -- $$ that BSI gets (= 0 if no split applies)
+      ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS bsi_share NUMERIC(12,2);
+
+      -- $$ THEI owes the writing producer (pass-through via ADP).
+      -- Only > 0 for ACA agency-only carriers (Molina, Cigna, Ambetter, Florida Blue)
+      -- where the producer is a known ACA pass-through agent.
+      ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS producer_payable NUMERIC(12,2);
+
+      -- Boolean: did the 50/50 BSI split apply to this row?
+      ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS split_applies BOOLEAN;
+
+      -- Line of business: MA, MAPD, ACA, Dental, Vision, etc.
+      -- Extracted from the statement when possible; derived from carrier+plan otherwise.
+      ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS lob TEXT;
+
+      -- Indexes for the new columns we'll filter/group by in reports
+      CREATE INDEX IF NOT EXISTS idx_records_source ON commission_records(source);
+      CREATE INDEX IF NOT EXISTS idx_records_lob ON commission_records(lob);
+      CREATE INDEX IF NOT EXISTS idx_records_split ON commission_records(split_applies);
+      CREATE INDEX IF NOT EXISTS idx_records_policy_date ON commission_records(policy_written_date);
     `);
 
     await seedDefaultAdmin(client);
