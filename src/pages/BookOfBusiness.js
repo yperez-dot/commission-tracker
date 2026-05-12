@@ -353,7 +353,9 @@ export default function BookOfBusiness({ user }) {
                           <td style={{fontSize:12}}>{c.agent_name||'—'}</td>
                           <td style={{fontSize:12}}>{c.carrier}</td>
                           <td style={{fontSize:11,color:'var(--text-muted)'}}>{c.effective_date||'—'}</td>
-                          <td style={{fontWeight:500,color:'var(--green)'}}>{fmt(c.last_commission_amount)}</td>
+                          <td style={{fontWeight:500,color:c.last_commission_amount && parseFloat(c.last_commission_amount) > 0 ? 'var(--green)' : 'var(--text-light)'}}>
+                            {c.last_commission_amount && parseFloat(c.last_commission_amount) > 0 ? fmt(c.last_commission_amount) : '—'}
+                          </td>
                           <td>
                             <select value={c.resolution||''} onChange={e=>updateStatus(c.id,e.target.value)}
                               style={{fontSize:11,padding:'3px 6px',borderRadius:5,border:'1px solid var(--border)',background:c.status==='inactive'?'var(--bg-subtle)':'var(--bg)',color:'var(--text)'}}>

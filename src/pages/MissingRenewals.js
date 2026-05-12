@@ -63,6 +63,33 @@ function nameVariants(name) {
   return result;
 }
 
+// Prettify date strings for display: handles YYYYMMDD, MM/DD/YYYY, YYYY-MM-DD, Excel serial numbers
+function prettifyDate(d) {
+  if (!d) return '';
+  const s = String(d).trim();
+  if (!s || s === '—') return '';
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  // YYYYMMDD (e.g., 20260101)
+  const m1 = s.match(/^(\d{4})(\d{2})(\d{2})$/);
+  if (m1) {
+    const mo = parseInt(m1[2], 10);
+    return mo >= 1 && mo <= 12 ? `${months[mo-1]} ${parseInt(m1[3],10)}, ${m1[1]}` : s;
+  }
+  // MM/DD/YYYY
+  const m2 = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m2) {
+    const mo = parseInt(m2[1], 10);
+    return mo >= 1 && mo <= 12 ? `${months[mo-1]} ${parseInt(m2[2],10)}, ${m2[3]}` : s;
+  }
+  // YYYY-MM-DD
+  const m3 = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (m3) {
+    const mo = parseInt(m3[2], 10);
+    return mo >= 1 && mo <= 12 ? `${months[mo-1]} ${parseInt(m3[3],10)}, ${m3[1]}` : s;
+  }
+  return s; // leave anything else as-is
+}
+
 function normCarrier(c) {
   const s = String(c || '').toLowerCase();
   if (s.includes('united') || s.includes('uhc')) return 'unitedhealthcare';
@@ -434,7 +461,7 @@ export default function MissingRenewals({ user }) {
                             {r.client}
                           </button>
                         </td>
-                        <td style={{ fontSize:12,color:'var(--text-muted)' }}>{r.effectiveDate||'—'}</td>
+                        <td style={{ fontSize:12,color:'var(--text-muted)' }}>{prettifyDate(r.effectiveDate)||'—'}</td>
                         <td style={{ fontWeight:500,color:r.isMissing?'var(--text-muted)':'var(--green)' }}>
                           {r.isMissing ? '$0.00' : fmt(r.commission)}
                         </td>

@@ -29,7 +29,7 @@ export default function Login({ onLogin }) {
   return (
     <div style={{
       minHeight: '100vh',
-      background: '#1A1209',
+      background: '#FAF6F0',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
@@ -37,12 +37,12 @@ export default function Login({ onLogin }) {
       position: 'relative',
       overflow: 'hidden'
     }}>
-      {/* Background texture */}
+      {/* Background texture — soft warm tones */}
       <div style={{
         position: 'absolute', inset: 0,
-        backgroundImage: `radial-gradient(ellipse at 20% 50%, rgba(201,169,110,0.08) 0%, transparent 60%),
-          radial-gradient(ellipse at 80% 20%, rgba(201,169,110,0.05) 0%, transparent 50%),
-          radial-gradient(ellipse at 60% 80%, rgba(201,169,110,0.06) 0%, transparent 40%)`,
+        backgroundImage: `radial-gradient(ellipse at 20% 50%, rgba(201,169,110,0.14) 0%, transparent 60%),
+          radial-gradient(ellipse at 80% 20%, rgba(168,133,74,0.09) 0%, transparent 50%),
+          radial-gradient(ellipse at 60% 80%, rgba(201,169,110,0.10) 0%, transparent 40%)`,
         pointerEvents: 'none'
       }}/>
 
@@ -66,21 +66,21 @@ export default function Login({ onLogin }) {
           @keyframes spin { to { transform: rotate(360deg); } }
           .login-input {
             width: 100%;
-            background: rgba(255,255,255,0.04);
-            border: 0.5px solid rgba(201,169,110,0.25);
+            background: rgba(255,255,255,0.65);
+            border: 0.5px solid rgba(201,169,110,0.35);
             border-radius: 6px;
             padding: 12px 14px;
-            color: #F0EAD8;
+            color: #3D2B1F;
             font-size: 14px;
             font-family: 'Georgia', serif;
             outline: none;
             transition: border-color 0.2s, background 0.2s;
             box-sizing: border-box;
           }
-          .login-input::placeholder { color: rgba(240,234,216,0.3); }
+          .login-input::placeholder { color: rgba(61,43,31,0.35); }
           .login-input:focus {
-            border-color: rgba(201,169,110,0.6);
-            background: rgba(255,255,255,0.07);
+            border-color: rgba(168,133,74,0.65);
+            background: #ffffff;
           }
           .login-btn {
             width: 100%;
