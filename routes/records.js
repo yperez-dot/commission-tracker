@@ -293,6 +293,173 @@ router.post('/normalize-agents', requireAuth, requireAdmin, async (req, res) => 
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ADP Payable Report — list of producers THEI owes for ACA pass-through.
+//
+// Use case: Each pay period, Yahoska needs to know exactly how much to pay
+// each ACA pass-through producer (Patsy, Eduardo, Jessica, Sabri, Jill,
+// Josseline, Osmary) via ADP. This endpoint gives her that list.
+//
+// Query params:
+//   period (string) - filter by payment_period (e.g., '202604'). Optional.
+//   year (string)   - filter by YYYY of payment_period. Optional.
+//   group_by_carrier (bool) - if true, return per-carrier breakdown per producer
+//
+// Returns:
+//   {
+//     period_filter: string | null,
+//     totals: { gross, paid_count },
+//     producers: [
+//       { name, total_payable, record_count, by_carrier: { Molina: $, Cigna: $, ... } }
+//     ]
+//   }
+router.get('/adp-payable', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const pool = getPool();
+    const period = req.query.period;
+    const year = req.query.year;
+    const groupByCarrier = req.query.group_by_carrier === 'true';
+
+    const whereParts = ['producer_payable IS NOT NULL', 'producer_payable > 0'];
+    const params = [];
+    if (period) {
+      params.push(period);
+      whereParts.push(`payment_period = $${params.length}`);
+    } else if (year) {
+      params.push(`${year}%`);
+      whereParts.push(`payment_period LIKE $${params.length}`);
+    }
+    const whereClause = `WHERE ${whereParts.join(' AND ')}`;
+
+    // Per-producer totals
+    const perProducer = await pool.query(
+      `SELECT agent_name,
+              SUM(producer_payable) as total_payable,
+              COUNT(*) as record_count
+       FROM commission_records
+       ${whereClause}
+       GROUP BY agent_name
+       ORDER BY total_payable DESC`,
+      params
+    );
+
+    // Optional per-carrier breakdown
+    let perCarrier = [];
+    if (groupByCarrier) {
+      const carrierResult = await pool.query(
+        `SELECT agent_name, carrier,
+                SUM(producer_payable) as carrier_payable,
+                COUNT(*) as record_count
+         FROM commission_records
+         ${whereClause}
+         GROUP BY agent_name, carrier
+         ORDER BY agent_name, carrier`,
+        params
+      );
+      perCarrier = carrierResult.rows;
+    }
+
+    // Build response
+    const producers = perProducer.rows.map(r => {
+      const out = {
+        name: r.agent_name,
+        total_payable: parseFloat(r.total_payable),
+        record_count: parseInt(r.record_count, 10),
+      };
+      if (groupByCarrier) {
+        out.by_carrier = {};
+        for (const c of perCarrier.filter(x => x.agent_name === r.agent_name)) {
+          out.by_carrier[c.carrier] = parseFloat(c.carrier_payable);
+        }
+      }
+      return out;
+    });
+
+    const totalGross = producers.reduce((s, p) => s + p.total_payable, 0);
+    const totalCount = producers.reduce((s, p) => s + p.record_count, 0);
+
+    res.json({
+      period_filter: period || (year ? `${year}*` : null),
+      totals: {
+        gross: Math.round(totalGross * 100) / 100,
+        record_count: totalCount,
+        producer_count: producers.length,
+      },
+      producers,
+    });
+  } catch (err) {
+    console.error('adp-payable error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Agency P&L summary — what THEI actually earned + what's owed
+router.get('/agency-summary', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const pool = getPool();
+    const period = req.query.period;
+    const year = req.query.year;
+
+    const whereParts = [];
+    const params = [];
+    if (period) {
+      params.push(period);
+      whereParts.push(`payment_period = $${params.length}`);
+    } else if (year) {
+      params.push(`${year}%`);
+      whereParts.push(`payment_period LIKE $${params.length}`);
+    }
+    const whereClause = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
+
+    const result = await pool.query(
+      `SELECT
+         source,
+         SUM(COALESCE(gross_commission, 0)) as gross_total,
+         SUM(COALESCE(thei_share, 0)) as thei_total,
+         SUM(COALESCE(bsi_share, 0)) as bsi_total,
+         SUM(COALESCE(producer_payable, 0)) as producer_total,
+         COUNT(*) as record_count
+       FROM commission_records
+       ${whereClause}
+       GROUP BY source
+       ORDER BY source`,
+      params
+    );
+
+    const sources = {};
+    let grandGross = 0, grandThei = 0, grandBsi = 0, grandPayable = 0, grandCount = 0;
+    for (const r of result.rows) {
+      const src = r.source || 'unknown';
+      sources[src] = {
+        gross: parseFloat(r.gross_total),
+        thei_share: parseFloat(r.thei_total),
+        bsi_share: parseFloat(r.bsi_total),
+        producer_payable: parseFloat(r.producer_total),
+        record_count: parseInt(r.record_count, 10),
+      };
+      grandGross += parseFloat(r.gross_total);
+      grandThei += parseFloat(r.thei_total);
+      grandBsi += parseFloat(r.bsi_total);
+      grandPayable += parseFloat(r.producer_total);
+      grandCount += parseInt(r.record_count, 10);
+    }
+
+    res.json({
+      period_filter: period || (year ? `${year}*` : 'all-time'),
+      sources,
+      totals: {
+        gross: Math.round(grandGross * 100) / 100,
+        thei_share: Math.round(grandThei * 100) / 100,
+        bsi_share: Math.round(grandBsi * 100) / 100,
+        producer_payable: Math.round(grandPayable * 100) / 100,
+        record_count: grandCount,
+      },
+    });
+  } catch (err) {
+    console.error('agency-summary error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Backfill OliComm business-rule columns onto existing commission_records.
 // Computes source/lob/split fields from the data we already have.
 // Safe to run multiple times — idempotent (only updates rows where the new
