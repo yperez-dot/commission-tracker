@@ -30,9 +30,17 @@ async function apiFetch(path, options = {}) {
     }
   });
   if (res.status === 401) {
+    // If we had no token to begin with, don't reload — the caller (App.checkAuth)
+    // is expecting a thrown error so it can render the Login screen. Reloading
+    // here causes an infinite loop on first visit / after JWT secret rotation.
+    const hadToken = !!token;
     clearToken();
-    window.location.reload();
-    return;
+    if (hadToken) {
+      window.location.reload();
+      return;
+    }
+    // No token → throw so caller's try/catch handles it (renders Login).
+    throw new Error('Unauthorized');
   }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
