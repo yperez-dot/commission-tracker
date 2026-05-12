@@ -29,14 +29,53 @@ const upload = multer({
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 // ─── BSI split rules ──────────────────────────────────────────────────────────
-const NO_SPLIT_AGENTS = ['patsy pernia', 'josseline silber', 'jessica sifontes', 'eduardo pernia'];
-const ACA_CARRIERS_LIST = ['oscar health', 'oscar', 'cigna', 'florida blue', 'ambetter'];
+//
+// "Split" = the THEI<->BSI 50/50 split applies to this line.
+// We DO NOT split when:
+//   (a) the producer is an ACA pass-through agent (THEI receives, pays them via ADP)
+//   (b) the carrier line is ACA (we never split ACA with BSI — only Medicare splits)
+//
+// Updated 2026-05-12 per Yahoska — see projects/olicomm/business-rules.md
+
+// ACA pass-through producers (THEI cuts them a check via ADP):
+const NO_SPLIT_AGENTS = [
+  'patsy pernia',
+  'eduardo pernia',      // Patsy's husband, also produces ACA
+  'josseline silber',    // aka Josseline Mena
+  'josseline mena',
+  'jessica sifontes',
+  'sabri perez',         // confirmed 2026-05-12
+  'jill taylor',         // confirmed 2026-05-12
+  'osmary orozco',       // confirmed 2026-05-12 (possible — Yahoska to verify)
+];
+
+// ACA carriers (no BSI split applies to ANY ACA line, regardless of producer):
+const ACA_CARRIERS_LIST = [
+  // Agency-pay-only carriers (THEI receives, pays producer 100% via ADP)
+  'molina',
+  'cigna',
+  'ambetter',
+  'florida blue',
+  // Pay-agent-directly ACA carriers (producer receives, no THEI involvement)
+  'oscar health',
+  'oscar',
+];
+
+// Subset of ACA_CARRIERS_LIST: carriers that pay AGENCY ONLY (THEI must pay
+// producer via ADP). For these, THEI keeps $0 — pure pass-through.
+const ACA_AGENCY_PAYS_PRODUCER = ['molina', 'cigna', 'ambetter', 'florida blue'];
+
 function shouldSplit(agentName, carrier) {
   const agent = String(agentName || '').toLowerCase().trim();
   const car = String(carrier || '').toLowerCase().trim();
   if (NO_SPLIT_AGENTS.some(a => agent.includes(a))) return false;
   if (ACA_CARRIERS_LIST.some(c => car.includes(c))) return false;
   return true;
+}
+
+function isAcaAgencyPaysProducer(carrier) {
+  const car = String(carrier || '').toLowerCase().trim();
+  return ACA_AGENCY_PAYS_PRODUCER.some(c => car.includes(c));
 }
 
 // ─── Plan type derivation ────────────────────────────────────────────────────
