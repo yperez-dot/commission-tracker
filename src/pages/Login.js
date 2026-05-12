@@ -122,10 +122,11 @@ export default function Login({ onLogin }) {
           }}/>
           <div style={{
             fontSize: 11,
-            color: 'rgba(201,169,110,0.6)',
+            color: '#A8854A',
             letterSpacing: '3px',
             textTransform: 'uppercase',
-            fontFamily: "'Georgia', serif"
+            fontFamily: "'Georgia', serif",
+            fontWeight: 600
           }}>
             Commission Tracker
           </div>
@@ -152,11 +153,12 @@ export default function Login({ onLogin }) {
           <div style={{ marginBottom: 16 }}>
             <div style={{
               fontSize: 10,
-              color: 'rgba(201,169,110,0.5)',
+              color: '#6B4F35',
               letterSpacing: '2px',
               textTransform: 'uppercase',
               marginBottom: 8,
-              fontFamily: "'Georgia', serif"
+              fontFamily: "'Georgia', serif",
+              fontWeight: 600
             }}>Email</div>
             <input
               className="login-input"
@@ -172,11 +174,12 @@ export default function Login({ onLogin }) {
           <div style={{ marginBottom: 24 }}>
             <div style={{
               fontSize: 10,
-              color: 'rgba(201,169,110,0.5)',
+              color: '#6B4F35',
               letterSpacing: '2px',
               textTransform: 'uppercase',
               marginBottom: 8,
-              fontFamily: "'Georgia', serif"
+              fontFamily: "'Georgia', serif",
+              fontWeight: 600
             }}>Password</div>
             <input
               className="login-input"
@@ -209,10 +212,10 @@ export default function Login({ onLogin }) {
         <div style={{
           marginTop: 32,
           paddingTop: 20,
-          borderTop: '0.5px solid rgba(201,169,110,0.12)',
+          borderTop: '0.5px solid rgba(168,133,74,0.25)',
           textAlign: 'center',
           fontSize: 11,
-          color: 'rgba(240,234,216,0.4)',
+          color: 'rgba(61,43,31,0.55)',
           letterSpacing: '0.5px',
           lineHeight: 1.8
         }}>
