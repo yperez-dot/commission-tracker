@@ -144,7 +144,15 @@ export default function MissingRenewals({ user }) {
       const checkDate = periodToDate(selectedPeriod);
 
       const bobData = await apiFetch('/bob?status=active');
-      const bobClients = bobData || [];
+      // Filter to only Yahoska + Katy's BOB (THEI's own production).
+      // Per Yahoska 2026-05-12: 'We only check for mine and Katy's BOB.'
+      // Downline producers' renewals are BSI's responsibility, not ours.
+      const allBob = bobData || [];
+      const bobClients = allBob.filter(c => {
+        const a = String(c.agent_name || '').toLowerCase();
+        return a.includes('yahoska') || a.includes('katy')
+          || a.includes('perez, yahoska') || a.includes('robles, katy');
+      });
 
       const allRecData = await apiFetch('/records?limit=5000');
       const allRecs = (allRecData.records || []).filter(r => {
