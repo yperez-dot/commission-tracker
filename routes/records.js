@@ -293,4 +293,145 @@ router.post('/normalize-agents', requireAuth, requireAdmin, async (req, res) => 
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Backfill OliComm business-rule columns onto existing commission_records.
+// Computes source/lob/split fields from the data we already have.
+// Safe to run multiple times — idempotent (only updates rows where the new
+// columns are still NULL).
+router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const pool = getPool();
+
+    // Inline the rule constants so this works without depending on files.js exports
+    const NO_SPLIT_AGENTS = [
+      'patsy pernia', 'eduardo pernia', 'josseline silber', 'josseline mena',
+      'jessica sifontes', 'sabri perez', 'jill taylor', 'osmary orozco',
+    ];
+    const ACA_CARRIERS_LIST = [
+      'molina', 'cigna', 'ambetter', 'florida blue', 'oscar health', 'oscar',
+    ];
+    const ACA_AGENCY_PAYS_PRODUCER = ['molina', 'cigna', 'ambetter', 'florida blue'];
+
+    function shouldSplit(agentName, carrier) {
+      const a = String(agentName || '').toLowerCase().trim();
+      const c = String(carrier || '').toLowerCase().trim();
+      if (NO_SPLIT_AGENTS.some(x => a.includes(x))) return false;
+      if (ACA_CARRIERS_LIST.some(x => c.includes(x))) return false;
+      return true;
+    }
+    function isAcaAgencyPaysProducer(carrier) {
+      const c = String(carrier || '').toLowerCase().trim();
+      return ACA_AGENCY_PAYS_PRODUCER.some(x => c.includes(x));
+    }
+
+    // Fetch all rows that still have NULL source (i.e., haven't been backfilled)
+    const sel = await pool.query(`
+      SELECT cr.id, cr.agent_name, cr.carrier, cr.commission, cr.classification,
+             cr.effective_date, cr.plan_type, cr.payee, cr.payment_period,
+             u.original_name AS upload_name
+      FROM commission_records cr
+      LEFT JOIN uploads u ON u.id = cr.upload_id
+      WHERE cr.source IS NULL
+    `);
+
+    let updated = 0;
+    let skipped = 0;
+    const sources = { BSI: 0, NHP: 0, direct_carrier: 0, manual: 0 };
+
+    for (const row of sel.rows) {
+      // Infer source from the upload filename / payee
+      const fn = String(row.upload_name || '').toLowerCase();
+      const payeeLc = String(row.payee || '').toLowerCase();
+      let source = 'manual';
+      if (payeeLc === 'bsi' || /statement-the|statement_-the|broker_society|bsi/.test(fn)) source = 'BSI';
+      else if (payeeLc === 'nhp' || /nhp|the_health_experts_insurance_statement/.test(fn)) source = 'NHP';
+      else if (payeeLc) source = 'direct_carrier';
+      sources[source] = (sources[source] || 0) + 1;
+
+      // Compute split / payable
+      const agent = row.agent_name;
+      const carrier = row.carrier;
+      const classification = String(row.classification || '').toLowerCase();
+      const isCommissionRow = classification.includes('agent commission') || classification === 'commission';
+
+      // The historical `commission` column is already the NET-after-split value
+      // (per the existing parsers). We can't recover the gross from there alone,
+      // BUT for split records we can derive it: gross = net * 2.
+      // For no-split records, gross = net.
+      const netCommission = parseFloat(row.commission) || 0;
+
+      const isAcaPassThroughAgent = NO_SPLIT_AGENTS.some(a => String(agent || '').toLowerCase().includes(a));
+      const isAcaCarrier = ACA_CARRIERS_LIST.some(c => String(carrier || '').toLowerCase().includes(c));
+      let splitApplies, theiShare, bsiShare, producerPayable, grossCommission;
+
+      if (isCommissionRow || isAcaPassThroughAgent || isAcaCarrier) {
+        splitApplies = false;
+        grossCommission = netCommission; // no split was applied to net already
+        if (isAcaAgencyPaysProducer(carrier) || isCommissionRow) {
+          theiShare = 0;
+          bsiShare = 0;
+          producerPayable = grossCommission;
+        } else {
+          theiShare = grossCommission;
+          bsiShare = 0;
+          producerPayable = 0;
+        }
+      } else {
+        // Was split 50/50 -> net stored was half of gross
+        splitApplies = true;
+        grossCommission = Math.round(netCommission * 2 * 100) / 100;
+        theiShare = netCommission;
+        bsiShare = netCommission;
+        producerPayable = 0;
+      }
+
+      // LOB inference from plan_type / carrier
+      const planType = String(row.plan_type || '').toLowerCase();
+      const carrierLc = String(carrier || '').toLowerCase();
+      let lob = null;
+      if (/med adv|mapd|advantage/.test(planType)) lob = 'MA';
+      else if (/pdp/.test(planType)) lob = 'PDP';
+      else if (/medsupp|medigap|supplement/.test(planType)) lob = 'MedSupp';
+      else if (/aca|marketplace/.test(planType) || isAcaCarrier) lob = 'ACA';
+      else if (/dental/.test(planType)) lob = 'Dental';
+      else if (/vision/.test(planType)) lob = 'Vision';
+      else if (/life/.test(planType)) lob = 'Life';
+      else if (/medicare|humana|aetna|united|devoted/.test(carrierLc)) lob = 'MA';
+
+      // Parse effective_date (often MM/DD/YYYY string) -> YYYY-MM-DD
+      let policyWrittenDate = null;
+      const ed = String(row.effective_date || '');
+      const m1 = ed.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+      const m2 = ed.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (m1) policyWrittenDate = `${m1[3]}-${m1[1]}-${m1[2]}`;
+      else if (m2) policyWrittenDate = `${m2[1]}-${m2[2]}-${m2[3]}`;
+
+      await pool.query(
+        `UPDATE commission_records
+            SET source = $1,
+                policy_written_date = $2,
+                gross_commission = $3,
+                thei_share = $4,
+                bsi_share = $5,
+                producer_payable = $6,
+                split_applies = $7,
+                lob = $8
+          WHERE id = $9`,
+        [source, policyWrittenDate, grossCommission, theiShare, bsiShare, producerPayable, splitApplies, lob, row.id]
+      );
+      updated++;
+    }
+
+    res.json({
+      success: true,
+      updated,
+      skipped,
+      sources,
+      message: `Backfilled ${updated} records with OliComm business-rule columns.`,
+    });
+  } catch (err) {
+    console.error('backfill error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

@@ -665,6 +665,8 @@ function parseNHPRows(wb) {
   const records = [];
   const ws = wb.Sheets[wb.SheetNames[0]];
   const range = XLSX.utils.decode_range(ws['!ref']);
+
+  // Find the header row by looking for 'Override' anywhere in the first 20 rows.
   let headerRow = -1;
   for (let r = range.s.r; r <= Math.min(range.s.r + 20, range.e.r); r++) {
     for (let c = range.s.c; c <= range.e.c; c++) {
@@ -680,7 +682,8 @@ function parseNHPRows(wb) {
   const rows = XLSX.utils.sheet_to_json(ws, { raw: true, defval: '', range: headerRow });
 
   for (const row of rows) {
-    const agent = normalizeAgentName(String(row['Agent'] || '').trim());
+    const agentRaw = String(row['Agent'] || '').trim();
+    const agent = normalizeAgentName(agentRaw);
     const carrierRaw = String(row['Carrier-Statement Month'] || '').trim();
     const client = String(row['Subscriber Name'] || '').trim();
     const policyNumber = String(row['Policy Number'] || '').trim();
@@ -688,19 +691,69 @@ function parseNHPRows(wb) {
     const rawPeriod = row['Commission Month'];
     const period = normalizePeriod(rawPeriod);
     const nhpType = String(row['Type'] || '').trim();
-    const lob = String(row['LOB'] || '').trim();
-    const commission = nhpType.toLowerCase().includes('commission')
+    const lobRaw = String(row['LOB'] || '').trim();
+
+    // Determine which dollar field to use:
+    //   Type='Commission' -> agent commission (Commission column)
+    //   Type='Override'   -> agency override (Override column)
+    const isCommissionRow = nhpType.toLowerCase().includes('commission');
+    const grossCommission = isCommissionRow
       ? (parseFloat(row['Commission']) || 0)
       : (parseFloat(row['Override']) || 0);
-    if (!client || commission === 0) continue;
+
+    // Skip empty/zero rows
+    if (!client) continue;
+    if (grossCommission === 0) continue;
 
     const carrier = normalizeNHPCarrier(carrierRaw);
-    const recordType = nhpType.toLowerCase().includes('commission') ? 'Agent Commission' : 'Agency Override';
-    const planType = derivePlanType(carrier, '', policyNumber, lob);
+    const recordType = isCommissionRow ? 'Agent Commission' : 'Agency Override';
+    const planType = derivePlanType(carrier, '', policyNumber, lobRaw);
 
-    const nhpNet = (recordType === 'Agency Override' && shouldSplit(agent || '', carrier))
-      ? Math.round(commission * 0.5 * 100) / 100
-      : commission;
+    // Apply BSI split rules:
+    //   - Agent Commission rows (Patsy/Jessica/Sabri/etc ACA pass-through):
+    //       100% to producer via ADP, no BSI split
+    //   - Agency Override rows: 50/50 with BSI (per Yahoska 2026-05-12),
+    //       except for ACA pass-through agents or ACA carriers
+    const isAcaPassThroughAgent = NO_SPLIT_AGENTS.some(a => String(agent).toLowerCase().includes(a));
+    const isAcaCarrier = ACA_CARRIERS_LIST.some(c => String(carrier).toLowerCase().includes(c));
+    let splitApplies, theiShare, bsiShare, producerPayable;
+
+    if (isCommissionRow) {
+      // Agent commission: producer is owed via ADP (THEI doesn't keep it)
+      splitApplies = false;
+      theiShare = 0;
+      bsiShare = 0;
+      producerPayable = grossCommission;
+    } else if (isAcaPassThroughAgent || isAcaCarrier) {
+      // ACA override (Molina/Cigna/Ambetter/FL Blue) — THEI keeps 100% generally,
+      // but for the agency-pay-only carriers, THEI passes 100% to producer.
+      splitApplies = false;
+      if (isAcaAgencyPaysProducer(carrier)) {
+        theiShare = 0;
+        bsiShare = 0;
+        producerPayable = grossCommission;
+      } else {
+        theiShare = grossCommission;
+        bsiShare = 0;
+        producerPayable = 0;
+      }
+    } else {
+      // Medicare agency override — 50/50 BSI split (per 2026-05-12 rules)
+      splitApplies = true;
+      theiShare = Math.round(grossCommission * 0.5 * 100) / 100;
+      bsiShare = Math.round(grossCommission * 0.5 * 100) / 100;
+      producerPayable = 0;
+    }
+
+    // Map NHP's LOB to OliComm's canonical lob
+    let lob;
+    const lobLower = lobRaw.toLowerCase();
+    if (lobLower === 'ma' || lobLower === 'mapd') lob = 'MA';
+    else if (lobLower === 'aca') lob = 'ACA';
+    else if (lobLower === 'pdp') lob = 'PDP';
+    else if (lobLower === 'medsupp' || lobLower === 'medigap') lob = 'MedSupp';
+    else lob = lobRaw || null;
+
     records.push({
       agent: agent || 'Unknown',
       carrier,
@@ -708,11 +761,21 @@ function parseNHPRows(wb) {
       client,
       effectiveDate,
       premium: 0,
-      commission: nhpNet,
-      classification: commission < 0 ? 'Chargeback' : recordType,
+      commission: theiShare,  // existing column: net to THEI after split
+      classification: grossCommission < 0 ? 'Chargeback' : recordType,
       period: period || 'Unknown',
       policyNumber,
-      raw: row
+      payee: 'NHP',
+      // New OliComm schema columns:
+      source: 'NHP',
+      policyWrittenDate: effectiveDate,
+      grossCommission,
+      theiShare,
+      bsiShare,
+      producerPayable,
+      splitApplies,
+      lob,
+      raw: row,
     });
   }
   return records;
