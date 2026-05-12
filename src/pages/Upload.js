@@ -17,6 +17,10 @@ export default function Upload({ user }) {
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [viewRecords, setViewRecords] = useState([]);
   const [viewLoading, setViewLoading] = useState(false);
+  // New: search/filter/sort state for the uploads list
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterCarrier, setFilterCarrier] = useState('');
+  const [sortBy, setSortBy] = useState('date_desc'); // date_desc | date_asc | carrier | name
 
   const loadUploads = useCallback(async () => {
     try {
@@ -102,6 +106,32 @@ export default function Upload({ user }) {
 
   const totalRecords = uploads.reduce((s, u) => s + (u.row_count || 0), 0);
   const totalCommission = uploads.reduce((s, u) => s + (parseFloat(u.commission_sum) || 0), 0);
+
+  // Distinct carriers across all uploads (split on commas because some uploads have multi-carrier strings)
+  const allCarriers = Array.from(new Set(
+    uploads.flatMap(u => (u.carrier || '').split(',').map(s => s.trim()).filter(Boolean))
+  )).sort();
+
+  // Apply search + filter + sort
+  const visibleUploads = uploads
+    .filter(u => {
+      if (searchQuery && !((u.original_name || '').toLowerCase().includes(searchQuery.toLowerCase()))) return false;
+      if (filterCarrier && !((u.carrier || '').toLowerCase().includes(filterCarrier.toLowerCase()))) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      switch (sortBy) {
+        case 'date_asc':
+          return new Date(a.uploaded_at) - new Date(b.uploaded_at);
+        case 'carrier':
+          return (a.carrier || '').localeCompare(b.carrier || '');
+        case 'name':
+          return (a.original_name || '').localeCompare(b.original_name || '');
+        case 'date_desc':
+        default:
+          return new Date(b.uploaded_at) - new Date(a.uploaded_at);
+      }
+    });
 
   return (
     <div>
@@ -232,10 +262,48 @@ export default function Upload({ user }) {
         )}
 
         <div className="card" style={{ padding: 0 }}>
+          {/* Search + filter + sort toolbar */}
+          {uploads.length > 0 && (
+            <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+              <input
+                type="text"
+                placeholder="Search by filename..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                style={{ flex: '1 1 220px', minWidth: 180, padding: '6px 10px', borderRadius: 6, border: '0.5px solid var(--border)', fontSize: 13, background: 'var(--bg)', color: 'var(--text)' }}
+              />
+              <select
+                value={filterCarrier}
+                onChange={(e) => setFilterCarrier(e.target.value)}
+                style={{ padding: '6px 10px', borderRadius: 6, border: '0.5px solid var(--border)', fontSize: 13, background: 'var(--bg)', color: 'var(--text)', cursor: 'pointer' }}
+              >
+                <option value="">All carriers</option>
+                {allCarriers.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+              <select
+                value={sortBy}
+                onChange={(e) => setSortBy(e.target.value)}
+                style={{ padding: '6px 10px', borderRadius: 6, border: '0.5px solid var(--border)', fontSize: 13, background: 'var(--bg)', color: 'var(--text)', cursor: 'pointer' }}
+              >
+                <option value="date_desc">↓ Newest first</option>
+                <option value="date_asc">↑ Oldest first</option>
+                <option value="carrier">Sort by carrier</option>
+                <option value="name">Sort by filename</option>
+              </select>
+              {(searchQuery || filterCarrier) && (
+                <button
+                  onClick={() => { setSearchQuery(''); setFilterCarrier(''); }}
+                  style={{ background: 'none', border: '0.5px solid var(--border)', borderRadius: 6, padding: '5px 12px', fontSize: 12, cursor: 'pointer', color: 'var(--text-muted)' }}
+                >
+                  Clear filters
+                </button>
+              )}
+            </div>
+          )}
           <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 }}>
-            <input type="checkbox" checked={selectedUploads.size === uploads.length && uploads.length > 0} onChange={selectAllUploads} style={{ cursor: 'pointer' }} />
+            <input type="checkbox" checked={selectedUploads.size === visibleUploads.length && visibleUploads.length > 0} onChange={selectAllUploads} style={{ cursor: 'pointer' }} />
             <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', flex: 1 }}>
-              Uploaded files ({uploads.length})
+              Uploaded files {visibleUploads.length !== uploads.length ? `(${visibleUploads.length} of ${uploads.length})` : `(${uploads.length})`}
             </span>
             {selectedUploads.size > 0 && (
               <button onClick={bulkDeleteUploads} disabled={bulkDeleting} style={{ background: '#E24B4A', color: '#fff', border: 'none', borderRadius: 6, padding: '5px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
@@ -249,7 +317,13 @@ export default function Upload({ user }) {
               <div className="empty-title">No files uploaded yet</div>
               <div className="empty-sub">Drop your first carrier statement above</div>
             </div>
-          ) : uploads.map(u => (
+          ) : visibleUploads.length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-icon">🔍</div>
+              <div className="empty-title">No matches found</div>
+              <div className="empty-sub">Try a different search or clear the filters</div>
+            </div>
+          ) : visibleUploads.map(u => (
             <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', borderBottom: '1px solid var(--border)', background: selectedUploads.has(u.id) ? 'var(--blue-light)' : 'transparent' }}>
               <input type="checkbox" checked={selectedUploads.has(u.id)} onChange={() => toggleSelectUpload(u.id)} style={{ cursor: 'pointer', flexShrink: 0 }} />
               <span style={{ fontSize: 20, flexShrink: 0 }}>📊</span>
