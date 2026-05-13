@@ -1436,19 +1436,31 @@ function parseYourFMOXLSXRows(wb) {
   };
   
   // Parse data rows (skip header sections, summaries, empty rows)
+  // Track current agent from section headers
+  let currentAgent = 'Yahoska G Perez'; // Default to Yahoska
+  
   for (let i = headerRowIdx + 1; i < data.length; i++) {
     const row = data[i];
     const firstCell = String(row[0] || '').trim();
     
     // Stop at summary section
-    if (firstCell === 'Commission Summary' || firstCell.startsWith('Note:')) {
+    if (firstCell === 'Commission Summary' || firstCell.startStartsWith('Note:')) {
       break;
+    }
+    
+    // Check for agent section header (e.g. "Katy Jullie Robles   (Agent Number: EH9972...)")
+    if (firstCell.includes('Agent Number')) {
+      // Extract agent name (everything before the opening parenthesis)
+      const nameMatch = firstCell.match(/^(.+?)\s*\(Agent Number/);
+      if (nameMatch) {
+        currentAgent = nameMatch[1].trim();
+      }
+      continue;
     }
     
     // Skip section headers and empty rows
     if (firstCell.includes('NEW BUSINESS') || 
         firstCell.includes('RENEWAL BUSINESS') ||
-        firstCell.includes('Agent Number') ||
         firstCell === 'ADJUSTMENT' ||
         firstCell === '') {
       continue;
@@ -1495,7 +1507,7 @@ function parseYourFMOXLSXRows(wb) {
     }
     
     records.push({
-      agent: 'Yahoska G Perez', // YourFMO statements are for Yahoska (agent EE3120)
+      agent: currentAgent, // Use agent from section header
       carrier,
       planType,
       client,
