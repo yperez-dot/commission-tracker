@@ -308,9 +308,14 @@ function isHumanaPDF(filename) {
   const f = filename.toLowerCase();
   return f.endsWith('.pdf') && (f.includes('humana') || f.includes('commissionstatement') || f.includes('yourfmo'));
 }
+// UPDATED 2026-05-13: Detect YourFMO files by actual file naming patterns
 function isYourFMOXLSX(filename) {
   const f = filename.toLowerCase().replace(/\s+/g, '_');
-  return f.includes('commissions_commissiondetails') || f.includes('commissiondetails_88892');
+  return f.includes('commissions_commissiondetails') || 
+         f.includes('commissiondetails_88892') ||
+         f.includes('commissionstatement') ||      // CommissionStatement.xls, CommissionStatement_2.xls, etc.
+         f.includes('agent.xcelerator') ||         // agent.xcelerator.12.21.25.xls
+         f.includes('yourfmo');                    // any file with 'yourfmo' in the name
 }
 
 // ─── NEW: Mutual of Omaha PDF detector ───────────────────────────────────────
@@ -1393,44 +1398,118 @@ function parseYourFMORows(wb, filename) {
   return records;
 }
 
+// UPDATED 2026-05-13: Handle actual YourFMO Commission Statement format
+// Format: Headers in row 4, data rows mixed with section headers, summaries at bottom
 function parseYourFMOXLSXRows(wb) {
   const records = [];
   const ws = wb.Sheets[wb.SheetNames[0]];
-  const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
-  if (!rows.length) return records;
-  for (const row of rows) {
-    const client    = String(row['Insured Name'] || '').trim();
-    const agentRaw  = String(row['Writing Agent'] || '').trim();
-    const commission= parseFloat(row['Commission ($)']) || 0;
-    const policyNum = String(row['Policy #'] || row['Carrier Policy ID'] || '').trim().split('_')[0];
-    const fyr       = String(row['First Year/Renewal'] || '').trim();
-    const commType  = String(row['Commission Type'] || '').trim();
-    const carrier   = String(row['Carrier'] || 'Humana').trim();
-    if (!client || commission === 0) continue;
-    let period = '';
-    const stmtDate = row['Statement Date'];
-    if (stmtDate) {
-      const d = new Date(stmtDate);
-      if (!isNaN(d)) period = String(d.getFullYear()) + String(d.getMonth()+1).padStart(2,'0');
+  
+  // Parse as array of arrays to handle the messy format
+  const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+  
+  if (data.length < 5) return records; // Need at least header row
+  
+  // Find header row (should be row 4 in YourFMO format)
+  let headerRowIdx = -1;
+  for (let i = 0; i < Math.min(10, data.length); i++) {
+    const row = data[i];
+    if (row.some(cell => String(cell).includes('Policy #')) && 
+        row.some(cell => String(cell).includes('Name of Insured'))) {
+      headerRowIdx = i;
+      break;
     }
-    const effectiveDate = formatDate(row['Effective Date']);
-    const classification = commission < 0 ? 'Chargeback'
-      : fyr === 'First Year' ? 'New Business'
-      : fyr === 'Renewal Year' ? 'Renewal'
-      : commType.toLowerCase().includes('override') ? 'Agency Override'
-      : 'Agent Commission';
-    const carrierNorm = carrier.toLowerCase().includes('humana') ? 'Humana'
-      : carrier.toLowerCase().includes('united') ? 'UnitedHealthcare'
-      : carrier.toLowerCase().includes('aetna') ? 'Aetna'
-      : carrier;
+  }
+  
+  if (headerRowIdx === -1) return records; // No header found
+  
+  const headers = data[headerRowIdx];
+  
+  // Find column indexes
+  const colIdx = {
+    policy: headers.findIndex(h => String(h).includes('Policy #')),
+    name: headers.findIndex(h => String(h).includes('Name of Insured')),
+    transType: headers.findIndex(h => String(h).includes('Transaction Type')),
+    premium: headers.findIndex(h => String(h).includes('Premium Type')),
+    product: headers.findIndex(h => String(h).includes('Product')),
+    effectiveDate: headers.findIndex(h => String(h).includes('Effective Date') && !String(h).includes('Original')),
+    commAmount: headers.findIndex(h => String(h).includes('Net Comm')),
+  };
+  
+  // Parse data rows (skip header sections, summaries, empty rows)
+  for (let i = headerRowIdx + 1; i < data.length; i++) {
+    const row = data[i];
+    const firstCell = String(row[0] || '').trim();
+    
+    // Stop at summary section
+    if (firstCell === 'Commission Summary' || firstCell.startsWith('Note:')) {
+      break;
+    }
+    
+    // Skip section headers and empty rows
+    if (firstCell.includes('NEW BUSINESS') || 
+        firstCell.includes('RENEWAL BUSINESS') ||
+        firstCell.includes('Agent Number') ||
+        firstCell === 'ADJUSTMENT' ||
+        firstCell === '') {
+      continue;
+    }
+    
+    const policy = String(row[colIdx.policy] || '').trim().split('_')[0];
+    const client = String(row[colIdx.name] || '').trim();
+    const transType = String(row[colIdx.transType] || '').trim();
+    const product = String(row[colIdx.product] || '').trim();
+    const effectiveDate = formatDate(row[colIdx.effectiveDate]);
+    const commission = parseFloat(row[colIdx.commAmount]) || 0;
+    
+    // Skip if no policy number or no client name
+    if (!policy || !client || client === '') continue;
+    
+    // Derive classification
+    let classification;
+    if (commission < 0) {
+      classification = 'Chargeback';
+    } else if (transType.toLowerCase().includes('override')) {
+      classification = 'Agency Override';
+    } else if (transType.toLowerCase().includes('adjustment')) {
+      classification = 'Adjustment';
+    } else {
+      classification = 'Agent Commission';
+    }
+    
+    // Derive carrier from product
+    let carrier = 'Humana'; // default for YourFMO
+    if (product.toLowerCase().includes('devoted')) carrier = 'Devoted';
+    
+    // Derive plan type
+    const planType = derivePlanType(carrier, product, policy, '');
+    
+    // Extract period from statement date (row 1 typically has "Statement Date: MM/DD/YYYY")
+    let period = '';
+    if (data[1]) {
+      const statementRow = data[1].join(' ');
+      const dateMatch = statementRow.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+      if (dateMatch) {
+        const [_, month, day, year] = dateMatch;
+        period = `${year}${month.padStart(2, '0')}`;
+      }
+    }
+    
     records.push({
-      agent: normalizeAgentName(agentRaw) || 'The Health Experts Insurance',
-      carrier: carrierNorm,
-      planType: derivePlanType(carrierNorm, '', policyNum, ''),
-      client, effectiveDate, premium: 0, commission, classification,
-      period, policyNumber: policyNum, payee: 'YourFMO', raw: row
+      agent: 'Yahoska G Perez', // YourFMO statements are for Yahoska (agent EE3120)
+      carrier,
+      planType,
+      client,
+      effectiveDate,
+      premium: 0,
+      commission,
+      classification,
+      period,
+      policyNumber: policy,
+      payee: 'YourFMO',
+      raw: Object.fromEntries(headers.map((h, i) => [h, row[i]]))
     });
   }
+  
   return records;
 }
 
