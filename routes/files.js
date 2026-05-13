@@ -1444,7 +1444,7 @@ function parseYourFMOXLSXRows(wb) {
     const firstCell = String(row[0] || '').trim();
     
     // Stop at summary section
-    if (firstCell === 'Commission Summary' || firstCell.startStartsWith('Note:')) {
+    if (firstCell === 'Commission Summary' || firstCell.startsWith('Note:')) {
       break;
     }
     
