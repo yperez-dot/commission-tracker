@@ -730,14 +730,20 @@ function parseNHPRows(wb) {
     //       100% to producer via ADP, no BSI split
     //   - Agency Override rows: 50/50 with BSI (per Yahoska 2026-05-12),
     //       except for ACA pass-through agents or ACA carriers
+    //   - BSI SPLIT ONLY APPLIES TO EFFECTIVE DATES 9/1/2025 AND LATER (partnership start)
     // Split decision (per Yahoska 2026-05-12, corrected interpretation):
     //   - ACA carrier (any agent) -> no BSI split. Either THEI keeps 100%
     //     OR THEI pays producer 100% via ADP (agency-pay-only carriers).
-    //   - Medicare carrier (any agent including Patsy/Jill/Sabri/etc.) -> 50/50 BSI.
+    //   - Medicare carrier (any agent including Patsy/Jill/Sabri/etc.) -> 50/50 BSI IF effective >= 9/1/2025.
     //   - 'Agent Commission' Type rows from NHP -> the producer's own ACA
     //     commission flowing through THEI for ADP payout.
     const isAcaCarrier = ACA_CARRIERS_LIST.some(c => String(carrier).toLowerCase().includes(c));
     const isAcaAgentRow = NO_SPLIT_AGENTS.some(a => String(agent).toLowerCase().includes(a));
+    
+    // BSI partnership started August 2025, split applies to effective dates 9/1/2025+
+    const BSI_SPLIT_START_DATE = '2025-09-01';
+    const isBsiEligible = effectiveDate && effectiveDate >= BSI_SPLIT_START_DATE;
+    
     let splitApplies, theiShare, bsiShare, producerPayable;
 
     if (isCommissionRow) {
@@ -763,11 +769,20 @@ function parseNHPRows(wb) {
         producerPayable = 0;
       }
     } else {
-      // Medicare agency override -> 50/50 BSI split (every producer, no exceptions)
-      splitApplies = true;
-      theiShare = Math.round(grossCommission * 0.5 * 100) / 100;
-      bsiShare = Math.round(grossCommission * 0.5 * 100) / 100;
-      producerPayable = 0;
+      // Medicare agency override -> check if BSI split applies
+      if (isBsiEligible) {
+        // Effective date is 9/1/2025 or later -> 50/50 BSI split
+        splitApplies = true;
+        theiShare = Math.round(grossCommission * 0.5 * 100) / 100;
+        bsiShare = Math.round(grossCommission * 0.5 * 100) / 100;
+        producerPayable = 0;
+      } else {
+        // Effective date is before 9/1/2025 -> THEI keeps 100% (no BSI yet)
+        splitApplies = false;
+        theiShare = grossCommission;
+        bsiShare = 0;
+        producerPayable = 0;
+      }
     }
 
     // Map NHP's LOB to OliComm's canonical lob
@@ -1182,7 +1197,11 @@ async function parseBSIPDF(filePath, filename) {
         const planType = derivePlanType(carrier);
 
         const isChargeback = commission < 0;
-        const splitApplies = shouldSplit(agent, carrier);
+        
+        // BSI split only applies to effective dates 9/1/2025 and later
+        const BSI_SPLIT_START_DATE = '2025-09-01';
+        const isBsiEligible = effectiveDate && effectiveDate >= BSI_SPLIT_START_DATE;
+        const splitApplies = shouldSplit(agent, carrier) && isBsiEligible;
         const grossCommission = commission;
 
         // producer_payable only kicks in for ACA agency-pay-only carriers
