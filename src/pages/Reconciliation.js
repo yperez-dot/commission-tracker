@@ -99,6 +99,7 @@ export default function Reconciliation({ user }) {
   const [manualPayments, setManualPayments] = useState([]);
   const [sortColumn, setSortColumn] = useState('client');
   const [sortDirection, setSortDirection] = useState('asc');
+  const [searchTerm, setSearchTerm] = useState('');
 
   async function loadData() {
     setLoading(true);
@@ -158,6 +159,21 @@ export default function Reconciliation({ user }) {
   if (filterCarrier !== 'all') {
     filteredPaid = filteredPaid.filter(m => normalizeCarrier(m.sale.carrier) === normalizeCarrier(filterCarrier));
     filteredUnpaid = filteredUnpaid.filter(m => normalizeCarrier(m.sale.carrier) === normalizeCarrier(filterCarrier));
+  }
+
+  // Apply search term
+  if (searchTerm.trim()) {
+    const search = searchTerm.toLowerCase();
+    filteredPaid = filteredPaid.filter(m => 
+      (m.sale.client_name || '').toLowerCase().includes(search) ||
+      (m.sale.agent || '').toLowerCase().includes(search) ||
+      (m.sale.carrier || '').toLowerCase().includes(search)
+    );
+    filteredUnpaid = filteredUnpaid.filter(m => 
+      (m.sale.client_name || '').toLowerCase().includes(search) ||
+      (m.sale.agent || '').toLowerCase().includes(search) ||
+      (m.sale.carrier || '').toLowerCase().includes(search)
+    );
   }
 
   // Sort data
@@ -275,6 +291,17 @@ export default function Reconciliation({ user }) {
         <div className="card" style={{marginBottom:14}}>
           <div style={{display:'flex', alignItems:'flex-end', gap:12, flexWrap:'wrap', justifyContent:'space-between'}}>
             <div style={{display:'flex', gap:12, flexWrap:'wrap'}}>
+              <div>
+                <div className="form-label">Search</div>
+                <input 
+                  type="text"
+                  className="filter-select"
+                  placeholder="Client, agent, or carrier..."
+                  value={searchTerm}
+                  onChange={e => setSearchTerm(e.target.value)}
+                  style={{minWidth:220}}
+                />
+              </div>
               <div>
                 <div className="form-label">Agent</div>
                 <select className="filter-select" value={filterAgent} onChange={e => setFilterAgent(e.target.value)}>
