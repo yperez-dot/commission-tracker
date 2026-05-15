@@ -432,8 +432,84 @@ function isAgencyName(name) {
 
 // ─── Parsers ─────────────────────────────────────────────────────────────────
 
+/**
+ * Parse UHC Commission Summary sheet (monthly totals)
+ * Returns { commissionEarned, paymentReceived, hasBalance }
+ */
+function parseUHCSummary(wb) {
+  const sheetName = wb.SheetNames.find(s => s.toLowerCase().includes('commission summary'));
+  if (!sheetName) return null;
+  
+  const ws = wb.Sheets[sheetName];
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: false });
+  
+  let totalCommissionEarned = 0;
+  let totalPaymentReceived = 0;
+  let hasNegativeBalance = false;
+  let agentName = '';
+  
+  for (const row of rows) {
+    const commissionActivity = parseFloat(row['Commission Activity']) || 0;
+    const paymentAmount = parseFloat(row['Payment Amount']) || 0;
+    const endingBalance = parseFloat(row['Ending Balance']) || 0;
+    
+    totalCommissionEarned += commissionActivity;
+    totalPaymentReceived += paymentAmount;
+    
+    if (endingBalance < 0) {
+      hasNegativeBalance = true;
+    }
+  }
+  
+  // Try to get agent name from Commission Transactions sheet
+  const transSheet = wb.SheetNames.find(s => s.toLowerCase().includes('commission trans'));
+  if (transSheet) {
+    const transWs = wb.Sheets[transSheet];
+    const transRows = XLSX.utils.sheet_to_json(transWs, { defval: '', raw: true });
+    if (transRows.length > 0) {
+      agentName = String(transRows[0]['Writing Agent Name'] || transRows[0]['Agent Name'] || '').trim();
+    }
+  }
+  
+  return {
+    commissionEarned: totalCommissionEarned,
+    paymentReceived: totalPaymentReceived,
+    hasBalance: hasNegativeBalance,
+    netActivity: totalCommissionEarned,
+    agentName: agentName || 'Unknown Agent'
+  };
+}
+
 function parseUHCRows(wb) {
   const records = [];
+  
+  // First, check if we have Commission Summary data
+  const summaryData = parseUHCSummary(wb);
+  
+  // If Commission Summary exists and has activity, create a summary record
+  if (summaryData && summaryData.netActivity !== 0) {
+    const agentName = summaryData.agentName && !isAgencyName(summaryData.agentName)
+      ? normalizeAgentName(summaryData.agentName)
+      : 'Katy Robles';
+    
+    records.push({
+      agent: agentName,
+      carrier: 'UnitedHealthcare',
+      planType: 'Monthly Summary',
+      client: summaryData.commissionEarned >= 0 ? 'Commission Activity' : 'Chargeback Activity',
+      effectiveDate: '',
+      premium: 0,
+      commission: summaryData.commissionEarned,
+      paymentReceived: summaryData.paymentReceived,
+      classification: summaryData.commissionEarned < 0 ? 'Chargeback' : 'Commission',
+      period: '',
+      policyNumber: 'SUMMARY',
+      isSummary: true,
+      hasUnpaidBalance: summaryData.hasBalance,
+      raw: { summaryData }
+    });
+  }
+  
   const sheetName = wb.SheetNames.find(s => s.toLowerCase().includes('commission trans')) || wb.SheetNames[0];
   const ws = wb.Sheets[sheetName];
   const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
