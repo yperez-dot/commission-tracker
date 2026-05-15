@@ -449,10 +449,18 @@ function parseUHCSummary(wb) {
   let hasNegativeBalance = false;
   let agentName = '';
   
+  console.log('🔍 [DEBUG] parseUHCSummary - Processing rows:', rows.length);
+  
   for (const row of rows) {
     const commissionActivity = parseFloat(row['Commission Activity']) || 0;
     const paymentAmount = parseFloat(row['Payment Amount']) || 0;
     const endingBalance = parseFloat(row['Ending Balance']) || 0;
+    
+    console.log('🔍 [DEBUG] Row:', {
+      statementDate: row['Statement Date'],
+      commissionActivity,
+      paymentAmount
+    });
     
     // Separate positive commissions from chargebacks
     if (commissionActivity > 0) {
@@ -467,6 +475,12 @@ function parseUHCSummary(wb) {
       hasNegativeBalance = true;
     }
   }
+  
+  console.log('🔍 [DEBUG] Totals:', {
+    totalCommissionEarned,
+    totalChargebacks,
+    totalPaymentReceived
+  });
   
   // Try to get agent name from Commission Transactions sheet
   const transSheet = wb.SheetNames.find(s => s.toLowerCase().includes('commission trans'));
@@ -491,8 +505,11 @@ function parseUHCSummary(wb) {
 function parseUHCRows(wb) {
   const records = [];
   
+  console.log('🔍 [DEBUG] parseUHCRows called');
+  
   // First, check if we have Commission Summary data
   const summaryData = parseUHCSummary(wb);
+  console.log('🔍 [DEBUG] Summary data:', JSON.stringify(summaryData, null, 2));
   
   // If Commission Summary exists and has activity, create summary record(s)
   if (summaryData) {
@@ -502,7 +519,7 @@ function parseUHCRows(wb) {
     
     // If there are positive commissions, show them
     if (summaryData.commissionEarned > 0) {
-      records.push({
+      const commissionRecord = {
         agent: agentName,
         carrier: 'UnitedHealthcare',
         planType: 'Monthly Summary',
@@ -517,12 +534,14 @@ function parseUHCRows(wb) {
         isSummary: true,
         hasUnpaidBalance: summaryData.hasBalance,
         raw: { summaryData }
-      });
+      };
+      console.log('🔍 [DEBUG] Creating commission record:', commissionRecord);
+      records.push(commissionRecord);
     }
     
     // If there are chargebacks, show them separately
     if (summaryData.chargebacks < 0) {
-      records.push({
+      const chargebackRecord = {
         agent: agentName,
         carrier: 'UnitedHealthcare',
         planType: 'Monthly Summary',
@@ -536,7 +555,9 @@ function parseUHCRows(wb) {
         policyNumber: 'SUMMARY',
         isSummary: true,
         raw: { summaryData }
-      });
+      };
+      console.log('🔍 [DEBUG] Creating chargeback record:', chargebackRecord);
+      records.push(chargebackRecord);
     }
   }
   
@@ -579,6 +600,16 @@ function parseUHCRows(wb) {
       raw: row
     });
   }
+  
+  console.log(`🔍 [DEBUG] parseUHCRows returning ${records.length} total records`);
+  if (records.length > 0) {
+    console.log('🔍 [DEBUG] Sample records:', records.slice(0, 3).map(r => ({
+      client: r.client,
+      commission: r.commission,
+      classification: r.classification
+    })));
+  }
+  
   return records;
 }
 
