@@ -97,6 +97,8 @@ export default function Reconciliation({ user }) {
   const [filterAgent, setFilterAgent] = useState('all');
   const [filterCarrier, setFilterCarrier] = useState('all');
   const [manualPayments, setManualPayments] = useState([]);
+  const [sortColumn, setSortColumn] = useState('client');
+  const [sortDirection, setSortDirection] = useState('asc');
 
   async function loadData() {
     setLoading(true);
@@ -157,6 +159,61 @@ export default function Reconciliation({ user }) {
     filteredPaid = filteredPaid.filter(m => normalizeCarrier(m.sale.carrier) === normalizeCarrier(filterCarrier));
     filteredUnpaid = filteredUnpaid.filter(m => normalizeCarrier(m.sale.carrier) === normalizeCarrier(filterCarrier));
   }
+
+  // Sort data
+  const sortData = (data) => {
+    return [...data].sort((a, b) => {
+      let aVal, bVal;
+      
+      switch(sortColumn) {
+        case 'client':
+          aVal = (a.sale.client_name || '').toLowerCase();
+          bVal = (b.sale.client_name || '').toLowerCase();
+          break;
+        case 'agent':
+          aVal = (a.sale.agent || '').toLowerCase();
+          bVal = (b.sale.agent || '').toLowerCase();
+          break;
+        case 'carrier':
+          aVal = (a.sale.carrier || '').toLowerCase();
+          bVal = (b.sale.carrier || '').toLowerCase();
+          break;
+        case 'effective_date':
+          aVal = a.sale.effective_date || '';
+          bVal = b.sale.effective_date || '';
+          break;
+        case 'enrollment_date':
+          aVal = a.sale.enrollment_date || '';
+          bVal = b.sale.enrollment_date || '';
+          break;
+        default:
+          return 0;
+      }
+      
+      if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1;
+      if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
+      return 0;
+    });
+  };
+
+  filteredPaid = sortData(filteredPaid);
+  filteredUnpaid = sortData(filteredUnpaid);
+
+  // Handle column header click for sorting
+  const handleSort = (column) => {
+    if (sortColumn === column) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortColumn(column);
+      setSortDirection('asc');
+    }
+  };
+
+  // Sort indicator
+  const sortIndicator = (column) => {
+    if (sortColumn !== column) return ' ↕';
+    return sortDirection === 'asc' ? ' ↑' : ' ↓';
+  };
 
   // Get unique agents and carriers for filters
   const agents = [...new Set(sales.map(s => s.agent).filter(Boolean))].sort();
@@ -333,10 +390,18 @@ export default function Reconciliation({ user }) {
                     <table>
                       <thead>
                         <tr>
-                          <th>Client</th>
-                          <th>Agent</th>
-                          <th>Carrier</th>
-                          <th>Effective Date</th>
+                          <th onClick={() => handleSort('client')} style={{cursor:'pointer', userSelect:'none'}}>
+                            Client{sortIndicator('client')}
+                          </th>
+                          <th onClick={() => handleSort('agent')} style={{cursor:'pointer', userSelect:'none'}}>
+                            Agent{sortIndicator('agent')}
+                          </th>
+                          <th onClick={() => handleSort('carrier')} style={{cursor:'pointer', userSelect:'none'}}>
+                            Carrier{sortIndicator('carrier')}
+                          </th>
+                          <th onClick={() => handleSort('effective_date')} style={{cursor:'pointer', userSelect:'none'}}>
+                            Effective Date{sortIndicator('effective_date')}
+                          </th>
                           <th>Commission</th>
                           <th>Payment Period</th>
                         </tr>
@@ -392,11 +457,21 @@ export default function Reconciliation({ user }) {
                     <table>
                       <thead>
                         <tr>
-                          <th>Client</th>
-                          <th>Agent</th>
-                          <th>Carrier</th>
-                          <th>Effective Date</th>
-                          <th>Enrollment Date</th>
+                          <th onClick={() => handleSort('client')} style={{cursor:'pointer', userSelect:'none'}}>
+                            Client{sortIndicator('client')}
+                          </th>
+                          <th onClick={() => handleSort('agent')} style={{cursor:'pointer', userSelect:'none'}}>
+                            Agent{sortIndicator('agent')}
+                          </th>
+                          <th onClick={() => handleSort('carrier')} style={{cursor:'pointer', userSelect:'none'}}>
+                            Carrier{sortIndicator('carrier')}
+                          </th>
+                          <th onClick={() => handleSort('effective_date')} style={{cursor:'pointer', userSelect:'none'}}>
+                            Effective Date{sortIndicator('effective_date')}
+                          </th>
+                          <th onClick={() => handleSort('enrollment_date')} style={{cursor:'pointer', userSelect:'none'}}>
+                            Enrollment Date{sortIndicator('enrollment_date')}
+                          </th>
                           <th>Status</th>
                           <th style={{textAlign:'center'}}>Actions</th>
                         </tr>
