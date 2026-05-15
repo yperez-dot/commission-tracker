@@ -84,6 +84,19 @@ async function initSchema() {
         uploaded_at TIMESTAMPTZ DEFAULT NOW()
       );
 
+      CREATE TABLE IF NOT EXISTS medicarepro_sales (
+        id SERIAL PRIMARY KEY,
+        client_name VARCHAR(255),
+        carrier VARCHAR(100),
+        policy_type VARCHAR(50),
+        effective_date DATE,
+        status VARCHAR(50),
+        policy_number VARCHAR(100),
+        plan_name VARCHAR(255),
+        raw_data JSONB,
+        uploaded_at TIMESTAMP DEFAULT NOW()
+      );
+
       CREATE INDEX IF NOT EXISTS idx_records_agent ON commission_records(agent_name);
       CREATE INDEX IF NOT EXISTS idx_records_carrier ON commission_records(carrier);
       CREATE INDEX IF NOT EXISTS idx_records_plan_type ON commission_records(plan_type);
@@ -93,6 +106,9 @@ async function initSchema() {
       CREATE INDEX IF NOT EXISTS idx_bob_carrier ON book_of_business(carrier);
       CREATE INDEX IF NOT EXISTS idx_bob_client ON book_of_business(client_full_name);
       CREATE INDEX IF NOT EXISTS idx_bob_status ON book_of_business(status);
+      CREATE INDEX IF NOT EXISTS idx_medicarepro_client ON medicarepro_sales(client_name);
+      CREATE INDEX IF NOT EXISTS idx_medicarepro_carrier ON medicarepro_sales(carrier);
+      CREATE INDEX IF NOT EXISTS idx_medicarepro_status ON medicarepro_sales(status);
 
       ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS plan_type TEXT;
       ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS payee TEXT DEFAULT '';
