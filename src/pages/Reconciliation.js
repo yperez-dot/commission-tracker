@@ -116,7 +116,17 @@ export default function Reconciliation({ user }) {
   }));
 
   const paid = matches.filter(m => m.commission);
-  const unpaid = matches.filter(m => !m.commission);
+  
+  // Only show Yahoska + Katy in unpaid (they get carrier commissions)
+  // Other agents only generate agency overrides (BSI/NHP)
+  const directAgents = ['Yahoska Perez', 'Katy Robles'];
+  const unpaid = matches.filter(m => {
+    if (!m.commission) {
+      const agent = m.sale.agent || '';
+      return directAgents.some(da => agent.includes(da) || da.includes(agent));
+    }
+    return false;
+  });
 
   // Apply filters
   let filteredPaid = paid;
