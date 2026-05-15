@@ -41,8 +41,19 @@ function datesMatch(date1, date2) {
   }
 }
 
-// Find matching commission for a sale
-function findMatch(sale, commissions) {
+// Find matching commission for a sale (including manual payments)
+function findMatch(sale, commissions, manualPayments = []) {
+  // Check manual payments first
+  const manualMatch = manualPayments.find(mp => 
+    mp.client_name === sale.client_name && 
+    mp.agent === sale.agent && 
+    mp.effective_date === sale.effective_date
+  );
+  
+  if (manualMatch) {
+    return { ...manualMatch, isManual: true };
+  }
+  
   const client = normalizeName(sale.client_name);
   const agent = normalizeName(sale.agent);
   const carrier = normalizeCarrier(sale.carrier);
@@ -85,6 +96,7 @@ export default function Reconciliation({ user }) {
   const [tab, setTab] = useState('summary');
   const [filterAgent, setFilterAgent] = useState('all');
   const [filterCarrier, setFilterCarrier] = useState('all');
+  const [manualPayments, setManualPayments] = useState([]);
 
   async function loadData() {
     setLoading(true);
@@ -97,6 +109,10 @@ export default function Reconciliation({ user }) {
       // Fetch commissions from OliComm
       const commData = await apiFetch('/records?limit=5000');
       setCommissions((commData.records || []).filter(r => parseFloat(r.commission) > 0));
+      
+      // Fetch manual payments
+      const manualData = await apiFetch('/manual-payments');
+      setManualPayments(manualData.payments || []);
     } catch (e) {
       console.error('Error loading data:', e);
       setError(e.message || 'Failed to load data');
@@ -112,7 +128,7 @@ export default function Reconciliation({ user }) {
   // Match sales to commissions
   const matches = sales.map(sale => ({
     sale,
-    commission: findMatch(sale, commissions)
+    commission: findMatch(sale, commissions, manualPayments)
   }));
 
   const paid = matches.filter(m => m.commission);
@@ -145,6 +161,38 @@ export default function Reconciliation({ user }) {
   // Get unique agents and carriers for filters
   const agents = [...new Set(sales.map(s => s.agent).filter(Boolean))].sort();
   const carriers = [...new Set(sales.map(s => s.carrier).filter(Boolean))].sort();
+
+  // Handle marking a sale as paid
+  async function handleMarkPaid(sale) {
+    const paymentDate = prompt(
+      `Mark "${sale.client_name}" as paid.\n\nEnter payment date (YYYY-MM-DD):`,
+      new Date().toISOString().split('T')[0]
+    );
+    
+    if (!paymentDate) return; // User cancelled
+    
+    try {
+      await apiFetch('/manual-payments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          client_name: sale.client_name,
+          agent: sale.agent,
+          carrier: sale.carrier,
+          effective_date: sale.effective_date,
+          payment_date: paymentDate,
+          marked_by: user?.name || 'User'
+        })
+      });
+      
+      // Reload data to reflect the change
+      await loadData();
+      alert('✅ Marked as paid!');
+    } catch (e) {
+      console.error('Error marking as paid:', e);
+      alert('❌ Error: ' + (e.message || 'Could not mark as paid'));
+    }
+  }
 
   const tabStyle = (id) => ({
     padding: '7px 14px',
@@ -303,10 +351,23 @@ export default function Reconciliation({ user }) {
                               {m.sale.effective_date || '—'}
                             </td>
                             <td style={{fontWeight:600, color:'var(--green)'}}>
-                              {fmt(m.commission.commission)}
+                              {m.commission.isManual ? (
+                                <span>
+                                  Manual
+                                  <span className="badge badge-blue" style={{marginLeft:6, fontSize:10}}>
+                                    ✓ Marked
+                                  </span>
+                                </span>
+                              ) : (
+                                fmt(m.commission.commission)
+                              )}
                             </td>
                             <td style={{fontSize:12}}>
-                              {m.commission.payment_period || '—'}
+                              {m.commission.isManual ? (
+                                m.commission.payment_date || '—'
+                              ) : (
+                                m.commission.payment_period || '—'
+                              )}
                             </td>
                           </tr>
                         ))}
@@ -337,6 +398,7 @@ export default function Reconciliation({ user }) {
                           <th>Effective Date</th>
                           <th>Enrollment Date</th>
                           <th>Status</th>
+                          <th style={{textAlign:'center'}}>Actions</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -355,6 +417,15 @@ export default function Reconciliation({ user }) {
                               <span className="badge badge-amber">
                                 {m.sale.status || 'Unpaid'}
                               </span>
+                            </td>
+                            <td style={{textAlign:'center'}}>
+                              <button 
+                                className="btn btn-sm btn-primary"
+                                onClick={() => handleMarkPaid(m.sale)}
+                                style={{fontSize:11, padding:'4px 10px'}}
+                              >
+                                💰 Mark Paid
+                              </button>
                             </td>
                           </tr>
                         ))}

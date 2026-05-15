@@ -48,6 +48,7 @@ normalizeOnStartup();
 
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/files', require('./routes/files'));
+app.use('/api/manual-payments', require('./routes/manual-payments'));
 app.use('/api/records', require('./routes/records'));
 app.use('/api/bob', require('./routes/bob'));
 app.use('/api/sales-tracker', require('./routes/sales-tracker'));
