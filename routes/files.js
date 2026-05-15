@@ -441,9 +441,10 @@ function parseUHCSummary(wb) {
   if (!sheetName) return null;
   
   const ws = wb.Sheets[sheetName];
-  const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: false });
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
   
   let totalCommissionEarned = 0;
+  let totalChargebacks = 0;
   let totalPaymentReceived = 0;
   let hasNegativeBalance = false;
   let agentName = '';
@@ -453,7 +454,13 @@ function parseUHCSummary(wb) {
     const paymentAmount = parseFloat(row['Payment Amount']) || 0;
     const endingBalance = parseFloat(row['Ending Balance']) || 0;
     
-    totalCommissionEarned += commissionActivity;
+    // Separate positive commissions from chargebacks
+    if (commissionActivity > 0) {
+      totalCommissionEarned += commissionActivity;
+    } else if (commissionActivity < 0) {
+      totalChargebacks += commissionActivity;
+    }
+    
     totalPaymentReceived += paymentAmount;
     
     if (endingBalance < 0) {
@@ -473,9 +480,10 @@ function parseUHCSummary(wb) {
   
   return {
     commissionEarned: totalCommissionEarned,
+    chargebacks: totalChargebacks,
+    netActivity: totalCommissionEarned + totalChargebacks,
     paymentReceived: totalPaymentReceived,
     hasBalance: hasNegativeBalance,
-    netActivity: totalCommissionEarned,
     agentName: agentName || 'Unknown Agent'
   };
 }
@@ -486,28 +494,50 @@ function parseUHCRows(wb) {
   // First, check if we have Commission Summary data
   const summaryData = parseUHCSummary(wb);
   
-  // If Commission Summary exists and has activity, create a summary record
-  if (summaryData && summaryData.netActivity !== 0) {
+  // If Commission Summary exists and has activity, create summary record(s)
+  if (summaryData) {
     const agentName = summaryData.agentName && !isAgencyName(summaryData.agentName)
       ? normalizeAgentName(summaryData.agentName)
       : 'Katy Robles';
     
-    records.push({
-      agent: agentName,
-      carrier: 'UnitedHealthcare',
-      planType: 'Monthly Summary',
-      client: summaryData.commissionEarned >= 0 ? 'Commission Activity' : 'Chargeback Activity',
-      effectiveDate: '',
-      premium: 0,
-      commission: summaryData.commissionEarned,
-      paymentReceived: summaryData.paymentReceived,
-      classification: summaryData.commissionEarned < 0 ? 'Chargeback' : 'Commission',
-      period: '',
-      policyNumber: 'SUMMARY',
-      isSummary: true,
-      hasUnpaidBalance: summaryData.hasBalance,
-      raw: { summaryData }
-    });
+    // If there are positive commissions, show them
+    if (summaryData.commissionEarned > 0) {
+      records.push({
+        agent: agentName,
+        carrier: 'UnitedHealthcare',
+        planType: 'Monthly Summary',
+        client: summaryData.paymentReceived > 0 ? 'Commission Earned & Paid' : 'Commission Earned (Applied to Balance)',
+        effectiveDate: '',
+        premium: 0,
+        commission: summaryData.commissionEarned,
+        paymentReceived: summaryData.paymentReceived,
+        classification: 'Commission',
+        period: '',
+        policyNumber: 'SUMMARY',
+        isSummary: true,
+        hasUnpaidBalance: summaryData.hasBalance,
+        raw: { summaryData }
+      });
+    }
+    
+    // If there are chargebacks, show them separately
+    if (summaryData.chargebacks < 0) {
+      records.push({
+        agent: agentName,
+        carrier: 'UnitedHealthcare',
+        planType: 'Monthly Summary',
+        client: 'Chargebacks',
+        effectiveDate: '',
+        premium: 0,
+        commission: summaryData.chargebacks,
+        paymentReceived: 0,
+        classification: 'Chargeback',
+        period: '',
+        policyNumber: 'SUMMARY',
+        isSummary: true,
+        raw: { summaryData }
+      });
+    }
   }
   
   const sheetName = wb.SheetNames.find(s => s.toLowerCase().includes('commission trans')) || wb.SheetNames[0];
