@@ -436,7 +436,7 @@ function parseUHCSummary(wb) {
     
     console.log('🔍 [DEBUG] Row:', {
       statementDate: row['Statement Date'],
-      commissionActivityRaw,
+      
       commissionActivityParsed: commissionActivity,
       paymentAmount,
       endingBalance
