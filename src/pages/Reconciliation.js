@@ -106,7 +106,7 @@ export default function Reconciliation({ user }) {
     setError(null);
     try {
       // Fetch sales from backend (which fetches from Notion)
-      const salesData = await apiFetch('/api/medicarepro'););
+      const salesData = await apiFetch('/api/medicarepro');
       setSales(salesData.sales || []);
       
       // Fetch commissions from OliComm (optimized: limit=100 instead of 5000)
