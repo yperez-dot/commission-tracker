@@ -492,7 +492,7 @@ function parseUHCSummary(wb) {
     }
   }
   
-  return {
+  const result = {
     commissionEarned: totalCommissionEarned,
     chargebacks: totalChargebacks,
     netActivity: totalCommissionEarned + totalChargebacks,
@@ -500,6 +500,13 @@ function parseUHCSummary(wb) {
     hasBalance: hasNegativeBalance,
     agentName: agentName || 'Unknown Agent'
   };
+  
+  // DEBUG: If commissions are 0, something is wrong - throw error to see data
+  if (totalCommissionEarned === 0 && totalChargebacks === 0) {
+    throw new Error(`UHC Summary Parse Debug: Found ${rows.length} rows but all commissions are 0. Sample row: ${JSON.stringify(rows[0])}`);
+  }
+  
+  return result;
 }
 
 function parseUHCRows(wb) {
