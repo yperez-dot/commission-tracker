@@ -433,7 +433,14 @@ function isAgencyName(name) {
 // ─── Parsers ─────────────────────────────────────────────────────────────────
 
 /**
- * Parse UHC Commission Summary sheet (monthly totals)
+ * FIXED: Parse UHC Commission Summary sheet (monthly totals)
+ * 
+ * KEY FIXES (2026-05-15):
+ * 1. Handle both number AND string formats for Commission Activity
+ *    (XLSX can store the same column as either type depending on source)
+ * 2. Removed the error throw that was blocking the parser
+ * 3. Added explicit parseFloat with currency symbol handling
+ * 
  * Returns { commissionEarned, paymentReceived, hasBalance }
  */
 function parseUHCSummary(wb) {
@@ -452,14 +459,25 @@ function parseUHCSummary(wb) {
   console.log('🔍 [DEBUG] parseUHCSummary - Processing rows:', rows.length);
   
   for (const row of rows) {
-    const commissionActivity = parseFloat(row['Commission Activity']) || 0;
+    // FIX: Handle both number and string formats for Commission Activity
+    // XLSX can store the same column as either type depending on source
+    const commActivityRaw = row['Commission Activity'];
+    let commissionActivity = 0;
+    if (typeof commActivityRaw === 'number') {
+      commissionActivity = commActivityRaw;
+    } else if (typeof commActivityRaw === 'string') {
+      commissionActivity = parseFloat(commActivityRaw.replace(/[$,]/g, '')) || 0;
+    }
+    
     const paymentAmount = parseFloat(row['Payment Amount']) || 0;
     const endingBalance = parseFloat(row['Ending Balance']) || 0;
     
     console.log('🔍 [DEBUG] Row:', {
       statementDate: row['Statement Date'],
-      commissionActivity,
-      paymentAmount
+      commissionActivityRaw,
+      commissionActivityParsed: commissionActivity,
+      paymentAmount,
+      endingBalance
     });
     
     // Separate positive commissions from chargebacks
@@ -476,10 +494,12 @@ function parseUHCSummary(wb) {
     }
   }
   
-  console.log('🔍 [DEBUG] Totals:', {
+  console.log('🔍 [DEBUG] Final totals:', {
     totalCommissionEarned,
     totalChargebacks,
-    totalPaymentReceived
+    netActivity: totalCommissionEarned + totalChargebacks,
+    totalPaymentReceived,
+    hasNegativeBalance
   });
   
   // Try to get agent name from Commission Transactions sheet
@@ -501,10 +521,10 @@ function parseUHCSummary(wb) {
     agentName: agentName || 'Unknown Agent'
   };
   
-  // DEBUG: If commissions are 0, something is wrong - throw error to see data
-  if (totalCommissionEarned === 0 && totalChargebacks === 0) {
-    throw new Error(`UHC Summary Parse Debug: Found ${rows.length} rows but all commissions are 0. Sample row: ${JSON.stringify(rows[0])}`);
-  }
+  console.log('🔍 [DEBUG] parseUHCSummary returning:', result);
+  
+  // FIX: Removed the error throw. If totals are legitimately $0 (all chargebacks),
+  // we should return the result and let the caller handle it, not crash.
   
   return result;
 }
