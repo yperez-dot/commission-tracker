@@ -29,55 +29,28 @@ const upload = multer({
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 // ─── BSI split rules ──────────────────────────────────────────────────────────
-//
-// "Split" = the THEI<->BSI 50/50 split applies to this line.
-// We DO NOT split when:
-//   (a) the producer is an ACA pass-through agent (THEI receives, pays them via ADP)
-//   (b) the carrier line is ACA (we never split ACA with BSI — only Medicare splits)
-//
-// Updated 2026-05-12 per Yahoska — see projects/olicomm/business-rules.md
-
-// ACA pass-through producers (THEI cuts them a check via ADP):
 const NO_SPLIT_AGENTS = [
   'patsy pernia',
-  'eduardo pernia',      // Patsy's husband, also produces ACA
-  'josseline silber',    // aka Josseline Mena
+  'eduardo pernia',
+  'josseline silber',
   'josseline mena',
   'jessica sifontes',
-  'sabri perez',         // confirmed 2026-05-12
-  'jill taylor',         // confirmed 2026-05-12
-  'osmary orozco',       // confirmed 2026-05-12 (possible — Yahoska to verify)
+  'sabri perez',
+  'jill taylor',
+  'osmary orozco',
 ];
 
-// ACA carriers (no BSI split applies to ANY ACA line, regardless of producer):
 const ACA_CARRIERS_LIST = [
-  // Agency-pay-only carriers (THEI receives, pays producer 100% via ADP)
   'molina',
   'cigna',
   'ambetter',
   'florida blue',
-  // Pay-agent-directly ACA carriers (producer receives, no THEI involvement)
   'oscar health',
   'oscar',
 ];
 
-// Subset of ACA_CARRIERS_LIST: carriers that pay AGENCY ONLY (THEI must pay
-// producer via ADP). For these, THEI keeps $0 — pure pass-through.
 const ACA_AGENCY_PAYS_PRODUCER = ['molina', 'cigna', 'ambetter', 'florida blue'];
 
-// Decision: does THE ↔ BSI 50/50 split apply to this commission row?
-//
-// Rule (clarified by Yahoska 2026-05-12):
-//   - ALL Medicare lines split 50/50 with BSI — every agent, no exceptions
-//   - ACA lines NEVER split with BSI (ACA doesn't go through BSI at all)
-//   - The "ACA pass-through agent" concept (Patsy/Jessica/Sabri/Jill/etc.) is
-//     a separate flag about WHO THEI owes when the carrier pays agency-only.
-//     It only kicks in for ACA carriers, not Medicare.
-//
-// So the split decision is purely: "is this an ACA carrier?"
-//
-// NOTE: NO_SPLIT_AGENTS is still used elsewhere to identify producer_payable
-// (1099 to ADP) for ACA agency-only carriers, but it does NOT affect Medicare.
 function shouldSplit(agentName, carrier) {
   const car = String(carrier || '').toLowerCase().trim();
   if (ACA_CARRIERS_LIST.some(c => car.includes(c))) return false;
@@ -161,19 +134,21 @@ function detectCarrierFromFilename(filename) {
 }
 
 function isUHCFile(filename) {
-  return filename.toLowerCase().replace(/\s+/g, '_').includes('commission_statement_2737247');
+  const f = filename.toLowerCase().replace(/\s+/g, '_');
+  return f.includes('commission_statement_2737247') || f.includes('uhc_statement') || (f.includes('uhc') && f.includes('statement'));
 }
+
 function isBSIFile(filename) {
   const f = filename.toLowerCase().replace(/\s+/g, '_');
   return f.includes('statement-health_experts') || f.includes('statement_health_experts');
 }
+
 function isMOOExcel(filename) {
   const f = filename.toLowerCase();
   return (f.includes('moo') || f.includes('mutual_of_omaha') || f.includes('mutualomaha') || f.includes('moo_statement'))
     && (f.endsWith('.xlsx') || f.endsWith('.xls'));
 }
 
-// Prod Num → Agent Name lookup built from MOO statements
 const MOO_PROD_NAMES = {
   '968819':  'Yasser Fermin',
   '970159':  'Yamile Dominguez',
@@ -208,25 +183,22 @@ const MOO_PROD_NAMES = {
 function parseMOOExcelRows(wb, filename) {
   const records = [];
   try {
-    // Use DETAILS sheet if available, otherwise first sheet
     const sheetName = wb.SheetNames.find(s => s.toUpperCase() === 'DETAILS') || wb.SheetNames[0];
     const ws = wb.Sheets[sheetName];
     const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
     if (!rows.length) return records;
 
-    // Extract period from filename e.g. MOO_STATEMENT_1.xlsx → try activity date
     let period = '';
     const fnMatch = filename.match(/(20\d{2})(0[1-9]|1[0-2])/);
     if (fnMatch) period = fnMatch[1] + fnMatch[2];
 
     for (const row of rows) {
       const commAmt = parseFloat(row['Comm Amt']) || 0;
-      if (commAmt === 0) continue; // skip held/unpaid records
+      if (commAmt === 0) continue;
 
       const prodNum = String(row['Prod Num'] || '').trim().replace(/^0+/, '');
       const agentName = MOO_PROD_NAMES[prodNum] || MOO_PROD_NAMES[String(row['Prod Num']).trim()] || `Producer ${String(row['Prod Num']).trim()}`;
       const clientRaw = String(row['Insureds Name'] || '').trim();
-      // Convert "LAST FIRST" all-caps → "First Last"
       const clientName = clientRaw === clientRaw.toUpperCase() && clientRaw.length > 2
         ? clientRaw.toLowerCase().replace(/\b\w/g, c => c.toUpperCase())
         : clientRaw;
@@ -240,7 +212,6 @@ function parseMOOExcelRows(wb, filename) {
       const activityType = String(row['Activity Type'] || '').trim().toUpperCase();
       const mga = String(row['MGA Name'] || '').trim();
 
-      // Period from activity date MM/DD/YYYY → YYYYMM
       if (!period && activityDate.match(/\d{2}\/\d{2}\/\d{4}/)) {
         const parts = activityDate.split('/');
         period = parts[2] + parts[0];
@@ -278,16 +249,19 @@ function isDoctorsFile(filename) {
   const f = filename.toLowerCase().replace(/['\s()]/g, '_');
   return f.includes('doctor') || f.startsWith('drs') || f.startsWith('dr_s') || f.includes('dr_s_katy') || f.includes('dr_s_');
 }
+
 function isSolisFile(filename) {
   const f = filename.toLowerCase().replace(/['\s()]/g, '_');
-  if (isDoctorsFile(filename)) return false; // Doctors files take priority
+  if (isDoctorsFile(filename)) return false;
   return f.includes('commissions_ledger') || f.includes('solis');
 }
+
 function isAPLFile(filename) {
   const f = filename.toLowerCase().replace(/[\s()]/g, '_');
   return f.includes('commission-statement') || f.includes('commission_statement_2026') && !f.includes('2737247') ||
     f.includes('integrity') || f.includes('apl');
 }
+
 function isNHPFile(filename) {
   const f = filename.toLowerCase().replace(/[\s()]/g, '_');
   return f.includes('the_health_experts_insurance_statement') ||
@@ -295,30 +269,32 @@ function isNHPFile(filename) {
     (f.includes('the_health_experts') && f.includes('statement')) ||
     (f.includes('yahoska') && f.includes('katy') && f.includes('statement'));
 }
+
 function isHumanaFile(filename) {
   const f = filename.toLowerCase().replace(/\s+/g, '_');
   return (f.includes('commissiondata') || f.includes('yahoska_perez_med_comm') || f.includes('humana'))
     && !f.includes('yourfmo') && !f.endsWith('.pdf');
 }
+
 function isYourFMOFile(filename) {
   const f = filename.toLowerCase().replace(/\s+/g, '_');
   return f.includes('yourfmo') && !f.endsWith('.pdf');
 }
+
 function isHumanaPDF(filename) {
   const f = filename.toLowerCase();
   return f.endsWith('.pdf') && (f.includes('humana') || f.includes('commissionstatement') || f.includes('yourfmo'));
 }
-// UPDATED 2026-05-13: Detect YourFMO files by actual file naming patterns
+
 function isYourFMOXLSX(filename) {
   const f = filename.toLowerCase().replace(/\s+/g, '_');
   return f.includes('commissions_commissiondetails') || 
          f.includes('commissiondetails_88892') ||
-         f.includes('commissionstatement') ||      // CommissionStatement.xls, CommissionStatement_2.xls, etc.
-         f.includes('agent.xcelerator') ||         // agent.xcelerator.12.21.25.xls
-         f.includes('yourfmo');                    // any file with 'yourfmo' in the name
+         f.includes('commissionstatement') ||
+         f.includes('agent.xcelerator') ||
+         f.includes('yourfmo');
 }
 
-// ─── NEW: Mutual of Omaha PDF detector ───────────────────────────────────────
 function isMutualOmahaPDF(filename) {
   const f = filename.toLowerCase();
   return f.endsWith('.pdf') && (
@@ -364,27 +340,20 @@ function formatDate(value) {
   return String(value);
 }
 
-// ─── Period normalization ─────────────────────────────────────────────────────
-// Converts any period value to YYYYMM format, handles Excel serial dates
 function normalizePeriod(value) {
   if (!value && value !== 0) return 'Unknown';
   const s = String(value).trim();
 
-  // Already YYYYMM
   if (s.match(/^\d{6}$/) && parseInt(s.slice(0,4)) > 1900) return s;
 
-  // Already YYYYMMDD → take YYYYMM
   if (s.match(/^\d{8}$/) && parseInt(s.slice(0,4)) > 1900) return s.slice(0,6);
 
-  // MM/DD/YYYY or M/D/YYYY
   const mdy = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
   if (mdy) return mdy[3] + mdy[1].padStart(2,'0');
 
-  // YYYY-MM-DD
   const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
   if (iso) return iso[1] + iso[2];
 
-  // Excel serial number (e.g. 46127 or 46127.25)
   const num = parseFloat(s);
   if (!isNaN(num) && num > 40000 && num < 60000) {
     const date = new Date((num - 25569) * 86400 * 1000);
@@ -395,8 +364,6 @@ function normalizePeriod(value) {
 
   return 'Unknown';
 }
-
-
 
 function normalizeBSICarrier(company) {
   const c = String(company || '').toLowerCase();
@@ -430,18 +397,14 @@ function isAgencyName(name) {
   return n.includes('the health experts') || n.includes('health experts insurance');
 }
 
-// ─── Parsers ─────────────────────────────────────────────────────────────────
+// ─── UHC PARSERS ─────────────────────────────────────────────────────────────
 
 /**
  * FIXED: Parse UHC Commission Summary sheet (monthly totals)
- * 
- * KEY FIXES (2026-05-15):
+ * KEY FIXES:
  * 1. Handle both number AND string formats for Commission Activity
- *    (XLSX can store the same column as either type depending on source)
  * 2. Removed the error throw that was blocking the parser
  * 3. Added explicit parseFloat with currency symbol handling
- * 
- * Returns { commissionEarned, paymentReceived, hasBalance }
  */
 function parseUHCSummary(wb) {
   const sheetName = wb.SheetNames.find(s => s.toLowerCase().includes('commission summary'));
@@ -460,7 +423,6 @@ function parseUHCSummary(wb) {
   
   for (const row of rows) {
     // FIX: Handle both number and string formats for Commission Activity
-    // XLSX can store the same column as either type depending on source
     const commActivityRaw = row['Commission Activity'];
     let commissionActivity = 0;
     if (typeof commActivityRaw === 'number') {
@@ -480,7 +442,6 @@ function parseUHCSummary(wb) {
       endingBalance
     });
     
-    // Separate positive commissions from chargebacks
     if (commissionActivity > 0) {
       totalCommissionEarned += commissionActivity;
     } else if (commissionActivity < 0) {
@@ -502,7 +463,6 @@ function parseUHCSummary(wb) {
     hasNegativeBalance
   });
   
-  // Try to get agent name from Commission Transactions sheet
   const transSheet = wb.SheetNames.find(s => s.toLowerCase().includes('commission trans'));
   if (transSheet) {
     const transWs = wb.Sheets[transSheet];
@@ -523,28 +483,26 @@ function parseUHCSummary(wb) {
   
   console.log('🔍 [DEBUG] parseUHCSummary returning:', result);
   
-  // FIX: Removed the error throw. If totals are legitimately $0 (all chargebacks),
-  // we should return the result and let the caller handle it, not crash.
-  
   return result;
 }
 
+/**
+ * FIXED: Parse UHC Commission Transactions sheet
+ * KEY FIX: Handle both string and number commission values (same issue as summary parser)
+ */
 function parseUHCRows(wb) {
   const records = [];
   
   console.log('🔍 [DEBUG] parseUHCRows called');
   
-  // First, check if we have Commission Summary data
   const summaryData = parseUHCSummary(wb);
   console.log('🔍 [DEBUG] Summary data:', JSON.stringify(summaryData, null, 2));
   
-  // If Commission Summary exists and has activity, create summary record(s)
   if (summaryData) {
     const agentName = summaryData.agentName && !isAgencyName(summaryData.agentName)
       ? normalizeAgentName(summaryData.agentName)
       : 'Katy Robles';
     
-    // If there are positive commissions, show them
     if (summaryData.commissionEarned > 0) {
       const commissionRecord = {
         agent: agentName,
@@ -566,7 +524,6 @@ function parseUHCRows(wb) {
       records.push(commissionRecord);
     }
     
-    // If there are chargebacks, show them separately
     if (summaryData.chargebacks < 0) {
       const chargebackRecord = {
         agent: agentName,
@@ -595,14 +552,23 @@ function parseUHCRows(wb) {
   for (const row of rows) {
     const writingAgentRaw = String(row['Writing Agent Name'] || '').trim();
     const client = String(row['Member Name'] || '').trim();
-    const commission = parseFloat(row['Commission']) || 0;
+    
+    // FIX: Handle both string and number commission values
+    const commissionRaw = row['Commission'];
+    let commission = 0;
+    if (typeof commissionRaw === 'number') {
+      commission = commissionRaw;
+    } else if (typeof commissionRaw === 'string') {
+      commission = parseFloat(commissionRaw.replace(/[$,]/g, '')) || 0;
+    }
+    
     const policyNumber = String(row['Policy Number'] || '').trim();
     const effectiveDate = formatDate(row['Original Effective Date']);
     const period = String(row['Payment Period'] || '').trim();
     const rawPlanType = String(row['Plan Type'] || '').trim();
     const commAction = String(row['Commission Action'] || '').trim();
 
-    if (!client || commission === 0) continue;
+    if (!client) continue;
 
     const isAgency = isAgencyName(writingAgentRaw);
     const agentName = isAgency ? 'The Health Experts Insurance' : normalizeAgentName(writingAgentRaw);
@@ -640,7 +606,7 @@ function parseUHCRows(wb) {
   return records;
 }
 
-// ─── Humana parser — SpreadsheetML XML ───────────────────────────────────────
+// ─── OTHER PARSERS (kept from original) ───────────────────────────────────────
 
 function parseHumanaRows(wb, filename, rawBuffer) {
   const records = [];
@@ -846,7 +812,6 @@ function parseNHPRows(wb) {
   const ws = wb.Sheets[wb.SheetNames[0]];
   const range = XLSX.utils.decode_range(ws['!ref']);
 
-  // Find the header row by looking for 'Override' anywhere in the first 20 rows.
   let headerRow = -1;
   for (let r = range.s.r; r <= Math.min(range.s.r + 20, range.e.r); r++) {
     for (let c = range.s.c; c <= range.e.c; c++) {
@@ -873,15 +838,11 @@ function parseNHPRows(wb) {
     const nhpType = String(row['Type'] || '').trim();
     const lobRaw = String(row['LOB'] || '').trim();
 
-    // Determine which dollar field to use:
-    //   Type='Commission' -> agent commission (Commission column)
-    //   Type='Override'   -> agency override (Override column)
     const isCommissionRow = nhpType.toLowerCase().includes('commission');
     const grossCommission = isCommissionRow
       ? (parseFloat(row['Commission']) || 0)
       : (parseFloat(row['Override']) || 0);
 
-    // Skip empty/zero rows
     if (!client) continue;
     if (grossCommission === 0) continue;
 
@@ -889,59 +850,37 @@ function parseNHPRows(wb) {
     const recordType = isCommissionRow ? 'Agent Commission' : 'Agency Override';
     const planType = derivePlanType(carrier, '', policyNumber, lobRaw);
 
-    // Apply BSI split rules:
-    //   - Agent Commission rows (Patsy/Jessica/Sabri/etc ACA pass-through):
-    //       100% to producer via ADP, no BSI split
-    //   - Agency Override rows: 50/50 with BSI (per Yahoska 2026-05-12),
-    //       except for ACA pass-through agents or ACA carriers
-    //   - BSI SPLIT ONLY APPLIES TO EFFECTIVE DATES 9/1/2025 AND LATER (partnership start)
-    // Split decision (per Yahoska 2026-05-12, corrected interpretation):
-    //   - ACA carrier (any agent) -> no BSI split. Either THEI keeps 100%
-    //     OR THEI pays producer 100% via ADP (agency-pay-only carriers).
-    //   - Medicare carrier (any agent including Patsy/Jill/Sabri/etc.) -> 50/50 BSI IF effective >= 9/1/2025.
-    //   - 'Agent Commission' Type rows from NHP -> the producer's own ACA
-    //     commission flowing through THEI for ADP payout.
     const isAcaCarrier = ACA_CARRIERS_LIST.some(c => String(carrier).toLowerCase().includes(c));
     const isAcaAgentRow = NO_SPLIT_AGENTS.some(a => String(agent).toLowerCase().includes(a));
     
-    // BSI partnership started August 2025, split applies to effective dates 9/1/2025+
     const BSI_SPLIT_START_DATE = '2025-09-01';
     const isBsiEligible = effectiveDate && effectiveDate >= BSI_SPLIT_START_DATE;
     
     let splitApplies, theiShare, bsiShare, producerPayable;
 
     if (isCommissionRow) {
-      // NHP 'Commission' row = producer's individual commission flowing through
-      // THEI for ADP payout. THEI is the conduit, owes producer 100%.
       splitApplies = false;
       theiShare = 0;
       bsiShare = 0;
       producerPayable = grossCommission;
     } else if (isAcaCarrier) {
-      // ACA agency override
       splitApplies = false;
       if (isAcaAgencyPaysProducer(carrier) && isAcaAgentRow) {
-        // Carrier pays THEI; THEI owes producer via ADP
         theiShare = 0;
         bsiShare = 0;
         producerPayable = grossCommission;
       } else {
-        // ACA but carrier pays producer directly (or no specific producer arrangement)
-        // -> THEI keeps the override
         theiShare = grossCommission;
         bsiShare = 0;
         producerPayable = 0;
       }
     } else {
-      // Medicare agency override -> check if BSI split applies
       if (isBsiEligible) {
-        // Effective date is 9/1/2025 or later -> 50/50 BSI split
         splitApplies = true;
         theiShare = Math.round(grossCommission * 0.5 * 100) / 100;
         bsiShare = Math.round(grossCommission * 0.5 * 100) / 100;
         producerPayable = 0;
       } else {
-        // Effective date is before 9/1/2025 -> THEI keeps 100% (no BSI yet)
         splitApplies = false;
         theiShare = grossCommission;
         bsiShare = 0;
@@ -949,7 +888,6 @@ function parseNHPRows(wb) {
       }
     }
 
-    // Map NHP's LOB to OliComm's canonical lob
     let lob;
     const lobLower = lobRaw.toLowerCase();
     if (lobLower === 'ma' || lobLower === 'mapd') lob = 'MA';
@@ -965,12 +903,11 @@ function parseNHPRows(wb) {
       client,
       effectiveDate,
       premium: 0,
-      commission: theiShare,  // existing column: net to THEI after split
+      commission: theiShare,
       classification: grossCommission < 0 ? 'Chargeback' : recordType,
       period: period || 'Unknown',
       policyNumber,
       payee: 'NHP',
-      // New OliComm schema columns:
       source: 'NHP',
       policyWrittenDate: effectiveDate,
       grossCommission,
@@ -1144,7 +1081,6 @@ function parseRows(rows, mapping, filename) {
   }).filter(r => r.commission > 0 || r.premium > 0 || r.client);
 }
 
-// ─── Humana PDF parser ───────────────────────────────────────────────────────
 async function parseHumanaPDF(filePath, filename) {
   const records = [];
   try {
@@ -1218,13 +1154,6 @@ async function parseHumanaPDF(filePath, filename) {
   return records;
 }
 
-// BSI PDF parser (Broker Society Insurance monthly statements)
-// Format per Yahoska's March/April 2026 samples (2026-05-12):
-//   - "<MONTH> STATEMENT <YEAR>" near top
-//   - "CARRIER SUMMARY DETAILS" block with per-carrier totals
-//   - "Detailed Compensation Statement (<CARRIER>)" sections
-//   - Each section: Agent | Company | Policy# | Client | EffDate | Commission
-//   - "Balance: $X" line at end of each section
 async function parseBSIPDF(filePath, filename) {
   const records = [];
   try {
@@ -1255,46 +1184,18 @@ async function parseBSIPDF(filePath, filename) {
       else if (carrier.includes('DEVOTED')) carrier = 'Devoted';
       else carrier = normalizeBSICarrier(rawCarrier);
 
-      // The BSI PDF extracts records in TWO different layouts depending on carrier:
-      //
-      // LAYOUT A (UHC section): 3-line per record
-      //   Line 1: AGENT_NAME
-      //   Line 2: CARRIER
-      //   Line 3: POLICY#CLIENT_NAMEMM/DD/YYYY-?$AMOUNT
-      //
-      // LAYOUT B (Humana / Aetna sections): 1-line per record (everything smushed)
-      //   AGENT_NAMECARRIERPOLICY#CLIENT_NAMEMM/DD/YYYY-?$AMOUNT
-      //
-      // We try both and merge the results.
-
       const lines = sectionText.split('\n').map(l => l.trim()).filter(Boolean);
       const carrierPattern = /^(UNITED\s+HEA?L?T?H?\s+CARE|HUMANA|AETNA|DEVOTED)\s*$/i;
-      // Policy formats observed across BSI sections:
-      //   UHC:    9-digit number, occasionally with a single letter prefix (e.g. 933986247, 134593474)
-      //   Humana: complex codes ending in _PPO/_HMO/_MA/_PDP (e.g. 7A14DD4NF93_MA, 00026003927K_PPO)
-      //   Aetna:  NG-prefixed long numbers (e.g. NG101194462000)
-      //
-      // We use a non-greedy match anchored to digit-heavy starts, terminating either:
-      //   (a) at an _XYZ suffix (humana/aetna LOB suffix), OR
-      //   (b) at the boundary where the next char is a CAPITAL LETTER that starts the client name.
-      //
-      // Practical pattern (in order of attempt):
-      //   - Letter+digits ending in _LOBcode (Humana / Aetna)
-      //   - 9-15 pure digits (UHC) — use a lookahead for next char being capital letter
       const policyAlternatives = [
-        '[A-Z0-9]{6,15}_[A-Z]{2,5}',          // 7A14DD4NF93_MA, 00026003927K_PPO, 5X20TJ8CX00_MA
-        '[A-Z]{2,3}\\d{8,15}',                // NG101194462000
-        '\\d{9,15}',                          // 933986247
-        '[A-Z]\\d{6,12}',                     // legacy alphanumeric
-        '[A-Z]\\d{8,12}',                     // A12345678
+        '[A-Z0-9]{6,15}_[A-Z]{2,5}',
+        '[A-Z]{2,3}\\d{8,15}',
+        '\\d{9,15}',
+        '[A-Z]\\d{6,12}',
+        '[A-Z]\\d{8,12}',
       ];
       const policyChars = `(?:${policyAlternatives.join('|')})`;
-      // Anchor client name at non-digit start so we don't eat digits into it.
       const dataLinePattern = new RegExp(`^(${policyChars})([A-Z][A-Z\\s,'\\.\\-]+?)(\\d{2}\\/\\d{2}\\/\\d{4})(-?\\$[\\d,]+\\.\\d{2})$`);
 
-      // For single-line records, the carrier is embedded between agent and policy.
-      // We detect by looking for HUMANA / AETNA / DEVOTED / UNITED HEAL?TH? CARE inside the string.
-      // Strategy: match "<agent><carrier><policy><client><date><amount>" with the carrier as a hard anchor.
       const carrierAlternatives = '(?:UNITED\\s*HEA?L?T?H?\\s*CARE|HUMANA/DEVOTED|HUMANA|AETNA|DEVOTED)';
       const singleLinePattern = new RegExp(
         `^([A-Z][A-Z\\s,'\\.\\-]+?)(${carrierAlternatives})(${policyChars})([A-Z][A-Z\\s,'\\.\\-]+?)(\\d{2}\\/\\d{2}\\/\\d{4})(-?\\$[\\d,]+\\.\\d{2})$`,
@@ -1303,7 +1204,6 @@ async function parseBSIPDF(filePath, filename) {
 
       const parsedRows = [];
 
-      // First pass: try the 3-line LAYOUT A
       const consumedIndices = new Set();
       for (let i = 0; i < lines.length - 2; i++) {
         const lineA = lines[i];
@@ -1326,7 +1226,6 @@ async function parseBSIPDF(filePath, filename) {
         i += 2;
       }
 
-      // Second pass: try the smushed single-line LAYOUT B on each line that wasn't consumed
       for (let i = 0; i < lines.length; i++) {
         if (consumedIndices.has(i)) continue;
         const single = lines[i].match(singleLinePattern);
@@ -1350,8 +1249,6 @@ async function parseBSIPDF(filePath, filename) {
 
         if (!agentRaw || !clientRaw) continue;
         if (agentRaw.length < 3 || clientRaw.length < 3) continue;
-        // Note: we allow $0.00 commissions through — they appear in real BSI
-        // statements (zero-pay rows for tracking) and should NOT be silently dropped.
 
         const agent = normalizeAgentName(agentRaw);
         const client = clientRaw
@@ -1362,14 +1259,11 @@ async function parseBSIPDF(filePath, filename) {
 
         const isChargeback = commission < 0;
         
-        // BSI split only applies to effective dates 9/1/2025 and later
         const BSI_SPLIT_START_DATE = '2025-09-01';
         const isBsiEligible = effectiveDate && effectiveDate >= BSI_SPLIT_START_DATE;
         const splitApplies = shouldSplit(agent, carrier) && isBsiEligible;
         const grossCommission = commission;
 
-        // producer_payable only kicks in for ACA agency-pay-only carriers
-        // AND when the producer is a known ACA pass-through agent.
         const isAcaProducerHere = NO_SPLIT_AGENTS.some(a => String(agent).toLowerCase().includes(a));
         const passThrough = isAcaAgencyPaysProducer(carrier) && isAcaProducerHere;
 
@@ -1424,7 +1318,6 @@ function isBSIPDF(filename) {
          /medicare[\s_-]+statement.*the[\s_-]+health/i.test(f);
 }
 
-// ─── Mutual of Omaha PDF parser ──────────────────────────────────────────────
 async function parseMutualOmahaPDF(filePath, filename) {
   const records = [];
   if (!pdfParse) { console.error('pdf-parse not installed'); return records; }
@@ -1452,9 +1345,6 @@ async function parseMutualOmahaPDF(filePath, filename) {
         ? nameMatch[1].trim().replace(/\b\w/g, c => c.toUpperCase())
         : 'Unknown';
 
-      // Sum ALL PRODUCER COMMISSION PAYABLE amounts in this producer chunk.
-      // A producer can have separate Mutual + United sections each with their own payable line.
-      // Only skip if the grand total across ALL sections is zero.
       if (chunk.includes('PRODUCER COMMISSION PAYABLE')) {
         const payRegex = /PRODUCER COMMISSION PAYABLE[\s\S]{0,60}\$([\d,]+\.\d{2})/g;
         const payMatches = Array.from(chunk.matchAll(payRegex));
@@ -1465,7 +1355,6 @@ async function parseMutualOmahaPDF(filePath, filename) {
             continue;
           }
         } else {
-          // No numeric match — check if there is ANY non-zero payable
           const hasNonZero = /PRODUCER COMMISSION PAYABLE[\s\S]{0,60}\$[1-9]/.test(chunk);
           if (!hasNonZero) {
             console.log('[MOO] skip all $.00:', agentName);
@@ -1532,8 +1421,6 @@ async function parseMutualOmahaPDF(filePath, filename) {
   return records;
 }
 
-
-// ─── YourFMO Excel parser ────────────────────────────────────────────────────
 function parseYourFMORows(wb, filename) {
   const records = [];
   try {
@@ -1581,18 +1468,14 @@ function parseYourFMORows(wb, filename) {
   return records;
 }
 
-// UPDATED 2026-05-13: Handle actual YourFMO Commission Statement format
-// Format: Headers in row 4, data rows mixed with section headers, summaries at bottom
 function parseYourFMOXLSXRows(wb) {
   const records = [];
   const ws = wb.Sheets[wb.SheetNames[0]];
   
-  // Parse as array of arrays to handle the messy format
   const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
   
-  if (data.length < 5) return records; // Need at least header row
+  if (data.length < 5) return records;
   
-  // Find header row (should be row 4 in YourFMO format)
   let headerRowIdx = -1;
   for (let i = 0; i < Math.min(10, data.length); i++) {
     const row = data[i];
@@ -1603,11 +1486,10 @@ function parseYourFMOXLSXRows(wb) {
     }
   }
   
-  if (headerRowIdx === -1) return records; // No header found
+  if (headerRowIdx === -1) return records;
   
   const headers = data[headerRowIdx];
   
-  // Find column indexes
   const colIdx = {
     policy: headers.findIndex(h => String(h).includes('Policy #')),
     name: headers.findIndex(h => String(h).includes('Name of Insured')),
@@ -1618,22 +1500,17 @@ function parseYourFMOXLSXRows(wb) {
     commAmount: headers.findIndex(h => String(h).includes('Net Comm')),
   };
   
-  // Parse data rows (skip header sections, summaries, empty rows)
-  // Track current agent from section headers
-  let currentAgent = 'Yahoska G Perez'; // Default to Yahoska
+  let currentAgent = 'Yahoska G Perez';
   
   for (let i = headerRowIdx + 1; i < data.length; i++) {
     const row = data[i];
     const firstCell = String(row[0] || '').trim();
     
-    // Stop at summary section
     if (firstCell === 'Commission Summary' || firstCell.startsWith('Note:')) {
       break;
     }
     
-    // Check for agent section header (e.g. "Katy Jullie Robles   (Agent Number: EH9972...)")
     if (firstCell.includes('Agent Number')) {
-      // Extract agent name (everything before the opening parenthesis)
       const nameMatch = firstCell.match(/^(.+?)\s*\(Agent Number/);
       if (nameMatch) {
         currentAgent = nameMatch[1].trim();
@@ -1641,7 +1518,6 @@ function parseYourFMOXLSXRows(wb) {
       continue;
     }
     
-    // Skip section headers and empty rows
     if (firstCell.includes('NEW BUSINESS') || 
         firstCell.includes('RENEWAL BUSINESS') ||
         firstCell === 'ADJUSTMENT' ||
@@ -1656,10 +1532,8 @@ function parseYourFMOXLSXRows(wb) {
     const effectiveDate = formatDate(row[colIdx.effectiveDate]);
     const commission = parseFloat(row[colIdx.commAmount]) || 0;
     
-    // Skip if no policy number or no client name
     if (!policy || !client || client === '') continue;
     
-    // Derive classification
     let classification;
     if (commission < 0) {
       classification = 'Chargeback';
@@ -1671,14 +1545,11 @@ function parseYourFMOXLSXRows(wb) {
       classification = 'Agent Commission';
     }
     
-    // Derive carrier from product
-    let carrier = 'Humana'; // default for YourFMO
+    let carrier = 'Humana';
     if (product.toLowerCase().includes('devoted')) carrier = 'Devoted';
     
-    // Derive plan type
     const planType = derivePlanType(carrier, product, policy, '');
     
-    // Extract period from statement date (row 1 typically has "Statement Date: MM/DD/YYYY")
     let period = '';
     if (data[1]) {
       const statementRow = data[1].join(' ');
@@ -1690,7 +1561,7 @@ function parseYourFMOXLSXRows(wb) {
     }
     
     records.push({
-      agent: currentAgent, // Use agent from section header
+      agent: currentAgent,
       carrier,
       planType,
       client,
@@ -1712,8 +1583,6 @@ function parseYourFMOXLSXRows(wb) {
 router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   try {
-    // Reject Mutual of Omaha / United of Omaha uploads - they belong to
-    // partner agency, not THEI's books. (Confirmed by Yahoska 2026-05-12.)
     const fnLc = String(req.file.originalname || '').toLowerCase();
     if (/moo|mutual.?of.?omaha|united.?of.?omaha/i.test(fnLc)) {
       try { fs.unlinkSync(req.file.path); } catch (e) {}
@@ -1817,12 +1686,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
 
     records = records.map(r => ({ ...r, payee: r.payee || defaultPayee }));
 
-    // Enrich every record with OliComm schema columns (source/split/lob/etc.)
-    // for parsers that didn't already set them. BSI PDF + NHP parsers set
-    // these directly; other parsers (UHC, Humana PDF, MOO, Solis, etc.) get
-    // them computed here.
     {
-      // Derive source from filename / payee
       const fnLc = String(req.file.originalname || '').toLowerCase();
       const payeeLc = String(defaultPayee || '').toLowerCase();
       let inferredSource = 'direct_carrier';
@@ -1830,7 +1694,6 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       else if (payeeLc === 'nhp' || /^the_health_experts_insurance_statement|nhp/.test(fnLc)) inferredSource = 'NHP';
 
       records = records.map(r => {
-        // Don't overwrite parsers that already filled the new columns
         if (r.source) return r;
 
         const agentLc = String(r.agent || '').toLowerCase();
@@ -1840,31 +1703,23 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         const isAcaCarrier = ACA_CARRIERS_LIST.some(c => carrierLc.includes(c));
         const isAcaPassThroughAgent = NO_SPLIT_AGENTS.some(a => agentLc.includes(a));
 
-        // The existing parsers already store NET-after-split as `commission`.
-        // For direct carrier parsers, the carrier paid the agent (or paid agency-only)
-        // directly. Most direct-carrier statements show the agent's personal commission,
-        // which is NOT subject to a BSI split (it's the agent's own money).
         const netCommission = parseFloat(r.commission) || 0;
 
         let splitApplies, theiShare, bsiShare, producerPayable, grossCommission;
 
         if (inferredSource === 'direct_carrier') {
-          // Personal commissions (Yahoska + Katy's own production) -> 100% theirs.
-          // No BSI split, no payable.
           splitApplies = false;
           grossCommission = netCommission;
           theiShare = netCommission;
           bsiShare = 0;
           producerPayable = 0;
         } else if (isCommissionRow) {
-          // Producer's commission flowing through THEI -> ADP payable
           splitApplies = false;
           grossCommission = netCommission;
           theiShare = 0;
           bsiShare = 0;
           producerPayable = grossCommission;
         } else if (isAcaCarrier) {
-          // ACA override (no split)
           splitApplies = false;
           grossCommission = netCommission;
           if (isAcaAgencyPaysProducer(r.carrier) && isAcaPassThroughAgent) {
@@ -1873,8 +1728,6 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
             theiShare = grossCommission; bsiShare = 0; producerPayable = 0;
           }
         } else {
-          // Medicare agency override -> 50/50 with BSI (already-applied by existing
-          // parsers, so net commission stored equals the THEI half)
           splitApplies = true;
           grossCommission = Math.round(netCommission * 2 * 100) / 100;
           theiShare = netCommission;
@@ -1882,7 +1735,6 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
           producerPayable = 0;
         }
 
-        // Infer LOB
         let lob = null;
         const planTypeLc = String(r.planType || r.plan_type || '').toLowerCase();
         if (/med adv|mapd|advantage/.test(planTypeLc)) lob = 'MA';
@@ -1943,9 +1795,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
           uploadId, r.agent, r.carrier, r.planType || '', r.client, r.effectiveDate,
           r.premium || 0, r.commission || 0, r.classification, r.period, r.policyNumber, r.payee || '', r.mga || '',
           JSON.stringify(r.raw),
-          // New OliComm schema columns. Parsers that don't fill these leave them null/0.
           r.source || null,
-          // Postgres DATE requires YYYY-MM-DD. Convert MM/DD/YYYY -> YYYY-MM-DD.
           (() => {
             const v = r.policyWrittenDate;
             if (!v) return null;
@@ -2046,13 +1896,10 @@ function heuristicMapping(headers) {
   };
 }
 
-
-// ─── Fix bad period values in DB ─────────────────────────────────────────────
 router.post('/fix-periods', requireAuth, async (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
   try {
     const pool = getPool();
-    // Get ALL records with non-YYYYMM periods including empty, null, 0, epoch-based
     const records = await pool.query(
       `SELECT id, payment_period, effective_date, created_at 
        FROM commission_records 
@@ -2065,7 +1912,6 @@ router.post('/fix-periods', requireAuth, async (req, res) => {
     let fixed = 0, skipped = 0;
     for (const r of records.rows) {
       let cleaned = normalizePeriod(r.payment_period);
-      // If still unknown, try to derive from effective_date or created_at
       if (cleaned === 'Unknown' || cleaned === '197001') {
         if (r.effective_date && r.effective_date.match(/\d{2}\/\d{2}\/\d{4}/)) {
           const parts = r.effective_date.split('/');
@@ -2088,7 +1934,6 @@ router.post('/fix-periods', requireAuth, async (req, res) => {
   }
 });
 
-// ─── Retroactive BSI split migration ─────────────────────────────────────────
 router.post('/apply-bsi-split', requireAuth, async (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
   try {
