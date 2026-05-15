@@ -5,63 +5,212 @@ function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-const SPLIT_START_DATE = new Date('2025-08-01');
+// Notion Sales Tracker config
+const NOTION_TOKEN = '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';
+const SALES_TRACKER_DB = 'dce5f374-c877-4280-b5be-3b922b4ff210';
+const NOTION_VERSION = '2022-06-28';
 
-function isSplitEligible(effectiveDate) {
-  if (!effectiveDate) return false;
-  const d = new Date(effectiveDate);
-  if (isNaN(d.getTime())) return false;
-  return d >= SPLIT_START_DATE;
+// Helper to fetch from Notion
+async function notionRequest(endpoint, options = {}) {
+  const response = await fetch(`https://api.notion.com/v1/${endpoint}`, {
+    ...options,
+    headers: {
+      'Authorization': `Bearer ${NOTION_TOKEN}`,
+      'Notion-Version': NOTION_VERSION,
+      'Content-Type': 'application/json',
+      ...options.headers
+    }
+  });
+  if (!response.ok) throw new Error(`Notion API error: ${response.status}`);
+  return response.json();
+}
+
+// Extract value from Notion property
+function getPropValue(properties, key) {
+  const prop = properties[key] || {};
+  const type = prop.type;
+  
+  if (type === 'title') {
+    const titles = prop.title || [];
+    return titles[0]?.plain_text || '';
+  } else if (type === 'rich_text') {
+    const rich = prop.rich_text || [];
+    return rich[0]?.plain_text || '';
+  } else if (type === 'select') {
+    return prop.select?.name || '';
+  } else if (type === 'date') {
+    return prop.date?.start || null;
+  } else if (type === 'checkbox') {
+    return prop.checkbox || false;
+  }
+  return null;
+}
+
+// Fetch all sales from Notion
+async function fetchAllSales() {
+  const sales = [];
+  let hasMore = true;
+  let startCursor = null;
+  
+  while (hasMore) {
+    const params = { page_size: 100 };
+    if (startCursor) params.start_cursor = startCursor;
+    
+    const response = await notionRequest(`databases/${SALES_TRACKER_DB}/query`, {
+      method: 'POST',
+      body: JSON.stringify(params)
+    });
+    
+    for (const page of response.results || []) {
+      const props = page.properties;
+      sales.push({
+        id: page.id,
+        client_name: getPropValue(props, 'Name'),
+        agent: getPropValue(props, 'Agent'),
+        carrier: getPropValue(props, 'Carrier'),
+        effective_date: getPropValue(props, 'Effective Date'),
+        enrollment_date: getPropValue(props, 'Enrollment Date'),
+        plan_name: getPropValue(props, 'Plan Name'),
+        plan_type: getPropValue(props, 'Plan Type'),
+        status: getPropValue(props, 'Status')
+      });
+    }
+    
+    hasMore = response.has_more;
+    startCursor = response.next_cursor;
+  }
+  
+  return sales;
+}
+
+// Normalize names for fuzzy matching
+function normalizeName(name) {
+  if (!name) return '';
+  return name.toLowerCase().trim().replace(/\s+/g, ' ');
+}
+
+// Normalize carrier names
+function normalizeCarrier(carrier) {
+  if (!carrier) return '';
+  const c = carrier.toLowerCase().trim();
+  
+  if (c.includes('humana')) return 'humana';
+  if (c.includes('aetna')) return 'aetna';
+  if (c.includes('uhc') || c.includes('united')) return 'uhc';
+  if (c.includes('doctors')) return 'doctors';
+  if (c.includes('careplus') || c.includes('care plus')) return 'careplus';
+  if (c.includes('devoted')) return 'devoted';
+  if (c.includes('wellcare')) return 'wellcare';
+  if (c.includes('healthsun')) return 'healthsun';
+  if (c.includes('florida blue') || c.includes('fl blue')) return 'florida blue';
+  
+  return c;
+}
+
+// Check if dates match
+function datesMatch(date1, date2) {
+  if (!date1 || !date2) return false;
+  try {
+    const d1 = new Date(date1.split('T')[0]);
+    const d2 = new Date(date2.split('T')[0]);
+    return d1.getTime() === d2.getTime();
+  } catch {
+    return false;
+  }
+}
+
+// Find matching commission for a sale
+function findMatch(sale, commissions) {
+  const client = normalizeName(sale.client_name);
+  const agent = normalizeName(sale.agent);
+  const carrier = normalizeCarrier(sale.carrier);
+  
+  for (const comm of commissions) {
+    const commClient = normalizeName(comm.client_full_name);
+    const commAgent = normalizeName(comm.agent_name);
+    const commCarrier = normalizeCarrier(comm.carrier);
+    
+    // Client name match (fuzzy)
+    const clientMatch = (
+      client.includes(commClient) || 
+      commClient.includes(client) ||
+      client.replace(/\s/g, '').includes(commClient.replace(/\s/g, ''))
+    );
+    
+    // Agent name match
+    const agentMatch = agent.includes(commAgent) || commAgent.includes(agent);
+    
+    // Carrier match
+    const carrierMatch = carrier === commCarrier || carrier.includes(commCarrier) || commCarrier.includes(carrier);
+    
+    // Date match (bonus)
+    const dateMatch = datesMatch(sale.effective_date, comm.effective_date);
+    
+    // Require: client + agent + carrier
+    if (clientMatch && agentMatch && carrierMatch) {
+      return comm;
+    }
+  }
+  
+  return null;
 }
 
 export default function Reconciliation({ user }) {
-  const [periods, setPeriods] = useState([]);
-  const [selectedPeriod, setSelectedPeriod] = useState('');
-  const [nhpRecords, setNhpRecords] = useState([]);
-  const [bsiRecords, setBsiRecords] = useState([]);
+  const [sales, setSales] = useState([]);
+  const [commissions, setCommissions] = useState([]);
   const [loading, setLoading] = useState(false);
   const [tab, setTab] = useState('summary');
+  const [filterAgent, setFilterAgent] = useState('all');
+  const [filterCarrier, setFilterCarrier] = useState('all');
 
-  useEffect(() => {
-    apiFetch('/records/filters').then(d => {
-      setPeriods(d.periods || []);
-      if (d.periods && d.periods.length) setSelectedPeriod(d.periods[0]);
-    }).catch(console.error);
-  }, []);
-
-  async function loadReconciliation() {
-    if (!selectedPeriod) return;
+  async function loadData() {
     setLoading(true);
     try {
-      const nhpData = await apiFetch('/records?carrier=NHP&limit=500');
-      const bsiData = await apiFetch('/records?carrier=BSI&limit=500');
-      setNhpRecords(nhpData.records || []);
-      setBsiRecords(bsiData.records || []);
+      // Fetch sales from Notion
+      const salesData = await fetchAllSales();
+      setSales(salesData.filter(s => s.client_name)); // Exclude empty rows
+      
+      // Fetch commissions from OliComm
+      const commData = await apiFetch('/records?limit=5000');
+      setCommissions((commData.records || []).filter(r => parseFloat(r.commission) > 0));
     } catch (e) {
-      console.error(e);
+      console.error('Error loading data:', e);
+      alert('Failed to load data. Check console for details.');
     } finally {
       setLoading(false);
     }
   }
 
   useEffect(() => {
-    if (selectedPeriod) loadReconciliation();
-  }, [selectedPeriod]);
+    loadData();
+  }, []);
 
-  const nhpPreSplit = nhpRecords.filter(r => !isSplitEligible(r.effective_date));
-  const nhpSplitElig = nhpRecords.filter(r => isSplitEligible(r.effective_date));
-  const nhpGross = nhpRecords.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0);
-  const nhpPreTotal = nhpPreSplit.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0);
-  const nhpSplitTotal = nhpSplitElig.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0);
-  const owedToBSI = nhpSplitTotal * 0.5;
-  const yourNHPShare = nhpPreTotal + (nhpSplitTotal * 0.5);
-  const bsiTotal = bsiRecords.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0);
-  const difference = bsiTotal - owedToBSI;
-  const diffPct = owedToBSI > 0 ? ((difference / owedToBSI) * 100).toFixed(1) : 0;
-  const isBalanced = Math.abs(difference) < 10;
-  const statusLabel = isBalanced ? 'Balanced' : difference > 0 ? 'BSI paid more' : 'BSI paid less';
-  const statusBg = isBalanced ? 'var(--green-light)' : difference > 0 ? 'var(--blue-light)' : 'var(--red-light)';
-  const statusFg = isBalanced ? 'var(--green)' : difference > 0 ? 'var(--blue)' : 'var(--red)';
+  // Match sales to commissions
+  const matches = sales.map(sale => ({
+    sale,
+    commission: findMatch(sale, commissions)
+  }));
+
+  const paid = matches.filter(m => m.commission);
+  const unpaid = matches.filter(m => !m.commission);
+
+  // Apply filters
+  let filteredPaid = paid;
+  let filteredUnpaid = unpaid;
+
+  if (filterAgent !== 'all') {
+    filteredPaid = paid.filter(m => m.sale.agent === filterAgent);
+    filteredUnpaid = unpaid.filter(m => m.sale.agent === filterAgent);
+  }
+
+  if (filterCarrier !== 'all') {
+    filteredPaid = filteredPaid.filter(m => normalizeCarrier(m.sale.carrier) === normalizeCarrier(filterCarrier));
+    filteredUnpaid = filteredUnpaid.filter(m => normalizeCarrier(m.sale.carrier) === normalizeCarrier(filterCarrier));
+  }
+
+  // Get unique agents and carriers for filters
+  const agents = [...new Set(sales.map(s => s.agent).filter(Boolean))].sort();
+  const carriers = [...new Set(sales.map(s => s.carrier).filter(Boolean))].sort();
 
   const tabStyle = (id) => ({
     padding: '7px 14px',
@@ -72,228 +221,207 @@ export default function Reconciliation({ user }) {
     borderBottom: tab === id ? '2px solid var(--blue)' : '2px solid transparent',
     color: tab === id ? 'var(--blue)' : 'var(--text-muted)',
     fontWeight: tab === id ? 600 : 400,
-    marginBottom: -1
+    marginBottom: -1,
+    whiteSpace: 'nowrap'
   });
 
   return (
     <div>
       <div className="page-header">
-        <div className="page-title">NHP / BSI reconciliation</div>
-        <div className="page-sub">Cross-check NHP overrides vs BSI payments — partnership started 08/01/2025</div>
+        <div className="page-title">Sales Reconciliation</div>
+        <div className="page-sub">Cross-check Sales Tracker vs Commission Records</div>
       </div>
       <div className="page-body">
 
         <div className="card" style={{marginBottom:14}}>
-          <div style={{display:'flex', alignItems:'flex-end', gap:12, flexWrap:'wrap'}}>
-            <div>
-              <div className="form-label">Statement period</div>
-              <select className="filter-select" value={selectedPeriod} onChange={e => setSelectedPeriod(e.target.value)}>
-                <option value="">Select period</option>
-                {periods.map(p => (
-                  <option key={p} value={p}>{p}</option>
-                ))}
-              </select>
+          <div style={{display:'flex', alignItems:'flex-end', gap:12, flexWrap:'wrap', justifyContent:'space-between'}}>
+            <div style={{display:'flex', gap:12, flexWrap:'wrap'}}>
+              <div>
+                <div className="form-label">Agent</div>
+                <select className="filter-select" value={filterAgent} onChange={e => setFilterAgent(e.target.value)}>
+                  <option value="all">All agents</option>
+                  {agents.map(a => <option key={a} value={a}>{a}</option>)}
+                </select>
+              </div>
+              <div>
+                <div className="form-label">Carrier</div>
+                <select className="filter-select" value={filterCarrier} onChange={e => setFilterCarrier(e.target.value)}>
+                  <option value="all">All carriers</option>
+                  {carriers.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
             </div>
-            <button className="btn btn-primary" onClick={loadReconciliation} disabled={loading}>
-              {loading ? 'Loading...' : 'Refresh'}
+            <button className="btn btn-primary" onClick={loadData} disabled={loading}>
+              {loading ? 'Loading...' : '🔄 Refresh'}
             </button>
           </div>
         </div>
 
-        {!nhpRecords.length && !bsiRecords.length ? (
+        {loading ? (
           <div className="card">
             <div className="empty-state">
-              <div className="empty-icon">🔍</div>
-              <div className="empty-title">No NHP or BSI data found</div>
-              <div className="empty-sub">Upload your NHP and BSI statements first</div>
+              <div className="empty-title" style={{color:'var(--text-muted)'}}>Loading sales and commissions...</div>
+            </div>
+          </div>
+        ) : !sales.length ? (
+          <div className="card">
+            <div className="empty-state">
+              <div className="empty-icon">📊</div>
+              <div className="empty-title">No sales data found</div>
+              <div className="empty-sub">Check your Sales Tracker in Notion</div>
             </div>
           </div>
         ) : (
           <div>
+            {/* KPI Cards */}
             <div className="kpi-grid" style={{marginBottom:14}}>
               <div className="kpi-card">
-                <div className="kpi-label">NHP gross received</div>
-                <div className="kpi-value blue">{fmt(nhpGross)}</div>
+                <div className="kpi-label">Total Sales</div>
+                <div className="kpi-value">{sales.length}</div>
               </div>
               <div className="kpi-card">
-                <div className="kpi-label">Your NHP share</div>
-                <div className="kpi-value green">{fmt(yourNHPShare)}</div>
+                <div className="kpi-label">✅ Paid</div>
+                <div className="kpi-value green">{paid.length}</div>
+                <div className="kpi-sub">{((paid.length / sales.length) * 100).toFixed(1)}%</div>
               </div>
               <div className="kpi-card">
-                <div className="kpi-label">Owed to BSI (50%)</div>
-                <div className="kpi-value amber">{fmt(owedToBSI)}</div>
+                <div className="kpi-label">⏳ Unpaid</div>
+                <div className="kpi-value red">{unpaid.length}</div>
+                <div className="kpi-sub">{((unpaid.length / sales.length) * 100).toFixed(1)}%</div>
               </div>
               <div className="kpi-card">
-                <div className="kpi-label">BSI actually paid</div>
-                <div className="kpi-value blue">{fmt(bsiTotal)}</div>
+                <div className="kpi-label">Commission Records</div>
+                <div className="kpi-value blue">{commissions.length}</div>
               </div>
             </div>
 
-            <div className="card" style={{marginBottom:14}}>
-              <div className="card-title">Reconciliation result</div>
-              <div style={{display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:12}}>
-                <div style={{background:'var(--gray-100)', borderRadius:'var(--radius)', padding:'14px 16px'}}>
-                  <div style={{fontSize:12, color:'var(--text-muted)', marginBottom:4}}>Pre-partnership</div>
-                  <div style={{fontSize:18, fontWeight:600}}>{fmt(nhpPreTotal)}</div>
-                  <div style={{fontSize:11, color:'var(--text-muted)', marginTop:2}}>Before 08/01/2025 — 100% yours</div>
-                </div>
-                <div style={{background:'var(--gray-100)', borderRadius:'var(--radius)', padding:'14px 16px'}}>
-                  <div style={{fontSize:12, color:'var(--text-muted)', marginBottom:4}}>Split-eligible</div>
-                  <div style={{fontSize:18, fontWeight:600}}>{fmt(nhpSplitTotal)}</div>
-                  <div style={{fontSize:11, color:'var(--text-muted)', marginTop:2}}>08/01/2025 or later — 50/50</div>
-                </div>
-                <div style={{background:statusBg, borderRadius:'var(--radius)', padding:'14px 16px'}}>
-                  <div style={{fontSize:12, color:'var(--text-muted)', marginBottom:4}}>Difference</div>
-                  <div style={{fontSize:18, fontWeight:600, color:statusFg}}>
-                    {difference >= 0 ? '+' : ''}{fmt(difference)}
-                  </div>
-                  <div style={{fontSize:11, marginTop:2, color:statusFg}}>
-                    {statusLabel} {Math.abs(diffPct) > 0 ? '(' + diffPct + '%)' : ''}
-                  </div>
-                </div>
-              </div>
+            {/* Tabs */}
+            <div style={{display:'flex', gap:8, marginBottom:12, borderBottom:'1px solid var(--border)', overflowX:'auto'}}>
+              <button style={tabStyle('summary')} onClick={() => setTab('summary')}>
+                Summary
+              </button>
+              <button style={tabStyle('paid')} onClick={() => setTab('paid')}>
+                ✅ Paid ({filteredPaid.length})
+              </button>
+              <button style={tabStyle('unpaid')} onClick={() => setTab('unpaid')}>
+                ⏳ Unpaid ({filteredUnpaid.length})
+              </button>
             </div>
 
-            <div style={{display:'flex', gap:8, marginBottom:12, borderBottom:'1px solid var(--border)'}}>
-              <button style={tabStyle('summary')} onClick={() => setTab('summary')}>Split breakdown</button>
-              <button style={tabStyle('nhp')} onClick={() => setTab('nhp')}>{'NHP records (' + nhpRecords.length + ')'}</button>
-              <button style={tabStyle('bsi')} onClick={() => setTab('bsi')}>{'BSI records (' + bsiRecords.length + ')'}</button>
-            </div>
-
+            {/* Summary Tab */}
             {tab === 'summary' && (
-              <div className="card" style={{padding:0}}>
-                <div className="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Category</th>
-                        <th>Records</th>
-                        <th>Total</th>
-                        <th>Your share</th>
-                        <th>BSI share</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr>
-                        <td>
-                          <div style={{fontWeight:500}}>Pre-partnership</div>
-                          <div style={{fontSize:11, color:'var(--text-muted)'}}>Before 08/01/2025</div>
-                        </td>
-                        <td>{nhpPreSplit.length}</td>
-                        <td>{fmt(nhpPreTotal)}</td>
-                        <td style={{fontWeight:600, color:'var(--green)'}}>{fmt(nhpPreTotal)}</td>
-                        <td style={{color:'var(--text-muted)'}}>$0.00</td>
-                      </tr>
-                      <tr>
-                        <td>
-                          <div style={{fontWeight:500}}>Split-eligible</div>
-                          <div style={{fontSize:11, color:'var(--text-muted)'}}>08/01/2025 or later</div>
-                        </td>
-                        <td>{nhpSplitElig.length}</td>
-                        <td>{fmt(nhpSplitTotal)}</td>
-                        <td style={{fontWeight:600, color:'var(--green)'}}>{fmt(nhpSplitTotal * 0.5)}</td>
-                        <td style={{fontWeight:600, color:'var(--amber)'}}>{fmt(nhpSplitTotal * 0.5)}</td>
-                      </tr>
-                      <tr style={{background:'var(--gray-50)'}}>
-                        <td style={{fontWeight:600}}>Total NHP</td>
-                        <td style={{fontWeight:600}}>{nhpRecords.length}</td>
-                        <td style={{fontWeight:600}}>{fmt(nhpGross)}</td>
-                        <td style={{fontWeight:600, color:'var(--green)'}}>{fmt(yourNHPShare)}</td>
-                        <td style={{fontWeight:600, color:'var(--amber)'}}>{fmt(owedToBSI)}</td>
-                      </tr>
-                      <tr>
-                        <td>
-                          <div style={{fontWeight:500}}>BSI direct payment</div>
-                          <div style={{fontSize:11, color:'var(--text-muted)'}}>What BSI actually sent you</div>
-                        </td>
-                        <td>{bsiRecords.length}</td>
-                        <td style={{fontWeight:600, color:'var(--blue)'}}>{fmt(bsiTotal)}</td>
-                        <td colSpan={2} style={{color:'var(--text-muted)', fontSize:12}}>Should match BSI share above</td>
-                      </tr>
-                    </tbody>
-                  </table>
+              <div className="card">
+                <div className="card-title">Reconciliation Summary</div>
+                <div style={{marginBottom:20}}>
+                  <div style={{fontSize:14, marginBottom:12}}>
+                    Out of <strong>{sales.length} total sales</strong> in your Sales Tracker:
+                  </div>
+                  <ul style={{fontSize:14, lineHeight:1.8, paddingLeft:20}}>
+                    <li><strong style={{color:'var(--green)'}}>{paid.length} sales ({((paid.length / sales.length) * 100).toFixed(1)}%)</strong> have matching commission records in OliComm</li>
+                    <li><strong style={{color:'var(--red)'}}>{unpaid.length} sales ({((unpaid.length / sales.length) * 100).toFixed(1)}%)</strong> are missing commission records</li>
+                  </ul>
+                </div>
+                
+                <div className="card-title" style={{marginTop:24}}>What this means</div>
+                <div style={{fontSize:14, lineHeight:1.7}}>
+                  <p><strong>✅ Paid sales</strong> have been matched to commission records using client name, agent, carrier, and effective date.</p>
+                  <p><strong>⏳ Unpaid sales</strong> either haven't been paid yet, or the commission statement hasn't been uploaded to OliComm.</p>
+                  <p style={{marginTop:16, padding:12, background:'var(--blue-light)', borderRadius:6, color:'var(--blue-dark)'}}>
+                    💡 <strong>Tip:</strong> After Katy uploads new commission statements, click "🔄 Refresh" to update the reconciliation.
+                  </p>
                 </div>
               </div>
             )}
 
-            {tab === 'nhp' && (
+            {/* Paid Tab */}
+            {tab === 'paid' && (
               <div className="card" style={{padding:0}}>
-                <div className="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>#</th>
-                        <th>Agent</th>
-                        <th>Carrier</th>
-                        <th>Client</th>
-                        <th>Effective</th>
-                        <th>Commission</th>
-                        <th>Split eligible</th>
-                        <th>Your share</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {nhpRecords.map((r, i) => {
-                        var eligible = isSplitEligible(r.effective_date);
-                        var comm = parseFloat(r.commission) || 0;
-                        var share = eligible ? comm * 0.5 : comm;
-                        return (
-                          <tr key={r.id}>
-                            <td style={{color:'var(--text-muted)', fontSize:11}}>{i + 1}</td>
-                            <td style={{fontWeight:500}}>{r.agent_name}</td>
-                            <td style={{fontSize:12}}>{r.carrier}</td>
-                            <td>{r.client_full_name || '—'}</td>
-                            <td style={{fontSize:12, color:'var(--text-muted)'}}>{r.effective_date || '—'}</td>
-                            <td style={{fontWeight:600}}>{fmt(comm)}</td>
-                            <td>
-                              {eligible
-                                ? <span className="badge badge-amber">Yes (50/50)</span>
-                                : <span className="badge badge-green">No (100% yours)</span>
-                              }
+                {filteredPaid.length === 0 ? (
+                  <div className="empty-state">
+                    <div className="empty-title">No paid sales match your filters</div>
+                  </div>
+                ) : (
+                  <div className="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Client</th>
+                          <th>Agent</th>
+                          <th>Carrier</th>
+                          <th>Effective Date</th>
+                          <th>Commission</th>
+                          <th>Payment Period</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredPaid.map((m, i) => (
+                          <tr key={i}>
+                            <td style={{fontWeight:500}}>{m.sale.client_name}</td>
+                            <td>{m.sale.agent}</td>
+                            <td style={{fontSize:12}}>{m.sale.carrier}</td>
+                            <td style={{fontSize:12, color:'var(--text-muted)'}}>
+                              {m.sale.effective_date || '—'}
                             </td>
-                            <td style={{fontWeight:600, color:'var(--green)'}}>{fmt(share)}</td>
+                            <td style={{fontWeight:600, color:'var(--green)'}}>
+                              {fmt(m.commission.commission)}
+                            </td>
+                            <td style={{fontSize:12}}>
+                              {m.commission.payment_period || '—'}
+                            </td>
                           </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             )}
 
-            {tab === 'bsi' && (
+            {/* Unpaid Tab */}
+            {tab === 'unpaid' && (
               <div className="card" style={{padding:0}}>
-                <div className="table-wrap">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>#</th>
-                        <th>Agent</th>
-                        <th>Carrier</th>
-                        <th>Client</th>
-                        <th>Effective</th>
-                        <th>Commission</th>
-                        <th>Type</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {bsiRecords.map((r, i) => {
-                        var comm = parseFloat(r.commission) || 0;
-                        return (
-                          <tr key={r.id}>
-                            <td style={{color:'var(--text-muted)', fontSize:11}}>{i + 1}</td>
-                            <td style={{fontWeight:500}}>{r.agent_name}</td>
-                            <td style={{fontSize:12}}>{r.carrier}</td>
-                            <td>{r.client_full_name || '—'}</td>
-                            <td style={{fontSize:12, color:'var(--text-muted)'}}>{r.effective_date || '—'}</td>
-                            <td style={{fontWeight:600, color: comm < 0 ? 'var(--red)' : 'var(--green)'}}>{fmt(comm)}</td>
-                            <td><span className="badge badge-blue">{r.classification || 'Override'}</span></td>
+                {filteredUnpaid.length === 0 ? (
+                  <div className="empty-state">
+                    <div className="empty-icon">🎉</div>
+                    <div className="empty-title">All sales are paid!</div>
+                    <div className="empty-sub">No unpaid sales match your filters</div>
+                  </div>
+                ) : (
+                  <div className="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Client</th>
+                          <th>Agent</th>
+                          <th>Carrier</th>
+                          <th>Effective Date</th>
+                          <th>Enrollment Date</th>
+                          <th>Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredUnpaid.map((m, i) => (
+                          <tr key={i}>
+                            <td style={{fontWeight:500}}>{m.sale.client_name}</td>
+                            <td>{m.sale.agent}</td>
+                            <td style={{fontSize:12}}>{m.sale.carrier}</td>
+                            <td style={{fontSize:12, color:'var(--text-muted)'}}>
+                              {m.sale.effective_date || '—'}
+                            </td>
+                            <td style={{fontSize:12, color:'var(--text-muted)'}}>
+                              {m.sale.enrollment_date || '—'}
+                            </td>
+                            <td>
+                              <span className="badge badge-amber">
+                                {m.sale.status || 'Unpaid'}
+                              </span>
+                            </td>
                           </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
             )}
 
