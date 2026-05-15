@@ -11,6 +11,7 @@ import BookOfBusiness from './pages/BookOfBusiness';
 import Payroll from './pages/Payroll';
 import Reports from './pages/Reports';
 import AdminUsers from './pages/AdminUsers';
+import MedicareProUpload from './pages/MedicareProUpload';
 import './App.css';
 
 export default function App() {
@@ -89,6 +90,7 @@ export default function App() {
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: '◼' },
     { id: 'upload', label: 'Upload', icon: '↑' },
+    { id: 'medicarepro-upload', label: 'Upload MedicarePro', icon: '📊' },
     { id: 'alldata', label: 'All Data', icon: '≡' },
     { id: 'bob', label: 'Book of Business', icon: '◉' },
     { id: 'renewals', label: 'Missing Renewals', icon: '!' },
@@ -109,6 +111,7 @@ export default function App() {
   const pages = {
     dashboard: <Dashboard key={agencyView} user={effectiveUser} onNavigate={navigate} />,
     upload: <Upload key={agencyView} user={effectiveUser} />,
+    'medicarepro-upload': <MedicareProUpload key={agencyView} user={effectiveUser} />,
     alldata: <AllData key={agencyView} user={effectiveUser} initialFilters={pageParams} />,
     bob: <BookOfBusiness key={agencyView} user={effectiveUser} />,
     renewals: <MissingRenewals key={agencyView} user={effectiveUser} />,
