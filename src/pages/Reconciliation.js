@@ -5,84 +5,6 @@ function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-// Notion Sales Tracker config
-const NOTION_TOKEN = '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';
-const SALES_TRACKER_DB = 'dce5f374-c877-4280-b5be-3b922b4ff210';
-const NOTION_VERSION = '2022-06-28';
-
-// Helper to fetch from Notion
-async function notionRequest(endpoint, options = {}) {
-  const response = await fetch(`https://api.notion.com/v1/${endpoint}`, {
-    ...options,
-    headers: {
-      'Authorization': `Bearer ${NOTION_TOKEN}`,
-      'Notion-Version': NOTION_VERSION,
-      'Content-Type': 'application/json',
-      ...options.headers
-    }
-  });
-  if (!response.ok) throw new Error(`Notion API error: ${response.status}`);
-  return response.json();
-}
-
-// Extract value from Notion property
-function getPropValue(properties, key) {
-  const prop = properties[key] || {};
-  const type = prop.type;
-  
-  if (type === 'title') {
-    const titles = prop.title || [];
-    return titles[0]?.plain_text || '';
-  } else if (type === 'rich_text') {
-    const rich = prop.rich_text || [];
-    return rich[0]?.plain_text || '';
-  } else if (type === 'select') {
-    return prop.select?.name || '';
-  } else if (type === 'date') {
-    return prop.date?.start || null;
-  } else if (type === 'checkbox') {
-    return prop.checkbox || false;
-  }
-  return null;
-}
-
-// Fetch all sales from Notion
-async function fetchAllSales() {
-  const sales = [];
-  let hasMore = true;
-  let startCursor = null;
-  
-  while (hasMore) {
-    const params = { page_size: 100 };
-    if (startCursor) params.start_cursor = startCursor;
-    
-    const response = await notionRequest(`databases/${SALES_TRACKER_DB}/query`, {
-      method: 'POST',
-      body: JSON.stringify(params)
-    });
-    
-    for (const page of response.results || []) {
-      const props = page.properties;
-      sales.push({
-        id: page.id,
-        client_name: getPropValue(props, 'Name'),
-        agent: getPropValue(props, 'Agent'),
-        carrier: getPropValue(props, 'Carrier'),
-        effective_date: getPropValue(props, 'Effective Date'),
-        enrollment_date: getPropValue(props, 'Enrollment Date'),
-        plan_name: getPropValue(props, 'Plan Name'),
-        plan_type: getPropValue(props, 'Plan Type'),
-        status: getPropValue(props, 'Status')
-      });
-    }
-    
-    hasMore = response.has_more;
-    startCursor = response.next_cursor;
-  }
-  
-  return sales;
-}
-
 // Normalize names for fuzzy matching
 function normalizeName(name) {
   if (!name) return '';
@@ -159,23 +81,25 @@ export default function Reconciliation({ user }) {
   const [sales, setSales] = useState([]);
   const [commissions, setCommissions] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
   const [tab, setTab] = useState('summary');
   const [filterAgent, setFilterAgent] = useState('all');
   const [filterCarrier, setFilterCarrier] = useState('all');
 
   async function loadData() {
     setLoading(true);
+    setError(null);
     try {
-      // Fetch sales from Notion
-      const salesData = await fetchAllSales();
-      setSales(salesData.filter(s => s.client_name)); // Exclude empty rows
+      // Fetch sales from backend (which fetches from Notion)
+      const salesData = await apiFetch('/sales-tracker');
+      setSales(salesData.sales || []);
       
       // Fetch commissions from OliComm
       const commData = await apiFetch('/records?limit=5000');
       setCommissions((commData.records || []).filter(r => parseFloat(r.commission) > 0));
     } catch (e) {
       console.error('Error loading data:', e);
-      alert('Failed to load data. Check console for details.');
+      setError(e.message || 'Failed to load data');
     } finally {
       setLoading(false);
     }
@@ -256,6 +180,12 @@ export default function Reconciliation({ user }) {
             </button>
           </div>
         </div>
+
+        {error && (
+          <div className="card" style={{marginBottom:14, background:'var(--red-light)', border:'1px solid var(--red)'}}>
+            <div style={{color:'var(--red-dark)', fontWeight:500}}>❌ Error: {error}</div>
+          </div>
+        )}
 
         {loading ? (
           <div className="card">
