@@ -109,8 +109,8 @@ export default function Reconciliation({ user }) {
       const salesData = await apiFetch('/sales-tracker');
       setSales(salesData.sales || []);
       
-      // Fetch commissions from OliComm
-      const commData = await apiFetch('/records?limit=5000');
+      // Fetch commissions from OliComm (optimized: limit=100 instead of 5000)
+      const commData = await apiFetch('/records?limit=100');
       setCommissions((commData.records || []).filter(r => parseFloat(r.commission) > 0));
       
       // Fetch manual payments
