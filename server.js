@@ -1,7 +1,6 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-
 const app = express();
 const PORT = process.env.PORT || 3001;
 
@@ -13,12 +12,39 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 const { initSchema } = require('./db/database');
-
 initSchema().then(() => {
   console.log('✅ Database ready');
 }).catch(err => {
   console.error('❌ Database init failed:', err.message);
 });
+
+// ONE-TIME AGENT NAME NORMALIZATION (runs once on startup)
+const normalizeOnStartup = async () => {
+  try {
+    const { getPool } = require('./db/database');
+    const { normalizeAgentName } = require('./routes/normalize');
+    const pool = getPool();
+    
+    const records = await pool.query('SELECT id, agent_name FROM commission_records');
+    let updated = 0;
+    
+    for (const rec of records.rows) {
+      const normalized = normalizeAgentName(rec.agent_name);
+      if (normalized !== rec.agent_name) {
+        await pool.query('UPDATE commission_records SET agent_name = $1 WHERE id = $2', [normalized, rec.id]);
+        updated++;
+      }
+    }
+    
+    if (updated > 0) {
+      console.log(`✅ Normalized ${updated} agent names`);
+    }
+  } catch (err) {
+    console.error('⚠️  Normalization error:', err.message);
+  }
+};
+
+normalizeOnStartup();
 
 app.use('/api/auth', require('./routes/auth'));
 app.use('/api/files', require('./routes/files'));
