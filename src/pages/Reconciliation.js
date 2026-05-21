@@ -8,7 +8,10 @@ function fmt(n) {
 function formatDate(dateStr) {
   if (!dateStr) return '—';
   try {
-    const date = new Date(dateStr);
+    // Strip time component to avoid timezone conversion issues
+    const dateOnly = dateStr.split('T')[0];  // "2026-05-01"
+    const [year, month, day] = dateOnly.split('-');
+    const date = new Date(year, month - 1, day);  // Create date in local timezone
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   } catch {
     return dateStr;
