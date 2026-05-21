@@ -110,6 +110,7 @@ export default function Reconciliation({ user }) {
   const [sortColumn, setSortColumn] = useState('client');
   const [sortDirection, setSortDirection] = useState('asc');
   const [searchTerm, setSearchTerm] = useState('');
+  const [showDirectAgentsOnly, setShowDirectAgentsOnly] = useState(true);  // Default to direct agents only
 
   async function loadData() {
     setLoading(true);
@@ -149,24 +150,26 @@ export default function Reconciliation({ user }) {
     loadData();
   }, []);
 
+  // Direct agents who get carrier commissions (Yahoska + Katy)
+  const directAgents = ['Yahoska Perez', 'Katy Robles'];
+  
+  // Filter sales by direct agents if toggle is on
+  let filteredSales = sales;
+  if (showDirectAgentsOnly) {
+    filteredSales = sales.filter(sale => {
+      const agentName = sale.agent_name || sale.agent || '';
+      return directAgents.some(da => agentName.includes(da) || da.includes(agentName));
+    });
+  }
+  
   // Match sales to commissions
-  const matches = sales.map(sale => ({
+  const matches = filteredSales.map(sale => ({
     sale,
     commission: findMatch(sale, commissions, manualPayments)
   }));
 
   const paid = matches.filter(m => m.commission);
-  
-  // Only show Yahoska + Katy in unpaid (they get carrier commissions)
-  // Other agents only generate agency overrides (BSI/NHP)
-  const directAgents = ['Yahoska Perez', 'Katy Robles'];
-  const unpaid = matches.filter(m => {
-    if (!m.commission) {
-      const agent = m.sale.agent || '';
-      return directAgents.some(da => agent.includes(da) || da.includes(agent));
-    }
-    return false;
-  });
+  const unpaid = matches.filter(m => !m.commission);
 
   // Apply filters
   let filteredPaid = paid;
@@ -252,9 +255,9 @@ export default function Reconciliation({ user }) {
     return sortDirection === 'asc' ? ' ↑' : ' ↓';
   };
 
-  // Get unique agents and carriers for filters
-  const agents = [...new Set(sales.map(s => s.agent_name || s.agent).filter(Boolean))].sort();
-  const carriers = [...new Set(sales.map(s => s.carrier).filter(Boolean))].sort();
+  // Get unique agents and carriers for filters (from filtered sales)
+  const agents = [...new Set(filteredSales.map(s => s.agent_name || s.agent).filter(Boolean))].sort();
+  const carriers = [...new Set(filteredSales.map(s => s.carrier).filter(Boolean))].sort();
 
   // Handle marking a sale as paid
   async function handleMarkPaid(sale) {
@@ -338,9 +341,20 @@ export default function Reconciliation({ user }) {
                 </select>
               </div>
             </div>
-            <button className="btn btn-primary" onClick={loadData} disabled={loading}>
-              {loading ? 'Loading...' : '🔄 Refresh'}
-            </button>
+            <div style={{display:'flex', gap:12, alignItems:'center'}}>
+              <label style={{display:'flex', alignItems:'center', gap:8, fontSize:13, cursor:'pointer', userSelect:'none'}}>
+                <input 
+                  type="checkbox" 
+                  checked={showDirectAgentsOnly} 
+                  onChange={e => setShowDirectAgentsOnly(e.target.checked)}
+                  style={{cursor:'pointer'}}
+                />
+                <span>Direct agents only (Yahoska & Katy)</span>
+              </label>
+              <button className="btn btn-primary" onClick={loadData} disabled={loading}>
+                {loading ? 'Loading...' : '🔄 Refresh'}
+              </button>
+            </div>
           </div>
         </div>
 

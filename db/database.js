@@ -111,6 +111,36 @@ async function initSchema() {
         status VARCHAR(20) DEFAULT 'success'
       );
 
+      CREATE TABLE IF NOT EXISTS agency_production (
+        id SERIAL PRIMARY KEY,
+        agent_name VARCHAR(255),
+        client_name VARCHAR(255),
+        carrier VARCHAR(100),
+        plan_name VARCHAR(255),
+        policy_number VARCHAR(100),
+        effective_date DATE,
+        transaction_date DATE,
+        status VARCHAR(50),
+        policy_type VARCHAR(50),
+        enrollment_type VARCHAR(50),
+        state VARCHAR(2),
+        county VARCHAR(100),
+        upload_batch VARCHAR(7),
+        uploaded_at TIMESTAMP DEFAULT NOW(),
+        raw_data JSONB
+      );
+
+      CREATE TABLE IF NOT EXISTS agency_production_uploads (
+        id SERIAL PRIMARY KEY,
+        filename VARCHAR(255),
+        carrier VARCHAR(100),
+        upload_batch VARCHAR(7),
+        uploaded_at TIMESTAMP DEFAULT NOW(),
+        uploaded_by VARCHAR(100),
+        record_count INTEGER DEFAULT 0,
+        status VARCHAR(20) DEFAULT 'success'
+      );
+
       CREATE INDEX IF NOT EXISTS idx_records_agent ON commission_records(agent_name);
       CREATE INDEX IF NOT EXISTS idx_records_carrier ON commission_records(carrier);
       CREATE INDEX IF NOT EXISTS idx_records_plan_type ON commission_records(plan_type);
@@ -126,6 +156,11 @@ async function initSchema() {
       CREATE INDEX IF NOT EXISTS idx_medicarepro_status ON medicarepro_sales(status);
       CREATE INDEX IF NOT EXISTS idx_medicarepro_batch ON medicarepro_sales(upload_batch);
       CREATE INDEX IF NOT EXISTS idx_medicarepro_uploads_batch ON medicarepro_uploads(upload_batch);
+      CREATE INDEX IF NOT EXISTS idx_agency_production_agent ON agency_production(agent_name);
+      CREATE INDEX IF NOT EXISTS idx_agency_production_client ON agency_production(client_name);
+      CREATE INDEX IF NOT EXISTS idx_agency_production_carrier ON agency_production(carrier);
+      CREATE INDEX IF NOT EXISTS idx_agency_production_batch ON agency_production(upload_batch);
+      CREATE INDEX IF NOT EXISTS idx_agency_production_eff_date ON agency_production(effective_date);
 
       ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS plan_type TEXT;
       ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS payee TEXT DEFAULT '';
