@@ -56,7 +56,6 @@ app.use('/api/sales-tracker', require('./routes/sales-tracker'));
 app.use('/api/medicarepro', require('./routes/medicarepro'));  // ← ADD THIS LINE
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
-app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
 app.use((err, req, res, next) => {
   console.error(err.stack);
