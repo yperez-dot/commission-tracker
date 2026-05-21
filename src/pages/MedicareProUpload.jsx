@@ -234,36 +234,48 @@ export default function MedicareProUpload() {
                   </tr>
                 </thead>
                 <tbody>
-                  {preview.map((row, i) => (
-                    <tr key={i}>
-                      <td style={{ fontWeight: 500 }}>{row.Name || '—'}</td>
-                      <td>{row.Company || '—'}</td>
-                      <td style={{ fontSize: 12 }}>{row['Policy Type'] || '—'}</td>
-                      <td style={{ fontSize: 12 }}>{row['Effective Date'] || '—'}</td>
-                      <td>
-                        <span className="badge" style={{
-                          background: 
-                            row.Status === 'Active' ? '#D4EDDA' :
-                            row.Status === 'Pending' ? '#FFF3CD' :
-                            row.Status === 'Canceled' || row.Status === 'Replaced' ? '#F8D7DA' :
-                            row.Status === 'Disenrolled' ? '#E7D4F5' :
-                            '#F0EAE0',
-                          color:
-                            row.Status === 'Active' ? '#155724' :
-                            row.Status === 'Pending' ? '#856404' :
-                            row.Status === 'Canceled' || row.Status === 'Replaced' ? '#721C24' :
-                            row.Status === 'Disenrolled' ? '#663399' :
-                            '#3D2B1F',
-                          padding: '4px 8px',
-                          borderRadius: 4,
-                          fontSize: 11,
-                          fontWeight: 600
-                        }}>
-                          {row.Status || '—'}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
+                  {preview.map((row, i) => {
+                    // Detect format and extract fields
+                    const hasAgentColumns = 'Agent First' in row || 'Member First' in row;
+                    const name = hasAgentColumns 
+                      ? `${row['Member First'] || ''} ${row['Member Last'] || ''}`.trim()
+                      : row.Name;
+                    const company = row['Company Name'] || row.Company;
+                    const policyType = row['Policy Type'];
+                    const effDate = row['Policy Effective Date'] || row['Effective Date'];
+                    const status = row['Policy Status'] || row.Status;
+                    
+                    return (
+                      <tr key={i}>
+                        <td style={{ fontWeight: 500 }}>{name || '—'}</td>
+                        <td>{company || '—'}</td>
+                        <td style={{ fontSize: 12 }}>{policyType || '—'}</td>
+                        <td style={{ fontSize: 12 }}>{effDate || '—'}</td>
+                        <td>
+                          <span className="badge" style={{
+                            background: 
+                              status === 'Active' ? '#D4EDDA' :
+                              status === 'Pending' ? '#FFF3CD' :
+                              status === 'Canceled' || status === 'Replaced' ? '#F8D7DA' :
+                              status === 'Disenrolled' ? '#E7D4F5' :
+                              '#F0EAE0',
+                            color:
+                              status === 'Active' ? '#155724' :
+                              status === 'Pending' ? '#856404' :
+                              status === 'Canceled' || status === 'Replaced' ? '#721C24' :
+                              status === 'Disenrolled' ? '#663399' :
+                              '#3D2B1F',
+                            padding: '4px 8px',
+                            borderRadius: 4,
+                            fontSize: 11,
+                            fontWeight: 600
+                          }}>
+                            {status || '—'}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
