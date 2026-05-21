@@ -105,16 +105,22 @@ export default function Reconciliation({ user }) {
     setLoading(true);
     setError(null);
     try {
-      // Fetch sales from backend (which fetches from Notion)
+      // Fetch sales from MedicarePro upload
+      console.log('Loading MedicarePro sales...');
       const salesData = await apiFetch('/api/medicarepro');
+      console.log('MedicarePro response:', salesData);
       setSales(salesData.sales || []);
       
       // Fetch commissions from OliComm (optimized: limit=100 instead of 5000)
+      console.log('Loading commission records...');
       const commData = await apiFetch('/records?limit=100');
+      console.log('Commission response:', commData);
       setCommissions((commData.records || []).filter(r => parseFloat(r.commission) > 0));
       
       // Fetch manual payments
+      console.log('Loading manual payments...');
       const manualData = await apiFetch('/manual-payments');
+      console.log('Manual payments response:', manualData);
       setManualPayments(manualData.payments || []);
     } catch (e) {
       console.error('Error loading data:', e);
@@ -232,7 +238,7 @@ export default function Reconciliation({ user }) {
   };
 
   // Get unique agents and carriers for filters
-  const agents = [...new Set(sales.map(s => s.agent).filter(Boolean))].sort();
+  const agents = [...new Set(sales.map(s => s.agent || s.agent_name).filter(Boolean))].sort();
   const carriers = [...new Set(sales.map(s => s.carrier).filter(Boolean))].sort();
 
   // Handle marking a sale as paid
@@ -284,7 +290,7 @@ export default function Reconciliation({ user }) {
     <div>
       <div className="page-header">
         <div className="page-title">Sales Reconciliation</div>
-        <div className="page-sub">Cross-check Sales Tracker vs Commission Records</div>
+        <div className="page-sub">Cross-check MedicarePro Sales vs Commission Records</div>
       </div>
       <div className="page-body">
 
@@ -340,7 +346,7 @@ export default function Reconciliation({ user }) {
             <div className="empty-state">
               <div className="empty-icon">📊</div>
               <div className="empty-title">No sales data found</div>
-              <div className="empty-sub">Check your Sales Tracker in Notion</div>
+              <div className="empty-sub">Upload a MedicarePro CSV to get started</div>
             </div>
           </div>
         ) : (
@@ -386,7 +392,7 @@ export default function Reconciliation({ user }) {
                 <div className="card-title">Reconciliation Summary</div>
                 <div style={{marginBottom:20}}>
                   <div style={{fontSize:14, marginBottom:12}}>
-                    Out of <strong>{sales.length} total sales</strong> in your Sales Tracker:
+                    Out of <strong>{sales.length} total sales</strong> in your MedicarePro upload:
                   </div>
                   <ul style={{fontSize:14, lineHeight:1.8, paddingLeft:20}}>
                     <li><strong style={{color:'var(--green)'}}>{paid.length} sales ({((paid.length / sales.length) * 100).toFixed(1)}%)</strong> have matching commission records in OliComm</li>
@@ -399,7 +405,7 @@ export default function Reconciliation({ user }) {
                   <p><strong>✅ Paid sales</strong> have been matched to commission records using client name, agent, carrier, and effective date.</p>
                   <p><strong>⏳ Unpaid sales</strong> either haven't been paid yet, or the commission statement hasn't been uploaded to OliComm.</p>
                   <p style={{marginTop:16, padding:12, background:'var(--blue-light)', borderRadius:6, color:'var(--blue-dark)'}}>
-                    💡 <strong>Tip:</strong> After Katy uploads new commission statements, click "🔄 Refresh" to update the reconciliation.
+                    💡 <strong>Tip:</strong> After uploading new commission statements, click "🔄 Refresh" to update the reconciliation.
                   </p>
                 </div>
               </div>
@@ -437,7 +443,7 @@ export default function Reconciliation({ user }) {
                         {filteredPaid.map((m, i) => (
                           <tr key={i}>
                             <td style={{fontWeight:500}}>{m.sale.client_name}</td>
-                            <td>{m.sale.agent}</td>
+                            <td>{m.sale.agent || m.sale.agent_name}</td>
                             <td style={{fontSize:12}}>{m.sale.carrier}</td>
                             <td style={{fontSize:12, color:'var(--text-muted)'}}>
                               {m.sale.effective_date || '—'}
@@ -496,9 +502,6 @@ export default function Reconciliation({ user }) {
                           <th onClick={() => handleSort('effective_date')} style={{cursor:'pointer', userSelect:'none'}}>
                             Effective Date{sortIndicator('effective_date')}
                           </th>
-                          <th onClick={() => handleSort('enrollment_date')} style={{cursor:'pointer', userSelect:'none'}}>
-                            Enrollment Date{sortIndicator('enrollment_date')}
-                          </th>
                           <th>Status</th>
                           <th style={{textAlign:'center'}}>Actions</th>
                         </tr>
@@ -507,13 +510,10 @@ export default function Reconciliation({ user }) {
                         {filteredUnpaid.map((m, i) => (
                           <tr key={i}>
                             <td style={{fontWeight:500}}>{m.sale.client_name}</td>
-                            <td>{m.sale.agent}</td>
+                            <td>{m.sale.agent || m.sale.agent_name}</td>
                             <td style={{fontSize:12}}>{m.sale.carrier}</td>
                             <td style={{fontSize:12, color:'var(--text-muted)'}}>
                               {m.sale.effective_date || '—'}
-                            </td>
-                            <td style={{fontSize:12, color:'var(--text-muted)'}}>
-                              {m.sale.enrollment_date || '—'}
                             </td>
                             <td>
                               <span className="badge badge-amber">
