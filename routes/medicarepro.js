@@ -14,7 +14,15 @@ function parseCSV(buffer) {
     
     stream.Readable.from([buffer.toString()])
       .pipe(csv())
-      .on('data', (row) => rows.push(row))
+      .on('data', (row) => {
+        // Strip quotes from column names (csv-parser might preserve them)
+        const cleanedRow = {};
+        for (const [key, value] of Object.entries(row)) {
+          const cleanKey = key.replace(/^"|"$/g, '').trim();
+          cleanedRow[cleanKey] = value;
+        }
+        rows.push(cleanedRow);
+      })
       .on('end', () => resolve(rows))
       .on('error', reject);
   });
