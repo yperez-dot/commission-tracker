@@ -56,7 +56,7 @@ function findMatch(sale, commissions, manualPayments = []) {
   // Check manual payments first
   const manualMatch = manualPayments.find(mp => 
     mp.client_name === sale.client_name && 
-    mp.agent === sale.agent && 
+    mp.agent === (sale.agent_name || sale.agent) && 
     mp.effective_date === sale.effective_date
   );
   
@@ -65,7 +65,7 @@ function findMatch(sale, commissions, manualPayments = []) {
   }
   
   const client = normalizeName(sale.client_name);
-  const agent = normalizeName(sale.agent);
+  const agent = normalizeName(sale.agent_name || sale.agent);  // Use agent_name first (MedicarePro format)
   const carrier = normalizeCarrier(sale.carrier);
   
   for (const comm of commissions) {
