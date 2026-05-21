@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { apiFetch } from '../api';
 
 export default function MedicareProUpload() {
   const [file, setFile] = useState(null);
@@ -8,6 +7,29 @@ export default function MedicareProUpload() {
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [dragOver, setDragOver] = useState(false);
+
+  // Simple CSV parser (browser-friendly)
+  function parseCSV(text) {
+    const lines = text.trim().split('\n');
+    if (lines.length === 0) return [];
+    
+    const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
+    const rows = [];
+    
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i];
+      if (!line.trim()) continue;
+      
+      const values = line.split(',').map(v => v.trim().replace(/^"|"$/g, ''));
+      const row = {};
+      headers.forEach((header, index) => {
+        row[header] = values[index] || '';
+      });
+      rows.push(row);
+    }
+    
+    return rows;
+  }
 
   // Handle file selection
   async function handleFileSelect(selectedFile) {
@@ -22,25 +44,13 @@ export default function MedicareProUpload() {
 
     // Preview first 5 rows
     const reader = new FileReader();
-    reader.onload = async (e) => {
+    reader.onload = (e) => {
       try {
-        const csv = require('csv-parser');
-        const stream = require('stream');
-        const rows = [];
-
-        stream.Readable.from([e.target.result.toString()])
-          .pipe(csv())
-          .on('data', (row) => {
-            if (rows.length < 5) rows.push(row);
-          })
-          .on('end', () => {
-            setPreview(rows);
-          })
-          .on('error', (err) => {
-            setError('❌ Error reading CSV: ' + err.message);
-          });
+        const csv = e.target.result;
+        const rows = parseCSV(csv);
+        setPreview(rows.slice(0, 5));
       } catch (err) {
-        setError('❌ Error previewing file: ' + err.message);
+        setError('❌ Error reading CSV: ' + err.message);
       }
     };
     reader.readAsText(selectedFile);
@@ -180,8 +190,8 @@ export default function MedicareProUpload() {
               <table>
                 <thead>
                   <tr>
-                    <th>Client Name</th>
-                    <th>Carrier</th>
+                    <th>Name</th>
+                    <th>Company</th>
                     <th>Policy Type</th>
                     <th>Effective Date</th>
                     <th>Status</th>
@@ -241,69 +251,3 @@ export default function MedicareProUpload() {
             {error}
           </div>
         )}
-
-        {/* Success */}
-        {success && (
-          <div
-            className="card"
-            style={{
-              marginTop: 20,
-              background: 'var(--green-light)',
-              border: '1px solid var(--green)',
-              color: 'var(--green-dark)',
-              fontWeight: 500
-            }}
-          >
-            {success}
-          </div>
-        )}
-
-        {/* Upload Button */}
-        {file && !success && (
-          <div style={{ marginTop: 20, display: 'flex', gap: 12 }}>
-            <button
-              className="btn btn-primary btn-lg"
-              onClick={handleUpload}
-              disabled={loading}
-              style={{ flex: 1 }}
-            >
-              {loading ? '⏳ Uploading...' : '🚀 Replace All Sales Data'}
-            </button>
-            <button
-              className="btn btn-secondary"
-              onClick={() => {
-                setFile(null);
-                setPreview([]);
-              }}
-              disabled={loading}
-            >
-              Cancel
-            </button>
-          </div>
-        )}
-
-        {/* Info Box */}
-        <div
-          style={{
-            marginTop: 30,
-            padding: 16,
-            background: 'var(--blue-light)',
-            borderRadius: 6,
-            borderLeft: '4px solid var(--blue)',
-            color: 'var(--blue-dark)',
-            fontSize: 13,
-            lineHeight: 1.6
-          }}
-        >
-          <div style={{ fontWeight: 600, marginBottom: 8 }}>💡 How to use:</div>
-          <ol style={{ paddingLeft: 20, margin: 0 }}>
-            <li>Export your client list from MedicarePro as CSV</li>
-            <li>Upload the file here (replaces all previous data)</li>
-            <li>The Reconciliation page will automatically update</li>
-            <li>Compare with commission records to find unpaid sales</li>
-          </ol>
-        </div>
-      </div>
-    </div>
-  );
-}
