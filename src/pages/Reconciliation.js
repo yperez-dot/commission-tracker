@@ -24,6 +24,29 @@ function normalizeName(name) {
   return name.toLowerCase().trim().replace(/\s+/g, ' ');
 }
 
+// Extract first and last name from various formats
+function parseClientName(name) {
+  if (!name) return { first: '', last: '', full: '' };
+  
+  const normalized = normalizeName(name);
+  
+  // Check if it's "LAST, FIRST" format
+  if (normalized.includes(',')) {
+    const parts = normalized.split(',').map(p => p.trim());
+    const last = parts[0].replace(/[^a-z\s]/g, '').trim();  // Remove periods, etc.
+    const first = parts[1] ? parts[1].split(' ')[0].replace(/[^a-z]/g, '').trim() : '';  // Get first word, remove initials
+    return { first, last, full: `${first} ${last}`.trim() };
+  }
+  
+  // Otherwise assume "FIRST LAST" format
+  const words = normalized.split(' ').filter(w => w.length > 1);  // Filter out initials
+  if (words.length >= 2) {
+    return { first: words[0], last: words[words.length - 1], full: normalized };
+  }
+  
+  return { first: '', last: words[0] || '', full: normalized };
+}
+
 // Normalize carrier names
 function normalizeCarrier(carrier) {
   if (!carrier) return '';
@@ -67,21 +90,21 @@ function findMatch(sale, commissions, manualPayments = []) {
     return { ...manualMatch, isManual: true };
   }
   
-  const client = normalizeName(sale.client_name);
+  const saleClientParsed = parseClientName(sale.client_name);
   const agent = normalizeName(sale.agent_name || sale.agent);  // Use agent_name first (MedicarePro format)
   const carrier = normalizeCarrier(sale.carrier);
   
   for (const comm of commissions) {
-    const commClient = normalizeName(comm.client_full_name);
+    const commClientParsed = parseClientName(comm.client_full_name);
     const commAgent = normalizeName(comm.agent_name);
     const commCarrier = normalizeCarrier(comm.carrier);
     
-    // Client name match (fuzzy)
-    const clientMatch = (
-      client.includes(commClient) || 
-      commClient.includes(client) ||
-      client.replace(/\s/g, '').includes(commClient.replace(/\s/g, ''))
-    );
+    // Client name match (smart matching - handles "LAST, FIRST" and "First Last" formats)
+    const firstMatch = saleClientParsed.first && commClientParsed.first && 
+                       saleClientParsed.first === commClientParsed.first;
+    const lastMatch = saleClientParsed.last && commClientParsed.last && 
+                      saleClientParsed.last === commClientParsed.last;
+    const clientMatch = firstMatch && lastMatch;
     
     // Agent name match
     const agentMatch = agent.includes(commAgent) || commAgent.includes(agent);
