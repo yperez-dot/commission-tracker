@@ -8,6 +8,8 @@ export default function MedicareProUpload() {
   const [success, setSuccess] = useState(null);
   const [dragOver, setDragOver] = useState(false);
 
+  const API_URL = process.env.REACT_APP_API_URL || '';
+
   function parseCSV(text) {
     const lines = text.trim().split('\n');
     if (lines.length === 0) return [];
@@ -60,7 +62,9 @@ export default function MedicareProUpload() {
       const formData = new FormData();
       formData.append('file', file);
 
-      const response = await fetch('/api/medicarepro/upload', {
+      const uploadUrl = `${API_URL}/api/medicarepro/upload`;
+      
+      const response = await fetch(uploadUrl, {
         method: 'POST',
         body: formData,
         headers: {
