@@ -51,6 +51,8 @@ app.use('/api/files', require('./routes/files'));
 app.use('/api/records', require('./routes/records'));
 app.use('/api/bob', require('./routes/bob'));
 app.use('/api/sales-tracker', require('./routes/sales-tracker'));
+app.use('/api/medicarepro', require('./routes/medicarepro'));  // ← ADD THIS LINE
+app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
