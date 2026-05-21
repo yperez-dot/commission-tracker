@@ -8,18 +8,14 @@ export default function MedicareProUpload() {
   const [success, setSuccess] = useState(null);
   const [dragOver, setDragOver] = useState(false);
 
-  // Simple CSV parser (browser-friendly)
   function parseCSV(text) {
     const lines = text.trim().split('\n');
     if (lines.length === 0) return [];
-    
     const headers = lines[0].split(',').map(h => h.trim().replace(/^"|"$/g, ''));
     const rows = [];
-    
     for (let i = 1; i < lines.length; i++) {
       const line = lines[i];
       if (!line.trim()) continue;
-      
       const values = line.split(',').map(v => v.trim().replace(/^"|"$/g, ''));
       const row = {};
       headers.forEach((header, index) => {
@@ -27,22 +23,17 @@ export default function MedicareProUpload() {
       });
       rows.push(row);
     }
-    
     return rows;
   }
 
-  // Handle file selection
   async function handleFileSelect(selectedFile) {
     if (!selectedFile.name.toLowerCase().endsWith('.csv')) {
       setError('❌ File must be CSV format');
       return;
     }
-
     setFile(selectedFile);
     setError(null);
     setSuccess(null);
-
-    // Preview first 5 rows
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
@@ -56,34 +47,26 @@ export default function MedicareProUpload() {
     reader.readAsText(selectedFile);
   }
 
-  // Handle upload
   async function handleUpload() {
     if (!file) {
       setError('❌ Please select a file');
       return;
     }
-
     setLoading(true);
     setError(null);
     setSuccess(null);
-
     try {
       const formData = new FormData();
       formData.append('file', file);
-
       const response = await fetch('/api/medicarepro/upload', {
         method: 'POST',
         body: formData,
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
       });
-
       if (!response.ok) {
         const err = await response.json();
         throw new Error(err.error || 'Upload failed');
       }
-
       const result = await response.json();
       setSuccess(`✅ Successfully imported ${result.inserted} records from MedicarePro!`);
       setFile(null);
@@ -95,7 +78,6 @@ export default function MedicareProUpload() {
     }
   }
 
-  // Drag & drop handlers
   function handleDragOver(e) {
     e.preventDefault();
     setDragOver(true);
@@ -119,9 +101,7 @@ export default function MedicareProUpload() {
         <div className="page-title">📊 Upload MedicarePro Sales</div>
         <div className="page-sub">Import your monthly client list from MedicarePro</div>
       </div>
-
       <div className="page-body">
-        {/* Upload Area */}
         <div
           className="card"
           style={{
@@ -154,7 +134,6 @@ export default function MedicareProUpload() {
           </label>
         </div>
 
-        {/* Selected File */}
         {file && (
           <div className="card" style={{ marginTop: 20, background: 'var(--blue-light)', border: '1px solid var(--blue)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -168,10 +147,7 @@ export default function MedicareProUpload() {
               </div>
               <button
                 className="btn btn-sm"
-                onClick={() => {
-                  setFile(null);
-                  setPreview([]);
-                }}
+                onClick={() => { setFile(null); setPreview([]); }}
                 style={{ background: 'var(--red)', color: 'white' }}
               >
                 Remove
@@ -180,7 +156,6 @@ export default function MedicareProUpload() {
           </div>
         )}
 
-        {/* Preview */}
         {preview.length > 0 && (
           <div className="card" style={{ marginTop: 20 }}>
             <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>
@@ -205,27 +180,14 @@ export default function MedicareProUpload() {
                       <td style={{ fontSize: 12 }}>{row['Policy Type'] || '—'}</td>
                       <td style={{ fontSize: 12 }}>{row['Effective Date'] || '—'}</td>
                       <td>
-                        <span
-                          className="badge"
-                          style={{
-                            background:
-                              row.Status === 'Active'
-                                ? 'var(--green-light)'
-                                : row.Status === 'Canceled'
-                                ? 'var(--red-light)'
-                                : 'var(--text-muted)',
-                            color:
-                              row.Status === 'Active'
-                                ? 'var(--green-dark)'
-                                : row.Status === 'Canceled'
-                                ? 'var(--red-dark)'
-                                : 'var(--text)',
-                            padding: '4px 8px',
-                            borderRadius: 4,
-                            fontSize: 11,
-                            fontWeight: 600
-                          }}
-                        >
+                        <span className="badge" style={{
+                          background: row.Status === 'Active' ? 'var(--green-light)' : row.Status === 'Canceled' ? 'var(--red-light)' : 'var(--text-muted)',
+                          color: row.Status === 'Active' ? 'var(--green-dark)' : row.Status === 'Canceled' ? 'var(--red-dark)' : 'var(--text)',
+                          padding: '4px 8px',
+                          borderRadius: 4,
+                          fontSize: 11,
+                          fontWeight: 600
+                        }}>
                           {row.Status || '—'}
                         </span>
                       </td>
@@ -237,17 +199,39 @@ export default function MedicareProUpload() {
           </div>
         )}
 
-        {/* Error */}
         {error && (
-          <div
-            className="card"
-            style={{
-              marginTop: 20,
-              background: 'var(--red-light)',
-              border: '1px solid var(--red)',
-              color: 'var(--red-dark)'
-            }}
-          >
+          <div className="card" style={{ marginTop: 20, background: 'var(--red-light)', border: '1px solid var(--red)', color: 'var(--red-dark)' }}>
             {error}
           </div>
         )}
+
+        {success && (
+          <div className="card" style={{ marginTop: 20, background: 'var(--green-light)', border: '1px solid var(--green)', color: 'var(--green-dark)', fontWeight: 500 }}>
+            {success}
+          </div>
+        )}
+
+        {file && !success && (
+          <div style={{ marginTop: 20, display: 'flex', gap: 12 }}>
+            <button className="btn btn-primary btn-lg" onClick={handleUpload} disabled={loading} style={{ flex: 1 }}>
+              {loading ? '⏳ Uploading...' : '🚀 Replace All Sales Data'}
+            </button>
+            <button className="btn btn-secondary" onClick={() => { setFile(null); setPreview([]); }} disabled={loading}>
+              Cancel
+            </button>
+          </div>
+        )}
+
+        <div style={{ marginTop: 30, padding: 16, background: 'var(--blue-light)', borderRadius: 6, borderLeft: '4px solid var(--blue)', color: 'var(--blue-dark)', fontSize: 13, lineHeight: 1.6 }}>
+          <div style={{ fontWeight: 600, marginBottom: 8 }}>💡 How to use:</div>
+          <ol style={{ paddingLeft: 20, margin: 0 }}>
+            <li>Export your client list from MedicarePro as CSV</li>
+            <li>Upload the file here (replaces all previous data)</li>
+            <li>The Reconciliation page will automatically update</li>
+            <li>Compare with commission records to find unpaid sales</li>
+          </ol>
+        </div>
+      </div>
+    </div>
+  );
+}
