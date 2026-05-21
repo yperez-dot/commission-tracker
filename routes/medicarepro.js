@@ -54,20 +54,27 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       const status = row.Status || '';
       const policyNumber = row['Policy Number'] || '';
       const planName = row.Policy || '';
-      const rawDataJson = JSON.stringify(row);
+      // Create a simple hash of the row to detect exact duplicates
+      const rowHash = Buffer.from(JSON.stringify([clientName, carrier, effectiveDate, policyNumber])).toString('base64');
 
-      // Check if this EXACT row (by raw_data) was already uploaded in this batch
+      // Check if this EXACT row (by hash) was already uploaded in this batch
       // This detects duplicate uploads of the same CSV file
       const checkQuery = `
         SELECT id FROM medicarepro_sales 
         WHERE upload_batch = $1 
-          AND raw_data = $2
+          AND client_name = $2
+          AND carrier = $3
+          AND effective_date = $4
+          AND policy_number = $5
         LIMIT 1
       `;
       
       const existing = await pool.query(checkQuery, [
         uploadMonth,
-        rawDataJson
+        clientName,
+        carrier,
+        effectiveDate,
+        policyNumber
       ]);
 
       if (existing.rows.length > 0) {
@@ -80,8 +87,8 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       try {
         await pool.query(
           `INSERT INTO medicarepro_sales 
-           (client_name, carrier, policy_type, effective_date, status, policy_number, plan_name, upload_batch, uploaded_at, raw_data)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+           (client_name, carrier, policy_type, effective_date, status, policy_number, plan_name, upload_batch, uploaded_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
           [
             clientName,
             carrier,
@@ -91,8 +98,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
             policyNumber,
             planName,
             uploadMonth,
-            uploadDate,
-            rawDataJson
+            uploadDate
           ]
         );
         inserted++;
