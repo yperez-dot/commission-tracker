@@ -7,6 +7,37 @@ const { requireAuth } = require('./auth');
 
 const upload = multer({ storage: multer.memoryStorage() });
 
+// Helper: Convert Excel serial date to ISO date string
+function excelDateToISO(excelDate) {
+  if (!excelDate) return null;
+  
+  // If it's already a Date object
+  if (excelDate instanceof Date) {
+    return excelDate.toISOString().split('T')[0];
+  }
+  
+  // If it's an Excel serial number (number > 1000)
+  if (typeof excelDate === 'number' && excelDate > 1000) {
+    // Excel epoch is Dec 30, 1899
+    const excelEpoch = new Date(1899, 11, 30);
+    const days = Math.floor(excelDate);
+    const date = new Date(excelEpoch.getTime() + days * 24 * 60 * 60 * 1000);
+    return date.toISOString().split('T')[0];
+  }
+  
+  // Try parsing as string
+  try {
+    const d = new Date(excelDate);
+    if (!isNaN(d.getTime())) {
+      return d.toISOString().split('T')[0];
+    }
+  } catch (e) {
+    // Invalid
+  }
+  
+  return null;
+}
+
 // POST /api/agency-production/upload
 router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
   try {
@@ -43,13 +74,13 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     
     // Check if we have required columns
     const firstRow = rows[0];
-    const hasAgent = firstRow.AGENT || firstRow['Agent Name'] || firstRow.agent || firstRow['agent name'];
-    const hasMember = firstRow.MEMBER || firstRow['Member Name'] || firstRow.member || firstRow['member name'];
+    const hasAgent = firstRow.AGENT || firstRow['Agent Name'] || firstRow.Agent_Name || firstRow.agent || firstRow['agent name'];
+    const hasMember = firstRow.MEMBER || firstRow['Member Name'] || firstRow.Member_First_Name || firstRow.Member_Last_Name || firstRow.member || firstRow['member name'];
     
     if (!hasAgent && !hasMember) {
       return res.status(400).json({ 
         error: 'Excel file is missing required columns',
-        details: `Expected columns like AGENT/Member or Agent Name/Member Name. Found: ${Object.keys(firstRow).join(', ')}`
+        details: `Expected columns like AGENT, Agent_Name, MEMBER, Member_First_Name, etc. Found: ${Object.keys(firstRow).slice(0, 10).join(', ')}...`
       });
     }
 
@@ -81,51 +112,34 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
 
     // Process each row
     for (const row of rows) {
-      const agentName = (row.AGENT || row['Agent Name'] || '').substring(0, 255);
-      const clientName = (row.MEMBER || row['Member Name'] || '').substring(0, 255);
-      const planName = (row.PLAN_NAME || row['Plan Name'] || '').substring(0, 255);
-      const policyNumber = (row.DOC_ID || row['Policy Number'] || '').toString().substring(0, 100);
-      const statusValue = (row.Status || '').substring(0, 50);
-      const policyType = (row.PRODUCT_DESCRIPTION || row['Policy Type'] || '').substring(0, 50);
-      const enrollmentType = (row.Enrollment_Type || row['Enrollment Type'] || '').substring(0, 50);
+      // Handle different agent name formats
+      const agentName = (row.AGENT || row['Agent Name'] || row.Agent_Name || row['Agent_Name'] || '').substring(0, 255);
+      
+      // Handle different member name formats
+      let clientName = '';
+      if (row.MEMBER || row['Member Name']) {
+        clientName = (row.MEMBER || row['Member Name'] || '').substring(0, 255);
+      } else if (row.Member_First_Name || row.Member_Last_Name) {
+        // UHC format: separate first/last names
+        const firstName = (row.Member_First_Name || '').trim();
+        const lastName = (row.Member_Last_Name || '').trim();
+        clientName = `${firstName} ${lastName}`.trim().substring(0, 255);
+      }
+      const planName = (row.PLAN_NAME || row['Plan Name'] || row.Plan_Name || '').substring(0, 255);
+      const policyNumber = (row.DOC_ID || row['Policy Number'] || row.Application_ID || row.HIC || '').toString().substring(0, 100);
+      const statusValue = (row.Status || row.App_Status || row.Consumer_Status || '').substring(0, 50);
+      const policyType = (row.PRODUCT_DESCRIPTION || row['Policy Type'] || row.Product || row.SubProduct || '').substring(0, 50);
+      const enrollmentType = (row.Enrollment_Type || row['Enrollment Type'] || row.Application_Type || '').substring(0, 50);
       const state = (row.STATE || row.State || '').substring(0, 2);
-      const county = (row.COUNTY || row.County || '').substring(0, 100);
+      const county = (row.COUNTY || row.County || row.App_County || '').substring(0, 100);
 
-      // Parse effective date
-      let effectiveDate = null;
-      if (row.EFF_DT || row['Effective Date']) {
-        try {
-          const dateValue = row.EFF_DT || row['Effective Date'];
-          if (dateValue instanceof Date) {
-            effectiveDate = dateValue.toISOString().split('T')[0];
-          } else {
-            const d = new Date(dateValue);
-            if (!isNaN(d.getTime())) {
-              effectiveDate = d.toISOString().split('T')[0];
-            }
-          }
-        } catch (e) {
-          // Invalid date, leave as null
-        }
-      }
+      // Parse effective date (handles Excel serial dates)
+      const effectiveDateValue = row.EFF_DT || row['Effective Date'] || row.Effective_Date;
+      const effectiveDate = excelDateToISO(effectiveDateValue);
 
-      // Parse transaction date
-      let transactionDate = null;
-      if (row.TRANSACTION_DATE || row['Transaction Date']) {
-        try {
-          const dateValue = row.TRANSACTION_DATE || row['Transaction Date'];
-          if (dateValue instanceof Date) {
-            transactionDate = dateValue.toISOString().split('T')[0];
-          } else {
-            const d = new Date(dateValue);
-            if (!isNaN(d.getTime())) {
-              transactionDate = d.toISOString().split('T')[0];
-            }
-          }
-        } catch (e) {
-          // Invalid date, leave as null
-        }
-      }
+      // Parse transaction date (handles Excel serial dates)
+      const transactionDateValue = row.TRANSACTION_DATE || row['Transaction Date'] || row.System_Received || row.Agent_Signature_Date;
+      const transactionDate = excelDateToISO(transactionDateValue);
 
       // Skip if missing essential data
       if (!clientName || !agentName) {
