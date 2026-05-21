@@ -20,7 +20,7 @@ function parseCSV(buffer) {
   });
 }
 
-// POST /api/medicarepro/upload - Upload with duplicate detection (exact row only)
+// POST /api/medicarepro/upload
 router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
@@ -31,9 +31,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       return res.status(400).json({ error: 'File must be CSV' });
     }
 
-    // Parse CSV
     const rows = await parseCSV(req.file.buffer);
-    
     if (rows.length === 0) {
       return res.status(400).json({ error: 'CSV is empty' });
     }
@@ -45,21 +43,29 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     let inserted = 0;
     let skipped = 0;
 
-    // Process rows - keep ALL plan changes, only skip exact duplicate rows
+    // Process each row
     for (const row of rows) {
-      const clientName = row.Name || '';
-      const carrier = row.Company || '';
-      const policyType = row['Policy Type'] || '';
-      const effectiveDate = row['Effective Date'] ? new Date(row['Effective Date']).toISOString().split('T')[0] : null;
-      const status = row.Status || '';
-      const policyNumber = row['Policy Number'] || '';
-      const planName = row.Policy || '';
-      // Create a simple hash of the row to detect exact duplicates
-      const rowHash = Buffer.from(JSON.stringify([clientName, carrier, effectiveDate, policyNumber])).toString('base64');
+      const clientName = (row.Name || '').substring(0, 255);
+      const carrier = (row.Company || '').substring(0, 100);
+      const policyType = (row['Policy Type'] || '').substring(0, 50);
+      const statusValue = (row.Status || '').substring(0, 50);
+      const policyNumber = (row['Policy Number'] || '').substring(0, 100);
+      const planName = (row.Policy || '').substring(0, 255);
+      
+      let effectiveDate = null;
+      if (row['Effective Date']) {
+        try {
+          const d = new Date(row['Effective Date']);
+          if (!isNaN(d.getTime())) {
+            effectiveDate = d.toISOString().split('T')[0];
+          }
+        } catch (e) {
+          // Invalid date, leave as null
+        }
+      }
 
-      // Check if this EXACT row (by hash) was already uploaded in this batch
-      // This detects duplicate uploads of the same CSV file
-      const checkQuery = `
+      // Check for exact duplicate (same client + carrier + eff_date + policy_number in this batch)
+      const existingQuery = `
         SELECT id FROM medicarepro_sales 
         WHERE upload_batch = $1 
           AND client_name = $2
@@ -69,7 +75,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         LIMIT 1
       `;
       
-      const existing = await pool.query(checkQuery, [
+      const existingResult = await pool.query(existingQuery, [
         uploadMonth,
         clientName,
         carrier,
@@ -77,13 +83,12 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         policyNumber
       ]);
 
-      if (existing.rows.length > 0) {
-        // Exact duplicate found in this batch, skip it
+      if (existingResult.rows.length > 0) {
         skipped++;
         continue;
       }
 
-      // Insert new record (keeps all plan changes, different eff dates)
+      // Insert the row
       try {
         await pool.query(
           `INSERT INTO medicarepro_sales 
@@ -94,7 +99,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
             carrier,
             policyType,
             effectiveDate,
-            status,
+            statusValue,
             policyNumber,
             planName,
             uploadMonth,
@@ -103,26 +108,27 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         );
         inserted++;
       } catch (err) {
-        console.error('Insert error:', err);
+        console.error('Row insert error:', err.message);
         skipped++;
       }
     }
 
-    res.json({
+    return res.json({
       success: true,
-      inserted,
-      skipped,
+      inserted: inserted,
+      skipped: skipped,
       upload_batch: uploadMonth,
       total_processed: rows.length,
-      message: `✅ Uploaded ${inserted} records, skipped ${skipped} exact duplicates for batch ${uploadMonth}`
+      message: `Uploaded ${inserted} records, skipped ${skipped} duplicates for batch ${uploadMonth}`
     });
+
   } catch (err) {
     console.error('Upload error:', err);
-    res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
   }
 });
 
-// GET /api/medicarepro - List all sales with filtering
+// GET /api/medicarepro
 router.get('/', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
@@ -142,11 +148,10 @@ router.get('/', requireAuth, async (req, res) => {
     }
 
     query += ` ORDER BY effective_date DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
-    params.push(limit, offset);
+    params.push(parseInt(limit), parseInt(offset));
 
     const result = await pool.query(query, params);
 
-    // Count total
     let countQuery = 'SELECT COUNT(*) as count FROM medicarepro_sales WHERE 1=1';
     const countParams = [];
     if (batch) {
@@ -161,19 +166,20 @@ router.get('/', requireAuth, async (req, res) => {
     const countResult = await pool.query(countQuery, countParams);
     const total = parseInt(countResult.rows[0].count);
 
-    res.json({
+    return res.json({
       sales: result.rows,
-      total,
-      limit,
-      offset
+      total: total,
+      limit: parseInt(limit),
+      offset: parseInt(offset)
     });
+
   } catch (err) {
     console.error('Fetch error:', err);
-    res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
   }
 });
 
-// GET /api/medicarepro/batches - List all upload batches
+// GET /api/medicarepro/batches
 router.get('/batches', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
@@ -184,23 +190,21 @@ router.get('/batches', requireAuth, async (req, res) => {
         MIN(uploaded_at) as first_uploaded,
         MAX(uploaded_at) as last_uploaded,
         COUNT(CASE WHEN status = 'Active' THEN 1 END) as active_count,
-        COUNT(CASE WHEN status = 'Pending' THEN 1 END) as pending_count,
-        COUNT(CASE WHEN status = 'Canceled' OR status = 'Replaced' THEN 1 END) as inactive_count
+        COUNT(CASE WHEN status = 'Pending' THEN 1 END) as pending_count
        FROM medicarepro_sales
        GROUP BY upload_batch
        ORDER BY upload_batch DESC`
     );
 
-    res.json({
-      batches: result.rows
-    });
+    return res.json({ batches: result.rows });
+
   } catch (err) {
     console.error('Batches error:', err);
-    res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
   }
 });
 
-// GET /api/medicarepro/stats - Summary stats
+// GET /api/medicarepro/stats
 router.get('/stats', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
@@ -211,15 +215,15 @@ router.get('/stats', requireAuth, async (req, res) => {
         COUNT(DISTINCT client_name) as unique_clients,
         COUNT(CASE WHEN status = 'Active' THEN 1 END) as active_sales,
         COUNT(CASE WHEN status = 'Pending' THEN 1 END) as pending_sales,
-        COUNT(CASE WHEN status = 'Canceled' OR status = 'Replaced' THEN 1 END) as inactive_sales,
         COUNT(DISTINCT carrier) as unique_carriers
        FROM medicarepro_sales`
     );
 
-    res.json(result.rows[0]);
+    return res.json(result.rows[0]);
+
   } catch (err) {
     console.error('Stats error:', err);
-    res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: err.message });
   }
 });
 
