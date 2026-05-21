@@ -20,7 +20,7 @@ function parseCSV(buffer) {
   });
 }
 
-// POST /api/medicarepro/upload - Upload and add to medicarepro_sales with batch tracking
+// POST /api/medicarepro/upload - Upload with duplicate detection
 router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
@@ -39,62 +39,78 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     }
 
     const pool = getPool();
-    const records = [];
     const uploadDate = new Date();
     const uploadMonth = `${uploadDate.getFullYear()}-${String(uploadDate.getMonth() + 1).padStart(2, '0')}`;
+
+    let inserted = 0;
+    let skipped = 0;
 
     // Process rows
     for (const row of rows) {
       const clientName = row.Name || '';
       const carrier = row.Company || '';
       const policyType = row['Policy Type'] || '';
-      const effectiveDate = row['Effective Date'] ? new Date(row['Effective Date']) : null;
+      const effectiveDate = row['Effective Date'] ? new Date(row['Effective Date']).toISOString().split('T')[0] : null;
       const status = row.Status || '';
       const policyNumber = row['Policy Number'] || '';
       const planName = row.Policy || '';
 
-      records.push({
-        client_name: clientName,
-        carrier: carrier,
-        policy_type: policyType,
-        effective_date: effectiveDate,
-        status: status,
-        policy_number: policyNumber,
-        plan_name: planName,
-        upload_batch: uploadMonth,
-        uploaded_at: uploadDate,
-        raw_data: JSON.stringify(row)
-      });
-    }
+      // Check if this exact record already exists in this batch
+      const checkQuery = `
+        SELECT id FROM medicarepro_sales 
+        WHERE upload_batch = $1 
+          AND client_name = $2 
+          AND carrier = $3 
+          AND effective_date = $4
+        LIMIT 1
+      `;
+      
+      const existing = await pool.query(checkQuery, [
+        uploadMonth,
+        clientName,
+        carrier,
+        effectiveDate
+      ]);
 
-    // Insert records (APPEND mode - keeps all batches)
-    let inserted = 0;
-    for (const record of records) {
-      await pool.query(
-        `INSERT INTO medicarepro_sales 
-         (client_name, carrier, policy_type, effective_date, status, policy_number, plan_name, upload_batch, uploaded_at, raw_data)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-        [
-          record.client_name,
-          record.carrier,
-          record.policy_type,
-          record.effective_date,
-          record.status,
-          record.policy_number,
-          record.plan_name,
-          record.upload_batch,
-          record.uploaded_at,
-          record.raw_data
-        ]
-      );
-      inserted++;
+      if (existing.rows.length > 0) {
+        // Duplicate found in this batch, skip it
+        skipped++;
+        continue;
+      }
+
+      // Insert new record
+      try {
+        await pool.query(
+          `INSERT INTO medicarepro_sales 
+           (client_name, carrier, policy_type, effective_date, status, policy_number, plan_name, upload_batch, uploaded_at, raw_data)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+          [
+            clientName,
+            carrier,
+            policyType,
+            effectiveDate,
+            status,
+            policyNumber,
+            planName,
+            uploadMonth,
+            uploadDate,
+            JSON.stringify(row)
+          ]
+        );
+        inserted++;
+      } catch (err) {
+        console.error('Insert error:', err);
+        skipped++;
+      }
     }
 
     res.json({
       success: true,
       inserted,
+      skipped,
       upload_batch: uploadMonth,
-      message: `✅ Uploaded ${inserted} records for batch ${uploadMonth}`
+      total_processed: rows.length,
+      message: `✅ Uploaded ${inserted} records, skipped ${skipped} duplicates for batch ${uploadMonth}`
     });
   } catch (err) {
     console.error('Upload error:', err);
