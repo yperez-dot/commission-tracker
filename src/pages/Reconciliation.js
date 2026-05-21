@@ -5,6 +5,16 @@ function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+function formatDate(dateStr) {
+  if (!dateStr) return '—';
+  try {
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  } catch {
+    return dateStr;
+  }
+}
+
 // Normalize names for fuzzy matching
 function normalizeName(name) {
   if (!name) return '';
@@ -163,8 +173,8 @@ export default function Reconciliation({ user }) {
   let filteredUnpaid = unpaid;
 
   if (filterAgent !== 'all') {
-    filteredPaid = paid.filter(m => m.sale.agent === filterAgent);
-    filteredUnpaid = unpaid.filter(m => m.sale.agent === filterAgent);
+    filteredPaid = paid.filter(m => (m.sale.agent_name || m.sale.agent) === filterAgent);
+    filteredUnpaid = unpaid.filter(m => (m.sale.agent_name || m.sale.agent) === filterAgent);
   }
 
   if (filterCarrier !== 'all') {
@@ -198,8 +208,8 @@ export default function Reconciliation({ user }) {
           bVal = (b.sale.client_name || '').toLowerCase();
           break;
         case 'agent':
-          aVal = (a.sale.agent || '').toLowerCase();
-          bVal = (b.sale.agent || '').toLowerCase();
+          aVal = (a.sale.agent_name || a.sale.agent || '').toLowerCase();
+          bVal = (b.sale.agent_name || b.sale.agent || '').toLowerCase();
           break;
         case 'carrier':
           aVal = (a.sale.carrier || '').toLowerCase();
@@ -243,7 +253,7 @@ export default function Reconciliation({ user }) {
   };
 
   // Get unique agents and carriers for filters
-  const agents = [...new Set(sales.map(s => s.agent || s.agent_name).filter(Boolean))].sort();
+  const agents = [...new Set(sales.map(s => s.agent_name || s.agent).filter(Boolean))].sort();
   const carriers = [...new Set(sales.map(s => s.carrier).filter(Boolean))].sort();
 
   // Handle marking a sale as paid
@@ -448,10 +458,10 @@ export default function Reconciliation({ user }) {
                         {filteredPaid.map((m, i) => (
                           <tr key={i}>
                             <td style={{fontWeight:500}}>{m.sale.client_name}</td>
-                            <td>{m.sale.agent || m.sale.agent_name}</td>
+                            <td>{m.sale.agent_name || m.sale.agent || '—'}</td>
                             <td style={{fontSize:12}}>{m.sale.carrier}</td>
                             <td style={{fontSize:12, color:'var(--text-muted)'}}>
-                              {m.sale.effective_date || '—'}
+                              {formatDate(m.sale.effective_date)}
                             </td>
                             <td style={{fontWeight:600, color:'var(--green)'}}>
                               {m.commission.isManual ? (
@@ -515,10 +525,10 @@ export default function Reconciliation({ user }) {
                         {filteredUnpaid.map((m, i) => (
                           <tr key={i}>
                             <td style={{fontWeight:500}}>{m.sale.client_name}</td>
-                            <td>{m.sale.agent || m.sale.agent_name}</td>
+                            <td>{m.sale.agent_name || m.sale.agent || '—'}</td>
                             <td style={{fontSize:12}}>{m.sale.carrier}</td>
                             <td style={{fontSize:12, color:'var(--text-muted)'}}>
-                              {m.sale.effective_date || '—'}
+                              {formatDate(m.sale.effective_date)}
                             </td>
                             <td>
                               <span className="badge badge-amber">
