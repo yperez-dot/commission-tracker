@@ -302,6 +302,62 @@ export default function Reconciliation({ user }) {
   const carriers = [...new Set(filteredSales.map(s => s.carrier).filter(Boolean))].sort();
 
   // Handle marking a sale as paid
+  function exportToCSV() {
+    // Get current tab data
+    let dataToExport = [];
+    let filename = '';
+    
+    if (tab === 'paid') {
+      dataToExport = sortedPaid;
+      filename = `reconciliation-paid-${new Date().toISOString().split('T')[0]}.csv`;
+    } else if (tab === 'unpaid') {
+      dataToExport = sortedUnpaid;
+      filename = `reconciliation-unpaid-${new Date().toISOString().split('T')[0]}.csv`;
+    } else {
+      dataToExport = [...sortedPaid, ...sortedUnpaid];
+      filename = `reconciliation-all-${new Date().toISOString().split('T')[0]}.csv`;
+    }
+    
+    if (dataToExport.length === 0) {
+      alert('No data to export');
+      return;
+    }
+    
+    // Build CSV
+    const headers = ['Agent', 'Client', 'Carrier', 'Policy Type', 'Effective Date', 'Status', 'Paid', 'Commission Amount'];
+    const rows = dataToExport.map(m => {
+      const agentName = m.sale.agent_name || m.sale.agent || '—';
+      const clientName = m.sale.client_name || '—';
+      const carrier = m.sale.carrier || '—';
+      const policyType = m.sale.policy_type || '—';
+      const effectiveDate = m.sale.effective_date ? formatDate(m.sale.effective_date) : '—';
+      const status = m.sale.status || '—';
+      const paid = m.commission ? 'Yes' : 'No';
+      const amount = m.commission ? (m.commission.commission_amount || '0') : '—';
+      
+      return [
+        agentName,
+        clientName,
+        carrier,
+        policyType,
+        effectiveDate,
+        status,
+        paid,
+        amount
+      ].map(val => `"${String(val).replace(/"/g, '""')}"`).join(',');
+    });
+    
+    const csv = [headers.join(','), ...rows].join('\n');
+    
+    // Trigger download
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(blob);
+    link.download = filename;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  }
+
   async function handleMarkPaid(sale) {
     const paymentDate = prompt(
       `Mark "${sale.client_name}" as paid.\n\nEnter payment date (YYYY-MM-DD):`,
@@ -393,6 +449,9 @@ export default function Reconciliation({ user }) {
                 />
                 <span>Direct agents only (Yahoska & Katy)</span>
               </label>
+              <button className="btn btn-secondary" onClick={exportToCSV} disabled={loading}>
+                📥 Export CSV
+              </button>
               <button className="btn btn-primary" onClick={loadData} disabled={loading}>
                 {loading ? 'Loading...' : '🔄 Refresh'}
               </button>
