@@ -30,6 +30,27 @@ export default function MedicareProUpload() {
     }
   }
 
+  async function handleDeleteBatch(batch) {
+    const confirmDelete = window.confirm(
+      `⚠️ Delete batch ${batch}?\n\nThis will permanently delete:\n- All upload logs for this batch\n- All sales records for this batch\n\nThis cannot be undone.`
+    );
+    
+    if (!confirmDelete) return;
+    
+    try {
+      const result = await apiFetch(`/medicarepro/batch/${batch}`, {
+        method: 'DELETE'
+      });
+      
+      alert(`✅ Deleted batch ${batch}\n\n${result.deleted_sales} sales records deleted\n${result.deleted_uploads} upload logs deleted`);
+      
+      // Reload history
+      await loadUploadHistory();
+    } catch (err) {
+      alert(`❌ Error deleting batch: ${err.message}`);
+    }
+  }
+
   function parseCSV(text) {
     const lines = text.trim().split('\n');
     if (lines.length === 0) return [];
@@ -301,6 +322,7 @@ export default function MedicareProUpload() {
                     <th>Uploaded</th>
                     <th>By</th>
                     <th>Records</th>
+                    <th style={{ textAlign: 'center' }}>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -324,6 +346,15 @@ export default function MedicareProUpload() {
                       </td>
                       <td style={{ fontSize: 13 }}>{upload.uploaded_by || '—'}</td>
                       <td style={{ fontWeight: 500, color: 'var(--green)' }}>{upload.record_count}</td>
+                      <td style={{ textAlign: 'center' }}>
+                        <button
+                          className="btn btn-sm"
+                          onClick={() => handleDeleteBatch(upload.upload_batch)}
+                          style={{ background: 'var(--red)', color: 'white', fontSize: 11, padding: '4px 10px' }}
+                        >
+                          🗑️ Delete
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
