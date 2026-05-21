@@ -48,6 +48,15 @@ router.post('/upload', upload.single('file'), async (req, res) => {
     const formatType = hasAgentColumns ? 'sales_by_agency' : 'client_list';
 
     console.log(`Detected CSV format: ${formatType}`);
+    if (rows[0]) {
+      console.log('First row columns:', Object.keys(rows[0]).slice(0, 10));
+      console.log('Sample agent data:', { 
+        agentFirst: rows[0]['Agent First'], 
+        agentLast: rows[0]['Agent Last'],
+        memberFirst: rows[0]['Member First'],
+        memberLast: rows[0]['Member Last']
+      });
+    }
 
     // Process each row
     for (const row of rows) {
@@ -58,6 +67,11 @@ router.post('/upload', upload.single('file'), async (req, res) => {
         const agentFirst = (row['Agent First'] || '').trim();
         const agentLast = (row['Agent Last'] || '').trim();
         agentName = `${agentFirst} ${agentLast}`.trim().substring(0, 100);
+        
+        // Debug log first few rows
+        if (inserted < 3) {
+          console.log(`Row ${inserted + 1} agent: "${agentFirst}" + "${agentLast}" = "${agentName}"`);
+        }
         
         const memberFirst = (row['Member First'] || '').trim();
         const memberLast = (row['Member Last'] || '').trim();
