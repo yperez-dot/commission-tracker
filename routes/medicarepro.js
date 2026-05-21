@@ -43,19 +43,47 @@ router.post('/upload', upload.single('file'), async (req, res) => {
     let inserted = 0;
     let skipped = 0;
 
+    // Detect CSV format by checking column names
+    const hasAgentColumns = rows[0] && ('Agent First' in rows[0] || 'Agent Last' in rows[0]);
+    const formatType = hasAgentColumns ? 'sales_by_agency' : 'client_list';
+
+    console.log(`Detected CSV format: ${formatType}`);
+
     // Process each row
     for (const row of rows) {
-      const clientName = (row.Name || '').substring(0, 255);
-      const carrier = (row.Company || '').substring(0, 100);
-      const policyType = (row['Policy Type'] || '').substring(0, 50);
-      const statusValue = (row.Status || '').substring(0, 50);
-      const policyNumber = (row['Policy Number'] || '').substring(0, 100);
-      const planName = (row.Policy || '').substring(0, 255);
+      let clientName, carrier, policyType, statusValue, policyNumber, planName, agentName;
+
+      if (formatType === 'sales_by_agency') {
+        // New format with agent names
+        const agentFirst = (row['Agent First'] || '').trim();
+        const agentLast = (row['Agent Last'] || '').trim();
+        agentName = `${agentFirst} ${agentLast}`.trim().substring(0, 100);
+        
+        const memberFirst = (row['Member First'] || '').trim();
+        const memberLast = (row['Member Last'] || '').trim();
+        clientName = `${memberFirst} ${memberLast}`.trim().substring(0, 255);
+        
+        carrier = (row['Company Name'] || '').substring(0, 100);
+        policyType = (row['Policy Type'] || '').substring(0, 50);
+        statusValue = (row['Policy Status'] || '').substring(0, 50);
+        policyNumber = (row['Policy #'] || '').substring(0, 100);
+        planName = (row['Plan Name'] || '').substring(0, 255);
+      } else {
+        // Old format without agent names
+        clientName = (row.Name || '').substring(0, 255);
+        carrier = (row.Company || '').substring(0, 100);
+        policyType = (row['Policy Type'] || '').substring(0, 50);
+        statusValue = (row.Status || '').substring(0, 50);
+        policyNumber = (row['Policy Number'] || '').substring(0, 100);
+        planName = (row.Policy || '').substring(0, 255);
+        agentName = null;
+      }
       
       let effectiveDate = null;
-      if (row['Effective Date']) {
+      const effDateField = formatType === 'sales_by_agency' ? row['Policy Effective Date'] : row['Effective Date'];
+      if (effDateField) {
         try {
-          const d = new Date(row['Effective Date']);
+          const d = new Date(effDateField);
           if (!isNaN(d.getTime())) {
             effectiveDate = d.toISOString().split('T')[0];
           }
@@ -92,10 +120,11 @@ router.post('/upload', upload.single('file'), async (req, res) => {
       try {
         await pool.query(
           `INSERT INTO medicarepro_sales 
-           (client_name, carrier, policy_type, effective_date, status, policy_number, plan_name, upload_batch, uploaded_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+           (client_name, agent_name, carrier, policy_type, effective_date, status, policy_number, plan_name, upload_batch, uploaded_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
           [
             clientName,
+            agentName,
             carrier,
             policyType,
             effectiveDate,
@@ -112,6 +141,14 @@ router.post('/upload', upload.single('file'), async (req, res) => {
         skipped++;
       }
     }
+
+    // Log the upload to medicarepro_uploads table
+    const uploadedBy = req.user?.name || req.body.uploadedBy || 'Unknown';
+    await pool.query(
+      `INSERT INTO medicarepro_uploads (filename, upload_batch, uploaded_by, record_count)
+       VALUES ($1, $2, $3, $4)`,
+      [req.file.originalname, uploadMonth, uploadedBy, inserted]
+    );
 
     return res.json({
       success: true,
@@ -223,6 +260,53 @@ router.get('/stats', requireAuth, async (req, res) => {
 
   } catch (err) {
     console.error('Stats error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/medicarepro/uploads - Fetch upload history
+router.get('/uploads', requireAuth, async (req, res) => {
+  try {
+    const pool = getPool();
+    const result = await pool.query(
+      `SELECT * FROM medicarepro_uploads ORDER BY uploaded_at DESC`
+    );
+
+    return res.json({ uploads: result.rows });
+
+  } catch (err) {
+    console.error('Upload history error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/medicarepro/batch/:batch - Delete a batch and all its records
+router.delete('/batch/:batch', requireAuth, async (req, res) => {
+  try {
+    const { batch } = req.params;
+    const pool = getPool();
+
+    // Delete all sales records for this batch
+    const salesResult = await pool.query(
+      'DELETE FROM medicarepro_sales WHERE upload_batch = $1',
+      [batch]
+    );
+
+    // Delete upload log entries for this batch
+    const uploadsResult = await pool.query(
+      'DELETE FROM medicarepro_uploads WHERE upload_batch = $1',
+      [batch]
+    );
+
+    return res.json({
+      success: true,
+      deleted_sales: salesResult.rowCount,
+      deleted_uploads: uploadsResult.rowCount,
+      message: `Deleted batch ${batch} (${salesResult.rowCount} sales, ${uploadsResult.rowCount} upload logs)`
+    });
+
+  } catch (err) {
+    console.error('Delete batch error:', err);
     return res.status(500).json({ error: err.message });
   }
 });

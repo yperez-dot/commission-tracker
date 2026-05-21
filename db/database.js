@@ -87,14 +87,28 @@ async function initSchema() {
       CREATE TABLE IF NOT EXISTS medicarepro_sales (
         id SERIAL PRIMARY KEY,
         client_name VARCHAR(255),
+        agent_name VARCHAR(100),
         carrier VARCHAR(100),
         policy_type VARCHAR(50),
         effective_date DATE,
         status VARCHAR(50),
         policy_number VARCHAR(100),
         plan_name VARCHAR(255),
+        upload_batch VARCHAR(7),
         raw_data JSONB,
         uploaded_at TIMESTAMP DEFAULT NOW()
+      );
+
+      ALTER TABLE medicarepro_sales ADD COLUMN IF NOT EXISTS agent_name VARCHAR(100);
+
+      CREATE TABLE IF NOT EXISTS medicarepro_uploads (
+        id SERIAL PRIMARY KEY,
+        filename VARCHAR(255),
+        upload_batch VARCHAR(7),
+        uploaded_at TIMESTAMP DEFAULT NOW(),
+        uploaded_by VARCHAR(100),
+        record_count INTEGER DEFAULT 0,
+        status VARCHAR(20) DEFAULT 'success'
       );
 
       CREATE INDEX IF NOT EXISTS idx_records_agent ON commission_records(agent_name);
@@ -107,8 +121,11 @@ async function initSchema() {
       CREATE INDEX IF NOT EXISTS idx_bob_client ON book_of_business(client_full_name);
       CREATE INDEX IF NOT EXISTS idx_bob_status ON book_of_business(status);
       CREATE INDEX IF NOT EXISTS idx_medicarepro_client ON medicarepro_sales(client_name);
+      CREATE INDEX IF NOT EXISTS idx_medicarepro_agent ON medicarepro_sales(agent_name);
       CREATE INDEX IF NOT EXISTS idx_medicarepro_carrier ON medicarepro_sales(carrier);
       CREATE INDEX IF NOT EXISTS idx_medicarepro_status ON medicarepro_sales(status);
+      CREATE INDEX IF NOT EXISTS idx_medicarepro_batch ON medicarepro_sales(upload_batch);
+      CREATE INDEX IF NOT EXISTS idx_medicarepro_uploads_batch ON medicarepro_uploads(upload_batch);
 
       ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS plan_type TEXT;
       ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS payee TEXT DEFAULT '';

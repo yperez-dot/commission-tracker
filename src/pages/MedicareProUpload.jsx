@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { apiFetch } from '../api';
 
 export default function MedicareProUpload() {
   const [file, setFile] = useState(null);
@@ -7,8 +8,27 @@ export default function MedicareProUpload() {
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [dragOver, setDragOver] = useState(false);
+  const [uploadHistory, setUploadHistory] = useState([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
 
   const API_URL = process.env.REACT_APP_API_URL || '';
+
+  // Load upload history on mount
+  useEffect(() => {
+    loadUploadHistory();
+  }, []);
+
+  async function loadUploadHistory() {
+    setLoadingHistory(true);
+    try {
+      const data = await apiFetch('/medicarepro/uploads');
+      setUploadHistory(data.uploads || []);
+    } catch (err) {
+      console.error('Error loading upload history:', err);
+    } finally {
+      setLoadingHistory(false);
+    }
+  }
 
   function parseCSV(text) {
     const lines = text.trim().split('\n');
@@ -88,6 +108,8 @@ export default function MedicareProUpload() {
       setSuccess(`✅ Upload successful! ${result.message || ''}`);
       setFile(null);
       setPreview([]);
+      // Reload upload history
+      await loadUploadHistory();
     } catch (err) {
       setError('❌ Error: ' + err.message);
     } finally {
@@ -258,6 +280,56 @@ export default function MedicareProUpload() {
             <li>The Reconciliation page will automatically update</li>
             <li>Compare with commission records to find unpaid sales</li>
           </ol>
+        </div>
+
+        {/* Upload History */}
+        <div className="card" style={{ marginTop: 30 }}>
+          <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>📋 Upload History</div>
+          {loadingHistory ? (
+            <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-muted)' }}>Loading history...</div>
+          ) : uploadHistory.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-muted)' }}>
+              No uploads yet. Upload your first file above!
+            </div>
+          ) : (
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Filename</th>
+                    <th>Batch</th>
+                    <th>Uploaded</th>
+                    <th>By</th>
+                    <th>Records</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {uploadHistory.map((upload) => (
+                    <tr key={upload.id}>
+                      <td style={{ fontWeight: 500 }}>{upload.filename}</td>
+                      <td>
+                        <span className="badge" style={{ background: 'var(--blue-light)', color: 'var(--blue)' }}>
+                          {upload.upload_batch}
+                        </span>
+                      </td>
+                      <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                        {new Date(upload.uploaded_at).toLocaleString('en-US', {
+                          month: 'short',
+                          day: 'numeric',
+                          year: 'numeric',
+                          hour: 'numeric',
+                          minute: '2-digit',
+                          hour12: true
+                        })}
+                      </td>
+                      <td style={{ fontSize: 13 }}>{upload.uploaded_by || '—'}</td>
+                      <td style={{ fontWeight: 500, color: 'var(--green)' }}>{upload.record_count}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       </div>
     </div>
