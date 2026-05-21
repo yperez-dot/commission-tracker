@@ -24,6 +24,19 @@ function normalizeName(name) {
   return name.toLowerCase().trim().replace(/\s+/g, ' ');
 }
 
+// Normalize agent names (handle test data and variations)
+function normalizeAgentName(name) {
+  if (!name) return '';
+  const normalized = normalizeName(name);
+  
+  // Map known variations to canonical names
+  if (normalized.includes('yahoska')) {
+    return 'yahoska perez';  // "Yahoska Test" → "Yahoska Perez"
+  }
+  
+  return normalized;
+}
+
 // Extract first and last name from various formats
 function parseClientName(name) {
   if (!name) return { first: '', last: '', full: '' };
@@ -80,9 +93,10 @@ function datesMatch(date1, date2) {
 // Find matching commission for a sale (including manual payments)
 function findMatch(sale, commissions, manualPayments = []) {
   // Check manual payments first
+  const saleAgent = sale.agent_name || sale.agent;
   const manualMatch = manualPayments.find(mp => 
-    mp.client_name === sale.client_name && 
-    mp.agent === (sale.agent_name || sale.agent) && 
+    normalizeName(mp.client_name) === normalizeName(sale.client_name) && 
+    normalizeAgentName(mp.agent) === normalizeAgentName(saleAgent) && 
     mp.effective_date === sale.effective_date
   );
   
@@ -91,12 +105,12 @@ function findMatch(sale, commissions, manualPayments = []) {
   }
   
   const saleClientParsed = parseClientName(sale.client_name);
-  const agent = normalizeName(sale.agent_name || sale.agent);  // Use agent_name first (MedicarePro format)
+  const agent = normalizeAgentName(sale.agent_name || sale.agent);  // Use agent_name first, normalize variations
   const carrier = normalizeCarrier(sale.carrier);
   
   for (const comm of commissions) {
     const commClientParsed = parseClientName(comm.client_full_name);
-    const commAgent = normalizeName(comm.agent_name);
+    const commAgent = normalizeAgentName(comm.agent_name);
     const commCarrier = normalizeCarrier(comm.carrier);
     
     // Client name match (smart matching - handles "LAST, FIRST" and "First Last" formats)
@@ -106,8 +120,10 @@ function findMatch(sale, commissions, manualPayments = []) {
                       saleClientParsed.last === commClientParsed.last;
     const clientMatch = firstMatch && lastMatch;
     
-    // Agent name match
-    const agentMatch = agent.includes(commAgent) || commAgent.includes(agent);
+    // Agent name match (both normalized to canonical names)
+    const agentMatch = agent === commAgent || 
+                       agent.includes(commAgent) || 
+                       commAgent.includes(agent);
     
     // Carrier match
     const carrierMatch = carrier === commCarrier || carrier.includes(commCarrier) || commCarrier.includes(carrier);
