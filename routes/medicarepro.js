@@ -57,13 +57,10 @@ router.post('/upload', upload.single('file'), async (req, res) => {
 
     console.log(`Detected CSV format: ${formatType}`);
     if (rows[0]) {
-      console.log('First row columns:', Object.keys(rows[0]).slice(0, 10));
-      console.log('Sample agent data:', { 
-        agentFirst: rows[0]['Agent First'], 
-        agentLast: rows[0]['Agent Last'],
-        memberFirst: rows[0]['Member First'],
-        memberLast: rows[0]['Member Last']
-      });
+      console.log('=== DEBUG: First row ALL keys ===');
+      console.log(JSON.stringify(Object.keys(rows[0]), null, 2));
+      console.log('=== DEBUG: First row FULL DATA ===');
+      console.log(JSON.stringify(rows[0], null, 2));
     }
 
     // Process each row
@@ -76,10 +73,8 @@ router.post('/upload', upload.single('file'), async (req, res) => {
         const agentLast = (row['Agent Last'] || '').trim();
         agentName = `${agentFirst} ${agentLast}`.trim().substring(0, 100);
         
-        // Debug log first few rows
-        if (inserted < 3) {
-          console.log(`Row ${inserted + 1} agent: "${agentFirst}" + "${agentLast}" = "${agentName}"`);
-        }
+        // Debug log EVERY row to see what's happening
+        console.log(`Row ${inserted + 1}: agentFirst="${agentFirst}" agentLast="${agentLast}" => agentName="${agentName}"`);
         
         const memberFirst = (row['Member First'] || '').trim();
         const memberLast = (row['Member Last'] || '').trim();
