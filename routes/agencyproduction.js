@@ -20,13 +20,37 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     }
 
     // Parse Excel file
-    const workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
-    const sheetName = workbook.SheetNames[0];
-    const worksheet = workbook.Sheets[sheetName];
-    const rows = XLSX.utils.sheet_to_json(worksheet);
+    let workbook, rows;
+    try {
+      workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
+      const sheetName = workbook.SheetNames[0];
+      if (!sheetName) {
+        return res.status(400).json({ error: 'Excel file has no sheets' });
+      }
+      const worksheet = workbook.Sheets[sheetName];
+      rows = XLSX.utils.sheet_to_json(worksheet);
+    } catch (parseErr) {
+      console.error('Excel parse error:', parseErr);
+      return res.status(400).json({ 
+        error: 'Failed to parse Excel file',
+        details: parseErr.message 
+      });
+    }
 
     if (rows.length === 0) {
-      return res.status(400).json({ error: 'Excel file is empty' });
+      return res.status(400).json({ error: 'Excel file is empty or has no data rows' });
+    }
+    
+    // Check if we have required columns
+    const firstRow = rows[0];
+    const hasAgent = firstRow.AGENT || firstRow['Agent Name'] || firstRow.agent || firstRow['agent name'];
+    const hasMember = firstRow.MEMBER || firstRow['Member Name'] || firstRow.member || firstRow['member name'];
+    
+    if (!hasAgent && !hasMember) {
+      return res.status(400).json({ 
+        error: 'Excel file is missing required columns',
+        details: `Expected columns like AGENT/Member or Agent Name/Member Name. Found: ${Object.keys(firstRow).join(', ')}`
+      });
     }
 
     const pool = getPool();
@@ -46,6 +70,14 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     console.log(`Processing agency production file: ${req.file.originalname}`);
     console.log(`Detected carrier: ${carrier}`);
     console.log(`Total rows: ${rows.length}`);
+    
+    // Debug: Show first row column names
+    if (rows.length > 0) {
+      console.log('=== COLUMN NAMES ===');
+      console.log(Object.keys(rows[0]));
+      console.log('=== FIRST ROW DATA ===');
+      console.log(rows[0]);
+    }
 
     // Process each row
     for (const row of rows) {
@@ -176,7 +208,11 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
 
   } catch (err) {
     console.error('Upload error:', err);
-    return res.status(500).json({ error: err.message });
+    console.error('Stack trace:', err.stack);
+    return res.status(500).json({ 
+      error: err.message || 'Upload failed',
+      details: err.stack || 'No stack trace available'
+    });
   }
 });
 

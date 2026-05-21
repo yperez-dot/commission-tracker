@@ -66,7 +66,14 @@ export default function AgencyProductionUpload() {
       const text = await response.text();
       
       if (!response.ok) {
-        throw new Error(text || 'Upload failed');
+        let errorMsg = 'Upload failed';
+        try {
+          const errorData = JSON.parse(text);
+          errorMsg = errorData.error || errorData.message || text;
+        } catch (e) {
+          errorMsg = text || 'Upload failed';
+        }
+        throw new Error(errorMsg);
       }
 
       let result = {};
