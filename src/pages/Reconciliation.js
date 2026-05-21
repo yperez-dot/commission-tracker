@@ -104,11 +104,11 @@ export default function Reconciliation({ user }) {
   async function loadData() {
     setLoading(true);
     setError(null);
+    console.log('Loading MedicarePro sales...');
     try {
-      // Fetch sales from MedicarePro upload
-      console.log('Loading MedicarePro sales...');
-      const salesData = await apiFetch('/api/medicarepro');
-      console.log('MedicarePro response:', salesData);
+      // Fetch sales from MedicarePro upload endpoint
+      const salesData = await apiFetch('/medicarepro');
+      console.log('MedicarePro API response:', salesData);
       setSales(salesData.sales || []);
       
       // Fetch commissions from OliComm (optimized: limit=100 instead of 5000)
