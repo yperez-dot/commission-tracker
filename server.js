@@ -8,7 +8,7 @@ app.use(cors({
   origin: ['https://melodic-cendol-e1dc49.netlify.app', 'http://localhost:3000'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-agency-override']
 }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
