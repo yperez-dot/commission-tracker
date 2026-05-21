@@ -55,24 +55,37 @@ export default function MedicareProUpload() {
     setLoading(true);
     setError(null);
     setSuccess(null);
+
     try {
       const formData = new FormData();
       formData.append('file', file);
+
       const response = await fetch('/api/medicarepro/upload', {
         method: 'POST',
         body: formData,
-        headers: { 'Authorization': `Bearer ${localStorage.getItem('token')}` }
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('token')}`
+        }
       });
+
+      const text = await response.text();
+      
       if (!response.ok) {
-        const err = await response.json();
-        throw new Error(err.error || 'Upload failed');
+        throw new Error(text || 'Upload failed');
       }
-      const result = await response.json();
-      setSuccess(`✅ Successfully imported ${result.inserted} records from MedicarePro!`);
+
+      let result = {};
+      try {
+        result = JSON.parse(text);
+      } catch (e) {
+        result = { message: text };
+      }
+      
+      setSuccess(`✅ Upload successful! ${result.message || ''}`);
       setFile(null);
       setPreview([]);
     } catch (err) {
-      setError('❌ Upload error: ' + err.message);
+      setError('❌ Error: ' + err.message);
     } finally {
       setLoading(false);
     }
@@ -101,6 +114,7 @@ export default function MedicareProUpload() {
         <div className="page-title">📊 Upload MedicarePro Sales</div>
         <div className="page-sub">Import your monthly client list from MedicarePro</div>
       </div>
+
       <div className="page-body">
         <div
           className="card"
@@ -181,8 +195,18 @@ export default function MedicareProUpload() {
                       <td style={{ fontSize: 12 }}>{row['Effective Date'] || '—'}</td>
                       <td>
                         <span className="badge" style={{
-                          background: row.Status === 'Active' ? 'var(--green-light)' : row.Status === 'Canceled' ? 'var(--red-light)' : 'var(--text-muted)',
-                          color: row.Status === 'Active' ? 'var(--green-dark)' : row.Status === 'Canceled' ? 'var(--red-dark)' : 'var(--text)',
+                          background: 
+                            row.Status === 'Active' ? '#D4EDDA' :
+                            row.Status === 'Pending' ? '#FFF3CD' :
+                            row.Status === 'Canceled' || row.Status === 'Replaced' ? '#F8D7DA' :
+                            row.Status === 'Disenrolled' ? '#E7D4F5' :
+                            '#F0EAE0',
+                          color:
+                            row.Status === 'Active' ? '#155724' :
+                            row.Status === 'Pending' ? '#856404' :
+                            row.Status === 'Canceled' || row.Status === 'Replaced' ? '#721C24' :
+                            row.Status === 'Disenrolled' ? '#663399' :
+                            '#3D2B1F',
                           padding: '4px 8px',
                           borderRadius: 4,
                           fontSize: 11,
@@ -226,7 +250,7 @@ export default function MedicareProUpload() {
           <div style={{ fontWeight: 600, marginBottom: 8 }}>💡 How to use:</div>
           <ol style={{ paddingLeft: 20, margin: 0 }}>
             <li>Export your client list from MedicarePro as CSV</li>
-            <li>Upload the file here (replaces all previous data)</li>
+            <li>Upload the file here</li>
             <li>The Reconciliation page will automatically update</li>
             <li>Compare with commission records to find unpaid sales</li>
           </ol>
