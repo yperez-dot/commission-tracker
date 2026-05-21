@@ -15,10 +15,10 @@ function parseCSV(buffer) {
     stream.Readable.from([buffer.toString()])
       .pipe(csv())
       .on('data', (row) => {
-        // Strip quotes from column names (csv-parser might preserve them)
+        // Strip ALL quotes from column names (CSV headers might have unmatched quotes)
         const cleanedRow = {};
         for (const [key, value] of Object.entries(row)) {
-          const cleanKey = key.replace(/^"|"$/g, '').trim();
+          const cleanKey = key.replace(/"/g, '').trim();  // Remove ALL quotes
           cleanedRow[cleanKey] = value;
         }
         rows.push(cleanedRow);
