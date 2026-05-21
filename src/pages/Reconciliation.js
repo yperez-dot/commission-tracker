@@ -117,11 +117,16 @@ export default function Reconciliation({ user }) {
       console.log('Commission response:', commData);
       setCommissions((commData.records || []).filter(r => parseFloat(r.commission) > 0));
       
-      // Fetch manual payments
-      console.log('Loading manual payments...');
-      const manualData = await apiFetch('/manual-payments');
-      console.log('Manual payments response:', manualData);
-      setManualPayments(manualData.payments || []);
+      // Fetch manual payments (optional - may not exist yet)
+      try {
+        console.log('Loading manual payments...');
+        const manualData = await apiFetch('/manual-payments');
+        console.log('Manual payments response:', manualData);
+        setManualPayments(manualData.payments || []);
+      } catch (manualError) {
+        console.log('Manual payments endpoint not available yet (optional feature)');
+        setManualPayments([]);
+      }
     } catch (e) {
       console.error('Error loading data:', e);
       setError(e.message || 'Failed to load data');
