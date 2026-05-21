@@ -13,6 +13,7 @@ import Reports from './pages/Reports';
 import AdminUsers from './pages/AdminUsers';
 import MedicareProUpload from './pages/MedicareProUpload';
 import AgencyProductionUpload from './pages/AgencyProductionUpload';
+import AgencyProductionRecon from './pages/AgencyProductionRecon';
 import './App.css';
 
 export default function App() {
@@ -97,6 +98,7 @@ export default function App() {
     { id: 'bob', label: 'Book of Business', icon: '◉' },
     { id: 'renewals', label: 'Missing Renewals', icon: '!' },
     ...(!isBSI ? [{ id: 'reconciliation', label: 'Reconciliation', icon: '⇄' }] : []),
+    ...(!isBSI ? [{ id: 'agency-production-recon', label: 'Agency Override Recon', icon: '🏢' }] : []),
     { id: 'payroll', label: 'Payroll', icon: '$' },
     { id: 'reports', label: 'Reports', icon: '📊' },
     ...(user.role === 'admin' ? [
@@ -115,6 +117,7 @@ export default function App() {
     upload: <Upload key={agencyView} user={effectiveUser} />,
     'medicarepro-upload': <MedicareProUpload key={agencyView} user={effectiveUser} />,
     'agency-production-upload': <AgencyProductionUpload key={agencyView} user={effectiveUser} />,
+    'agency-production-recon': <AgencyProductionRecon key={agencyView} user={effectiveUser} />,
     alldata: <AllData key={agencyView} user={effectiveUser} initialFilters={pageParams} />,
     bob: <BookOfBusiness key={agencyView} user={effectiveUser} />,
     renewals: <MissingRenewals key={agencyView} user={effectiveUser} />,
