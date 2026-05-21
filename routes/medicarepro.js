@@ -20,7 +20,7 @@ function parseCSV(buffer) {
   });
 }
 
-// POST /api/medicarepro/upload - Upload with duplicate detection
+// POST /api/medicarepro/upload - Upload with duplicate detection (exact row only)
 router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
@@ -45,7 +45,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     let inserted = 0;
     let skipped = 0;
 
-    // Process rows
+    // Process rows - keep ALL plan changes, only skip exact duplicate rows
     for (const row of rows) {
       const clientName = row.Name || '';
       const carrier = row.Company || '';
@@ -54,31 +54,29 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       const status = row.Status || '';
       const policyNumber = row['Policy Number'] || '';
       const planName = row.Policy || '';
+      const rawDataJson = JSON.stringify(row);
 
-      // Check if this exact record already exists in this batch
+      // Check if this EXACT row (by raw_data) was already uploaded in this batch
+      // This detects duplicate uploads of the same CSV file
       const checkQuery = `
         SELECT id FROM medicarepro_sales 
         WHERE upload_batch = $1 
-          AND client_name = $2 
-          AND carrier = $3 
-          AND effective_date = $4
+          AND raw_data = $2
         LIMIT 1
       `;
       
       const existing = await pool.query(checkQuery, [
         uploadMonth,
-        clientName,
-        carrier,
-        effectiveDate
+        rawDataJson
       ]);
 
       if (existing.rows.length > 0) {
-        // Duplicate found in this batch, skip it
+        // Exact duplicate found in this batch, skip it
         skipped++;
         continue;
       }
 
-      // Insert new record
+      // Insert new record (keeps all plan changes, different eff dates)
       try {
         await pool.query(
           `INSERT INTO medicarepro_sales 
@@ -94,7 +92,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
             planName,
             uploadMonth,
             uploadDate,
-            JSON.stringify(row)
+            rawDataJson
           ]
         );
         inserted++;
@@ -110,7 +108,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       skipped,
       upload_batch: uploadMonth,
       total_processed: rows.length,
-      message: `✅ Uploaded ${inserted} records, skipped ${skipped} duplicates for batch ${uploadMonth}`
+      message: `✅ Uploaded ${inserted} records, skipped ${skipped} exact duplicates for batch ${uploadMonth}`
     });
   } catch (err) {
     console.error('Upload error:', err);
@@ -118,7 +116,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
   }
 });
 
-// GET /api/medicarepro - List all sales with batch filtering
+// GET /api/medicarepro - List all sales with filtering
 router.get('/', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
@@ -180,7 +178,8 @@ router.get('/batches', requireAuth, async (req, res) => {
         MIN(uploaded_at) as first_uploaded,
         MAX(uploaded_at) as last_uploaded,
         COUNT(CASE WHEN status = 'Active' THEN 1 END) as active_count,
-        COUNT(CASE WHEN status = 'Canceled' THEN 1 END) as canceled_count
+        COUNT(CASE WHEN status = 'Pending' THEN 1 END) as pending_count,
+        COUNT(CASE WHEN status = 'Canceled' OR status = 'Replaced' THEN 1 END) as inactive_count
        FROM medicarepro_sales
        GROUP BY upload_batch
        ORDER BY upload_batch DESC`
@@ -203,8 +202,10 @@ router.get('/stats', requireAuth, async (req, res) => {
       `SELECT 
         COUNT(*) as total_sales,
         COUNT(DISTINCT upload_batch) as total_batches,
+        COUNT(DISTINCT client_name) as unique_clients,
         COUNT(CASE WHEN status = 'Active' THEN 1 END) as active_sales,
-        COUNT(CASE WHEN status = 'Canceled' THEN 1 END) as canceled_sales,
+        COUNT(CASE WHEN status = 'Pending' THEN 1 END) as pending_sales,
+        COUNT(CASE WHEN status = 'Canceled' OR status = 'Replaced' THEN 1 END) as inactive_sales,
         COUNT(DISTINCT carrier) as unique_carriers
        FROM medicarepro_sales`
     );
