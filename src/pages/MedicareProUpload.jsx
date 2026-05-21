@@ -10,6 +10,9 @@ export default function MedicareProUpload() {
   const [dragOver, setDragOver] = useState(false);
   const [uploadHistory, setUploadHistory] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [viewingBatch, setViewingBatch] = useState(null);
+  const [batchData, setBatchData] = useState([]);
+  const [loadingBatchData, setLoadingBatchData] = useState(false);
 
   const API_URL = process.env.REACT_APP_API_URL || '';
 
@@ -27,6 +30,21 @@ export default function MedicareProUpload() {
       console.error('Error loading upload history:', err);
     } finally {
       setLoadingHistory(false);
+    }
+  }
+
+  async function viewBatchData(batch) {
+    setViewingBatch(batch);
+    setLoadingBatchData(true);
+    try {
+      const data = await apiFetch(`/medicarepro?batch=${batch}&limit=1000`);
+      setBatchData(data.sales || []);
+    } catch (err) {
+      console.error('Error loading batch data:', err);
+      alert('Error loading batch data: ' + err.message);
+      setViewingBatch(null);
+    } finally {
+      setLoadingBatchData(false);
     }
   }
 
@@ -340,7 +358,26 @@ export default function MedicareProUpload() {
                 <tbody>
                   {uploadHistory.map((upload) => (
                     <tr key={upload.id}>
-                      <td style={{ fontWeight: 500 }}>{upload.filename}</td>
+                      <td>
+                        <a 
+                          href="#" 
+                          onClick={(e) => {
+                            e.preventDefault();
+                            viewBatchData(upload.upload_batch);
+                          }}
+                          style={{ 
+                            fontWeight: 500, 
+                            color: 'var(--blue)', 
+                            textDecoration: 'none',
+                            cursor: 'pointer'
+                          }}
+                          onMouseOver={(e) => e.target.style.textDecoration = 'underline'}
+                          onMouseOut={(e) => e.target.style.textDecoration = 'none'}
+                          title="Click to view sales data"
+                        >
+                          {upload.filename}
+                        </a>
+                      </td>
                       <td>
                         <span className="badge" style={{ background: 'var(--blue-light)', color: 'var(--blue)' }}>
                           {upload.upload_batch}
@@ -374,6 +411,108 @@ export default function MedicareProUpload() {
             </div>
           )}
         </div>
+
+        {/* Batch Data Viewer Modal */}
+        {viewingBatch && (
+          <div 
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              background: 'rgba(0,0,0,0.5)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 1000
+            }}
+            onClick={() => setViewingBatch(null)}
+          >
+            <div 
+              className="card" 
+              style={{ 
+                width: '90%', 
+                maxWidth: 1200, 
+                maxHeight: '80vh', 
+                overflow: 'auto',
+                margin: 20
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
+                <div>
+                  <div style={{ fontSize: 18, fontWeight: 600 }}>📊 Sales Data - Batch {viewingBatch}</div>
+                  <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>
+                    {batchData.length} records
+                  </div>
+                </div>
+                <button 
+                  className="btn btn-secondary"
+                  onClick={() => setViewingBatch(null)}
+                  style={{ fontSize: 20, padding: '4px 12px' }}
+                >
+                  ×
+                </button>
+              </div>
+
+              {loadingBatchData ? (
+                <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-muted)' }}>
+                  Loading data...
+                </div>
+              ) : batchData.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-muted)' }}>
+                  No data found for this batch.
+                </div>
+              ) : (
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Agent</th>
+                        <th>Client</th>
+                        <th>Carrier</th>
+                        <th>Plan</th>
+                        <th>Effective Date</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {batchData.map((sale, idx) => (
+                        <tr key={idx}>
+                          <td style={{ fontSize: 13 }}>{sale.agent_name || sale.agent || '—'}</td>
+                          <td style={{ fontWeight: 500 }}>{sale.client_name}</td>
+                          <td>{sale.carrier}</td>
+                          <td style={{ fontSize: 12 }}>{sale.plan_name || '—'}</td>
+                          <td style={{ fontSize: 12 }}>
+                            {sale.effective_date ? new Date(sale.effective_date.split('T')[0]).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                          </td>
+                          <td>
+                            <span className="badge" style={{
+                              background: 
+                                sale.status === 'Active' ? '#D4EDDA' :
+                                sale.status === 'Pending' ? '#FFF3CD' :
+                                '#F8D7DA',
+                              color:
+                                sale.status === 'Active' ? '#155724' :
+                                sale.status === 'Pending' ? '#856404' :
+                                '#721C24',
+                              padding: '4px 8px',
+                              borderRadius: 4,
+                              fontSize: 11
+                            }}>
+                              {sale.status || '—'}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
