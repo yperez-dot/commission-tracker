@@ -1,22 +1,22 @@
-/* ─── OliComm — Warm Espresso + Honey Gold ──────────────────── */
+/* ─── OliComm — Soft Earthy Neutrals (Spa-Inspired) ──────────────────── */
 :root {
   --bg: #ffffff;
-  --bg-subtle: #FAFAF8;
-  --gray-50: #FAFAF8;
-  --gray-100: #F0EDE8;
-  --border: #EDEAE4;
-  --text: #3D2B1F;
-  --text-muted: #6B4F35;
-  --text-light: #9E856E;
-  --accent: #C9A96E;
-  --accent-dark: #A8854A;
-  --accent-light: #F5EDD4;
-  --blue-light: #F5EDD4;
-  --green: #4A7260;
-  --red: #A0522D;
-  --amber: #8B6914;
-  --blue: #6B5744;
-  --sidebar-bg: #3D2B1F;
+  --bg-subtle: #F7F2ED;          /* Soft warm cream */
+  --gray-50: #F7F2ED;
+  --gray-100: #EDE6DD;           /* Light warm beige */
+  --border: #E8DFD5;             /* Soft neutral border */
+  --text: #4A3F35;               /* Warm dark brown (not too dark) */
+  --text-muted: #8B7563;         /* Medium warm brown */
+  --text-light: #A89585;         /* Light warm brown */
+  --accent: #C9B5A7;             /* Dusty rose/mauve */
+  --accent-dark: #A89589;        /* Darker mauve */
+  --accent-light: #E8DDD5;       /* Very light dusty rose */
+  --blue-light: #E8DDD5;         /* Matches accent-light */
+  --green: #7A9B88;              /* Soft sage green */
+  --red: #B87B6C;                /* Soft terracotta */
+  --amber: #B89F7E;              /* Warm sand */
+  --blue: #8B7D70;               /* Warm taupe */
+  --sidebar-bg: #5C4A3E;         /* Warm brown (lighter than before) */
   --sidebar-width: 168px;
 }
 
@@ -83,7 +83,7 @@ input, select, textarea { font-family: inherit; font-size: 15px; }
   transition: background 0.15s, color 0.15s;
 }
 .nav-item:hover { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.75); }
-.nav-item.active { background: rgba(201,169,110,0.18); color: var(--accent); font-weight: 500; }
+.nav-item.active { background: rgba(201,181,167,0.20); color: var(--accent); font-weight: 500; }
 
 .nav-icon { font-size: 11px; width: 16px; text-align: center; flex-shrink: 0; opacity: 0.5; }
 
@@ -130,11 +130,11 @@ tfoot td { padding: 9px 12px; }
 
 /* ─── Badges ─────────────────────────────────────────────────── */
 .badge { display: inline-block; border-radius: 4px; padding: 3px 9px; font-size: 13px; font-weight: 500; }
-.badge-green { background: #E6EFE9; color: #375C43; }
-.badge-red { background: #F5EAE4; color: #7A3D1F; }
+.badge-green { background: #E8F0EB; color: #5A7865; }      /* Soft sage */
+.badge-red { background: #F5E8E3; color: #8B5D4F; }        /* Soft terracotta */
 .badge-blue { background: var(--accent-light); color: var(--accent-dark); }
 .badge-gray { background: var(--gray-100); color: var(--text-muted); }
-.badge-amber { background: #F5EDD4; color: #6B4E0A; }
+.badge-amber { background: #F5EFE5; color: #8B7556; }      /* Warm sand */
 
 /* ─── Buttons ────────────────────────────────────────────────── */
 .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 15px; border-radius: 7px; border: 0.5px solid var(--border); font-size: 15px; font-weight: 500; cursor: pointer; transition: all 0.15s; background: var(--bg); color: var(--text); }
