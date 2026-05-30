@@ -121,7 +121,7 @@ function HBar({ data, color, onClickItem, loading }) {
         return (
           <div key={i} onClick={()=>onClickItem&&onClickItem(d)} style={{cursor:onClickItem?'pointer':'default'}}>
             <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}>
-              <span style={{fontSize:14,color:C.text,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'65%',fontWeight:500}} title={name}>{name}</span>
+              <span style={{fontSize:14,color:C.text,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'65%',fontWeight:500}}>{name}</span>
               <span style={{fontSize:14,fontWeight:500,color:isNeg?C.red:C.text}}>{fmt(val)}</span>
             </div>
             <div style={{background:C.accentLight,borderRadius:3,height:4,overflow:'hidden'}}>
