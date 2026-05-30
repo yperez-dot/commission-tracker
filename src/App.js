@@ -91,26 +91,25 @@ export default function App() {
   const isBSI = agencyView.toLowerCase().includes('broker society');
 
   const navItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: '🏠' },
+    { id: 'dashboard', label: 'Dashboard' },
     { 
       id: 'uploads', 
-      label: 'Uploads', 
-      icon: '📤',
+      label: 'Uploads',
       children: [
-        { id: 'upload', label: 'Commission Statements', icon: '💰' },
-        { id: 'medicarepro-upload', label: 'MedicarePro Sales', icon: '📊' },
-        { id: 'agency-production-upload', label: 'Agency Production', icon: '🏢' },
+        { id: 'upload', label: 'Commission Statements' },
+        { id: 'medicarepro-upload', label: 'MedicarePro Sales' },
+        { id: 'agency-production-upload', label: 'Agency Production' },
       ]
     },
-    { id: 'alldata', label: 'All Data', icon: '📋' },
-    { id: 'bob', label: 'Book of Business', icon: '📖' },
-    { id: 'renewals', label: 'Missing Renewals', icon: '⚠️' },
-    ...(!isBSI ? [{ id: 'reconciliation', label: 'Reconciliation', icon: '🔄' }] : []),
-    ...(!isBSI ? [{ id: 'agency-production-recon', label: 'Agency Override Recon', icon: '🏛️' }] : []),
-    { id: 'payroll', label: 'Payroll', icon: '💵' },
-    { id: 'reports', label: 'Reports', icon: '📈' },
+    { id: 'alldata', label: 'All Data' },
+    { id: 'bob', label: 'Book of Business' },
+    { id: 'renewals', label: 'Missing Renewals' },
+    ...(!isBSI ? [{ id: 'reconciliation', label: 'Reconciliation' }] : []),
+    ...(!isBSI ? [{ id: 'agency-production-recon', label: 'Agency Override Recon' }] : []),
+    { id: 'payroll', label: 'Payroll' },
+    { id: 'reports', label: 'Reports' },
     ...(user.role === 'admin' ? [
-      { id: 'users', label: 'User Accounts', icon: '👥' },
+      { id: 'users', label: 'User Accounts' },
     ] : [])
   ];
 
@@ -175,7 +174,6 @@ export default function App() {
                     className={`nav-item${hasActiveChild ? ' active' : ''}`}
                     onClick={() => setExpandedMenus({...expandedMenus, [item.id]: !isExpanded})}
                   >
-                    <span className="nav-icon">{item.icon}</span>
                     {item.label}
                     <span style={{ marginLeft: 'auto', fontSize: 10, opacity: 0.6 }}>
                       {isExpanded ? '▼' : '▶'}
@@ -189,7 +187,6 @@ export default function App() {
                           className={`nav-item nav-sub-item${page === child.id ? ' active' : ''}`}
                           onClick={() => navigate(child.id)}
                         >
-                          <span className="nav-icon">{child.icon}</span>
                           {child.label}
                         </button>
                       ))}
@@ -204,7 +201,6 @@ export default function App() {
                 className={`nav-item${page === item.id ? ' active' : ''}`}
                 onClick={() => navigate(item.id)}
               >
-                <span className="nav-icon">{item.icon}</span>
                 {item.label}
               </button>
             );
