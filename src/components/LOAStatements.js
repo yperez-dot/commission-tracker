@@ -106,36 +106,23 @@ export default function LOAStatements() {
   async function downloadStatement(id, agentName, periodLabel) {
     try {
       console.log('Downloading statement:', id);
+      
+      // Create a temporary link to trigger download
+      const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001';
       const token = localStorage.getItem('token');
-      console.log('Token exists:', !!token);
       
-      const response = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:3001'}/api/loa-statements/${id}/export`, {
-        headers: {
-          'Authorization': `Bearer ${token}`
-        }
-      });
-
-      console.log('Response status:', response.status);
+      // Use a form to POST with token (bypasses CORS/auth issues)
+      const url = `${API_URL}/api/loa-statements/${id}/export?token=${encodeURIComponent(token)}`;
       
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Server error:', errorText);
-        throw new Error(`Server returned ${response.status}: ${errorText}`);
-      }
-
-      const blob = await response.blob();
-      console.log('Blob size:', blob.size);
-      
-      const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = `THEI_Payment_Statement_${agentName.replace(/\s+/g, '_')}_${(periodLabel || 'statement').replace(/\s+/g, '_')}.xlsx`;
+      a.target = '_blank';
       document.body.appendChild(a);
       a.click();
-      window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
       
-      console.log('Download complete!');
+      console.log('Download initiated!');
     } catch (err) {
       console.error('Error downloading statement:', err);
       alert('Error downloading statement: ' + err.message);
