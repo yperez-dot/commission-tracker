@@ -1,10 +1,10 @@
 /* ─── OliComm — Soft Earthy Neutrals (Spa-Inspired) ──────────────────── */
 :root {
   --bg: #ffffff;
-  --bg-subtle: #F7F2ED;          /* Soft warm cream */
-  --gray-50: #F7F2ED;
-  --gray-100: #EDE6DD;           /* Light warm beige */
-  --border: #E8DFD5;             /* Soft neutral border */
+  --bg-subtle: #FAFAF9;          /* Very light warm gray */
+  --gray-50: #FAFAF9;
+  --gray-100: #F5F5F4;           /* Light warm gray */
+  --border: #E7E5E4;             /* Light neutral border */
   --text: #4A3F35;               /* Warm dark brown (not too dark) */
   --text-muted: #8B7563;         /* Medium warm brown */
   --text-light: #A89585;         /* Light warm brown */
@@ -21,7 +21,7 @@
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 16px; color: var(--text); background: var(--bg-subtle); -webkit-font-smoothing: antialiased; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; font-size: 16px; color: var(--text); background: #FAFAF9; -webkit-font-smoothing: antialiased; }
 button { font-family: inherit; }
 input, select, textarea { font-family: inherit; font-size: 15px; }
 

@@ -204,7 +204,7 @@ router.delete('/:id', requireAuth, requireAdmin, async (req, res) => {
 });
 
 // GET /api/loa-statements/:id/export - Generate Excel file
-router.get('/:id/export', requireAuth, requireAdmin, async (req, res) => {
+router.get('/:id/export', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
     const { id } = req.params;

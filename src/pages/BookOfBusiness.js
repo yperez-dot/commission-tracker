@@ -352,7 +352,7 @@ export default function BookOfBusiness({ user }) {
                             }
                           </td>
                           <td style={{fontSize:12}}>{c.agent_name||'—'}</td>
-                          <td style={{fontSize:12}}>{formatCarrier(c.carrier)}</td>
+                          <td style={{fontSize:12,color:'var(--text)',fontWeight:500}}>{formatCarrier(c.carrier)}</td>
                           <td style={{fontSize:11,color:'var(--text-muted)'}}>{c.effective_date||'—'}</td>
                           <td style={{fontWeight:500,color:c.last_commission_amount && parseFloat(c.last_commission_amount) > 0 ? 'var(--green)' : 'var(--text-light)'}}>
                             {c.last_commission_amount && parseFloat(c.last_commission_amount) > 0 ? fmt(c.last_commission_amount) : '—'}
