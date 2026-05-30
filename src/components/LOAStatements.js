@@ -187,7 +187,7 @@ export default function LOAStatements() {
     <div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
         <div>
-          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600 }}>LOA Statements</h2>
+          <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600, color: 'var(--text)' }}>LOA Statements</h2>
           <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--text-muted)' }}>
             Producer payment statements for LOA (Loan Out Agreement) agents
           </p>
@@ -322,11 +322,11 @@ export default function LOAStatements() {
               <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
                 <thead>
                   <tr style={{ background: 'var(--bg-subtle)' }}>
-                    <th style={{ padding: '8px', textAlign: 'left', borderBottom: '1px solid var(--border)' }}>Client</th>
-                    <th style={{ padding: '8px', textAlign: 'left', borderBottom: '1px solid var(--border)' }}>Carrier</th>
-                    <th style={{ padding: '8px', textAlign: 'left', borderBottom: '1px solid var(--border)' }}>Type</th>
-                    <th style={{ padding: '8px', textAlign: 'right', borderBottom: '1px solid var(--border)' }}>Amount</th>
-                    <th style={{ padding: '8px', textAlign: 'left', borderBottom: '1px solid var(--border)' }}>Note</th>
+                    <th style={{ padding: '8px', textAlign: 'left', borderBottom: '1px solid var(--border)', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text)' }}>Client</th>
+                    <th style={{ padding: '8px', textAlign: 'left', borderBottom: '1px solid var(--border)', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text)' }}>Carrier</th>
+                    <th style={{ padding: '8px', textAlign: 'left', borderBottom: '1px solid var(--border)', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text)' }}>Type</th>
+                    <th style={{ padding: '8px', textAlign: 'right', borderBottom: '1px solid var(--border)', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text)' }}>Amount</th>
+                    <th style={{ padding: '8px', textAlign: 'left', borderBottom: '1px solid var(--border)', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text)' }}>Note</th>
                     <th style={{ padding: '8px', borderBottom: '1px solid var(--border)' }}></th>
                   </tr>
                 </thead>
@@ -401,7 +401,7 @@ export default function LOAStatements() {
       )}
 
       <div className="card" style={{ padding: 0 }}>
-        <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', fontSize: 13, fontWeight: 500 }}>
+        <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>
           All Statements ({statements.length})
         </div>
 
@@ -415,20 +415,20 @@ export default function LOAStatements() {
           <table style={{ width: '100%', fontSize: 12 }}>
             <thead>
               <tr style={{ background: 'var(--bg-subtle)' }}>
-                <th style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 500 }}>Agent</th>
-                <th style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 500 }}>Period</th>
-                <th style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 500 }}>Payment Date</th>
-                <th style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 500 }}>Amount</th>
-                <th style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 500 }}>Status</th>
-                <th style={{ padding: '8px 12px', fontWeight: 500 }}>Actions</th>
+                <th style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text)' }}>Agent</th>
+                <th style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text)' }}>Period</th>
+                <th style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text)' }}>Payment Date</th>
+                <th style={{ padding: '8px 12px', textAlign: 'right', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text)' }}>Amount</th>
+                <th style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text)' }}>Status</th>
+                <th style={{ padding: '8px 12px', fontWeight: 600, fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.5px', color: 'var(--text)' }}>Actions</th>
               </tr>
             </thead>
             <tbody>
               {statements.map(stmt => (
                 <tr key={stmt.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                  <td style={{ padding: '10px 12px', fontWeight: 500 }}>{stmt.agent_name}</td>
-                  <td style={{ padding: '10px 12px' }}>{stmt.period_label || '—'}</td>
-                  <td style={{ padding: '10px 12px' }}>{new Date(stmt.payment_date).toLocaleDateString()}</td>
+                  <td style={{ padding: '10px 12px', fontWeight: 500, color: 'var(--text)', fontSize: 13 }}>{stmt.agent_name}</td>
+                  <td style={{ padding: '10px 12px', color: 'var(--text)', fontSize: 13 }}>{stmt.period_label || '—'}</td>
+                  <td style={{ padding: '10px 12px', color: 'var(--text)', fontSize: 13 }}>{new Date(stmt.payment_date).toLocaleDateString()}</td>
                   <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 600, color: 'var(--green)' }}>
                     {fmt(stmt.total_amount)}
                   </td>
