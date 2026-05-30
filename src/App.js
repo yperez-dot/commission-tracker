@@ -147,20 +147,20 @@ export default function App() {
           </div>
         </div>
         {user.role === 'admin' && !user.agency && (
-          <div style={{padding:'8px 10px',borderBottom:'1px solid rgba(255,255,255,0.07)'}}>
-            <div style={{fontSize:9,fontWeight:500,color:'rgba(255,255,255,0.35)',textTransform:'uppercase',letterSpacing:'0.7px',marginBottom:5}}>Viewing</div>
+          <div style={{padding:'8px 10px',borderBottom:'1px solid rgba(74,63,53,0.15)'}}>
+            <div style={{fontSize:9,fontWeight:500,color:'rgba(74,63,53,0.55)',textTransform:'uppercase',letterSpacing:'0.7px',marginBottom:5}}>Viewing</div>
             <select
               value={agencyView}
               onChange={e => handleAgencySwitch(e.target.value)}
               style={{
                 width:'100%', padding:'5px 8px', borderRadius:6, fontSize:11,
-                background:'rgba(255,255,255,0.08)', color:'#F0EAE0',
-                border:'0.5px solid rgba(255,255,255,0.15)', cursor:'pointer',
+                background:'rgba(74,63,53,0.08)', color:'#4A3F35',
+                border:'0.5px solid rgba(74,63,53,0.2)', cursor:'pointer',
                 outline:'none'
               }}
             >
-              <option value="The Health Experts Insurance" style={{background:'#3D2B1F'}}>Health Experts</option>
-              <option value="Broker Society Insurance" style={{background:'#3D2B1F'}}>Broker Society</option>
+              <option value="The Health Experts Insurance" style={{background:'#F7F2ED'}}>Health Experts</option>
+              <option value="Broker Society Insurance" style={{background:'#F7F2ED'}}>Broker Society</option>
             </select>
           </div>
         )}
