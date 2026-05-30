@@ -105,26 +105,40 @@ export default function LOAStatements() {
 
   async function downloadStatement(id, agentName, periodLabel) {
     try {
+      console.log('Downloading statement:', id);
+      const token = localStorage.getItem('token');
+      console.log('Token exists:', !!token);
+      
       const response = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:3001'}/api/loa-statements/${id}/export`, {
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${token}`
         }
       });
 
-      if (!response.ok) throw new Error('Download failed');
+      console.log('Response status:', response.status);
+      
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Server error:', errorText);
+        throw new Error(`Server returned ${response.status}: ${errorText}`);
+      }
 
       const blob = await response.blob();
+      console.log('Blob size:', blob.size);
+      
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `THEI_Payment_Statement_${agentName.replace(/\s+/g, '_')}_${periodLabel.replace(/\s+/g, '_')}.xlsx`;
+      a.download = `THEI_Payment_Statement_${agentName.replace(/\s+/g, '_')}_${(periodLabel || 'statement').replace(/\s+/g, '_')}.xlsx`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
+      
+      console.log('Download complete!');
     } catch (err) {
       console.error('Error downloading statement:', err);
-      alert('Error downloading statement');
+      alert('Error downloading statement: ' + err.message);
     }
   }
 
