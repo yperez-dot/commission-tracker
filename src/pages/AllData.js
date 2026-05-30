@@ -406,26 +406,26 @@ export default function AllData({ user, initialFilters = {} }) {
                           {user.role === 'admin' && (
                             <td><input type="checkbox" checked={isSel} onChange={() => toggleSelect(r.id)} style={{ cursor: 'pointer', accentColor: 'var(--accent)' }} /></td>
                           )}
-                          <td style={{ color: 'var(--text-muted)', fontSize: 11 }}>{page * PAGE_SIZE + i + 1}</td>
-                          <td style={{ fontSize: 12 }}>{formatCarrier(r.carrier)}</td>
-                          <td style={{ fontWeight: 500 }}>{r.agent_name}</td>
-                          <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                          <td style={{ color: 'var(--text-muted)', fontSize: 12 }}>{page * PAGE_SIZE + i + 1}</td>
+                          <td style={{ fontSize: 13, fontWeight: 500 }}>{formatCarrier(r.carrier)}</td>
+                          <td style={{ fontWeight: 500, fontSize: 13 }}>{r.agent_name}</td>
+                          <td style={{ fontSize: 12 }}>
                             {r.policy_number
                               ? <span onClick={()=>setPolicyModal(r)} style={{cursor:'pointer',color:'var(--accent-dark)',fontWeight:500}}>{r.policy_number}</span>
                               : '—'}
                           </td>
-                          <td>{r.client_full_name || '—'}</td>
-                          <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{r.effective_date || '—'}</td>
+                          <td style={{ fontSize: 13 }}>{r.client_full_name || '—'}</td>
+                          <td style={{ fontSize: 12 }}>{r.effective_date || '—'}</td>
                           <td>{r.premium ? fmt(r.premium) : '—'}</td>
                           <td style={{ fontWeight: 500, color: parseFloat(r.commission) < 0 ? 'var(--red)' : 'var(--green)' }}>{fmt(r.commission)}</td>
                           {hasCommSplit && (() => { const s = getCommSplit(r); return (
                             <>
-                              <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{s.commRate !== undefined ? `${s.commRate}%` : '—'}</td>
-                              <td style={{ fontWeight: 500, color: s.agentComm > 0 ? 'var(--green)' : 'var(--text-muted)' }}>{s.agentComm !== undefined ? fmt(s.agentComm) : '—'}</td>
-                              <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{s.agencyComm !== undefined ? fmt(s.agencyComm) : '—'}</td>
+                              <td style={{ fontSize: 12 }}>{s.commRate !== undefined ? `${s.commRate}%` : '—'}</td>
+                              <td style={{ fontWeight: 500, fontSize: 13, color: s.agentComm > 0 ? 'var(--green)' : 'var(--text)' }}>{s.agentComm !== undefined ? fmt(s.agentComm) : '—'}</td>
+                              <td style={{ fontSize: 12 }}>{s.agencyComm !== undefined ? fmt(s.agencyComm) : '—'}</td>
                             </>
                           );})()}
-                          <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.payment_period || '—'}</td>
+                          <td style={{ fontSize: 12 }}>{r.payment_period || '—'}</td>
                           <td style={{ whiteSpace: 'nowrap' }}>
                             <span className={`badge ${badgeClass(r.classification)}`}>
                               {r.classification === 'Agency Override' ? 'Override' : (r.classification || '—')}
