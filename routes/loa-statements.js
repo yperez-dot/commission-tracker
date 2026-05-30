@@ -276,11 +276,22 @@ router.get('/:id/export', requireAuth, requireAdmin, async (req, res) => {
     
     // Commission structure
     currentRow += 2;
-    const commStructure = statement.commission_structure || {
-      plan_changes: '$100 flat',
-      new_to_medicare: '$150 flat',
-      lead_generated: 'Full commission'
-    };
+    let commStructure;
+    try {
+      commStructure = typeof statement.commission_structure === 'string' 
+        ? JSON.parse(statement.commission_structure)
+        : statement.commission_structure || {
+            plan_changes: '$100 flat',
+            new_to_medicare: '$150 flat',
+            lead_generated: 'Full commission'
+          };
+    } catch (e) {
+      commStructure = {
+        plan_changes: '$100 flat',
+        new_to_medicare: '$150 flat',
+        lead_generated: 'Full commission'
+      };
+    }
     
     worksheet.getRow(currentRow).getCell(1).value = 'COMMISSION STRUCTURE (LOA Agreement)';
     worksheet.getRow(currentRow).getCell(1).font = { bold: true };

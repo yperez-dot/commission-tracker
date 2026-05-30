@@ -425,9 +425,9 @@ export default function AllData({ user, initialFilters = {} }) {
                             </>
                           );})()}
                           <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.payment_period || '—'}</td>
-                          <td>
+                          <td style={{ whiteSpace: 'nowrap' }}>
                             <span className={`badge ${badgeClass(r.classification)}`}>
-                              {r.classification || '—'}
+                              {r.classification === 'Agency Override' ? 'Override' : (r.classification || '—')}
                             </span>
                           </td>
                           {hasMGA && <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.mga || '—'}</td>}
