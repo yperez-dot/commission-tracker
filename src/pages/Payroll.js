@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../api';
+import LOAStatements from '../components/LOAStatements';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -275,11 +276,16 @@ export default function Payroll({ user }) {
       <div className="page-body">
         <div style={{ display:'flex', gap:8, marginBottom:14, borderBottom:'1px solid var(--border)' }}>
           <button style={tabStyle('payroll')} onClick={()=>setTab('payroll')}>Agent Statements</button>
+          <button style={tabStyle('loa')} onClick={()=>setTab('loa')}>LOA Statements</button>
           <button style={tabStyle('history')} onClick={()=>setTab('history')}>
             Payment History
             {history.length>0 && <span style={{ background:'var(--accent)', color:'var(--sidebar-bg)', borderRadius:99, fontSize:10, padding:'1px 6px', marginLeft:4, fontWeight:500 }}>{history.length}</span>}
           </button>
         </div>
+
+        {tab==='loa' && (
+          <LOAStatements />
+        )}
 
         {tab==='payroll' && (
           <div>

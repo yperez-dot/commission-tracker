@@ -56,6 +56,7 @@ app.use('/api/sales-tracker', require('./routes/sales-tracker'));
 app.use('/api/medicarepro', require('./routes/medicarepro'));
 app.use('/api/agency-production', require('./routes/agencyproduction'));
 app.use('/api/ghl', require('./routes/ghl'));
+app.use('/api/loa-statements', require('./routes/loa-statements'));
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
 
