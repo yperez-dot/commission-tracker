@@ -45,21 +45,7 @@ router.get('/', requireAuth, requireAdmin, async (req, res) => {
 
 // GET /api/loa-statements/:id - Get single statement with items
 // GET /api/loa-statements/:id/export - Generate Excel file
-router.get('/:id/export', async (req, res) => {
-  // Allow token in query param for direct download links
-  const token = req.query.token || (req.headers.authorization && req.headers.authorization.slice(7));
-  if (!token) {
-    return res.status(401).json({ error: 'No token provided' });
-  }
-  
-  try {
-    const jwt = require('jsonwebtoken');
-    const JWT_SECRET = process.env.JWT_SECRET || 'healthexperts-secret-change-in-production';
-    req.user = jwt.verify(token, JWT_SECRET);
-  } catch (err) {
-    console.error('Token verification failed:', err.message);
-    return res.status(401).json({ error: 'Invalid token' });
-  }
+router.get('/:id/export', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
     const { id } = req.params;

@@ -107,22 +107,44 @@ export default function LOAStatements() {
     try {
       console.log('Downloading statement:', id);
       
-      // Create a temporary link to trigger download
+      // Use apiFetch which handles auth automatically
       const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:3001';
-      const token = localStorage.getItem('token');
+      const token = localStorage.getItem('he_token');
       
-      // Use a form to POST with token (bypasses CORS/auth issues)
-      const url = `${API_URL}/api/loa-statements/${id}/export?token=${encodeURIComponent(token)}`;
+      console.log('Token from localStorage:', token ? 'exists' : 'NULL');
       
+      if (!token) {
+        alert('You are not logged in. Please refresh and log in again.');
+        return;
+      }
+      
+      const response = await fetch(`${API_URL}/api/loa-statements/${id}/export`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json'
+        }
+      });
+      
+      console.log('Response status:', response.status);
+      
+      if (!response.ok) {
+        const text = await response.text();
+        console.error('Error response:', text);
+        throw new Error(`Download failed: ${response.status}`);
+      }
+      
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
       a.download = `THEI_Payment_Statement_${agentName.replace(/\s+/g, '_')}_${(periodLabel || 'statement').replace(/\s+/g, '_')}.xlsx`;
-      a.target = '_blank';
       document.body.appendChild(a);
       a.click();
+      window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
       
-      console.log('Download initiated!');
+      console.log('Download complete!');
     } catch (err) {
       console.error('Error downloading statement:', err);
       alert('Error downloading statement: ' + err.message);
