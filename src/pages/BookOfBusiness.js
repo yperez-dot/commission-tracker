@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiFetch, apiUpload } from '../api';
+import { formatCarrier } from '../utils/formatCarrier';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -284,7 +285,7 @@ export default function BookOfBusiness({ user }) {
               />
               <select className="filter-select" value={filterCarrier} onChange={e=>setFilterCarrier(e.target.value)}>
                 <option value="">All carriers</option>
-                {(summary?.byCarrier||[]).map(c=><option key={c.carrier} value={c.carrier}>{c.carrier}</option>)}
+                {(summary?.byCarrier||[]).map(c=><option key={c.carrier} value={c.carrier}>{formatCarrier(c.carrier)}</option>)}
               </select>
               <select className="filter-select" value={filterAgent} onChange={e=>setFilterAgent(e.target.value)}>
                 <option value="">All agents</option>
@@ -351,7 +352,7 @@ export default function BookOfBusiness({ user }) {
                             }
                           </td>
                           <td style={{fontSize:12}}>{c.agent_name||'—'}</td>
-                          <td style={{fontSize:12}}>{c.carrier}</td>
+                          <td style={{fontSize:12}}>{formatCarrier(c.carrier)}</td>
                           <td style={{fontSize:11,color:'var(--text-muted)'}}>{c.effective_date||'—'}</td>
                           <td style={{fontWeight:500,color:c.last_commission_amount && parseFloat(c.last_commission_amount) > 0 ? 'var(--green)' : 'var(--text-light)'}}>
                             {c.last_commission_amount && parseFloat(c.last_commission_amount) > 0 ? fmt(c.last_commission_amount) : '—'}
@@ -388,7 +389,7 @@ export default function BookOfBusiness({ user }) {
                 <tbody>
                   {(summary?.byCarrier||[]).map((c,i) => (
                     <tr key={i} onClick={()=>{ setFilterCarrier(c.carrier); setFilterStatus('active'); setTab('all'); }} style={{cursor:'pointer'}}>
-                      <td style={{fontWeight:500,color:'var(--accent)'}}>{c.carrier}</td>
+                      <td style={{fontWeight:500,color:'var(--accent)'}}>{formatCarrier(c.carrier)}</td>
                       <td style={{fontWeight:500,color:'var(--accent)'}}>{c.count}</td>
                       <td>{(summary?.bySource||[]).find(s=>s.source==='bob_export')
                         ? <span className="badge badge-blue">BOB export</span>

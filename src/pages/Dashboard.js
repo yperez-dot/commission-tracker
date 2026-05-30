@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiFetch } from '../api';
+import { formatCarrier } from '../utils/formatCarrier';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -115,7 +116,7 @@ function HBar({ data, color, onClickItem, loading }) {
       {data.slice(0,8).map((d,i) => {
         const val = parseFloat(d.total)||0;
         const pct = max>0?(Math.abs(val)/max)*100:0;
-        const name = d.agent_name||d.carrier||'';
+        const name = d.agent_name || (d.carrier ? formatCarrier(d.carrier) : '');
         const isNeg = val<0;
         return (
           <div key={i} onClick={()=>onClickItem&&onClickItem(d)} style={{cursor:onClickItem?'pointer':'default'}}>

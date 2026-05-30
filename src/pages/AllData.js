@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiFetch } from '../api';
+import { formatCarrier } from '../utils/formatCarrier';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -188,7 +189,7 @@ export default function AllData({ user, initialFilters = {} }) {
 
   function exportCSV() {
     const headers = ['Agent', 'Carrier', 'Client', 'Policy #', 'Effective Date', 'Premium', 'Comm Value', 'Type', 'Period', 'Payee', 'MGA'];
-    const rows = records.map(r => [r.agent_name, r.carrier, r.client_full_name, r.policy_number, r.effective_date, r.premium, r.commission, r.classification, r.payment_period, r.payee, r.mga]);
+    const rows = records.map(r => [r.agent_name, formatCarrier(r.carrier), r.client_full_name, r.policy_number, r.effective_date, r.premium, r.commission, r.classification, r.payment_period, r.payee, r.mga]);
     const csv = [headers, ...rows].map(r => r.map(v => `"${String(v||'').replace(/"/g,'""')}"`).join(',')).join('\n');
     const blob = new Blob([csv], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
@@ -406,7 +407,7 @@ export default function AllData({ user, initialFilters = {} }) {
                             <td><input type="checkbox" checked={isSel} onChange={() => toggleSelect(r.id)} style={{ cursor: 'pointer', accentColor: 'var(--accent)' }} /></td>
                           )}
                           <td style={{ color: 'var(--text-muted)', fontSize: 11 }}>{page * PAGE_SIZE + i + 1}</td>
-                          <td style={{ fontSize: 12 }}>{r.carrier}</td>
+                          <td style={{ fontSize: 12 }}>{formatCarrier(r.carrier)}</td>
                           <td style={{ fontWeight: 500 }}>{r.agent_name}</td>
                           <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                             {r.policy_number
