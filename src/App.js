@@ -21,6 +21,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState('dashboard');
   const [pageParams, setPageParams] = useState({});
+  const [expandedMenus, setExpandedMenus] = useState({ uploads: false });
   const [agencyView, setAgencyView] = useState(
     localStorage.getItem('olicomm_agency_view') || 'The Health Experts Insurance'
   );
@@ -90,19 +91,26 @@ export default function App() {
   const isBSI = agencyView.toLowerCase().includes('broker society');
 
   const navItems = [
-    { id: 'dashboard', label: 'Dashboard', icon: '◼' },
-    { id: 'upload', label: 'Upload', icon: '↑' },
-    { id: 'medicarepro-upload', label: 'Upload MedicarePro', icon: '📊' },
-    { id: 'agency-production-upload', label: 'Upload Agency Production', icon: '🏢' },
-    { id: 'alldata', label: 'All Data', icon: '≡' },
-    { id: 'bob', label: 'Book of Business', icon: '◉' },
-    { id: 'renewals', label: 'Missing Renewals', icon: '!' },
-    ...(!isBSI ? [{ id: 'reconciliation', label: 'Reconciliation', icon: '⇄' }] : []),
-    ...(!isBSI ? [{ id: 'agency-production-recon', label: 'Agency Override Recon', icon: '🏢' }] : []),
-    { id: 'payroll', label: 'Payroll', icon: '$' },
-    { id: 'reports', label: 'Reports', icon: '📊' },
+    { id: 'dashboard', label: 'Dashboard', icon: '🏠' },
+    { 
+      id: 'uploads', 
+      label: 'Uploads', 
+      icon: '📤',
+      children: [
+        { id: 'upload', label: 'Commission Statements', icon: '💰' },
+        { id: 'medicarepro-upload', label: 'MedicarePro Sales', icon: '📊' },
+        { id: 'agency-production-upload', label: 'Agency Production', icon: '🏢' },
+      ]
+    },
+    { id: 'alldata', label: 'All Data', icon: '📋' },
+    { id: 'bob', label: 'Book of Business', icon: '📖' },
+    { id: 'renewals', label: 'Missing Renewals', icon: '⚠️' },
+    ...(!isBSI ? [{ id: 'reconciliation', label: 'Reconciliation', icon: '🔄' }] : []),
+    ...(!isBSI ? [{ id: 'agency-production-recon', label: 'Agency Override Recon', icon: '🏛️' }] : []),
+    { id: 'payroll', label: 'Payroll', icon: '💵' },
+    { id: 'reports', label: 'Reports', icon: '📈' },
     ...(user.role === 'admin' ? [
-      { id: 'users', label: 'User Accounts', icon: '👤' },
+      { id: 'users', label: 'User Accounts', icon: '👥' },
     ] : [])
   ];
 
@@ -157,16 +165,50 @@ export default function App() {
           </div>
         )}
         <nav className="sidebar-nav">
-          {navItems.map(item => (
-            <button
-              key={item.id}
-              className={`nav-item${page === item.id ? ' active' : ''}`}
-              onClick={() => navigate(item.id)}
-            >
-              <span className="nav-icon">{item.icon}</span>
-              {item.label}
-            </button>
-          ))}
+          {navItems.map(item => {
+            if (item.children) {
+              const isExpanded = expandedMenus[item.id];
+              const hasActiveChild = item.children.some(child => page === child.id);
+              return (
+                <div key={item.id}>
+                  <button
+                    className={`nav-item${hasActiveChild ? ' active' : ''}`}
+                    onClick={() => setExpandedMenus({...expandedMenus, [item.id]: !isExpanded})}
+                  >
+                    <span className="nav-icon">{item.icon}</span>
+                    {item.label}
+                    <span style={{ marginLeft: 'auto', fontSize: 10, opacity: 0.6 }}>
+                      {isExpanded ? '▼' : '▶'}
+                    </span>
+                  </button>
+                  {isExpanded && (
+                    <div style={{ paddingLeft: 12 }}>
+                      {item.children.map(child => (
+                        <button
+                          key={child.id}
+                          className={`nav-item nav-sub-item${page === child.id ? ' active' : ''}`}
+                          onClick={() => navigate(child.id)}
+                        >
+                          <span className="nav-icon">{child.icon}</span>
+                          {child.label}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            }
+            return (
+              <button
+                key={item.id}
+                className={`nav-item${page === item.id ? ' active' : ''}`}
+                onClick={() => navigate(item.id)}
+              >
+                <span className="nav-icon">{item.icon}</span>
+                {item.label}
+              </button>
+            );
+          })}
         </nav>
         <div className="sidebar-footer">
           <div className="user-chip">
