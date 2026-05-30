@@ -44,174 +44,19 @@ router.get('/', requireAuth, requireAdmin, async (req, res) => {
 });
 
 // GET /api/loa-statements/:id - Get single statement with items
-router.get('/:id', requireAuth, requireAdmin, async (req, res) => {
-  try {
-    const pool = getPool();
-    const { id } = req.params;
-    
-    const statementResult = await pool.query(
-      'SELECT * FROM loa_statements WHERE id = $1',
-      [id]
-    );
-    
-    if (statementResult.rows.length === 0) {
-      return res.status(404).json({ error: 'Statement not found' });
-    }
-    
-    const itemsResult = await pool.query(
-      'SELECT * FROM loa_statement_items WHERE statement_id = $1 ORDER BY sort_order, id',
-      [id]
-    );
-    
-    const statement = statementResult.rows[0];
-    statement.items = itemsResult.rows;
-    
-    res.json({ statement });
-  } catch (err) {
-    console.error('Error fetching LOA statement:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// POST /api/loa-statements - Create new LOA statement
-router.post('/', requireAuth, requireAdmin, async (req, res) => {
-  try {
-    const pool = getPool();
-    const {
-      agent_name,
-      payment_date,
-      period_start,
-      period_end,
-      period_label,
-      commission_structure,
-      items,
-      status = 'draft',
-      notes
-    } = req.body;
-    
-    if (!agent_name || !payment_date || !items || items.length === 0) {
-      return res.status(400).json({ error: 'Missing required fields' });
-    }
-    
-    // Calculate total
-    const total_amount = items.reduce((sum, item) => sum + parseFloat(item.amount || 0), 0);
-    
-    // Insert statement
-    const statementResult = await pool.query(
-      `INSERT INTO loa_statements 
-       (agent_name, payment_date, period_start, period_end, period_label, total_amount, status, commission_structure, created_by, notes)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-       RETURNING *`,
-      [agent_name, payment_date, period_start, period_end, period_label, total_amount, status, JSON.stringify(commission_structure), req.user.name, notes]
-    );
-    
-    const statement = statementResult.rows[0];
-    
-    // Insert items
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      await pool.query(
-        `INSERT INTO loa_statement_items 
-         (statement_id, client_name, carrier, transaction_type, amount, note, sort_order)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-        [statement.id, item.client_name, item.carrier, item.transaction_type, item.amount, item.note, i]
-      );
-    }
-    
-    res.json({ statement, success: true });
-  } catch (err) {
-    console.error('Error creating LOA statement:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// PUT /api/loa-statements/:id - Update statement
-router.put('/:id', requireAuth, requireAdmin, async (req, res) => {
-  try {
-    const pool = getPool();
-    const { id } = req.params;
-    const { status, paid_date, items, notes } = req.body;
-    
-    // Recalculate total if items provided
-    let total_amount;
-    if (items) {
-      total_amount = items.reduce((sum, item) => sum + parseFloat(item.amount || 0), 0);
-      
-      // Delete old items
-      await pool.query('DELETE FROM loa_statement_items WHERE statement_id = $1', [id]);
-      
-      // Insert new items
-      for (let i = 0; i < items.length; i++) {
-        const item = items[i];
-        await pool.query(
-          `INSERT INTO loa_statement_items 
-           (statement_id, client_name, carrier, transaction_type, amount, note, sort_order)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
-          [id, item.client_name, item.carrier, item.transaction_type, item.amount, item.note, i]
-        );
-      }
-    }
-    
-    // Update statement
-    const updates = [];
-    const params = [];
-    let paramIndex = 1;
-    
-    if (status) {
-      updates.push(`status = $${paramIndex++}`);
-      params.push(status);
-    }
-    
-    if (paid_date) {
-      updates.push(`paid_date = $${paramIndex++}`);
-      params.push(paid_date);
-    }
-    
-    if (total_amount !== undefined) {
-      updates.push(`total_amount = $${paramIndex++}`);
-      params.push(total_amount);
-    }
-    
-    if (notes !== undefined) {
-      updates.push(`notes = $${paramIndex++}`);
-      params.push(notes);
-    }
-    
-    if (updates.length > 0) {
-      params.push(id);
-      const query = `UPDATE loa_statements SET ${updates.join(', ')} WHERE id = $${paramIndex} RETURNING *`;
-      const result = await pool.query(query, params);
-      res.json({ statement: result.rows[0], success: true });
-    } else {
-      res.json({ success: true });
-    }
-  } catch (err) {
-    console.error('Error updating LOA statement:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// DELETE /api/loa-statements/:id - Delete statement
-router.delete('/:id', requireAuth, requireAdmin, async (req, res) => {
-  try {
-    const pool = getPool();
-    await pool.query('DELETE FROM loa_statements WHERE id = $1', [req.params.id]);
-    res.json({ success: true });
-  } catch (err) {
-    console.error('Error deleting LOA statement:', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
 // GET /api/loa-statements/:id/export - Generate Excel file
 router.get('/:id/export', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
     const { id } = req.params;
     
+    console.log(`📥 Export request for LOA statement ID: ${id}`);
+    console.log(`   User: ${req.user.name} (${req.user.role})`);
+    
     // Get statement and items
     const statementResult = await pool.query('SELECT * FROM loa_statements WHERE id = $1', [id]);
     if (statementResult.rows.length === 0) {
+      console.error(`❌ Statement not found: ${id}`);
       return res.status(404).json({ error: 'Statement not found' });
     }
     
@@ -347,6 +192,35 @@ router.get('/:id/export', requireAuth, async (req, res) => {
     res.end();
   } catch (err) {
     console.error('Error exporting LOA statement:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const pool = getPool();
+    const { id } = req.params;
+    
+    const statementResult = await pool.query(
+      'SELECT * FROM loa_statements WHERE id = $1',
+      [id]
+    );
+    
+    if (statementResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Statement not found' });
+    }
+    
+    const itemsResult = await pool.query(
+      'SELECT * FROM loa_statement_items WHERE statement_id = $1 ORDER BY sort_order, id',
+      [id]
+    );
+    
+    const statement = statementResult.rows[0];
+    statement.items = itemsResult.rows;
+    
+    res.json({ statement });
+  } catch (err) {
+    console.error('Error fetching LOA statement:', err);
     res.status(500).json({ error: err.message });
   }
 });
