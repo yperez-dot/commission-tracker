@@ -389,8 +389,8 @@ export default function BookOfBusiness({ user }) {
                 <tbody>
                   {(summary?.byCarrier||[]).map((c,i) => (
                     <tr key={i} onClick={()=>{ setFilterCarrier(c.carrier); setFilterStatus('active'); setTab('all'); }} style={{cursor:'pointer'}}>
-                      <td style={{fontWeight:500,color:'var(--accent)'}}>{formatCarrier(c.carrier)}</td>
-                      <td style={{fontWeight:500,color:'var(--accent)'}}>{c.count}</td>
+                      <td style={{fontWeight:500,color:'var(--text)'}}>{formatCarrier(c.carrier)}</td>
+                      <td style={{fontWeight:500,color:'var(--text)'}}>{c.count}</td>
                       <td>{(summary?.bySource||[]).find(s=>s.source==='bob_export')
                         ? <span className="badge badge-blue">BOB export</span>
                         : <span className="badge badge-gray">Statements only</span>}</td>
