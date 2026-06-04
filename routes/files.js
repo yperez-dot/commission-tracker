@@ -1003,7 +1003,10 @@ function parseSolisRows(wb, filename) {
     const commission = parseFloat(row['Payment Amt'] || row['PaymentAmt']) || 0;
     const commissionEffDate = row['Commission Eff. Date'] || row['CommissionEffectiveDate'];
     const memberEnrollDate = row['Member Enrollment Date'] || row['MemberEnrollmentDate'];
-    const effectiveDate = formatDate(commissionEffDate);
+    
+    // Both Doctors and Solis use Member Enrollment Date for EFFECTIVE column
+    const isDoctor = isDoctorsFile(filename);
+    const effectiveDate = formatDate(memberEnrollDate);
     // Normalize payment type: lowercase and collapse multiple spaces
     const paymentType = String(row['Payment Type'] || row['PaymentType'] || '').toLowerCase().replace(/\s+/g, ' ').trim();
     const policyNumber = String(row['Plan Member ID'] || row['PlanMemberID'] || '').trim();
@@ -1013,21 +1016,26 @@ function parseSolisRows(wb, filename) {
     // Determine if New Business vs Renewal by comparing enrollment date to commission date
     let isNewBusiness = false;
     if (memberEnrollDate && commissionEffDate) {
-      // Parse enrollment date (format: YYYYMMDD like 20260501)
-      let enrollDate;
-      const enrollStr = String(memberEnrollDate);
-      if (enrollStr.length === 8) {
-        const y = parseInt(enrollStr.substring(0, 4));
-        const m = parseInt(enrollStr.substring(4, 6));
-        const d = parseInt(enrollStr.substring(6, 8));
-        enrollDate = new Date(Date.UTC(y, m - 1, d));
-      } else {
-        enrollDate = new Date(memberEnrollDate);
-      }
+      // Helper to convert any date format to Date object
+      const parseAnyDate = (val) => {
+        if (typeof val === 'number') {
+          // Excel serial number
+          return new Date(Date.UTC(1899, 11, 30) + val * 86400000);
+        }
+        const str = String(val);
+        if (str.length === 8 && /^\d{8}$/.test(str)) {
+          // YYYYMMDD format (Doctors)
+          const y = parseInt(str.substring(0, 4));
+          const m = parseInt(str.substring(4, 6));
+          const d = parseInt(str.substring(6, 8));
+          return new Date(Date.UTC(y, m - 1, d));
+        }
+        // Standard date string
+        return new Date(val);
+      };
       
-      const commDate = typeof commissionEffDate === 'number' 
-        ? new Date(Date.UTC(1899, 11, 30) + commissionEffDate * 86400000)
-        : new Date(commissionEffDate);
+      const enrollDate = parseAnyDate(memberEnrollDate);
+      const commDate = parseAnyDate(commissionEffDate);
       
       if (!isNaN(enrollDate.getTime()) && !isNaN(commDate.getTime())) {
         const enrollYM = enrollDate.getUTCFullYear() * 100 + (enrollDate.getUTCMonth() + 1);
@@ -1063,7 +1071,6 @@ function parseSolisRows(wb, filename) {
       }
     }
 
-    const isDoctor = isDoctorsFile(filename);
     const carrierName = isDoctor ? 'Doctors' : 'Solis';
     const planTypeName = isDoctor ? 'Doctors Med Adv' : 'Solis Med Adv';
     records.push({
