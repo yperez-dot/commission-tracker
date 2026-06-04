@@ -3,7 +3,9 @@
  * - "DOCTORS" → "Doctors"
  * - "SOLIS" → "Solis"
  * - "HUMANA" → "Humana"
+ * - "PA healthsun" / "PA HealthSun" / "healthsun" → "HealthSun"
  * etc.
+ * Updated: 2026-06-04 - HealthSun consolidation
  */
 export function formatCarrier(carrier) {
   if (!carrier) return '';
