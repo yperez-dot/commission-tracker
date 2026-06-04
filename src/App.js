@@ -238,23 +238,24 @@ export default function App() {
           <button 
             onClick={toggleSidebar}
             style={{
-              position: 'absolute',
-              right: sidebarCollapsed ? '50%' : '-12px',
-              top: '50%',
-              transform: sidebarCollapsed ? 'translateX(50%)' : 'translateY(-50%)',
+              position: sidebarCollapsed ? 'fixed' : 'absolute',
+              left: sidebarCollapsed ? '12px' : 'auto',
+              right: sidebarCollapsed ? 'auto' : '-12px',
+              top: sidebarCollapsed ? '20px' : '50%',
+              transform: sidebarCollapsed ? 'none' : 'translateY(-50%)',
               background: 'var(--sidebar-bg)',
               border: '1px solid rgba(255,255,255,0.2)',
               color: 'rgba(255,255,255,0.95)',
-              width: '24px',
-              height: '24px',
+              width: '32px',
+              height: '32px',
               borderRadius: '50%',
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              fontSize: '12px',
+              fontSize: '14px',
               boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
-              zIndex: 10
+              zIndex: 9999
             }}
             title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
           >
