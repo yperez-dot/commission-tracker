@@ -104,8 +104,9 @@ input, select, textarea { font-family: inherit; font-size: 15px; }
 
 .nav-sub-item {
   font-size: 14px;
-  padding: 7px 9px;
+  padding: 10px 9px;
   margin-left: 8px;
+  margin-bottom: 2px;
   opacity: 0.85;
 }
 .nav-sub-item:hover { opacity: 1; }
