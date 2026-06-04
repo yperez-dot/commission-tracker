@@ -93,6 +93,7 @@ export default function AgencyProductionRecon() {
   const [filterCarrier, setFilterCarrier] = useState('all');
   const [filterAgent, setFilterAgent] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const [selectedOverride, setSelectedOverride] = useState(null);
 
   useEffect(() => {
     loadData();
@@ -233,6 +234,127 @@ export default function AgencyProductionRecon() {
 
   return (
     <div>
+      {/* Override Details Modal */}
+      {selectedOverride && (
+        <div 
+          onClick={() => setSelectedOverride(null)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999
+          }}
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: 'white',
+              borderRadius: 12,
+              maxWidth: '600px',
+              width: '90%',
+              maxHeight: '85vh',
+              overflow: 'auto',
+              boxShadow: '0 10px 40px rgba(0,0,0,0.3)'
+            }}
+          >
+            <div style={{
+              padding: '20px',
+              borderBottom: '1px solid var(--border)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center'
+            }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: 18, color: 'var(--text)' }}>
+                  📊 Override Statement Details
+                </h2>
+                <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--text-muted)' }}>
+                  Matched BSI/NHP commission record
+                </p>
+              </div>
+              <button 
+                onClick={() => setSelectedOverride(null)}
+                style={{
+                  background: 'var(--red)',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: 4,
+                  padding: '6px 12px',
+                  cursor: 'pointer',
+                  fontSize: 12,
+                  fontWeight: 500
+                }}
+              >
+                Close
+              </button>
+            </div>
+            <div style={{ padding: '20px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: '12px 16px', fontSize: 13 }}>
+                <div style={{ color: 'var(--text-muted)', fontWeight: 500 }}>Client Name:</div>
+                <div style={{ fontWeight: 600, color: 'var(--text)' }}>{selectedOverride.override.client_full_name || '—'}</div>
+                
+                <div style={{ color: 'var(--text-muted)', fontWeight: 500 }}>Agent Name:</div>
+                <div>{selectedOverride.override.agent_name || '—'}</div>
+                
+                <div style={{ color: 'var(--text-muted)', fontWeight: 500 }}>Carrier:</div>
+                <div>{selectedOverride.override.carrier || '—'}</div>
+                
+                <div style={{ color: 'var(--text-muted)', fontWeight: 500 }}>Plan Type:</div>
+                <div>{selectedOverride.override.plan_type || '—'}</div>
+                
+                <div style={{ color: 'var(--text-muted)', fontWeight: 500 }}>Classification:</div>
+                <div>
+                  <span className="badge" style={{
+                    background: 'var(--blue-light)',
+                    color: 'var(--blue)',
+                    padding: '3px 8px',
+                    borderRadius: 4,
+                    fontSize: 11
+                  }}>
+                    {selectedOverride.override.classification || '—'}
+                  </span>
+                </div>
+                
+                <div style={{ color: 'var(--text-muted)', fontWeight: 500 }}>Commission:</div>
+                <div style={{ fontWeight: 600, color: 'var(--green)', fontSize: 16 }}>
+                  {fmt(selectedOverride.override.commission || selectedOverride.override.commission_amount || 0)}
+                </div>
+                
+                <div style={{ color: 'var(--text-muted)', fontWeight: 500 }}>Effective Date:</div>
+                <div>{selectedOverride.override.effective_date ? formatDate(selectedOverride.override.effective_date) : '—'}</div>
+                
+                <div style={{ color: 'var(--text-muted)', fontWeight: 500 }}>Payment Period:</div>
+                <div>{selectedOverride.override.payment_period || '—'}</div>
+                
+                <div style={{ color: 'var(--text-muted)', fontWeight: 500 }}>Policy Number:</div>
+                <div style={{ fontFamily: 'monospace', fontSize: 12 }}>{selectedOverride.override.policy_number || '—'}</div>
+                
+                {selectedOverride.override.payee && (
+                  <>
+                    <div style={{ color: 'var(--text-muted)', fontWeight: 500 }}>Payee:</div>
+                    <div>{selectedOverride.override.payee}</div>
+                  </>
+                )}
+              </div>
+              
+              <div style={{
+                marginTop: 20,
+                padding: 12,
+                background: 'var(--blue-light)',
+                borderRadius: 6,
+                fontSize: 12,
+                color: 'var(--text-muted)'
+              }}>
+                <strong>Production Record:</strong> {selectedOverride.production.client_name} ({selectedOverride.production.carrier})
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="page-header">
         <div className="page-title">🏢 Agency Override Reconciliation</div>
       </div>
@@ -323,7 +445,30 @@ export default function AgencyProductionRecon() {
                       {displayData.map((m, idx) => (
                         <tr key={idx}>
                           <td style={{ fontSize: 13 }}>{m.production.agent_name || '—'}</td>
-                          <td style={{ fontWeight: 500 }}>{m.production.client_name}</td>
+                          <td style={{ fontWeight: 500 }}>
+                            {m.override ? (
+                              <a 
+                                href="#"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  setSelectedOverride({ production: m.production, override: m.override });
+                                }}
+                                style={{
+                                  color: 'var(--blue)',
+                                  textDecoration: 'none',
+                                  cursor: 'pointer',
+                                  borderBottom: '1px dashed var(--blue)'
+                                }}
+                                onMouseOver={(e) => e.target.style.borderBottom = '1px solid var(--blue)'}
+                                onMouseOut={(e) => e.target.style.borderBottom = '1px dashed var(--blue)'}
+                                title="Click to view override statement details"
+                              >
+                                {m.production.client_name}
+                              </a>
+                            ) : (
+                              m.production.client_name
+                            )}
+                          </td>
                           <td>{m.production.carrier}</td>
                           <td style={{ fontSize: 12 }}>{m.production.plan_name || '—'}</td>
                           <td style={{ fontSize: 12 }}>
