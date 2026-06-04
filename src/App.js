@@ -22,9 +22,18 @@ export default function App() {
   const [page, setPage] = useState('dashboard');
   const [pageParams, setPageParams] = useState({});
   const [expandedMenus, setExpandedMenus] = useState({ uploads: false, reconciliation: false });
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    localStorage.getItem('olicomm_sidebar_collapsed') === 'true'
+  );
   const [agencyView, setAgencyView] = useState(
     localStorage.getItem('olicomm_agency_view') || 'The Health Experts Insurance'
   );
+
+  function toggleSidebar() {
+    const newState = !sidebarCollapsed;
+    setSidebarCollapsed(newState);
+    localStorage.setItem('olicomm_sidebar_collapsed', newState.toString());
+  }
 
   function handleAgencySwitch(val) {
     setAgencyView(val);
@@ -144,7 +153,7 @@ export default function App() {
 
   return (
     <div className="app-layout">
-      <aside className="sidebar">
+      <aside className={`sidebar${sidebarCollapsed ? ' collapsed' : ''}`}>
         <div className="sidebar-logo">
           <div className="logo-mark">HE</div>
           <div>
@@ -214,14 +223,43 @@ export default function App() {
           })}
         </nav>
         <div className="sidebar-footer">
-          <div className="user-chip">
-            <div className="user-avatar">{user.name.charAt(0)}</div>
-            <div>
-              <div className="user-name">{user.name.split(' ')[0]}</div>
-              <div className="user-role">{user.role}</div>
-            </div>
-          </div>
-          <button className="logout-btn" onClick={handleLogout}>Logout</button>
+          {!sidebarCollapsed && (
+            <>
+              <div className="user-chip">
+                <div className="user-avatar">{user.name.charAt(0)}</div>
+                <div>
+                  <div className="user-name">{user.name.split(' ')[0]}</div>
+                  <div className="user-role">{user.role}</div>
+                </div>
+              </div>
+              <button className="logout-btn" onClick={handleLogout}>Logout</button>
+            </>
+          )}
+          <button 
+            onClick={toggleSidebar}
+            style={{
+              position: 'absolute',
+              right: sidebarCollapsed ? '50%' : '-12px',
+              top: '50%',
+              transform: sidebarCollapsed ? 'translateX(50%)' : 'translateY(-50%)',
+              background: 'var(--sidebar-bg)',
+              border: '1px solid rgba(255,255,255,0.2)',
+              color: 'rgba(255,255,255,0.95)',
+              width: '24px',
+              height: '24px',
+              borderRadius: '50%',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: '12px',
+              boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+              zIndex: 10
+            }}
+            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            {sidebarCollapsed ? '▶' : '◀'}
+          </button>
         </div>
       </aside>
       <main className="main-content">
