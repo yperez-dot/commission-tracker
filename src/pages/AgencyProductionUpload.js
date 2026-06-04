@@ -188,13 +188,24 @@ export default function AgencyProductionUpload() {
                   Size: {(file.size / 1024).toFixed(1)} KB
                 </div>
               </div>
-              <button
-                className="btn btn-sm"
-                onClick={() => { setFile(null); }}
-                style={{ background: 'var(--red)', color: 'white' }}
-              >
-                Remove
-              </button>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  className="btn btn-sm"
+                  onClick={handleUpload}
+                  disabled={loading}
+                  style={{ background: 'var(--green)', color: 'white', fontWeight: 600 }}
+                >
+                  {loading ? 'Uploading...' : 'Upload'}
+                </button>
+                <button
+                  className="btn btn-sm"
+                  onClick={() => { setFile(null); }}
+                  disabled={loading}
+                  style={{ background: 'var(--red)', color: 'white' }}
+                >
+                  Remove
+                </button>
+              </div>
             </div>
           </div>
         )}
@@ -211,16 +222,7 @@ export default function AgencyProductionUpload() {
           </div>
         )}
 
-        {file && !success && (
-          <div style={{ marginTop: 20, display: 'flex', gap: 12 }}>
-            <button className="btn btn-primary btn-lg" onClick={handleUpload} disabled={loading} style={{ flex: 1 }}>
-              {loading ? '⏳ Uploading...' : '🚀 Upload Agency Production'}
-            </button>
-            <button className="btn btn-secondary" onClick={() => { setFile(null); }} disabled={loading}>
-              Cancel
-            </button>
-          </div>
-        )}
+
 
         <div style={{ marginTop: 30, padding: 16, background: 'var(--blue-light)', borderRadius: 6, borderLeft: '4px solid var(--blue)', color: 'var(--blue-dark)', fontSize: 13, lineHeight: 1.6 }}>
           <div style={{ fontWeight: 600, marginBottom: 8 }}>💡 What is this for?</div>
