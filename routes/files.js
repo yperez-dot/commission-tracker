@@ -1004,8 +1004,11 @@ function parseSolisRows(wb, filename) {
 
     if (!client || commission === 0) continue;
 
+    // Solis-specific payment type mapping
     const classification = commission < 0 ? 'Chargeback'
       : paymentType.includes('chargeback') ? 'Chargeback'
+      : paymentType.includes('agent renewal compensation') ? 'Agent Commission'
+      : paymentType.includes('agent retention') ? 'Renewal'
       : paymentType.includes('initial') ? 'New Business'
       : paymentType.includes('renewal') ? 'Renewal'
       : paymentType.includes('new') ? 'New Business'
