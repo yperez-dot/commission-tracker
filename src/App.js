@@ -162,20 +162,20 @@ export default function App() {
           </div>
         </div>
         {user.role === 'admin' && !user.agency && (
-          <div style={{padding:'8px 10px',borderBottom:'1px solid rgba(74,63,53,0.15)'}}>
-            <div style={{fontSize:9,fontWeight:500,color:'rgba(74,63,53,0.55)',textTransform:'uppercase',letterSpacing:'0.7px',marginBottom:5}}>Viewing</div>
+          <div style={{padding:'10px 12px',borderBottom:'1px solid rgba(255,255,255,0.1)'}}>
+            <div style={{fontSize:10,fontWeight:500,color:'rgba(255,255,255,0.6)',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:6}}>Viewing</div>
             <select
               value={agencyView}
               onChange={e => handleAgencySwitch(e.target.value)}
               style={{
-                width:'100%', padding:'5px 8px', borderRadius:6, fontSize:11,
-                background:'rgba(74,63,53,0.08)', color:'#4A3F35',
-                border:'0.5px solid rgba(74,63,53,0.2)', cursor:'pointer',
+                width:'100%', padding:'6px 8px', borderRadius:6, fontSize:12,
+                background:'rgba(255,255,255,0.1)', color:'rgba(255,255,255,0.95)',
+                border:'1px solid rgba(255,255,255,0.2)', cursor:'pointer',
                 outline:'none'
               }}
             >
-              <option value="The Health Experts Insurance" style={{background:'#F7F2ED'}}>Health Experts</option>
-              <option value="Broker Society Insurance" style={{background:'#F7F2ED'}}>Broker Society</option>
+              <option value="The Health Experts Insurance" style={{background:'#3D2B1F',color:'#fff'}}>THEI</option>
+              <option value="Broker Society Insurance" style={{background:'#3D2B1F',color:'#fff'}}>BSI</option>
             </select>
           </div>
         )}
@@ -240,22 +240,22 @@ export default function App() {
             style={{
               position: sidebarCollapsed ? 'fixed' : 'absolute',
               left: sidebarCollapsed ? '16px' : 'auto',
-              right: sidebarCollapsed ? 'auto' : '-16px',
-              top: sidebarCollapsed ? '16px' : '50%',
-              transform: sidebarCollapsed ? 'none' : 'translateY(-50%)',
-              background: sidebarCollapsed ? '#C9B5A7' : 'var(--sidebar-bg)',
-              border: sidebarCollapsed ? '2px solid #A89589' : '1px solid rgba(255,255,255,0.2)',
-              color: sidebarCollapsed ? '#3D2B1F' : 'rgba(255,255,255,0.95)',
-              width: '40px',
-              height: '40px',
-              borderRadius: '8px',
+              right: sidebarCollapsed ? 'auto' : '8px',
+              top: sidebarCollapsed ? '16px' : '12px',
+              transform: 'none',
+              background: sidebarCollapsed ? '#C9B5A7' : 'rgba(255,255,255,0.08)',
+              border: sidebarCollapsed ? '2px solid #A89589' : '1px solid rgba(255,255,255,0.15)',
+              color: sidebarCollapsed ? '#3D2B1F' : 'rgba(255,255,255,0.8)',
+              width: sidebarCollapsed ? '40px' : '28px',
+              height: sidebarCollapsed ? '40px' : '28px',
+              borderRadius: sidebarCollapsed ? '8px' : '6px',
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              fontSize: '18px',
+              fontSize: sidebarCollapsed ? '18px' : '16px',
               fontWeight: 'bold',
-              boxShadow: sidebarCollapsed ? '0 4px 12px rgba(0,0,0,0.25)' : '0 2px 8px rgba(0,0,0,0.15)',
+              boxShadow: sidebarCollapsed ? '0 4px 12px rgba(0,0,0,0.25)' : 'none',
               zIndex: 9999,
               transition: 'all 0.2s ease'
             }}
@@ -263,12 +263,16 @@ export default function App() {
               if (sidebarCollapsed) {
                 e.target.style.background = '#A89589';
                 e.target.style.transform = 'scale(1.05)';
+              } else {
+                e.target.style.background = 'rgba(255,255,255,0.15)';
               }
             }}
             onMouseOut={(e) => {
               if (sidebarCollapsed) {
                 e.target.style.background = '#C9B5A7';
                 e.target.style.transform = 'scale(1)';
+              } else {
+                e.target.style.background = 'rgba(255,255,255,0.08)';
               }
             }}
             title={sidebarCollapsed ? 'Open Sidebar' : 'Close Sidebar'}
