@@ -110,24 +110,21 @@ export default function AgencyProductionRecon() {
       // These are in commission_records with carrier = 'BSI' or 'NHP' or specific override indicators
       const overrideData = await apiFetch('/records?limit=5000');
       
-      // Debug: Show what carriers we have
+      // Debug: Show what carriers and classifications we have
       const allCarriers = [...new Set((overrideData.records || []).map(r => r.carrier))].sort();
+      const allClassifications = [...new Set((overrideData.records || []).map(r => r.classification))].sort();
       console.log('📊 All carriers in commission_records:', allCarriers);
+      console.log('🏷️ All classifications:', allClassifications);
       
-      // Filter to only override statements (BSI/NHP)
+      // Filter to only override statements (by classification, not carrier!)
       const overrideStatements = (overrideData.records || []).filter(r => {
-        const carrier = r.carrier?.toLowerCase() || '';
-        const isOverride = carrier.includes('bsi') || 
-                          carrier.includes('nhp') ||
-                          carrier.includes('override') ||
-                          carrier.includes('brokers society') ||
-                          carrier.includes('brokers alliance') ||
-                          carrier.includes('national health');
-        return isOverride;
+        const classification = r.classification?.toLowerCase() || '';
+        return classification.includes('agency override') || classification.includes('override');
       });
       
       console.log('✅ Override records found:', overrideStatements.length);
       console.log('📋 Override carriers:', [...new Set(overrideStatements.map(r => r.carrier))].sort());
+      console.log('📋 Override classifications:', [...new Set(overrideStatements.map(r => r.classification))].sort());
       
       setOverrides(overrideStatements);
     } catch (err) {
@@ -249,7 +246,7 @@ export default function AgencyProductionRecon() {
     <div>
       <div className="page-header">
         <div className="page-title">🏢 Agency Override Reconciliation</div>
-        <div className="page-sub">Compare agency production (Hector's reports) vs BSI/NHP override payments</div>
+        <div className="page-sub">Compare agency production (Hector's reports) vs override commissions (filtered by classification="Agency Override")</div>
       </div>
 
       {/* Debug Info Panel */}
