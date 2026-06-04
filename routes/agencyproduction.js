@@ -79,8 +79,8 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     
     // Check if we have required columns
     const firstRow = rows[0];
-    const hasAgent = firstRow.AGENT || firstRow['Agent Name'] || firstRow.Agent_Name || firstRow.Agent_First_Name || firstRow.AgentName || firstRow.agent || firstRow['agent name'];
-    const hasMember = firstRow.MEMBER || firstRow['Member Name'] || firstRow.Member_First_Name || firstRow.Member_Last_Name || firstRow['First Name'] || firstRow['Last Name'] || firstRow.Beneficiary_First_Name || firstRow.Beneficiary_Last_Name || firstRow.FIRST || firstRow.LAST || firstRow.FullName || firstRow['Full Name'] || firstRow.member || firstRow['member name'];
+    const hasAgent = firstRow.AGENT || firstRow['Agent Name'] || firstRow.Agent_Name || firstRow.Agent_First_Name || firstRow.AgentName || firstRow.Current_Agent_Name || firstRow.agent || firstRow['agent name'];
+    const hasMember = firstRow.MEMBER || firstRow['Member Name'] || firstRow.Member_First_Name || firstRow.Member_Last_Name || firstRow['First Name'] || firstRow['Last Name'] || firstRow.Beneficiary_First_Name || firstRow.Beneficiary_Last_Name || firstRow.FIRST || firstRow.LAST || firstRow.FullName || firstRow['Full Name'] || firstRow.Application_Application_Name || firstRow.member || firstRow['member name'];
     
     if (!hasAgent && !hasMember) {
       return res.status(400).json({ 
@@ -126,8 +126,8 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     for (const row of rows) {
       // Handle different agent name formats
       let agentName = '';
-      if (row.AGENT || row['Agent Name'] || row.Agent_Name || row.AgentName) {
-        agentName = (row.AGENT || row['Agent Name'] || row.Agent_Name || row.AgentName || '').trim().substring(0, 255);
+      if (row.AGENT || row['Agent Name'] || row.Agent_Name || row.AgentName || row.Current_Agent_Name) {
+        agentName = (row.AGENT || row['Agent Name'] || row.Agent_Name || row.AgentName || row.Current_Agent_Name || '').trim().substring(0, 255);
       } else if (row.Agent_First_Name || row.Agent_Last_Name) {
         // Anthem format: separate agent first/last names
         const firstName = (row.Agent_First_Name || '').trim();
@@ -140,7 +140,17 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       
       // Handle different member name formats
       let clientName = '';
-      if (row.FullName || row['Full Name']) {
+      if (row.Application_Application_Name) {
+        // HealthSpring format: "LAST - FIRST - DATE" - strip the date
+        const fullValue = String(row.Application_Application_Name || '').trim();
+        const parts = fullValue.split(' - ');
+        if (parts.length >= 2) {
+          // Take first two parts (LAST - FIRST), skip the date
+          clientName = `${parts[1]} ${parts[0]}`.trim().substring(0, 255);
+        } else {
+          clientName = fullValue.substring(0, 255);
+        }
+      } else if (row.FullName || row['Full Name']) {
         // Devoted format: FullName column
         clientName = (row.FullName || row['Full Name'] || '').trim().substring(0, 255);
       } else if (row.MEMBER || row['Member Name']) {
