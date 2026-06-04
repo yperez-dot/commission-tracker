@@ -187,15 +187,39 @@ export default function AllData({ user, initialFilters = {} }) {
   const grandTotal = records.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0);
   const hasFilters = selAgents.length || selCarriers.length || selPeriods.length || selTypes.length || selPayees.length || search.trim();
 
-  function exportCSV() {
-    const headers = ['Agent', 'Carrier', 'Client', 'Policy #', 'Effective Date', 'Premium', 'Comm Value', 'Type', 'Period', 'Payee', 'MGA'];
-    const rows = records.map(r => [r.agent_name, formatCarrier(r.carrier), r.client_full_name, r.policy_number, r.effective_date, r.premium, r.commission, r.classification, r.payment_period, r.payee, r.mga]);
-    const csv = [headers, ...rows].map(r => r.map(v => `"${String(v||'').replace(/"/g,'""')}"`).join(',')).join('\n');
-    const blob = new Blob([csv], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = `commissions_export.csv`; a.click();
-    URL.revokeObjectURL(url);
+  async function exportCSV() {
+    try {
+      // Build same params as loadRecords but without limit/offset to get ALL records
+      const params = new URLSearchParams();
+      if (selAgents.length === 1) params.set('agent', selAgents[0]);
+      if (selCarriers.length === 1) params.set('carrier', selCarriers[0]);
+      if (selPeriods.length === 1) params.set('period', selPeriods[0]);
+      if (selTypes.length === 1) params.set('classification', selTypes[0]);
+      if (selAgents.length > 1) params.set('agents', selAgents.join(','));
+      if (selCarriers.length > 1) params.set('carriers', selCarriers.join(','));
+      if (selPeriods.length > 1) params.set('periods', selPeriods.join(','));
+      if (selTypes.length > 1) params.set('classifications', selTypes.join(','));
+      if (selPayees.length === 1) params.set('payee', selPayees[0]);
+      if (search.trim()) params.set('search', search.trim());
+      
+      // Fetch ALL records (no limit)
+      const data = await apiFetch(`/records?${params}`);
+      const allRecords = data.records || [];
+      
+      // Build CSV with all records
+      const headers = ['Agent', 'Carrier', 'Client', 'Policy #', 'Effective Date', 'Premium', 'Comm Value', 'Type', 'Period', 'Payee', 'MGA'];
+      const rows = allRecords.map(r => [r.agent_name, formatCarrier(r.carrier), r.client_full_name, r.policy_number, r.effective_date, r.premium, r.commission, r.classification, r.payment_period, r.payee, r.mga]);
+      const csv = [headers, ...rows].map(r => r.map(v => `"${String(v||'').replace(/"/g,'""')}"`).join(',')).join('\n');
+      
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `commissions_export_${new Date().toISOString().split('T')[0]}.csv`; a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error('Export error:', e);
+      alert('Error exporting data. Please try again.');
+    }
   }
 
   function badgeClass(c) {

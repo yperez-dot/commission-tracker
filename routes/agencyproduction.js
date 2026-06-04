@@ -5,7 +5,12 @@ const XLSX = require('xlsx');
 const { getPool } = require('../db/database');
 const { requireAuth } = require('./auth');
 
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({ 
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024 // 10 MB limit
+  }
+});
 
 // Helper: Convert Excel serial date to ISO date string
 function excelDateToISO(excelDate) {
