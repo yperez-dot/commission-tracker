@@ -1001,33 +1001,62 @@ function parseSolisRows(wb, filename) {
     const client = String(row['Member Name'] || row['MemberName'] || '').trim();
     const agent = normalizeAgentName(String(row['Agent Name'] || row['AgentName'] || '').trim());
     const commission = parseFloat(row['Payment Amt'] || row['PaymentAmt']) || 0;
-    const effectiveDate = formatDate(row['Commission Eff. Date'] || row['CommissionEffectiveDate'] || row['Member Enrollment Date'] || row['MemberEnrollmentDate']);
+    const commissionEffDate = row['Commission Eff. Date'] || row['CommissionEffectiveDate'];
+    const memberEnrollDate = row['Member Enrollment Date'] || row['MemberEnrollmentDate'];
+    const effectiveDate = formatDate(commissionEffDate);
     // Normalize payment type: lowercase and collapse multiple spaces
     const paymentType = String(row['Payment Type'] || row['PaymentType'] || '').toLowerCase().replace(/\s+/g, ' ').trim();
     const policyNumber = String(row['Plan Member ID'] || row['PlanMemberID'] || '').trim();
 
     if (!client || commission === 0) continue;
 
-    // Solis-specific payment type mapping
+    // Determine if New Business vs Renewal by comparing enrollment date to commission date
+    let isNewBusiness = false;
+    if (memberEnrollDate && commissionEffDate) {
+      // Parse enrollment date (format: YYYYMMDD like 20260501)
+      let enrollDate;
+      const enrollStr = String(memberEnrollDate);
+      if (enrollStr.length === 8) {
+        const y = parseInt(enrollStr.substring(0, 4));
+        const m = parseInt(enrollStr.substring(4, 6));
+        const d = parseInt(enrollStr.substring(6, 8));
+        enrollDate = new Date(Date.UTC(y, m - 1, d));
+      } else {
+        enrollDate = new Date(memberEnrollDate);
+      }
+      
+      const commDate = typeof commissionEffDate === 'number' 
+        ? new Date(Date.UTC(1899, 11, 30) + commissionEffDate * 86400000)
+        : new Date(commissionEffDate);
+      
+      if (!isNaN(enrollDate.getTime()) && !isNaN(commDate.getTime())) {
+        const enrollYM = enrollDate.getUTCFullYear() * 100 + (enrollDate.getUTCMonth() + 1);
+        const commYM = commDate.getUTCFullYear() * 100 + (commDate.getUTCMonth() + 1);
+        isNewBusiness = (enrollYM === commYM);
+      }
+    }
+
+    // Solis/Doctors payment type mapping
+    // Use enrollment vs commission date comparison to determine New Business vs Renewal
     const classification = commission < 0 ? 'Chargeback'
       : paymentType.includes('chargeback') ? 'Chargeback'
-      : paymentType.includes('agent renewal compensation') ? 'Agent Commission'
+      : isNewBusiness ? 'New Business'
       : paymentType.includes('agent retention') ? 'Renewal'
+      : paymentType.includes('agent renewal compensation') ? 'Renewal'
       : paymentType.includes('initial') ? 'New Business'
       : paymentType.includes('renewal') ? 'Renewal'
       : paymentType.includes('new') ? 'New Business'
-      : 'Agency Override';
+      : 'Renewal';
 
-    const effRaw = row['Commission Eff. Date'] || row['CommissionEffectiveDate'];
     let period = '';
-    if (effRaw) {
+    if (commissionEffDate) {
       let d;
       // Handle Excel serial date numbers (e.g., 46143 = days since 1900)
-      if (typeof effRaw === 'number') {
+      if (typeof commissionEffDate === 'number') {
         // Convert Excel serial to JS Date (Excel epoch is Dec 30, 1899)
-        d = new Date(Date.UTC(1899, 11, 30) + effRaw * 86400000);
+        d = new Date(Date.UTC(1899, 11, 30) + commissionEffDate * 86400000);
       } else {
-        d = new Date(effRaw);
+        d = new Date(commissionEffDate);
       }
       if (!isNaN(d.getTime())) {
         period = String(d.getUTCFullYear()) + String(d.getUTCMonth() + 1).padStart(2, '0');
