@@ -2,10 +2,11 @@ import React, { useState, useEffect } from 'react';
 import { apiFetch, getToken } from '../api';
 
 export default function AgencyProductionUpload() {
-  const [file, setFile] = useState(null);
+  const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
+  const [uploadResults, setUploadResults] = useState([]);
   const [dragOver, setDragOver] = useState(false);
   const [uploadHistory, setUploadHistory] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
@@ -29,70 +30,102 @@ export default function AgencyProductionUpload() {
     }
   }
 
-  async function handleFileSelect(selectedFile) {
-    const filename = selectedFile.name.toLowerCase();
-    if (!filename.endsWith('.xlsx') && !filename.endsWith('.xls')) {
-      setError('❌ File must be Excel format (.xlsx or .xls)');
-      return;
+  async function handleFileSelect(selectedFiles) {
+    const fileList = Array.isArray(selectedFiles) ? selectedFiles : [selectedFiles];
+    const validFiles = [];
+    
+    for (const file of fileList) {
+      const filename = file.name.toLowerCase();
+      if (filename.endsWith('.xlsx') || filename.endsWith('.xls')) {
+        // Check for duplicates
+        if (!files.some(f => f.name === file.name && f.size === file.size)) {
+          validFiles.push(file);
+        }
+      }
     }
-    setFile(selectedFile);
+    
+    if (validFiles.length > 0) {
+      setFiles([...files, ...validFiles]);
+      setError(null);
+      setSuccess(null);
+      setUploadResults([]);
+    } else {
+      setError('❌ Only Excel files (.xlsx or .xls) are allowed');
+    }
+  }
+  
+  function handleRemoveFile(fileToRemove) {
+    setFiles(files.filter(f => f !== fileToRemove));
     setError(null);
     setSuccess(null);
+    setUploadResults([]);
   }
 
   async function handleUpload() {
-    if (!file) {
-      setError('❌ Please select a file');
+    if (files.length === 0) {
+      setError('❌ Please select at least one file');
       return;
     }
     setLoading(true);
     setError(null);
     setSuccess(null);
+    setUploadResults([]);
 
-    try {
-      const formData = new FormData();
-      formData.append('file', file);
-
-      const uploadUrl = `${API_URL}/api/agency-production/upload`;
-      
-      const response = await fetch(uploadUrl, {
-        method: 'POST',
-        body: formData,
-        headers: {
-          'Authorization': `Bearer ${getToken()}`
-        }
-      });
-
-      const text = await response.text();
-      
-      if (!response.ok) {
-        let errorMsg = 'Upload failed';
-        try {
-          const errorData = JSON.parse(text);
-          errorMsg = errorData.error || errorData.message || text;
-        } catch (e) {
-          errorMsg = text || 'Upload failed';
-        }
-        throw new Error(errorMsg);
-      }
-
-      let result = {};
+    const results = [];
+    
+    for (const file of files) {
       try {
-        result = JSON.parse(text);
-      } catch (e) {
-        result = { message: text };
+        const formData = new FormData();
+        formData.append('file', file);
+
+        const uploadUrl = `${API_URL}/api/agency-production/upload`;
+        
+        const response = await fetch(uploadUrl, {
+          method: 'POST',
+          body: formData,
+          headers: {
+            'Authorization': `Bearer ${getToken()}`
+          }
+        });
+
+        const text = await response.text();
+        
+        if (!response.ok) {
+          let errorMsg = 'Upload failed';
+          try {
+            const errorData = JSON.parse(text);
+            errorMsg = errorData.error || errorData.message || text;
+          } catch (e) {
+            errorMsg = text || 'Upload failed';
+          }
+          results.push({ file: file.name, success: false, message: errorMsg });
+        } else {
+          let result = {};
+          try {
+            result = JSON.parse(text);
+          } catch (e) {
+            result = { message: text };
+          }
+          results.push({ file: file.name, success: true, message: result.message || 'Upload successful!' });
+        }
+      } catch (err) {
+        results.push({ file: file.name, success: false, message: err.message });
       }
-      
-      setSuccess(`✅ ${result.message || 'Upload successful!'}`);
-      setFile(null);
-      
-      // Reload history
-      await loadUploadHistory();
-    } catch (err) {
-      setError('❌ Error: ' + err.message);
-    } finally {
-      setLoading(false);
     }
+    
+    setUploadResults(results);
+    const successCount = results.filter(r => r.success).length;
+    const failCount = results.filter(r => !r.success).length;
+    
+    if (successCount > 0) {
+      setSuccess(`✅ ${successCount} file(s) uploaded successfully${failCount > 0 ? `, ${failCount} failed` : ''}`);
+      setFiles([]);
+      await loadUploadHistory();
+    } else {
+      setError(`❌ All ${failCount} file(s) failed to upload`);
+    }
+    
+    setLoading(false);
   }
 
   async function handleDeleteBatch(batch) {
@@ -125,14 +158,6 @@ export default function AgencyProductionUpload() {
     setDragOver(false);
   }
 
-  function handleDrop(e) {
-    e.preventDefault();
-    setDragOver(false);
-    if (e.dataTransfer.files[0]) {
-      handleFileSelect(e.dataTransfer.files[0]);
-    }
-  }
-
   function handleCardClick() {
     // Trigger the hidden file input when clicking the card
     document.getElementById('agency-file-input').click();
@@ -163,60 +188,93 @@ export default function AgencyProductionUpload() {
         >
           <div style={{ fontSize: 48, marginBottom: 12 }}>📁</div>
           <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>
-            Drag & drop your agency production Excel file here
+            Drag & drop your agency production Excel files here
           </div>
           <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 20 }}>
-            Or click anywhere to select a file
+            Or click anywhere to select files (multiple files supported)
           </div>
           <input
             id="agency-file-input"
             type="file"
             accept=".xlsx,.xls"
-            onChange={(e) => e.target.files[0] && handleFileSelect(e.target.files[0])}
+            multiple
+            onChange={(e) => e.target.files.length > 0 && handleFileSelect(Array.from(e.target.files))}
             style={{ display: 'none' }}
           />
         </div>
 
-        {file && (
-          <div className="card" style={{ marginTop: 20, background: 'var(--blue-light)', border: '1px solid var(--blue)' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--blue-dark)' }}>
-                  ✅ Selected: {file.name}
+        {files.length > 0 && (
+          <div className="card" style={{ marginTop: 20 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span>📄 Selected Files ({files.length})</span>
+              <button
+                className="btn btn-sm"
+                onClick={handleUpload}
+                disabled={loading}
+                style={{ background: 'var(--green)', color: 'white', fontWeight: 600 }}
+              >
+                {loading ? `Uploading ${files.length} file(s)...` : `Upload All (${files.length})`}
+              </button>
+            </div>
+            {files.map((file, index) => (
+              <div key={index} style={{ 
+                display: 'flex', 
+                justifyContent: 'space-between', 
+                alignItems: 'center',
+                padding: '10px',
+                background: 'var(--blue-light)',
+                border: '1px solid var(--blue)',
+                borderRadius: '6px',
+                marginTop: index > 0 ? '8px' : '0'
+              }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--blue-dark)' }}>
+                    {file.name}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--blue)', marginTop: 2 }}>
+                    {(file.size / 1024).toFixed(1)} KB
+                  </div>
                 </div>
-                <div style={{ fontSize: 12, color: 'var(--blue)', marginTop: 4 }}>
-                  Size: {(file.size / 1024).toFixed(1)} KB
-                </div>
-              </div>
-              <div style={{ display: 'flex', gap: 8 }}>
                 <button
                   className="btn btn-sm"
-                  onClick={handleUpload}
+                  onClick={() => handleRemoveFile(file)}
                   disabled={loading}
-                  style={{ background: 'var(--green)', color: 'white', fontWeight: 600 }}
-                >
-                  {loading ? 'Uploading...' : 'Upload'}
-                </button>
-                <button
-                  className="btn btn-sm"
-                  onClick={() => { setFile(null); }}
-                  disabled={loading}
-                  style={{ background: 'var(--red)', color: 'white' }}
+                  style={{ background: 'var(--red)', color: 'white', fontSize: '11px', padding: '4px 8px' }}
                 >
                   Remove
                 </button>
               </div>
-            </div>
+            ))}
           </div>
         )}
 
-        {error && (
+        {uploadResults.length > 0 && (
+          <div className="card" style={{ marginTop: 20 }}>
+            <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12 }}>Upload Results</div>
+            {uploadResults.map((result, index) => (
+              <div key={index} style={{
+                padding: '8px 12px',
+                marginTop: index > 0 ? '6px' : '0',
+                background: result.success ? 'var(--green-light)' : 'var(--red-light)',
+                border: `1px solid ${result.success ? 'var(--green)' : 'var(--red)'}`,
+                borderRadius: '4px',
+                fontSize: '12px',
+                color: result.success ? 'var(--green-dark)' : 'var(--red-dark)'
+              }}>
+                <div style={{ fontWeight: 600 }}>{result.success ? '✅' : '❌'} {result.file}</div>
+                <div style={{ marginTop: '4px', opacity: 0.8 }}>{result.message}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {error && !uploadResults.length && (
           <div className="card" style={{ marginTop: 20, background: 'var(--red-light)', border: '1px solid var(--red)', color: 'var(--red-dark)' }}>
             {error}
           </div>
         )}
 
-        {success && (
+        {success && !uploadResults.length && (
           <div className="card" style={{ marginTop: 20, background: 'var(--green-light)', border: '1px solid var(--green)', color: 'var(--green-dark)', fontWeight: 500 }}>
             {success}
           </div>

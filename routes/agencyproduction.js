@@ -79,13 +79,13 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     
     // Check if we have required columns
     const firstRow = rows[0];
-    const hasAgent = firstRow.AGENT || firstRow['Agent Name'] || firstRow.Agent_Name || firstRow.agent || firstRow['agent name'];
-    const hasMember = firstRow.MEMBER || firstRow['Member Name'] || firstRow.Member_First_Name || firstRow.Member_Last_Name || firstRow.member || firstRow['member name'];
+    const hasAgent = firstRow.AGENT || firstRow['Agent Name'] || firstRow.Agent_Name || firstRow.Agent_First_Name || firstRow.AgentName || firstRow.agent || firstRow['agent name'];
+    const hasMember = firstRow.MEMBER || firstRow['Member Name'] || firstRow.Member_First_Name || firstRow.Member_Last_Name || firstRow['First Name'] || firstRow['Last Name'] || firstRow.Beneficiary_First_Name || firstRow.Beneficiary_Last_Name || firstRow.FIRST || firstRow.LAST || firstRow.FullName || firstRow['Full Name'] || firstRow.member || firstRow['member name'];
     
     if (!hasAgent && !hasMember) {
       return res.status(400).json({ 
         error: 'Excel file is missing required columns',
-        details: `Expected columns like AGENT, Agent_Name, MEMBER, Member_First_Name, etc. Found: ${Object.keys(firstRow).slice(0, 10).join(', ')}...`
+        details: `Expected columns like AGENT, Agent_First_Name, MEMBER, Beneficiary_First_Name, etc. Found: ${Object.keys(firstRow).slice(0, 10).join(', ')}...`
       });
     }
 
@@ -99,6 +99,13 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     else if (filename.includes('uhc') || filename.includes('united')) carrier = 'UnitedHealthcare';
     else if (filename.includes('aetna')) carrier = 'Aetna';
     else if (filename.includes('careplus')) carrier = 'CarePlus';
+    else if (filename.includes('anthem')) carrier = 'Anthem';
+    else if (filename.includes('freedom')) carrier = 'Freedom';
+    else if (filename.includes('devoted')) carrier = 'Devoted';
+    else if (filename.includes('healthspring')) carrier = 'HealthSpring';
+    else if (filename.includes('oscar')) carrier = 'Oscar';
+    else if (filename.includes('wellcare')) carrier = 'WellCare';
+    else if (filename.includes('cigna')) carrier = 'Cigna';
 
     let inserted = 0;
     let skipped = 0;
@@ -118,19 +125,48 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     // Process each row
     for (const row of rows) {
       // Handle different agent name formats
-      const agentName = (row.AGENT || row['Agent Name'] || row.Agent_Name || row['Agent_Name'] || '').substring(0, 255);
+      let agentName = '';
+      if (row.AGENT || row['Agent Name'] || row.Agent_Name || row.AgentName) {
+        agentName = (row.AGENT || row['Agent Name'] || row.Agent_Name || row.AgentName || '').trim().substring(0, 255);
+      } else if (row.Agent_First_Name || row.Agent_Last_Name) {
+        // Anthem format: separate agent first/last names
+        const firstName = (row.Agent_First_Name || '').trim();
+        const lastName = (row.Agent_Last_Name || '').trim();
+        agentName = `${firstName} ${lastName}`.trim().substring(0, 255);
+      }
+      
+      // Skip if no agent name found
+      if (!agentName) continue;
       
       // Handle different member name formats
       let clientName = '';
-      if (row.MEMBER || row['Member Name']) {
-        clientName = (row.MEMBER || row['Member Name'] || '').substring(0, 255);
+      if (row.FullName || row['Full Name']) {
+        // Devoted format: FullName column
+        clientName = (row.FullName || row['Full Name'] || '').trim().substring(0, 255);
+      } else if (row.MEMBER || row['Member Name']) {
+        clientName = (row.MEMBER || row['Member Name'] || '').trim().substring(0, 255);
       } else if (row.Member_First_Name || row.Member_Last_Name) {
-        // UHC format: separate first/last names
+        // UHC Medicare Advantage format: separate first/last names (underscores)
         const firstName = (row.Member_First_Name || '').trim();
         const lastName = (row.Member_Last_Name || '').trim();
         clientName = `${firstName} ${lastName}`.trim().substring(0, 255);
+      } else if (row['First Name'] || row['Last Name']) {
+        // UHC Med Sup format: separate first/last names (spaces)
+        const firstName = (row['First Name'] || '').trim();
+        const lastName = (row['Last Name'] || '').trim();
+        clientName = `${firstName} ${lastName}`.trim().substring(0, 255);
+      } else if (row.Beneficiary_First_Name || row.Beneficiary_Last_Name) {
+        // Anthem format: beneficiary first/last names
+        const firstName = (row.Beneficiary_First_Name || '').trim();
+        const lastName = (row.Beneficiary_Last_Name || '').trim();
+        clientName = `${firstName} ${lastName}`.trim().substring(0, 255);
+      } else if (row.FIRST || row.LAST) {
+        // Freedom format: FIRST + LAST columns
+        const firstName = (row.FIRST || '').trim();
+        const lastName = (row.LAST || '').trim();
+        clientName = `${firstName} ${lastName}`.trim().substring(0, 255);
       }
-      const planName = (row.PLAN_NAME || row['Plan Name'] || row.Plan_Name || '').substring(0, 255);
+      const planName = (row.PLAN_NAME || row['Plan Name'] || row.Plan_Name || row.PlanName || '').trim().substring(0, 255);
       const policyNumber = (row.DOC_ID || row['Policy Number'] || row.Application_ID || row.HIC || '').toString().substring(0, 100);
       const statusValue = (row.Status || row.App_Status || row.Consumer_Status || '').substring(0, 50);
       const policyType = (row.PRODUCT_DESCRIPTION || row['Policy Type'] || row.Product || row.SubProduct || '').substring(0, 50);
@@ -139,7 +175,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       const county = (row.COUNTY || row.County || row.App_County || '').substring(0, 100);
 
       // Parse effective date (handles Excel serial dates)
-      const effectiveDateValue = row.EFF_DT || row['Effective Date'] || row.Effective_Date;
+      const effectiveDateValue = row.EFF_DT || row['Effective Date'] || row.Effective_Date || row.StartDate;
       const effectiveDate = excelDateToISO(effectiveDateValue);
 
       // Parse transaction date (handles Excel serial dates)
