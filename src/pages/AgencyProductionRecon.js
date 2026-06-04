@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../api';
 import { formatCarrier } from '../utils/formatCarrier';
 
+// Version: 2026-06-04-19:03 - HealthSun consolidation fix
+
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
