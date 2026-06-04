@@ -1002,7 +1002,8 @@ function parseSolisRows(wb, filename) {
     const agent = normalizeAgentName(String(row['Agent Name'] || row['AgentName'] || '').trim());
     const commission = parseFloat(row['Payment Amt'] || row['PaymentAmt']) || 0;
     const effectiveDate = formatDate(row['Commission Eff. Date'] || row['CommissionEffectiveDate'] || row['Member Enrollment Date'] || row['MemberEnrollmentDate']);
-    const paymentType = String(row['Payment Type'] || row['PaymentType'] || '').toLowerCase();
+    // Normalize payment type: lowercase and collapse multiple spaces
+    const paymentType = String(row['Payment Type'] || row['PaymentType'] || '').toLowerCase().replace(/\s+/g, ' ').trim();
     const policyNumber = String(row['Plan Member ID'] || row['PlanMemberID'] || '').trim();
 
     if (!client || commission === 0) continue;
@@ -1020,9 +1021,16 @@ function parseSolisRows(wb, filename) {
     const effRaw = row['Commission Eff. Date'] || row['CommissionEffectiveDate'];
     let period = '';
     if (effRaw) {
-      const d = new Date(effRaw);
-      if (!isNaN(d)) {
-        period = String(d.getFullYear()) + String(d.getMonth() + 1).padStart(2, '0');
+      let d;
+      // Handle Excel serial date numbers (e.g., 46143 = days since 1900)
+      if (typeof effRaw === 'number') {
+        // Convert Excel serial to JS Date (Excel epoch is Dec 30, 1899)
+        d = new Date(Date.UTC(1899, 11, 30) + effRaw * 86400000);
+      } else {
+        d = new Date(effRaw);
+      }
+      if (!isNaN(d.getTime())) {
+        period = String(d.getUTCFullYear()) + String(d.getUTCMonth() + 1).padStart(2, '0');
       }
     }
 
