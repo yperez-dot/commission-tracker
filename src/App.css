@@ -78,7 +78,7 @@ input, select, textarea { font-family: inherit; font-size: 15px; }
 }
 
 .logo-name { font-size: 15px; font-weight: 600; color: #fff; line-height: 1.2; }
-.logo-sub { font-size: 14px; color: rgba(255,255,255,0.95); font-weight: 500; }
+.logo-sub { font-size: 14px; color: #fff; font-weight: 500; }
 
 .sidebar-nav { flex: 1; padding: 10px 8px; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
 
@@ -90,9 +90,9 @@ input, select, textarea { font-family: inherit; font-size: 15px; }
   border-radius: 6px;
   border: none;
   background: transparent;
-  color: rgba(255,255,255,0.95);
+  color: #fff;
   font-size: 15px;
-  font-weight: 400;
+  font-weight: 500;
   cursor: pointer;
   text-align: left;
   width: 100%;
