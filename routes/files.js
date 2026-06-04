@@ -983,7 +983,9 @@ function parseSolisRows(wb, filename) {
   for (let r = range.s.r; r <= Math.min(range.s.r + 10, range.e.r); r++) {
     for (let c = range.s.c; c <= range.e.c; c++) {
       const cell = ws[XLSX.utils.encode_cell({ r, c })];
-      if (cell && String(cell.v || '').toLowerCase().includes('member name')) {
+      const cellValue = String(cell?.v || '').toLowerCase().replace(/\s+/g, '');
+      // Match both "Member Name" and "MemberName" formats
+      if (cell && cellValue.includes('membername')) {
         headerRow = r;
         break;
       }
@@ -995,12 +997,13 @@ function parseSolisRows(wb, filename) {
   const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true, range: headerRow });
 
   for (const row of rows) {
-    const client = String(row['Member Name'] || '').trim();
-    const agent = normalizeAgentName(String(row['Agent Name'] || '').trim());
-    const commission = parseFloat(row['Payment Amt']) || 0;
-    const effectiveDate = formatDate(row['Commission Eff. Date'] || row['Member Enrollment Date']);
-    const paymentType = String(row['Payment Type'] || '').toLowerCase();
-    const policyNumber = String(row['Plan Member ID'] || '').trim();
+    // Handle both Solis (with spaces) and Doctors (no spaces) column formats
+    const client = String(row['Member Name'] || row['MemberName'] || '').trim();
+    const agent = normalizeAgentName(String(row['Agent Name'] || row['AgentName'] || '').trim());
+    const commission = parseFloat(row['Payment Amt'] || row['PaymentAmt']) || 0;
+    const effectiveDate = formatDate(row['Commission Eff. Date'] || row['CommissionEffectiveDate'] || row['Member Enrollment Date'] || row['MemberEnrollmentDate']);
+    const paymentType = String(row['Payment Type'] || row['PaymentType'] || '').toLowerCase();
+    const policyNumber = String(row['Plan Member ID'] || row['PlanMemberID'] || '').trim();
 
     if (!client || commission === 0) continue;
 
@@ -1014,7 +1017,7 @@ function parseSolisRows(wb, filename) {
       : paymentType.includes('new') ? 'New Business'
       : 'Agency Override';
 
-    const effRaw = row['Commission Eff. Date'];
+    const effRaw = row['Commission Eff. Date'] || row['CommissionEffectiveDate'];
     let period = '';
     if (effRaw) {
       const d = new Date(effRaw);
