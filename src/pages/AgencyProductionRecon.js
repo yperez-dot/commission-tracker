@@ -349,7 +349,7 @@ export default function AgencyProductionRecon() {
                   📊 Override Statement Details
                 </h2>
                 <p style={{ margin: '4px 0 0', fontSize: 13, color: 'var(--text-muted)' }}>
-                  Matched BSI/NHP commission record
+                  Matched BSI commission record
                 </p>
               </div>
               <button 
@@ -585,7 +585,7 @@ export default function AgencyProductionRecon() {
           <div style={{ fontWeight: 600, marginBottom: 8 }}>💡 How this works:</div>
           <ul style={{ paddingLeft: 20, margin: 0 }}>
             <li><strong>Agency Production:</strong> Hector's monthly reports showing ALL sales (uploaded via "Upload Agency Production")</li>
-            <li><strong>Override Statements:</strong> BSI/NHP commission statements showing what THEI got paid</li>
+            <li><strong>Override Statements:</strong> BSI commission statements showing what THEI got paid</li>
             <li><strong>This page:</strong> Matches production to overrides and shows missing payments</li>
             <li><strong>Missing Override:</strong> Sales exist in production but no override commission found</li>
           </ul>
