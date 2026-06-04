@@ -45,7 +45,9 @@ function parseClientName(name) {
   if (normalized.includes(',')) {
     const parts = normalized.split(',').map(p => p.trim());
     const last = parts[0].replace(/[^a-z\s]/g, '').trim();
-    const first = parts[1] ? parts[1].split(' ')[0].replace(/[^a-z]/g, '').trim() : '';
+    const firstPart = parts[1] || '';
+    const firstWords = firstPart.split(' ').filter(w => w.length > 0);
+    const first = firstWords[0] ? firstWords[0].replace(/[^a-z]/g, '').trim() : '';
     return { first, last, full: `${first} ${last}`.trim() };
   }
   
@@ -57,31 +59,106 @@ function parseClientName(name) {
   return { first: '', last: words[0] || '', full: normalized };
 }
 
-// Match agency production to override commissions
+// Calculate string similarity (0-1, higher is more similar)
+function stringSimilarity(str1, str2) {
+  if (!str1 || !str2) return 0;
+  if (str1 === str2) return 1;
+  
+  const s1 = str1.toLowerCase();
+  const s2 = str2.toLowerCase();
+  
+  // Check if one contains the other
+  if (s1.includes(s2) || s2.includes(s1)) return 0.9;
+  
+  // Simple character overlap score
+  const len1 = s1.length;
+  const len2 = s2.length;
+  const maxLen = Math.max(len1, len2);
+  
+  let matches = 0;
+  const minLen = Math.min(len1, len2);
+  for (let i = 0; i < minLen; i++) {
+    if (s1[i] === s2[i]) matches++;
+  }
+  
+  return matches / maxLen;
+}
+
+// Parse date to YYYYMM format
+function parseEffectiveDate(dateStr) {
+  if (!dateStr) return null;
+  try {
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return null;
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    return `${year}${month}`;
+  } catch {
+    return null;
+  }
+}
+
+// Match agency production to override commissions with improved fuzzy matching
 function findOverrideMatch(production, overrides) {
   const prodClientParsed = parseClientName(production.client_name);
   const prodCarrier = normalizeCarrier(production.carrier);
+  const prodDate = parseEffectiveDate(production.effective_date);
+  const prodPolicy = (production.policy_number || '').toLowerCase().trim();
+  
+  let bestMatch = null;
+  let bestScore = 0;
   
   for (const override of overrides) {
     const overrideClientParsed = parseClientName(override.client_full_name);
     const overrideCarrier = normalizeCarrier(override.carrier);
+    const overrideDate = parseEffectiveDate(override.effective_date);
+    const overridePolicy = (override.policy_number || '').toLowerCase().trim();
     
-    const firstMatch = prodClientParsed.first && overrideClientParsed.first && 
-                       prodClientParsed.first === overrideClientParsed.first;
-    const lastMatch = prodClientParsed.last && overrideClientParsed.last && 
-                      prodClientParsed.last === overrideClientParsed.last;
-    const clientMatch = firstMatch && lastMatch;
+    let score = 0;
     
+    // 1. Carrier match (required, +30 points)
     const carrierMatch = prodCarrier === overrideCarrier || 
                         prodCarrier.includes(overrideCarrier) || 
                         overrideCarrier.includes(prodCarrier);
+    if (!carrierMatch) continue; // Skip if carrier doesn't match
+    score += 30;
     
-    if (clientMatch && carrierMatch) {
-      return override;
+    // 2. Last name match (fuzzy, +40 points max)
+    if (prodClientParsed.last && overrideClientParsed.last) {
+      const lastSimilarity = stringSimilarity(prodClientParsed.last, overrideClientParsed.last);
+      if (lastSimilarity > 0.7) {
+        score += lastSimilarity * 40;
+      } else {
+        continue; // Last name too different, skip
+      }
+    } else {
+      continue; // No last name, skip
+    }
+    
+    // 3. First name match (fuzzy, +30 points max)
+    if (prodClientParsed.first && overrideClientParsed.first) {
+      const firstSimilarity = stringSimilarity(prodClientParsed.first, overrideClientParsed.first);
+      score += firstSimilarity * 30;
+    }
+    
+    // 4. Effective date match (same month/year, +20 points)
+    if (prodDate && overrideDate && prodDate === overrideDate) {
+      score += 20;
+    }
+    
+    // 5. Policy number match (exact, +50 points - strong signal!)
+    if (prodPolicy && overridePolicy && prodPolicy === overridePolicy) {
+      score += 50;
+    }
+    
+    // Track best match
+    if (score > bestScore && score >= 70) { // Require minimum 70 points
+      bestScore = score;
+      bestMatch = override;
     }
   }
   
-  return null;
+  return bestMatch;
 }
 
 export default function AgencyProductionRecon() {
