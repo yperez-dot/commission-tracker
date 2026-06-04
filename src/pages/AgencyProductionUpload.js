@@ -133,6 +133,11 @@ export default function AgencyProductionUpload() {
     }
   }
 
+  function handleCardClick() {
+    // Trigger the hidden file input when clicking the card
+    document.getElementById('agency-file-input').click();
+  }
+
   return (
     <div>
       <div className="page-header">
@@ -154,23 +159,22 @@ export default function AgencyProductionUpload() {
           onDragOver={handleDragOver}
           onDragLeave={handleDragLeave}
           onDrop={handleDrop}
+          onClick={handleCardClick}
         >
           <div style={{ fontSize: 48, marginBottom: 12 }}>📁</div>
           <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>
             Drag & drop your agency production Excel file here
           </div>
           <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 20 }}>
-            Or click below to select a file
+            Or click anywhere to select a file
           </div>
-          <label className="btn btn-primary" style={{ cursor: 'pointer' }}>
-            Choose File
-            <input
-              type="file"
-              accept=".xlsx,.xls"
-              onChange={(e) => e.target.files[0] && handleFileSelect(e.target.files[0])}
-              style={{ display: 'none' }}
-            />
-          </label>
+          <input
+            id="agency-file-input"
+            type="file"
+            accept=".xlsx,.xls"
+            onChange={(e) => e.target.files[0] && handleFileSelect(e.target.files[0])}
+            style={{ display: 'none' }}
+          />
         </div>
 
         {file && (
