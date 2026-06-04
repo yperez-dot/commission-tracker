@@ -1005,12 +1005,21 @@ function parseAetnaRows(wb, filename) {
     const commission = parseFloat(row['Payee Amount']) || 0;
     if (commission === 0) continue;
 
-    // Sales Event column already has the classification
+    // Sales Event column already has the classification, but sanity check with commission amount
     const salesEvent = String(row['Sales Event'] || '').trim();
     let classification = 'Agent Commission';
-    if (salesEvent.toLowerCase().includes('new')) classification = 'New Business';
-    else if (salesEvent.toLowerCase().includes('renewal')) classification = 'Renewal';
-    else if (commission < 0 || salesEvent.toLowerCase().includes('chargeback')) classification = 'Chargeback';
+    
+    // Sanity check: Small commissions ($0-$20) are almost always renewals, not new business
+    if (commission < 0 || salesEvent.toLowerCase().includes('chargeback')) {
+      classification = 'Chargeback';
+    } else if (Math.abs(commission) > 0 && Math.abs(commission) <= 20) {
+      // Small amounts are renewals, even if Aetna says "New Business"
+      classification = 'Renewal';
+    } else if (salesEvent.toLowerCase().includes('new')) {
+      classification = 'New Business';
+    } else if (salesEvent.toLowerCase().includes('renewal')) {
+      classification = 'Renewal';
+    }
 
     const effectiveDate = formatDate(row['Effective Date']);
     const policyNumber = String(row['Member ID'] || row['Legacy Member ID'] || '').trim();
