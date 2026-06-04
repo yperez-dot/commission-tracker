@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../api';
+import { formatCarrier } from '../utils/formatCarrier';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -33,6 +34,7 @@ function normalizeCarrier(carrier) {
   if (c.includes('careplus') || c.includes('care plus')) return 'careplus';
   if (c.includes('devoted')) return 'devoted';
   if (c.includes('solis')) return 'solis';
+  if (c.includes('healthsun')) return 'healthsun';
   
   return c;
 }
@@ -241,7 +243,16 @@ export default function AgencyProductionRecon() {
   const displayData = tab === 'paid' ? filteredPaid : tab === 'unpaid' ? filteredUnpaid : [...filteredPaid, ...filteredUnpaid];
 
   const agents = [...new Set(production.map(p => p.agent_name).filter(Boolean))].sort();
-  const carriers = [...new Set(production.map(p => p.carrier).filter(Boolean))].sort();
+  // Get unique carriers and format them consistently
+  const uniqueCarriers = [...new Set(production.map(p => normalizeCarrier(p.carrier)).filter(Boolean))];
+  const carriers = uniqueCarriers
+    .map(c => {
+      // Find original carrier name for display
+      const original = production.find(p => normalizeCarrier(p.carrier) === c)?.carrier;
+      return formatCarrier(original || c);
+    })
+    .filter((v, i, arr) => arr.indexOf(v) === i) // Remove duplicates after formatting
+    .sort();
 
   function exportToCSV() {
     let dataToExport = [];
@@ -267,7 +278,7 @@ export default function AgencyProductionRecon() {
     const rows = dataToExport.map(m => {
       const agentName = m.production.agent_name || '—';
       const clientName = m.production.client_name || '—';
-      const carrier = m.production.carrier || '—';
+      const carrier = formatCarrier(m.production.carrier) || '—';
       const plan = m.production.plan_name || '—';
       const effectiveDate = m.production.effective_date ? formatDate(m.production.effective_date) : '—';
       const status = m.production.status || '—';
@@ -425,7 +436,7 @@ export default function AgencyProductionRecon() {
                 fontSize: 12,
                 color: 'var(--text-muted)'
               }}>
-                <strong>Production Record:</strong> {selectedOverride.production.client_name} ({selectedOverride.production.carrier})
+                <strong>Production Record:</strong> {selectedOverride.production.client_name} ({formatCarrier(selectedOverride.production.carrier)})
               </div>
             </div>
           </div>
@@ -546,7 +557,7 @@ export default function AgencyProductionRecon() {
                               m.production.client_name
                             )}
                           </td>
-                          <td>{m.production.carrier}</td>
+                          <td>{formatCarrier(m.production.carrier)}</td>
                           <td style={{ fontSize: 12 }}>{m.production.plan_name || '—'}</td>
                           <td style={{ fontSize: 12 }}>
                             {m.production.effective_date ? formatDate(m.production.effective_date) : '—'}
