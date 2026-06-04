@@ -490,13 +490,13 @@ export default function MedicareProUpload() {
                           <td>
                             <span className="badge" style={{
                               background: 
-                                (sale.status === 'COMPLETED' || sale.status === 'Active Policy' || sale.status === 'Enrolled') ? '#D4EDDA' :
-                                (sale.status === 'IN PROGRESS' || sale.status === 'In Progress Application' || sale.status === 'Pending') ? '#FFF3CD' :
+                                (sale.status === 'Active Policy' || sale.status === 'Enrolled') ? '#D4EDDA' :
+                                (sale.status === 'COMPLETED' || sale.status === 'IN PROGRESS' || sale.status === 'In Progress Application' || sale.status === 'Pending') ? '#FFF3CD' :
                                 (sale.status === 'WITHDRAWN' || sale.status === 'Cancelled' || sale.status === 'Cancelled Application' || sale.status === 'Canceled') ? '#F8D7DA' :
                                 '#E8F0FE',
                               color:
-                                (sale.status === 'COMPLETED' || sale.status === 'Active Policy' || sale.status === 'Enrolled') ? '#155724' :
-                                (sale.status === 'IN PROGRESS' || sale.status === 'In Progress Application' || sale.status === 'Pending') ? '#856404' :
+                                (sale.status === 'Active Policy' || sale.status === 'Enrolled') ? '#155724' :
+                                (sale.status === 'COMPLETED' || sale.status === 'IN PROGRESS' || sale.status === 'In Progress Application' || sale.status === 'Pending') ? '#856404' :
                                 (sale.status === 'WITHDRAWN' || sale.status === 'Cancelled' || sale.status === 'Cancelled Application' || sale.status === 'Canceled') ? '#721C24' :
                                 '#1967D2',
                               padding: '4px 8px',
