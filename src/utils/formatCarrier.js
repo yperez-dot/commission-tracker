@@ -20,6 +20,7 @@ export function formatCarrier(carrier) {
   if (c.toUpperCase() === 'DEVOTED' || c.toUpperCase() === 'DEVOTED HEALTH') return 'Devoted Health';
   if (c.toUpperCase() === 'WELLCARE') return 'WellCare';
   if (c.toUpperCase() === 'OSCAR') return 'Oscar';
+  if (c.toUpperCase().includes('HEALTHSUN')) return 'HealthSun'; // Strip 'PA' prefix
   if (c.toUpperCase() === 'AARP' || c.includes('AARP')) return c; // Keep AARP uppercase
   if (c.toUpperCase().includes('MED SUPP')) return c; // Keep Med Supp as-is
   
