@@ -318,7 +318,77 @@ export default function AgencyProductionUpload() {
                 <tbody>
                   {uploadHistory.map((upload) => (
                     <tr key={upload.id}>
-                      <td style={{ fontWeight: 500 }}>{upload.filename}</td>
+                      <td style={{ fontWeight: 500 }}>
+                        <a 
+                          href="#" 
+                          onClick={async (e) => {
+                            e.preventDefault();
+                            try {
+                              const data = await apiFetch(`/agency-production?carrier=${encodeURIComponent(upload.carrier)}&batch=${encodeURIComponent(upload.upload_batch)}&limit=1000`);
+                              const records = data.production || [];
+                              
+                              if (records.length === 0) {
+                                alert('No records found for this upload');
+                                return;
+                              }
+                              
+                              // Show modal with data
+                              const modal = document.createElement('div');
+                              modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:9999;';
+                              modal.innerHTML = `
+                                <div style="background:white;border-radius:8px;max-width:90vw;max-height:90vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,0.3);">
+                                  <div style="padding:20px;border-bottom:1px solid #ddd;display:flex;justify-content:space-between;align-items:center;">
+                                    <div>
+                                      <h2 style="margin:0;font-size:18px;">${upload.filename}</h2>
+                                      <p style="margin:4px 0 0;font-size:13px;color:#666;">${upload.carrier} - ${upload.upload_batch} - ${records.length} records</p>
+                                    </div>
+                                    <button onclick="this.closest('div[style*=fixed]').remove()" style="background:var(--red);color:white;border:none;border-radius:4px;padding:6px 12px;cursor:pointer;font-size:12px;">Close</button>
+                                  </div>
+                                  <div style="padding:20px;">
+                                    <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                                      <thead>
+                                        <tr style="border-bottom:2px solid #ddd;">
+                                          <th style="text-align:left;padding:8px;">Agent</th>
+                                          <th style="text-align:left;padding:8px;">Client</th>
+                                          <th style="text-align:left;padding:8px;">Effective Date</th>
+                                          <th style="text-align:left;padding:8px;">Status</th>
+                                          <th style="text-align:left;padding:8px;">Plan</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        ${records.map((r, i) => `
+                                          <tr style="border-bottom:1px solid #eee;${i % 2 === 0 ? 'background:#f9f9f9;' : ''}">
+                                            <td style="padding:8px;">${r.agent_name || '—'}</td>
+                                            <td style="padding:8px;">${r.client_name || '—'}</td>
+                                            <td style="padding:8px;">${r.effective_date || '—'}</td>
+                                            <td style="padding:8px;">${r.status || '—'}</td>
+                                            <td style="padding:8px;">${r.policy_type || '—'}</td>
+                                          </tr>
+                                        `).join('')}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                              `;
+                              document.body.appendChild(modal);
+                              modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+                            } catch (err) {
+                              alert('Error loading data: ' + err.message);
+                            }
+                          }}
+                          style={{ 
+                            color: 'var(--blue)', 
+                            textDecoration: 'none',
+                            cursor: 'pointer',
+                            borderBottom: '1px dashed var(--blue)'
+                          }}
+                          onMouseOver={(e) => e.target.style.borderBottom = '1px solid var(--blue)'}
+                          onMouseOut={(e) => e.target.style.borderBottom = '1px dashed var(--blue)'}
+                          title="Click to view uploaded records"
+                        >
+                          📄 {upload.filename}
+                        </a>
+                      </td>
                       <td>
                         <span className="badge" style={{ background: 'var(--green-light)', color: 'var(--green)' }}>
                           {upload.carrier}
