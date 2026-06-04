@@ -14,7 +14,6 @@ import AdminUsers from './pages/AdminUsers';
 import MedicareProUpload from './pages/MedicareProUpload';
 import AgencyProductionUpload from './pages/AgencyProductionUpload';
 import AgencyProductionRecon from './pages/AgencyProductionRecon';
-import FixAetna from './pages/FixAetna';
 import './App.css';
 
 export default function App() {
@@ -126,7 +125,6 @@ export default function App() {
     { id: 'reports', label: 'Reports' },
     ...(user.role === 'admin' ? [
       { id: 'users', label: 'User Accounts' },
-      { id: 'fix-aetna', label: '🔧 Fix Aetna' },
     ] : [])
   ];
 
@@ -150,8 +148,7 @@ export default function App() {
     payroll: <Payroll key={agencyView} user={effectiveUser} />,
     reports: <Reports key={agencyView} user={effectiveUser} />,
     agents: <Agents key={agencyView} user={effectiveUser} />,
-    users: <AdminUsers key={agencyView} user={effectiveUser} />,
-    'fix-aetna': <FixAetna key={agencyView} user={effectiveUser} />
+    users: <AdminUsers key={agencyView} user={effectiveUser} />
   };
 
   return (
