@@ -246,7 +246,6 @@ export default function AgencyProductionRecon() {
     <div>
       <div className="page-header">
         <div className="page-title">🏢 Agency Override Reconciliation</div>
-        <div className="page-sub">Compare agency production (Hector's reports) vs override commissions (filtered by classification="Agency Override")</div>
       </div>
 
       {/* Debug Info Panel */}
