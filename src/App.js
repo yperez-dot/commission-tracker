@@ -21,7 +21,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState('dashboard');
   const [pageParams, setPageParams] = useState({});
-  const [expandedMenus, setExpandedMenus] = useState({ uploads: false });
+  const [expandedMenus, setExpandedMenus] = useState({ uploads: false, reconciliation: false });
   const [agencyView, setAgencyView] = useState(
     localStorage.getItem('olicomm_agency_view') || 'The Health Experts Insurance'
   );
@@ -104,8 +104,14 @@ export default function App() {
     { id: 'alldata', label: 'All Data' },
     { id: 'bob', label: 'Book of Business' },
     { id: 'renewals', label: 'Missing Renewals' },
-    ...(!isBSI ? [{ id: 'reconciliation', label: 'Reconciliation' }] : []),
-    ...(!isBSI ? [{ id: 'agency-production-recon', label: 'Agency Override Recon' }] : []),
+    ...(!isBSI ? [{
+      id: 'reconciliation',
+      label: 'Reconciliation',
+      children: [
+        { id: 'direct-recon', label: 'Direct Agent Recon' },
+        { id: 'agency-production-recon', label: 'Agency Override Recon' },
+      ]
+    }] : []),
     { id: 'payroll', label: 'Payroll' },
     { id: 'reports', label: 'Reports' },
     ...(user.role === 'admin' ? [
@@ -129,6 +135,7 @@ export default function App() {
     bob: <BookOfBusiness key={agencyView} user={effectiveUser} />,
     renewals: <MissingRenewals key={agencyView} user={effectiveUser} />,
     reconciliation: <Reconciliation key={agencyView} user={effectiveUser} />,
+    'direct-recon': <Reconciliation key={agencyView} user={effectiveUser} />,
     payroll: <Payroll key={agencyView} user={effectiveUser} />,
     reports: <Reports key={agencyView} user={effectiveUser} />,
     agents: <Agents key={agencyView} user={effectiveUser} />,
