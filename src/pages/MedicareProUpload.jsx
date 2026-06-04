@@ -489,16 +489,24 @@ export default function MedicareProUpload() {
                           </td>
                           <td>
                             <span className="badge" style={{
-                              background: 
-                                (sale.status === 'Active Policy' || sale.status === 'Enrolled') ? '#D4EDDA' :
-                                (sale.status === 'COMPLETED' || sale.status === 'IN PROGRESS' || sale.status === 'In Progress Application' || sale.status === 'Pending') ? '#FFF3CD' :
-                                (sale.status === 'WITHDRAWN' || sale.status === 'Cancelled' || sale.status === 'Cancelled Application' || sale.status === 'Canceled') ? '#F8D7DA' :
-                                '#E8F0FE',
-                              color:
-                                (sale.status === 'Active Policy' || sale.status === 'Enrolled') ? '#155724' :
-                                (sale.status === 'COMPLETED' || sale.status === 'IN PROGRESS' || sale.status === 'In Progress Application' || sale.status === 'Pending') ? '#856404' :
-                                (sale.status === 'WITHDRAWN' || sale.status === 'Cancelled' || sale.status === 'Cancelled Application' || sale.status === 'Canceled') ? '#721C24' :
-                                '#1967D2',
+                              background: (() => {
+                                const s = (sale.status || '').toLowerCase();
+                                // 🟢 Green: Active/Enrolled/Accepted states
+                                if (s.includes('active') || s.includes('enroll') || s.includes('accept')) return '#D4EDDA';
+                                // 🔴 Red: Cancelled/Withdrawn/Rejected/Disenrolled
+                                if (s.includes('cancel') || s.includes('withdraw') || s.includes('reject') || s.includes('disenroll')) return '#F8D7DA';
+                                // 🟡 Yellow: In Progress/Pending/Completed (transitional)
+                                if (s.includes('progress') || s.includes('pending') || s.includes('complete')) return '#FFF3CD';
+                                // 🔵 Blue: Everything else
+                                return '#E8F0FE';
+                              })(),
+                              color: (() => {
+                                const s = (sale.status || '').toLowerCase();
+                                if (s.includes('active') || s.includes('enroll') || s.includes('accept')) return '#155724';
+                                if (s.includes('cancel') || s.includes('withdraw') || s.includes('reject') || s.includes('disenroll')) return '#721C24';
+                                if (s.includes('progress') || s.includes('pending') || s.includes('complete')) return '#856404';
+                                return '#1967D2';
+                              })(),
                               padding: '4px 8px',
                               borderRadius: 4,
                               fontSize: 11
