@@ -158,6 +158,15 @@ export default function AgencyProductionUpload() {
     setDragOver(false);
   }
 
+  function handleDrop(e) {
+    e.preventDefault();
+    setDragOver(false);
+    const droppedFiles = Array.from(e.dataTransfer.files);
+    if (droppedFiles.length > 0) {
+      handleFileSelect(droppedFiles);
+    }
+  }
+
   function handleCardClick() {
     // Trigger the hidden file input when clicking the card
     document.getElementById('agency-file-input').click();
