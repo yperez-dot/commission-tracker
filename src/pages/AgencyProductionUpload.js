@@ -128,24 +128,24 @@ export default function AgencyProductionUpload() {
     setLoading(false);
   }
 
-  async function handleDeleteBatch(batch) {
+  async function handleDeleteUpload(upload) {
     const confirmDelete = window.confirm(
-      `⚠️ Delete batch ${batch}?\n\nThis will permanently delete:\n- All upload logs for this batch\n- All production records for this batch\n\nThis cannot be undone.`
+      `⚠️ Delete this upload?\n\nFile: ${upload.filename}\nCarrier: ${upload.carrier}\nRecords: ${upload.record_count}\n\nThis will permanently delete this upload and all its production records.\n\nThis cannot be undone.`
     );
     
     if (!confirmDelete) return;
     
     try {
-      const result = await apiFetch(`/agency-production/batch/${batch}`, {
+      const result = await apiFetch(`/agency-production/upload/${upload.id}`, {
         method: 'DELETE'
       });
       
-      alert(`✅ Deleted batch ${batch}\n\n${result.deleted_production} production records deleted\n${result.deleted_uploads} upload logs deleted`);
+      alert(`✅ Deleted ${result.carrier} upload\n\n${result.deleted_production} production records deleted`);
       
       // Reload history
       await loadUploadHistory();
     } catch (err) {
-      alert(`❌ Error deleting batch: ${err.message}`);
+      alert(`❌ Error deleting upload: ${err.message}`);
     }
   }
 
@@ -344,7 +344,7 @@ export default function AgencyProductionUpload() {
                       <td style={{ textAlign: 'center' }}>
                         <button
                           className="btn btn-sm"
-                          onClick={() => handleDeleteBatch(upload.upload_batch)}
+                          onClick={() => handleDeleteUpload(upload)}
                           style={{ background: 'var(--red)', color: 'white', fontSize: 11, padding: '4px 10px' }}
                         >
                           🗑️ Delete

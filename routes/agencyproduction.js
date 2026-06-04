@@ -348,6 +348,60 @@ router.get('/uploads', requireAuth, async (req, res) => {
   }
 });
 
+// DELETE /api/agency-production/upload/:id - Delete a single upload
+router.delete('/upload/:id', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const pool = getPool();
+
+    // Get upload details first
+    const uploadResult = await pool.query(
+      'SELECT * FROM agency_production_uploads WHERE id = $1',
+      [id]
+    );
+
+    if (uploadResult.rows.length === 0) {
+      return res.status(404).json({ error: 'Upload not found' });
+    }
+
+    const upload = uploadResult.rows[0];
+    const { carrier, upload_batch, uploaded_at } = upload;
+
+    // Delete production records for this specific upload
+    // Match by carrier + batch + uploaded within 5 minutes of upload time
+    const uploadTime = new Date(uploaded_at);
+    const beforeTime = new Date(uploadTime.getTime() - 5 * 60 * 1000);
+    const afterTime = new Date(uploadTime.getTime() + 5 * 60 * 1000);
+
+    const productionResult = await pool.query(
+      `DELETE FROM agency_production 
+       WHERE carrier = $1 
+         AND upload_batch = $2 
+         AND uploaded_at >= $3 
+         AND uploaded_at <= $4`,
+      [carrier, upload_batch, beforeTime, afterTime]
+    );
+
+    // Delete the upload log entry
+    await pool.query(
+      'DELETE FROM agency_production_uploads WHERE id = $1',
+      [id]
+    );
+
+    return res.json({
+      success: true,
+      deleted_production: productionResult.rowCount,
+      carrier: carrier,
+      filename: upload.filename,
+      message: `Deleted ${carrier} upload (${productionResult.rowCount} production records)`
+    });
+
+  } catch (err) {
+    console.error('Delete upload error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // DELETE /api/agency-production/batch/:batch - Delete a batch
 router.delete('/batch/:batch', requireAuth, async (req, res) => {
   try {
