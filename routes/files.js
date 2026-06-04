@@ -270,6 +270,11 @@ function isNHPFile(filename) {
     (f.includes('yahoska') && f.includes('katy') && f.includes('statement'));
 }
 
+function isAetnaFile(filename) {
+  const f = filename.toLowerCase().replace(/[\s()]/g, '_');
+  return f.includes('aetna') || f.includes('producerstatement');
+}
+
 function isHumanaFile(filename) {
   const f = filename.toLowerCase().replace(/\s+/g, '_');
   return (f.includes('commissiondata') || f.includes('yahoska_perez_med_comm') || f.includes('humana'))
@@ -968,6 +973,76 @@ function parseAPLRows(wb) {
       period: period,
       policyNumber,
       payee: payee || 'APL',
+      raw: row
+    });
+  }
+  return records;
+}
+
+function parseAetnaRows(wb, filename) {
+  const records = [];
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
+
+  for (const row of rows) {
+    // Skip empty rows and total rows
+    const memberName = String(row['Member Name'] || '').trim();
+    if (!memberName || memberName.toLowerCase().includes('total')) continue;
+
+    // Parse agent name - prefer Payee Name, fallback to Writing Agent Name
+    let agentName = String(row['Payee Name'] || row['Writing Agent Name'] || '').trim();
+    // Aetna format: "robles, katy" (lowercase, last first) - normalize it
+    if (agentName) {
+      const parts = agentName.split(',').map(p => p.trim());
+      if (parts.length === 2) {
+        // "robles, katy" → "Katy Robles"
+        agentName = parts[1].charAt(0).toUpperCase() + parts[1].slice(1) + ' ' +
+                    parts[0].charAt(0).toUpperCase() + parts[0].slice(1);
+      }
+    }
+    const agent = normalizeAgentName(agentName);
+
+    const commission = parseFloat(row['Payee Amount']) || 0;
+    if (commission === 0) continue;
+
+    // Sales Event column already has the classification
+    const salesEvent = String(row['Sales Event'] || '').trim();
+    let classification = 'Agent Commission';
+    if (salesEvent.toLowerCase().includes('new')) classification = 'New Business';
+    else if (salesEvent.toLowerCase().includes('renewal')) classification = 'Renewal';
+    else if (commission < 0 || salesEvent.toLowerCase().includes('chargeback')) classification = 'Chargeback';
+
+    const effectiveDate = formatDate(row['Effective Date']);
+    const policyNumber = String(row['Member ID'] || row['Legacy Member ID'] || '').trim();
+    const product = String(row['Product'] || '').trim();
+    
+    // Determine plan type
+    let planType = 'Aetna Med Adv';
+    if (product.toLowerCase().includes('pdp')) planType = 'Aetna PDP';
+    else if (product.toLowerCase().includes('mapd')) planType = 'Aetna MAPD';
+
+    // Parse period from Payment Date
+    let period = '';
+    const paymentDate = row['Payment Date'];
+    if (paymentDate) {
+      const d = new Date(paymentDate);
+      if (!isNaN(d.getTime())) {
+        period = String(d.getUTCFullYear()) + String(d.getUTCMonth() + 1).padStart(2, '0');
+      }
+    }
+
+    records.push({
+      agent: agent || 'The Health Experts Insurance',
+      carrier: 'Aetna',
+      planType,
+      client: memberName,
+      effectiveDate,
+      premium: 0,
+      commission,
+      classification,
+      period,
+      policyNumber,
+      payee: 'Aetna',
       raw: row
     });
   }
@@ -1725,6 +1800,8 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         records = parseSolisRows(wb, req.file.originalname);
       } else if (isAPLFile(req.file.originalname)) {
         records = parseAPLRows(wb);
+      } else if (isAetnaFile(req.file.originalname)) {
+        records = parseAetnaRows(wb, req.file.originalname);
       } else {
         const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
         if (!rows.length) return res.status(400).json({ error: 'File is empty' });
