@@ -194,7 +194,7 @@ export default function AgencyProductionRecon() {
       const effectiveDate = m.production.effective_date ? formatDate(m.production.effective_date) : '—';
       const status = m.production.status || '—';
       const paid = m.override ? 'Yes' : 'No';
-      const amount = m.override ? (m.override.commission_amount || '0') : '—';
+      const amount = m.override ? (m.override.commission || m.override.commission_amount || '0') : '—';
       
       return [
         agentName,
@@ -343,7 +343,7 @@ export default function AgencyProductionRecon() {
                           <td style={{ textAlign: 'center' }}>
                             {m.override ? (
                               <span style={{ color: 'var(--green)', fontWeight: 600 }}>
-                                ✅ {fmt(m.override.commission_amount)}
+                                ✅ {fmt(m.override.commission || m.override.commission_amount || 0)}
                               </span>
                             ) : (
                               <span style={{ color: 'var(--red)', fontWeight: 600 }}>❌ Missing</span>
