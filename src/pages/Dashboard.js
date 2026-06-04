@@ -46,7 +46,6 @@ function formatPeriod(p) {
 }
 
 function VerticalBarChart({ data, loading, metric }) {
-  const [hoveredIndex, setHoveredIndex] = useState(null);
   if (loading) return <div style={{height:220,display:'flex',alignItems:'center',justifyContent:'center',color:C.textMuted,fontSize:12}}>Loading...</div>;
   if (!data||!data.length) return <div style={{height:220,display:'flex',alignItems:'center',justifyContent:'center',color:C.textMuted,fontSize:12}}>No data</div>;
 
@@ -83,21 +82,11 @@ function VerticalBarChart({ data, loading, metric }) {
           const isNeg = isNegValue(d);
           const isRecent = i >= data.length-4;
           const barColor = metric==='chargebacks' ? C.red : isNeg ? C.red : isRecent ? C.barActive : C.barMuted;
-          const isHovered = hoveredIndex === i;
           return (
             <div key={i} 
-              onMouseEnter={() => setHoveredIndex(i)}
-              onMouseLeave={() => setHoveredIndex(null)}
-              style={{flex:1,minWidth:44,maxWidth:90,display:'flex',flexDirection:'column',alignItems:'center',height:'100%',justifyContent:'flex-end',position:'relative',cursor:'default'}}>
-              {isHovered && (
-                <div style={{position:'absolute',top:-50,left:'50%',transform:'translateX(-50%)',background:C.sidebar,color:'#fff',padding:'6px 10px',borderRadius:6,fontSize:11,fontWeight:500,whiteSpace:'nowrap',zIndex:10,boxShadow:'0 2px 8px rgba(0,0,0,0.15)',pointerEvents:'none'}}>
-                  <div>{label}</div>
-                  <div style={{marginTop:2}}>{metric==='apps'?`${val.toLocaleString()} apps`:fmt(parseFloat(d.total||d.chargebacks)||0)}</div>
-                  <div style={{marginTop:1,fontSize:9,opacity:0.7}}>{d.count||0} records</div>
-                </div>
-              )}
+              style={{flex:1,minWidth:44,maxWidth:90,display:'flex',flexDirection:'column',alignItems:'center',height:'100%',justifyContent:'flex-end',position:'relative'}}>
               <span style={{fontSize:12,fontWeight:500,color:isNeg||metric==='chargebacks'?C.red:C.text,marginBottom:4,whiteSpace:'nowrap'}}>{fmtVal(d)}</span>
-              <div style={{width:'60%',height:`${Math.max(pct,0)}%`,minHeight:3,background:barColor,borderRadius:'3px 3px 0 0',transition:'height 0.4s ease,opacity 0.2s',opacity:isHovered?1:0.9}}/>
+              <div style={{width:'60%',height:`${Math.max(pct,0)}%`,minHeight:3,background:barColor,borderRadius:'3px 3px 0 0',transition:'height 0.4s ease'}}/>
               <span style={{fontSize:12,color:C.text,marginTop:8,textAlign:'center',whiteSpace:'nowrap'}}>{label}</span>
             </div>
           );
