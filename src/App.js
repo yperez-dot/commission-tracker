@@ -239,27 +239,41 @@ export default function App() {
             onClick={toggleSidebar}
             style={{
               position: sidebarCollapsed ? 'fixed' : 'absolute',
-              left: sidebarCollapsed ? '12px' : 'auto',
-              right: sidebarCollapsed ? 'auto' : '-12px',
-              top: sidebarCollapsed ? '20px' : '50%',
+              left: sidebarCollapsed ? '16px' : 'auto',
+              right: sidebarCollapsed ? 'auto' : '-16px',
+              top: sidebarCollapsed ? '16px' : '50%',
               transform: sidebarCollapsed ? 'none' : 'translateY(-50%)',
-              background: 'var(--sidebar-bg)',
-              border: '1px solid rgba(255,255,255,0.2)',
-              color: 'rgba(255,255,255,0.95)',
-              width: '32px',
-              height: '32px',
-              borderRadius: '50%',
+              background: sidebarCollapsed ? '#C9B5A7' : 'var(--sidebar-bg)',
+              border: sidebarCollapsed ? '2px solid #A89589' : '1px solid rgba(255,255,255,0.2)',
+              color: sidebarCollapsed ? '#3D2B1F' : 'rgba(255,255,255,0.95)',
+              width: '40px',
+              height: '40px',
+              borderRadius: '8px',
               cursor: 'pointer',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              fontSize: '14px',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
-              zIndex: 9999
+              fontSize: '18px',
+              fontWeight: 'bold',
+              boxShadow: sidebarCollapsed ? '0 4px 12px rgba(0,0,0,0.25)' : '0 2px 8px rgba(0,0,0,0.15)',
+              zIndex: 9999,
+              transition: 'all 0.2s ease'
             }}
-            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            onMouseOver={(e) => {
+              if (sidebarCollapsed) {
+                e.target.style.background = '#A89589';
+                e.target.style.transform = 'scale(1.05)';
+              }
+            }}
+            onMouseOut={(e) => {
+              if (sidebarCollapsed) {
+                e.target.style.background = '#C9B5A7';
+                e.target.style.transform = 'scale(1)';
+              }
+            }}
+            title={sidebarCollapsed ? 'Open Sidebar' : 'Close Sidebar'}
           >
-            {sidebarCollapsed ? '▶' : '◀'}
+            {sidebarCollapsed ? '☰' : '×'}
           </button>
         </div>
       </aside>
