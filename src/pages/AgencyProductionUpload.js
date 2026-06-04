@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { apiFetch } from '../api';
+import { apiFetch, getToken } from '../api';
 
 export default function AgencyProductionUpload() {
   const [file, setFile] = useState(null);
@@ -59,7 +59,7 @@ export default function AgencyProductionUpload() {
         method: 'POST',
         body: formData,
         headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
+          'Authorization': `Bearer ${getToken()}`
         }
       });
 
