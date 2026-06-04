@@ -106,25 +106,14 @@ export default function AgencyProductionRecon() {
       const prodData = await apiFetch('/agency-production?limit=5000');
       setProduction(prodData.production || []);
 
-      // Load override commission statements (BSI/NHP)
-      // These are in commission_records with carrier = 'BSI' or 'NHP' or specific override indicators
+      // Load override commission statements
       const overrideData = await apiFetch('/records?limit=5000');
       
-      // Debug: Show what carriers and classifications we have
-      const allCarriers = [...new Set((overrideData.records || []).map(r => r.carrier))].sort();
-      const allClassifications = [...new Set((overrideData.records || []).map(r => r.classification))].sort();
-      console.log('📊 All carriers in commission_records:', allCarriers);
-      console.log('🏷️ All classifications:', allClassifications);
-      
-      // Filter to only override statements (by classification, not carrier!)
+      // Filter to only override statements (by classification)
       const overrideStatements = (overrideData.records || []).filter(r => {
         const classification = r.classification?.toLowerCase() || '';
         return classification.includes('agency override') || classification.includes('override');
       });
-      
-      console.log('✅ Override records found:', overrideStatements.length);
-      console.log('📋 Override carriers:', [...new Set(overrideStatements.map(r => r.carrier))].sort());
-      console.log('📋 Override classifications:', [...new Set(overrideStatements.map(r => r.classification))].sort());
       
       setOverrides(overrideStatements);
     } catch (err) {
@@ -247,36 +236,6 @@ export default function AgencyProductionRecon() {
       <div className="page-header">
         <div className="page-title">🏢 Agency Override Reconciliation</div>
       </div>
-
-      {/* Debug Info Panel */}
-      {(production.length > 0 || overrides.length > 0) && (
-        <div style={{
-          background: '#FFF3CD',
-          border: '1px solid #FFE69C',
-          borderRadius: 8,
-          padding: 16,
-          marginBottom: 16,
-          fontSize: 13
-        }}>
-          <div style={{ fontWeight: 600, marginBottom: 8, color: '#856404' }}>🔍 Debug Info:</div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, color: '#856404' }}>
-            <div>
-              <strong>Production Records:</strong> {production.length}
-            </div>
-            <div>
-              <strong>Override Records:</strong> {overrides.length}
-            </div>
-            <div>
-              <strong>Matched:</strong> {paid.length} | <strong>Unmatched:</strong> {unpaid.length}
-            </div>
-          </div>
-          {overrides.length === 0 && (
-            <div style={{ marginTop: 8, padding: 8, background: '#F8D7DA', border: '1px solid #F5C6CB', borderRadius: 4, color: '#721C24' }}>
-              ⚠️ <strong>No override records found!</strong> Make sure BSI/NHP statements are uploaded to Commission Statements.
-            </div>
-          )}
-        </div>
-      )}
 
       <div className="page-body">
         <div className="card" style={{ marginBottom: 14 }}>
