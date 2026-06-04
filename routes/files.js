@@ -1005,23 +1005,36 @@ function parseAetnaRows(wb, filename) {
     const commission = parseFloat(row['Payee Amount']) || 0;
     if (commission === 0) continue;
 
-    // Sales Event column already has the classification, but sanity check with commission amount
+    // Parse dates for smart classification
+    const rawEffectiveDate = row['Effective Date'];
+    const rawPaymentDate = row['Payment Date'];
+    const effectiveDate = formatDate(rawEffectiveDate);
+    
+    // Determine if this is New Business or Renewal based on dates
+    let isNewBusiness = false;
+    if (rawEffectiveDate && rawPaymentDate) {
+      const effDate = new Date(rawEffectiveDate);
+      const payDate = new Date(rawPaymentDate);
+      if (!isNaN(effDate.getTime()) && !isNaN(payDate.getTime())) {
+        // Compare year/month: if effective date is same month/year as payment, it's New Business
+        const effYM = effDate.getUTCFullYear() * 100 + (effDate.getUTCMonth() + 1);
+        const payYM = payDate.getUTCFullYear() * 100 + (payDate.getUTCMonth() + 1);
+        isNewBusiness = (effYM === payYM);
+      }
+    }
+    
+    // Classification logic
     const salesEvent = String(row['Sales Event'] || '').trim();
     let classification = 'Agent Commission';
     
-    // Sanity check: Small commissions ($0-$20) are almost always renewals, not new business
     if (commission < 0 || salesEvent.toLowerCase().includes('chargeback')) {
       classification = 'Chargeback';
-    } else if (Math.abs(commission) > 0 && Math.abs(commission) <= 20) {
-      // Small amounts are renewals, even if Aetna says "New Business"
-      classification = 'Renewal';
-    } else if (salesEvent.toLowerCase().includes('new')) {
+    } else if (isNewBusiness) {
       classification = 'New Business';
-    } else if (salesEvent.toLowerCase().includes('renewal')) {
+    } else {
+      // Older effective date = Renewal (regardless of what Aetna says)
       classification = 'Renewal';
     }
-
-    const effectiveDate = formatDate(row['Effective Date']);
     const policyNumber = String(row['Member ID'] || row['Legacy Member ID'] || '').trim();
     const product = String(row['Product'] || '').trim();
     
@@ -1034,7 +1047,13 @@ function parseAetnaRows(wb, filename) {
     let period = '';
     const paymentDate = row['Payment Date'];
     if (paymentDate) {
-      const d = new Date(paymentDate);
+      let d;
+      // Handle Excel serial date numbers
+      if (typeof paymentDate === 'number') {
+        d = new Date(Date.UTC(1899, 11, 30) + paymentDate * 86400000);
+      } else {
+        d = new Date(paymentDate);
+      }
       if (!isNaN(d.getTime())) {
         period = String(d.getUTCFullYear()) + String(d.getUTCMonth() + 1).padStart(2, '0');
       }
