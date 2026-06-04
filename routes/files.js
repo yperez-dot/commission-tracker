@@ -2154,7 +2154,7 @@ router.post('/fix-aetna-classifications', requireAuth, async (req, res) => {
       SET classification = 'Renewal'
       WHERE carrier = 'Aetna'
         AND classification = 'New Business'
-        AND period = '202601'
+        AND payment_period = '202601'
         AND (effective_date < '2026-01-01' OR effective_date >= '2026-02-01')
         AND commission > 0
       RETURNING id, client_full_name, effective_date, commission
