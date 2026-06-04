@@ -2139,4 +2139,37 @@ router.post('/apply-bsi-split', requireAuth, async (req, res) => {
   }
 });
 
+// POST /api/files/fix-aetna-classifications - Fix Aetna New Business → Renewal where effective date ≠ payment month
+router.post('/fix-aetna-classifications', requireAuth, async (req, res) => {
+  try {
+    const pool = getPool();
+    
+    // Update classification from "New Business" to "Renewal" where:
+    // - Carrier = Aetna
+    // - Period = 202601 (January 2026 payment)
+    // - Effective date is NOT in January 2026
+    // - Commission > 0 (don't change chargebacks)
+    const result = await pool.query(`
+      UPDATE commission_records
+      SET classification = 'Renewal'
+      WHERE carrier = 'Aetna'
+        AND classification = 'New Business'
+        AND period = '202601'
+        AND (effective_date < '2026-01-01' OR effective_date >= '2026-02-01')
+        AND commission > 0
+      RETURNING id, client_full_name, effective_date, commission
+    `);
+
+    res.json({
+      success: true,
+      updated: result.rowCount,
+      records: result.rows,
+      message: `Fixed ${result.rowCount} Aetna records from New Business → Renewal`
+    });
+  } catch (err) {
+    console.error('Fix Aetna classifications error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
