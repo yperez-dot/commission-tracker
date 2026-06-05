@@ -338,7 +338,8 @@ router.get('/filters', requireAuth, async (req, res) => {
       const classBase = baseWhere ? baseWhere + ` AND classification IS NOT NULL AND classification != ''` : `WHERE classification IS NOT NULL AND classification != ''`;
       const cl = await pool.query(`SELECT DISTINCT classification FROM commission_records ${classBase} ORDER BY classification`);
       // Filter out plan types that ended up in classification column
-      const planTypeKeywords = /AARP|CSNP|DSNP|MAPD|PDP|MED SUP|MEDIGAP|SUPPLEMENT|HMO|PPO/i;
+      // Exclude anything with carrier names + product types (Aetna MAPD, UnitedHealthcare Med Adv, etc.)
+      const planTypeKeywords = /AARP|CSNP|DSNP|MAPD|PDP|MED SUP|MED ADV|MEDIGAP|SUPPLEMENT|HMO|PPO|Aetna|UnitedHealthcare|Humana|Cigna|Devoted|WellCare|Solis|Doctors|HealthSun/i;
       classifications = cl.rows.map(c => c.classification).filter(c => c && !planTypeKeywords.test(c));
     } catch (e) { console.log('classification not available:', e.message); }
 
