@@ -118,17 +118,20 @@ function PayoutRow({ p, isPaid, paidDate, onTogglePaid, onExport, periodLabel, i
               ))}
             </tr></thead>
             <tbody>
-              {p.records.map((r,j) => (
-                <tr key={j} style={{ borderBottom:'0.5px solid var(--border)' }}>
-                  <td style={{ padding:'6px 8px', color:'var(--accent-dark)', fontWeight:500, fontSize:11 }}>{r.policy_number||'—'}</td>
-                  <td style={{ padding:'6px 8px', color:'var(--text)' }}>{r.client_full_name}</td>
-                  <td style={{ padding:'6px 8px', color:'var(--text-muted)', fontSize:11 }}>{r.carrier}</td>
-                  <td style={{ padding:'6px 8px', color:'var(--text-muted)', fontSize:11 }}>{r.effective_date||'—'}</td>
-                  <td style={{ padding:'6px 8px', color:'var(--text-muted)', fontSize:11 }}>{r.payment_period||'—'}</td>
-                  <td style={{ padding:'6px 8px', color:'var(--text-muted)', fontSize:11 }}>{r.classification||'—'}</td>
-                  <td style={{ padding:'6px 8px', textAlign:'right', fontWeight:500, color: parseFloat(r.commission)<0?'var(--red)':'var(--green)' }}>{fmt(r.commission)}</td>
-                </tr>
-              ))}
+              {p.records.map((r,j) => {
+                const amount = parseFloat(r.producer_payable) > 0 ? parseFloat(r.producer_payable) : parseFloat(r.commission) || 0;
+                return (
+                  <tr key={j} style={{ borderBottom:'0.5px solid var(--border)' }}>
+                    <td style={{ padding:'6px 8px', color:'var(--accent-dark)', fontWeight:500, fontSize:11 }}>{r.policy_number||'—'}</td>
+                    <td style={{ padding:'6px 8px', color:'var(--text)' }}>{r.client_full_name}</td>
+                    <td style={{ padding:'6px 8px', color:'var(--text-muted)', fontSize:11 }}>{r.carrier}</td>
+                    <td style={{ padding:'6px 8px', color:'var(--text-muted)', fontSize:11 }}>{r.effective_date||'—'}</td>
+                    <td style={{ padding:'6px 8px', color:'var(--text-muted)', fontSize:11 }}>{r.payment_period||'—'}</td>
+                    <td style={{ padding:'6px 8px', color:'var(--text-muted)', fontSize:11 }}>{r.classification||'—'}</td>
+                    <td style={{ padding:'6px 8px', textAlign:'right', fontWeight:500, color: amount<0?'var(--red)':'var(--green)' }}>{fmt(amount)}</td>
+                  </tr>
+                );
+              })}
               <tr style={{ borderTop:'0.5px solid var(--border)', background:'var(--bg-subtle)' }}>
                 <td colSpan={6} style={{ padding:'7px 8px', fontWeight:500, fontSize:12 }}>Total ({p.records.length} records)</td>
                 <td style={{ padding:'7px 8px', textAlign:'right', fontWeight:600, color:'var(--green)', fontSize:12 }}>{fmt(p.total)}</td>
@@ -182,18 +185,20 @@ export default function Payroll({ user }) {
           return c.includes('new business') || c.includes('chargeback');
         });
       } else {
-        // THEI: only Agent Commission type, exclude agency/team names
-        allRecs = allRecs.filter(r =>
-          r.classification === 'Agent Commission' &&
-          !isYourTeam(r.agent_name) &&
-          parseFloat(r.commission) > 0
-        );
+        // THEI: Agent Commission type (includes ACA) + Chargebacks, exclude agency/team names
+        allRecs = allRecs.filter(r => {
+          const classification = (r.classification || '').toLowerCase();
+          const isAgentCommission = classification.includes('agent commission');
+          const isChargeback = classification.includes('chargeback');
+          return (isAgentCommission || isChargeback) && !isYourTeam(r.agent_name);
+        });
       }
 
       const grouped = {}, seen = new Set();
       for (const r of allRecs) {
         const agent = r.agent_name || 'Unknown';
-        const commission = parseFloat(r.commission) || 0;
+        // Use producer_payable for ACA, commission for Medicare
+        const commission = parseFloat(r.producer_payable) > 0 ? parseFloat(r.producer_payable) : parseFloat(r.commission) || 0;
         const key = `${agent}|${r.client_full_name}|${r.carrier}|${r.payment_period}|${r.policy_number}`;
         if (seen.has(key)) continue;
         seen.add(key);
