@@ -386,18 +386,19 @@ export default function Dashboard({ user, onNavigate }) {
               {summary.byLOB.filter(lob => lob.lob && lob.lob !== 'null').map((lobData, idx) => {
                 const lobName = lobData.lob || 'Unknown';
                 const isACA = lobName === 'ACA';
-                const displayValue = isACA ? parseFloat(lobData.agent_payable || 0) : parseFloat(lobData.thei_total || 0);
+                // Dashboard shows AGENCY income only - ACA agency override, not agent commissions
+                const displayValue = parseFloat(lobData.thei_total || 0);
                 const count = parseInt(lobData.count || 0);
                 return (
                   <div key={idx} style={{...card,padding:'16px 20px',borderTop:`3px solid ${isACA ? '#C9A96E' : '#4A7260'}`}}>
                     <div style={{fontSize:10,color:C.textMuted,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.8px',marginBottom:8}}>
-                      {lobName} {isACA ? 'Agent Commissions' : 'Commissions'}
+                      {lobName} {isACA ? 'Agency Override' : 'Commissions'}
                     </div>
                     <div style={{fontSize:28,fontWeight:600,color:isACA ? C.accent : C.green,lineHeight:1.1,marginBottom:6}}>
                       {loading ? '—' : fmt(displayValue)}
                     </div>
                     <div style={{fontSize:11,color:C.textMuted}}>
-                      {count.toLocaleString()} {isACA ? 'payable to agents' : 'policies'}
+                      {count.toLocaleString()} {isACA ? 'agency policies' : 'policies'}
                     </div>
                   </div>
                 );

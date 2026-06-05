@@ -161,6 +161,9 @@ router.get('/summary', requireAuth, async (req, res) => {
     if (classifications) { const list = classifications.split(',').map(c=>c.trim()).filter(Boolean); if (list.length) { where.push(`classification = ANY($${idx++})`); params.push(list); } }
     if (planTypes) { const list = planTypes.split(',').map(p=>p.trim()).filter(Boolean); if (list.length) { where.push(`COALESCE(plan_type,'') = ANY($${idx++})`); params.push(list); } }
 
+    // Dashboard should show AGENCY income only - exclude ACA Agent Commissions (paid to agents)
+    where.push(`NOT (lob = 'ACA' AND classification ILIKE '%agent commission%')`);
+
     const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
 
     const [totalComm, totalRec, agentCnt, carrierCnt, byAgent, byCarrier, byPeriod, byLOB] = await Promise.all([
@@ -205,6 +208,9 @@ router.get('/kpi', requireAuth, async (req, res) => {
     if (periods) { const list = periods.split(',').map(p=>p.trim()).filter(Boolean); if (list.length) { where.push(`payment_period = ANY($${idx++})`); params.push(list); } }
     if (classifications) { const list = classifications.split(',').map(c=>c.trim()).filter(Boolean); if (list.length) { where.push(`classification = ANY($${idx++})`); params.push(list); } }
     if (planTypes) { const list = planTypes.split(',').map(p=>p.trim()).filter(Boolean); if (list.length) { where.push(`COALESCE(plan_type,'') = ANY($${idx++})`); params.push(list); } }
+
+    // Dashboard should show AGENCY income only - exclude ACA Agent Commissions (paid to agents)
+    where.push(`NOT (lob = 'ACA' AND classification ILIKE '%agent commission%')`);
 
     const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
 
