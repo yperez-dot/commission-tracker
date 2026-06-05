@@ -72,12 +72,13 @@ function MultiSelect({ label, options, selected, onChange }) {
 export default function AllData({ user, initialFilters = {} }) {
   const [records, setRecords] = useState([]);
   const [total, setTotal] = useState(0);
-  const [filterOptions, setFilterOptions] = useState({ agents: [], carriers: [], periods: [], planTypes: [] });
+  const [filterOptions, setFilterOptions] = useState({ agents: [], carriers: [], periods: [], planTypes: [], classifications: [], lobs: [] });
   const [selAgents, setSelAgents] = useState(initialFilters.agent ? [initialFilters.agent] : []);
   const [selCarriers, setSelCarriers] = useState(initialFilters.carrier ? [initialFilters.carrier] : []);
   const [selPeriods, setSelPeriods] = useState(initialFilters.period ? [initialFilters.period] : []);
   const [selTypes, setSelTypes] = useState(initialFilters.classification ? [initialFilters.classification] : []);
   const [selPayees, setSelPayees] = useState([]);
+  const [selLOB, setSelLOB] = useState([]);
   const [search, setSearch] = useState('');
   const [sortCol, setSortCol] = useState('');
   const [sortDir, setSortDir] = useState('asc');
@@ -90,11 +91,9 @@ export default function AllData({ user, initialFilters = {} }) {
   const PAGE_SIZE = 100;
   const [policyModal, setPolicyModal] = useState(null);
 
-  const classificationTypes = ['New Business', 'Renewal', 'Agent Commission', 'Agency Override', 'Chargeback', 'HRA/Bonus'];
-
   useEffect(() => {
     apiFetch('/records/filters').then(d => setFilterOptions(d)).catch(console.error);
-    setSelAgents([]); setSelCarriers([]); setSelPeriods([]); setSelTypes([]); setSelPayees([]);
+    setSelAgents([]); setSelCarriers([]); setSelPeriods([]); setSelTypes([]); setSelPayees([]); setSelLOB([]);
     setPage(0);
   }, [user.agency]);
 
@@ -119,6 +118,8 @@ export default function AllData({ user, initialFilters = {} }) {
       if (selPeriods.length > 1) params.set('periods', selPeriods.join(','));
       if (selTypes.length > 1) params.set('classifications', selTypes.join(','));
       if (selPayees.length === 1) params.set('payee', selPayees[0]);
+      if (selLOB.length === 1) params.set('lob', selLOB[0]);
+      if (selLOB.length > 1) params.set('lobs', selLOB.join(','));
       if (search.trim()) params.set('search', search.trim());
       const data = await apiFetch(`/records?${params}`);
       setRecords(data.records || []);
@@ -126,7 +127,7 @@ export default function AllData({ user, initialFilters = {} }) {
       setSelected(new Set());
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
-  }, [selAgents, selCarriers, selPeriods, selTypes, selPayees, search, user.agency]);
+  }, [selAgents, selCarriers, selPeriods, selTypes, selPayees, selLOB, search, user.agency]);
 
   useEffect(() => { setPage(0); loadRecords(0); }, [loadRecords]);
 
@@ -185,7 +186,7 @@ export default function AllData({ user, initialFilters = {} }) {
   });
 
   const grandTotal = records.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0);
-  const hasFilters = selAgents.length || selCarriers.length || selPeriods.length || selTypes.length || selPayees.length || search.trim();
+  const hasFilters = selAgents.length || selCarriers.length || selPeriods.length || selTypes.length || selPayees.length || selLOB.length || search.trim();
 
   async function exportCSV() {
     try {
@@ -368,7 +369,8 @@ export default function AllData({ user, initialFilters = {} }) {
           <MultiSelect label="Agents" options={filterOptions.agents || []} selected={selAgents} onChange={setSelAgents} />
           <MultiSelect label="Carriers" options={filterOptions.carriers || []} selected={selCarriers} onChange={setSelCarriers} />
           <MultiSelect label="Periods" options={(filterOptions.periods || []).filter(p => p && p !== 'Unknown')} selected={selPeriods} onChange={setSelPeriods} />
-          <MultiSelect label="Types" options={classificationTypes} selected={selTypes} onChange={setSelTypes} />
+          <MultiSelect label="Types" options={filterOptions.classifications || []} selected={selTypes} onChange={setSelTypes} />
+          <MultiSelect label="LOB" options={filterOptions.lobs || []} selected={selLOB} onChange={setSelLOB} />
           <MultiSelect label="Payee" options={filterOptions.payees || []} selected={selPayees} onChange={setSelPayees} />
           <input
             type="text"

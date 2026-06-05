@@ -34,7 +34,7 @@ function agencyFilter(req, alias) {
 router.get('/', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
-    const { agent, agents, carrier, carriers, period, periods, classification, classifications, planType, payee, search, upload_id, limit = 100, offset = 0 } = req.query;
+    const { agent, agents, carrier, carriers, period, periods, classification, classifications, lob, lobs, planType, payee, search, upload_id, limit = 100, offset = 0 } = req.query;
     let where = [], params = [], idx = 1;
 
     if (req.user.role === 'agent') {
@@ -51,6 +51,8 @@ router.get('/', requireAuth, async (req, res) => {
     else if (period) { where.push(`cr.payment_period = $${idx++}`); params.push(period); }
     if (classifications) { const list = classifications.split(',').map(c=>c.trim()).filter(Boolean); if (list.length) { where.push(`cr.classification = ANY($${idx++})`); params.push(list); } }
     else if (classification) { where.push(`cr.classification = $${idx++}`); params.push(classification); }
+    if (lobs) { const list = lobs.split(',').map(l=>l.trim()).filter(Boolean); if (list.length) { where.push(`cr.lob = ANY($${idx++})`); params.push(list); } }
+    else if (lob) { where.push(`cr.lob = $${idx++}`); params.push(lob); }
     if (planType) { where.push(`COALESCE(cr.plan_type,'') = $${idx++}`); params.push(planType); }
     if (upload_id) { where.push(`cr.upload_id = $${idx++}`); params.push(parseInt(upload_id)); }
     if (payee) { where.push(`cr.payee = $${idx++}`); params.push(payee); }
@@ -298,12 +300,28 @@ router.get('/filters', requireAuth, async (req, res) => {
       payees = py.rows.map(p => p.payee).filter(Boolean);
     } catch (e) { console.log('payee not available:', e.message); }
 
+    let classifications = [];
+    try {
+      const classBase = baseWhere ? baseWhere + ` AND classification IS NOT NULL AND classification != ''` : `WHERE classification IS NOT NULL AND classification != ''`;
+      const cl = await pool.query(`SELECT DISTINCT classification FROM commission_records ${classBase} ORDER BY classification`);
+      classifications = cl.rows.map(c => c.classification).filter(Boolean);
+    } catch (e) { console.log('classification not available:', e.message); }
+
+    let lobs = [];
+    try {
+      const lobBase = baseWhere ? baseWhere + ` AND lob IS NOT NULL AND lob != ''` : `WHERE lob IS NOT NULL AND lob != ''`;
+      const lb = await pool.query(`SELECT DISTINCT lob FROM commission_records ${lobBase} ORDER BY lob`);
+      lobs = lb.rows.map(l => l.lob).filter(Boolean);
+    } catch (e) { console.log('lob not available:', e.message); }
+
     res.json({
       agents: agents.rows.map(a => a.agent_name).filter(Boolean),
       carriers: carriers.rows.map(c => c.carrier).filter(Boolean),
       periods: periods.rows.map(p => p.payment_period).filter(Boolean),
       planTypes,
-      payees
+      payees,
+      classifications,
+      lobs
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
