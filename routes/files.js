@@ -832,74 +832,130 @@ function parseNHPRows(wb) {
   const rows = XLSX.utils.sheet_to_json(ws, { raw: true, defval: '', range: headerRow });
 
   for (const row of rows) {
-    const agentRaw = String(row['Agent'] || '').trim();
+    const agentRaw = String(row['Agent Name'] || row['Agent'] || '').trim();
     const agent = normalizeAgentName(agentRaw);
     const carrierRaw = String(row['Carrier-Statement Month'] || '').trim();
-    const client = String(row['Subscriber Name'] || '').trim();
+    const client = String(row['Subscriber / Member Name'] || row['Subscriber Name'] || '').trim();
     const policyNumber = String(row['Policy Number'] || '').trim();
     const effectiveDate = formatDate(row['Policy Effective Date']);
-    const rawPeriod = row['Commission Month'];
+    const rawPeriod = row['Commission /Coverage Date'] || row['Commission Month'];
     const period = normalizePeriod(rawPeriod);
-    const nhpType = String(row['Type'] || '').trim();
+    const commClass = String(row['Comm Class'] || row['Type'] || '').trim();
     const lobRaw = String(row['LOB'] || '').trim();
 
-    const isCommissionRow = nhpType.toLowerCase().includes('commission');
-    const grossCommission = isCommissionRow
-      ? (parseFloat(row['Commission']) || 0)
-      : (parseFloat(row['Override']) || 0);
-
     if (!client) continue;
-    if (grossCommission === 0) continue;
 
-    const carrier = normalizeNHPCarrier(carrierRaw);
-    const recordType = isCommissionRow ? 'Agent Commission' : 'Agency Override';
-    const planType = derivePlanType(carrier, '', policyNumber, lobRaw);
-
-    const isAcaCarrier = ACA_CARRIERS_LIST.some(c => String(carrier).toLowerCase().includes(c));
-    const isAcaAgentRow = NO_SPLIT_AGENTS.some(a => String(agent).toLowerCase().includes(a));
-    
-    const BSI_SPLIT_START_DATE = '2025-09-01';
-    const isBsiEligible = effectiveDate && effectiveDate >= BSI_SPLIT_START_DATE;
-    
-    let splitApplies, theiShare, bsiShare, producerPayable;
-
-    if (isCommissionRow) {
-      splitApplies = false;
-      theiShare = 0;
-      bsiShare = 0;
-      producerPayable = grossCommission;
-    } else if (isAcaCarrier) {
-      splitApplies = false;
-      if (isAcaAgencyPaysProducer(carrier) && isAcaAgentRow) {
-        theiShare = 0;
-        bsiShare = 0;
-        producerPayable = grossCommission;
-      } else {
-        theiShare = grossCommission;
-        bsiShare = 0;
-        producerPayable = 0;
-      }
-    } else {
-      if (isBsiEligible) {
-        splitApplies = true;
-        theiShare = Math.round(grossCommission * 0.5 * 100) / 100;
-        bsiShare = Math.round(grossCommission * 0.5 * 100) / 100;
-        producerPayable = 0;
-      } else {
-        splitApplies = false;
-        theiShare = grossCommission;
-        bsiShare = 0;
-        producerPayable = 0;
-      }
-    }
-
+    // Determine LOB
     let lob;
     const lobLower = lobRaw.toLowerCase();
     if (lobLower === 'ma' || lobLower === 'mapd') lob = 'MA';
     else if (lobLower === 'aca') lob = 'ACA';
     else if (lobLower === 'pdp') lob = 'PDP';
     else if (lobLower === 'medsupp' || lobLower === 'medigap') lob = 'MedSupp';
-    else lob = lobRaw || null;
+    else lob = lobRaw || 'MA'; // Default to MA if not specified
+
+    // Determine if this is Commission or Override row
+    const commClassLower = commClass.toLowerCase();
+    const isCommissionRow = commClassLower.includes('commission');
+    const isOverrideRow = commClassLower.includes('override');
+    
+    // Get the dollar amount
+    const commissionAmount = parseFloat(row['Commission']) || 0;
+    const overrideAmount = parseFloat(row['Override']) || 0;
+    const feeAmount = parseFloat(row['Fee']) || 0;
+    
+    const grossCommission = isCommissionRow ? commissionAmount : (isOverrideRow ? overrideAmount : (commissionAmount + overrideAmount + feeAmount));
+    
+    if (grossCommission === 0) continue;
+
+    const carrier = normalizeNHPCarrier(carrierRaw);
+    const planType = derivePlanType(carrier, '', policyNumber, lobRaw);
+
+    // BSI split eligibility (Medicare only, eff date >= 9/1/2025)
+    const BSI_SPLIT_START_DATE = '2025-09-01';
+    const isBsiEligible = lob === 'MA' && effectiveDate && effectiveDate >= BSI_SPLIT_START_DATE;
+    
+    let splitApplies, theiShare, bsiShare, producerPayable, recordType, subAgentOverride = 0;
+
+    // ACA LOGIC: Use LOB column, not carrier name
+    if (lob === 'ACA') {
+      splitApplies = false;
+      bsiShare = 0;
+      
+      if (isCommissionRow) {
+        // ACA Commission → Agent gets 100%
+        theiShare = 0;
+        producerPayable = grossCommission;
+        recordType = 'ACA Agent Commission';
+      } else {
+        // ACA Override → THEI keeps 100%
+        theiShare = grossCommission;
+        producerPayable = 0;
+        recordType = 'ACA Agency Override';
+      }
+    }
+    // MEDICARE LOGIC
+    else {
+      // Agent direct commission rows → pass through to agent
+      if (isCommissionRow) {
+        splitApplies = false;
+        theiShare = 0;
+        bsiShare = 0;
+        producerPayable = grossCommission;
+        recordType = 'Agent Commission';
+      }
+      // Agency override rows
+      else {
+        recordType = 'Agency Override';
+        
+        // Christian Munoz & Horacio Mendieta special handling
+        // Fixed rates on Doctors/Solis/HealthSun NEW BUSINESS only
+        const agentLower = agent.toLowerCase();
+        const carrierLower = carrier.toLowerCase();
+        const isChristianOrHoracio = agentLower.includes('christian munoz') || agentLower.includes('horacio mendieta');
+        const isSpecialCarrier = carrierLower.includes('doctors') || carrierLower.includes('solis') || carrierLower.includes('healthsun');
+        const isNewBusiness = commClassLower.includes('new') || commClassLower.includes('initial') || (!commClassLower.includes('renewal') && !commClassLower.includes('carry'));
+        
+        if (isChristianOrHoracio && isSpecialCarrier && isNewBusiness && grossCommission > 0) {
+          // Determine fixed rate
+          let fixedRate = 0;
+          if (carrierLower.includes('doctors')) fixedRate = 50;
+          else if (carrierLower.includes('solis')) fixedRate = 62.50;
+          else if (carrierLower.includes('healthsun')) fixedRate = 52.50;
+          
+          subAgentOverride = fixedRate;
+          // After deducting sub-agent payment, split the remainder with BSI if eligible
+          const remainingOverride = Math.max(0, grossCommission - subAgentOverride);
+          
+          if (isBsiEligible) {
+            splitApplies = true;
+            theiShare = Math.round(remainingOverride * 0.5 * 100) / 100;
+            bsiShare = Math.round(remainingOverride * 0.5 * 100) / 100;
+            producerPayable = 0;
+          } else {
+            splitApplies = false;
+            theiShare = remainingOverride;
+            bsiShare = 0;
+            producerPayable = 0;
+          }
+        }
+        // Standard agency override (no sub-agent special rate)
+        else {
+          if (isBsiEligible) {
+            splitApplies = true;
+            theiShare = Math.round(grossCommission * 0.5 * 100) / 100;
+            bsiShare = Math.round(grossCommission * 0.5 * 100) / 100;
+            producerPayable = 0;
+          } else {
+            // Pre-9/1/2025: THEI keeps 100%
+            splitApplies = false;
+            theiShare = grossCommission;
+            bsiShare = 0;
+            producerPayable = 0;
+          }
+        }
+      }
+    }
 
     records.push({
       agent: agent || 'Unknown',
@@ -921,6 +977,7 @@ function parseNHPRows(wb) {
       producerPayable,
       splitApplies,
       lob,
+      subAgentOverride,
       raw: row,
     });
   }
@@ -1911,6 +1968,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
           producerPayable,
           splitApplies,
           lob,
+          subAgentOverride: r.subAgentOverride || 0,
         };
       });
     }
@@ -1929,6 +1987,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS plan_type TEXT DEFAULT ''`); } catch(e) {}
     try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS mga TEXT DEFAULT ''`); } catch(e) {}
     try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS payee TEXT DEFAULT ''`); } catch(e) {}
+    try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS sub_agent_override NUMERIC DEFAULT 0`); } catch(e) {}
 
     for (const r of records) {
       await pool.query(
@@ -1937,14 +1996,14 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
            premium, commission, classification, payment_period, policy_number, payee, mga,
            raw_data,
            source, policy_written_date, gross_commission, thei_share, bsi_share,
-           producer_payable, split_applies, lob
+           producer_payable, split_applies, lob, sub_agent_override
          )
          VALUES (
            $1,$2,$3,$4,$5,$6,
            $7,$8,$9,$10,$11,$12,$13,
            $14,
            $15,$16,$17,$18,$19,
-           $20,$21,$22
+           $20,$21,$22,$23
          )`,
         [
           uploadId, r.agent, r.carrier, r.planType || '', r.client, r.effectiveDate,
@@ -1966,6 +2025,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
           r.producerPayable != null ? r.producerPayable : null,
           r.splitApplies != null ? r.splitApplies : null,
           r.lob || null,
+          r.subAgentOverride != null ? r.subAgentOverride : 0,
         ]
       );
     }
