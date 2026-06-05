@@ -245,6 +245,10 @@ export default function AllData({ user, initialFilters = {} }) {
   function getCommSplit(r) {
     try { const raw = typeof r.raw_data === 'string' ? JSON.parse(r.raw_data) : r.raw_data; return raw || {}; } catch(e) { return {}; }
   }
+  const hasLOB = records.some(r => r.lob);
+  const hasSplitData = records.some(r => r.thei_share != null || r.bsi_share != null);
+  const hasSubAgentOverride = records.some(r => r.sub_agent_override && r.sub_agent_override > 0);
+  
   const columns = [
     { col: 'carrier',         label: 'Carrier' },
     { col: 'agent_name',      label: 'Agent' },
@@ -258,8 +262,14 @@ export default function AllData({ user, initialFilters = {} }) {
     ...(hasCommSplit ? [{ col: 'agency_comm', label: 'Agency Comm' }] : []),
     { col: 'payment_period',  label: 'Period' },
     { col: 'classification',  label: 'Type' },
+    ...(hasLOB ? [{ col: 'lob', label: 'LOB' }] : []),
+    ...(hasSplitData ? [{ col: 'gross_commission', label: 'Gross' }] : []),
+    ...(hasSplitData ? [{ col: 'thei_share', label: 'THEI' }] : []),
+    ...(hasSplitData ? [{ col: 'bsi_share', label: 'BSI' }] : []),
+    ...(hasSplitData ? [{ col: 'producer_payable', label: 'Agent Pay' }] : []),
+    ...(hasSubAgentOverride ? [{ col: 'sub_agent_override', label: 'Sub-Agent OV' }] : []),
     ...(hasMGA ? [{ col: 'mga', label: 'MGA' }] : []),
-  ];
+  ];}]}
 
   return (
     <>
@@ -279,6 +289,7 @@ export default function AllData({ user, initialFilters = {} }) {
                 ['Agent', policyModal.agent_name],
                 ['Carrier', policyModal.carrier],
                 ['Plan Type', policyModal.plan_type],
+                ['LOB', policyModal.lob],
                 ['Effective Date', policyModal.effective_date],
                 ['Period', policyModal.payment_period],
                 ['Type', policyModal.classification],
@@ -286,6 +297,11 @@ export default function AllData({ user, initialFilters = {} }) {
                 ['MGA', policyModal.mga],
                 ['Premium', policyModal.premium ? fmt(policyModal.premium) : '—'],
                 ['Comm Value', fmt(policyModal.commission)],
+                ['Gross Commission', policyModal.gross_commission != null ? fmt(policyModal.gross_commission) : null],
+                ['THEI Share', policyModal.thei_share != null ? fmt(policyModal.thei_share) : null],
+                ['BSI Share', policyModal.bsi_share != null ? fmt(policyModal.bsi_share) : null],
+                ['Agent Payable', policyModal.producer_payable != null ? fmt(policyModal.producer_payable) : null],
+                ['Sub-Agent Override', policyModal.sub_agent_override && policyModal.sub_agent_override > 0 ? fmt(policyModal.sub_agent_override) : null],
               ].map(([label, val]) => val && val !== '—' ? (
                 <div key={label}>
                   <div style={{fontSize:10,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:2}}>{label}</div>
@@ -455,6 +471,12 @@ export default function AllData({ user, initialFilters = {} }) {
                               {r.classification === 'Agency Override' ? 'Override' : (r.classification || '—')}
                             </span>
                           </td>
+                          {hasLOB && <td style={{ fontSize: 11, fontWeight: 500, color: r.lob === 'ACA' ? 'var(--amber)' : 'var(--text-muted)' }}>{r.lob || '—'}</td>}
+                          {hasSplitData && <td style={{ fontSize: 12, fontWeight: 500 }}>{r.gross_commission != null ? fmt(r.gross_commission) : '—'}</td>}
+                          {hasSplitData && <td style={{ fontSize: 12, color: parseFloat(r.thei_share) > 0 ? 'var(--green)' : 'var(--text-muted)' }}>{r.thei_share != null ? fmt(r.thei_share) : '—'}</td>}
+                          {hasSplitData && <td style={{ fontSize: 12, color: parseFloat(r.bsi_share) > 0 ? 'var(--blue)' : 'var(--text-muted)' }}>{r.bsi_share != null ? fmt(r.bsi_share) : '—'}</td>}
+                          {hasSplitData && <td style={{ fontSize: 12, color: parseFloat(r.producer_payable) > 0 ? 'var(--accent-dark)' : 'var(--text-muted)' }}>{r.producer_payable != null ? fmt(r.producer_payable) : '—'}</td>}
+                          {hasSubAgentOverride && <td style={{ fontSize: 12, fontWeight: 500, color: parseFloat(r.sub_agent_override) > 0 ? 'var(--amber)' : 'var(--text-muted)' }}>{r.sub_agent_override && r.sub_agent_override > 0 ? fmt(r.sub_agent_override) : '—'}</td>}
                           {hasMGA && <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.mga || '—'}</td>}
                           {user.role === 'admin' && (
                             <td>
@@ -470,7 +492,7 @@ export default function AllData({ user, initialFilters = {} }) {
                       {user.role === 'admin' && <td></td>}
                       <td colSpan={6} style={{ padding: '10px 12px', fontSize: 13 }}>Page total ({records.length})</td>
                       <td style={{ padding: '10px 12px', fontSize: 13, color: grandTotal < 0 ? 'var(--red)' : 'var(--green)' }}>{fmt(grandTotal)}</td>
-                      <td colSpan={user.role === 'admin' ? (6 + (hasCommSplit ? 3 : 0)) : (5 + (hasCommSplit ? 3 : 0))}></td>
+                      <td colSpan={100}></td>
                     </tr>
                   </tfoot>
                 </table>
