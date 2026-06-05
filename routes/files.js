@@ -879,7 +879,7 @@ function parseNHPRows(wb) {
     // Determine LOB
     let lob;
     const lobLower = lobRaw.toLowerCase();
-    if (lobLower === 'ma' || lobLower === 'mapd') lob = 'MA';
+    if (lobLower === 'ma' || lobLower === 'mapd' || lobLower === 'med') lob = 'MA';
     else if (lobLower === 'aca') lob = 'ACA';
     else if (lobLower === 'pdp') lob = 'PDP';
     else if (lobLower === 'medsupp' || lobLower === 'medigap') lob = 'MedSupp';

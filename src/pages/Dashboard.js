@@ -175,6 +175,7 @@ export default function Dashboard({ user, onNavigate }) {
   const [selPeriods, setSelPeriods] = useState([]);
   const [selTypes, setSelTypes] = useState([]);
   const [selPlanTypes, setSelPlanTypes] = useState([]);
+  const [selLOBs, setSelLOBs] = useState([]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [prevPeriodData, setPrevPeriodData] = useState(null);
   const [quickActionsOpen, setQuickActionsOpen] = useState(false);
@@ -191,8 +192,9 @@ export default function Dashboard({ user, onNavigate }) {
     if (selPeriods.length) p.set('periods', selPeriods.join(','));
     if (selTypes.length) p.set('classifications', selTypes.join(','));
     if (selPlanTypes.length) p.set('planTypes', selPlanTypes.join(','));
+    if (selLOBs.length) p.set('lobs', selLOBs.join(','));
     return p;
-  }, [selAgents, selCarriers, selPeriods, selTypes, selPlanTypes]);
+  }, [selAgents, selCarriers, selPeriods, selTypes, selPlanTypes, selLOBs]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -223,7 +225,7 @@ export default function Dashboard({ user, onNavigate }) {
 
   // On load/agency switch: default to current year periods
   useEffect(() => {
-    setSelAgents([]); setSelCarriers([]); setSelTypes([]); setSelPlanTypes([]);
+    setSelAgents([]); setSelCarriers([]); setSelTypes([]); setSelPlanTypes([]); setSelLOBs([]);
     apiFetch('/records/filters').then(d => {
       setAllFilters(d);
       // Auto-select all periods from current year
@@ -249,7 +251,7 @@ export default function Dashboard({ user, onNavigate }) {
   }, [quickActionsOpen]);
 
   function toggle(list, setList, item) { setList(p=>p.includes(item)?p.filter(x=>x!==item):[...p,item]); }
-  function clearAll() { setSelAgents([]); setSelCarriers([]); setSelPeriods([]); setSelTypes([]); setSelPlanTypes([]); }
+  function clearAll() { setSelAgents([]); setSelCarriers([]); setSelPeriods([]); setSelTypes([]); setSelPlanTypes([]); setSelLOBs([]); }
 
   function drillDown(overrides={}) {
     if (!onNavigate) return;
@@ -381,30 +383,65 @@ export default function Dashboard({ user, onNavigate }) {
           </div>
 
           {/* LOB Breakdown Cards */}
-          {summary?.byLOB && summary.byLOB.length > 0 && (
-            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(280px, 1fr))',gap:10,marginBottom:16}}>
-              {summary.byLOB.filter(lob => lob.lob && lob.lob !== 'null').map((lobData, idx) => {
-                const lobName = lobData.lob || 'Unknown';
-                const isACA = lobName === 'ACA';
-                // Dashboard shows AGENCY income only - ACA agency override, not agent commissions
-                const displayValue = parseFloat(lobData.thei_total || 0);
-                const count = parseInt(lobData.count || 0);
-                return (
-                  <div key={idx} style={{...card,padding:'16px 20px',borderTop:`3px solid ${isACA ? '#C9A96E' : '#4A7260'}`}}>
-                    <div style={{fontSize:10,color:C.textMuted,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.8px',marginBottom:8}}>
-                      {lobName} {isACA ? 'Agency Override' : 'Commissions'}
+          {summary?.byLOB && summary.byLOB.length > 0 && (() => {
+            // Combine MA + MedSupp into one Medicare card
+            const combined = {};
+            summary.byLOB.filter(lob => lob.lob && lob.lob !== 'null').forEach(lobData => {
+              const lobName = lobData.lob;
+              // Combine MA and MedSupp
+              const displayName = (lobName === 'MA' || lobName === 'MedSupp') ? 'Medicare' : lobName;
+              if (!combined[displayName]) {
+                combined[displayName] = { displayName, lobCodes: [], total: 0, count: 0 };
+              }
+              combined[displayName].lobCodes.push(lobName);
+              combined[displayName].total += parseFloat(lobData.thei_total || 0);
+              combined[displayName].count += parseInt(lobData.count || 0);
+            });
+
+            const cards = Object.values(combined);
+            return (
+              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(280px, 1fr))',gap:10,marginBottom:16}}>
+                {cards.map((cardData, idx) => {
+                  const isACA = cardData.displayName === 'ACA';
+                  const isMedicare = cardData.displayName === 'Medicare';
+                  const isActive = selLOBs.length > 0 && cardData.lobCodes.some(code => selLOBs.includes(code));
+                  return (
+                    <div 
+                      key={idx} 
+                      onClick={() => {
+                        // Toggle filter: click card to show only this LOB, click again to clear
+                        if (isActive) {
+                          setSelLOBs([]);
+                        } else {
+                          setSelLOBs(cardData.lobCodes);
+                        }
+                      }}
+                      style={{
+                        ...card,
+                        padding:'16px 20px',
+                        borderTop:`3px solid ${isActive ? '#A0522D' : (isACA ? '#C9A96E' : '#4A7260')}`,
+                        cursor:'pointer',
+                        transition:'all 0.2s',
+                        opacity: selLOBs.length > 0 && !isActive ? 0.5 : 1,
+                        transform: isActive ? 'scale(1.02)' : 'scale(1)',
+                      }}
+                    >
+                      <div style={{fontSize:10,color:C.textMuted,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.8px',marginBottom:8}}>
+                        {cardData.displayName} {isACA ? 'Agency Override' : 'Commissions'}
+                        {isActive && ' ✓'}
+                      </div>
+                      <div style={{fontSize:28,fontWeight:600,color:isACA ? C.accent : C.green,lineHeight:1.1,marginBottom:6}}>
+                        {loading ? '—' : fmt(cardData.total)}
+                      </div>
+                      <div style={{fontSize:11,color:C.textMuted}}>
+                        {cardData.count.toLocaleString()} {isACA ? 'agency policies' : 'policies'}
+                      </div>
                     </div>
-                    <div style={{fontSize:28,fontWeight:600,color:isACA ? C.accent : C.green,lineHeight:1.1,marginBottom:6}}>
-                      {loading ? '—' : fmt(displayValue)}
-                    </div>
-                    <div style={{fontSize:11,color:C.textMuted}}>
-                      {count.toLocaleString()} {isACA ? 'agency policies' : 'policies'}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+                  );
+                })}
+              </div>
+            );
+          })()}
 
           <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10,marginBottom:16}}>
             {(() => {
