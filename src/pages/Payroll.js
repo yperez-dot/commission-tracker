@@ -187,7 +187,8 @@ export default function Payroll({ user }) {
           return c.includes('new business') || c.includes('chargeback');
         });
       } else {
-        // THEI: ONLY ACA Agent Commissions (you pay agents) + Sub-Agent Overrides (Christian/Horacio) + Chargebacks
+        // THEI: Include ACA, sub-agent overrides, and chargebacks
+        // Will filter agents after grouping (must have at least one positive payable record)
         allRecs = allRecs.filter(r => {
           const classification = (r.classification || '').toLowerCase();
           const lob = (r.lob || '').toUpperCase();
@@ -210,12 +211,16 @@ export default function Payroll({ user }) {
         const key = `${agent}|${r.client_full_name}|${r.carrier}|${r.payment_period}|${r.policy_number}`;
         if (seen.has(key)) continue;
         seen.add(key);
-        if (!grouped[agent]) grouped[agent] = { agent, records: [], total: 0 };
+        if (!grouped[agent]) grouped[agent] = { agent, records: [], total: 0, hasPositivePayable: false };
         grouped[agent].records.push(r);
         grouped[agent].total += commission;
+        // Track if agent has at least one positive payable record (ACA or sub-agent override)
+        const isPayable = (r.lob === 'ACA' && (r.classification || '').toLowerCase().includes('agent commission')) || parseFloat(r.sub_agent_override) > 0;
+        if (isPayable && commission > 0) grouped[agent].hasPositivePayable = true;
       }
 
-      setPayouts(Object.values(grouped).filter(p => p.records.length > 0).sort((a,b) => b.total - a.total));
+      // Only show agents who have at least one positive payable record (not just chargebacks)
+      setPayouts(Object.values(grouped).filter(p => p.hasPositivePayable).sort((a,b) => b.total - a.total));
       const saved = JSON.parse(localStorage.getItem(`payroll_period_${period}`)||'{}');
       setPaidStatus(saved.paid||{}); setPaidDates(saved.dates||{});
     } catch(e) { console.error(e); } finally { setLoading(false); }
