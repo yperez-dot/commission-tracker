@@ -214,9 +214,11 @@ export default function Payroll({ user }) {
         if (!grouped[agent]) grouped[agent] = { agent, records: [], total: 0, hasPositivePayable: false };
         grouped[agent].records.push(r);
         grouped[agent].total += commission;
-        // Track if agent has at least one positive payable record (ACA or sub-agent override)
-        const isPayable = (r.lob === 'ACA' && (r.classification || '').toLowerCase().includes('agent commission')) || parseFloat(r.sub_agent_override) > 0;
-        if (isPayable && commission > 0) grouped[agent].hasPositivePayable = true;
+        // Track if agent has at least one positive payable record (ACA or sub-agent override, NOT chargeback)
+        const isChargeback = (r.classification || '').toLowerCase().includes('chargeback');
+        const isACAPayable = r.lob === 'ACA' && (r.classification || '').toLowerCase().includes('agent commission') && !isChargeback;
+        const hasSubAgentOV = parseFloat(r.sub_agent_override) > 0 && !isChargeback;
+        if ((isACAPayable || hasSubAgentOV) && commission > 0) grouped[agent].hasPositivePayable = true;
       }
 
       // Only show agents who have at least one positive payable record (not just chargebacks)
