@@ -829,20 +829,51 @@ function parseNHPRows(wb) {
     if (headerRow >= 0) break;
   }
   if (headerRow < 0) return records;
-  const rows = XLSX.utils.sheet_to_json(ws, { raw: true, defval: '', range: headerRow });
+  
+  // NHP has inconsistent column alignment: when LOB is blank, data shifts left
+  // Read raw row data and map intelligently
+  const rawRows = XLSX.utils.sheet_to_json(ws, { raw: true, defval: null, range: headerRow, header: 1 });
+  const headerRowData = rawRows[0] || [];
+  
+  // Find column indices
+  const lobIdx = headerRowData.findIndex(h => String(h).toLowerCase().includes('lob'));
+  const carrierIdx = headerRowData.findIndex(h => String(h).toLowerCase().includes('carrier'));
+  const agencyIdx = headerRowData.findIndex(h => String(h).toLowerCase().includes('agency'));
+  const agentNpnIdx = headerRowData.findIndex(h => String(h).toLowerCase().includes('agent npn'));
+  const agentNameIdx = headerRowData.findIndex(h => String(h).toLowerCase().includes('agent name'));
+  const policyNumIdx = headerRowData.findIndex(h => String(h).toLowerCase().includes('policy number'));
+  const clientIdx = headerRowData.findIndex(h => String(h).toLowerCase().includes('subscriber') || String(h).toLowerCase().includes('member name'));
+  const effectiveDateIdx = headerRowData.findIndex(h => String(h).toLowerCase().includes('policy effective'));
+  const commDateIdx = headerRowData.findIndex(h => String(h).toLowerCase().includes('commission') && String(h).toLowerCase().includes('date'));
+  const commTypeIdx = headerRowData.findIndex(h => String(h).toLowerCase() === 'commission type');
+  const commClassIdx = headerRowData.findIndex(h => String(h).toLowerCase().includes('comm class'));
+  const commissionIdx = headerRowData.findIndex(h => String(h).toLowerCase() === 'commission');
+  const overrideIdx = headerRowData.findIndex(h => String(h).toLowerCase() === 'override');
+  const feeIdx = headerRowData.findIndex(h => String(h).toLowerCase() === 'fee');
+  
+  const rows = rawRows.slice(1); // Skip header row
 
   for (const row of rows) {
-    const agentRaw = String(row['Agent Name'] || row['Agent'] || '').trim();
+    if (!Array.isArray(row)) continue;
+    
+    // Check if LOB column is blank - if so, data is shifted left by 1
+    const lobValue = lobIdx >= 0 ? row[lobIdx] : null;
+    const hasLOB = lobValue && String(lobValue).trim() !== '';
+    const shift = hasLOB ? 0 : -1; // If no LOB, everything shifts left 1 column
+    
+    const lobRaw = hasLOB ? String(lobValue).trim() : '';
+    const carrierRaw = String(row[carrierIdx + shift] || '').trim();
+    const agentRaw = String(row[agentNameIdx + shift] || '').trim();
     const agent = normalizeAgentName(agentRaw);
-    const carrierRaw = String(row['Carrier-Statement Month'] || '').trim();
-    const client = String(row['Subscriber / Member Name'] || row['Subscriber Name'] || '').trim();
-    const policyNumber = String(row['Policy Number'] || '').trim();
-    const effectiveDate = formatDate(row['Policy Effective Date']);
-    const rawPeriod = row['Commission /Coverage Date'] || row['Commission Month'];
+    const client = String(row[clientIdx + shift] || '').trim();
+    const policyNumber = String(row[policyNumIdx + shift] || '').trim();
+    const effectiveDateRaw = row[effectiveDateIdx + shift];
+    const effectiveDate = formatDate(effectiveDateRaw);
+    const rawPeriod = row[commDateIdx + shift];
     const period = normalizePeriod(rawPeriod);
-    const commClass = String(row['Comm Class'] || row['Type'] || '').trim();
-    const lobRaw = String(row['LOB'] || '').trim();
-
+    const commType = String(row[commTypeIdx + shift] || '').trim();
+    const commClass = String(row[commClassIdx + shift] || '').trim();
+    
     if (!client) continue;
 
     // Determine LOB
@@ -856,13 +887,14 @@ function parseNHPRows(wb) {
 
     // Determine if this is Commission or Override row
     const commClassLower = commClass.toLowerCase();
-    const isCommissionRow = commClassLower.includes('commission');
-    const isOverrideRow = commClassLower.includes('override');
+    const commTypeLower = commType.toLowerCase();
+    const isCommissionRow = commClassLower.includes('commission') || commTypeLower.includes('commission');
+    const isOverrideRow = commClassLower.includes('override') || commTypeLower.includes('override');
     
-    // Get the dollar amount
-    const commissionAmount = parseFloat(row['Commission']) || 0;
-    const overrideAmount = parseFloat(row['Override']) || 0;
-    const feeAmount = parseFloat(row['Fee']) || 0;
+    // Get the dollar amount - handle shifted columns
+    const commissionAmount = commissionIdx >= 0 ? (parseFloat(row[commissionIdx + shift]) || 0) : 0;
+    const overrideAmount = overrideIdx >= 0 ? (parseFloat(row[overrideIdx + shift]) || 0) : 0;
+    const feeAmount = feeIdx >= 0 ? (parseFloat(row[feeIdx + shift]) || 0) : 0;
     
     const grossCommission = isCommissionRow ? commissionAmount : (isOverrideRow ? overrideAmount : (commissionAmount + overrideAmount + feeAmount));
     
