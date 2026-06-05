@@ -909,18 +909,24 @@ function parseNHPRows(wb) {
     
     let splitApplies, theiShare, bsiShare, producerPayable, recordType, subAgentOverride = 0;
 
-    // ACA LOGIC: Use LOB column, not carrier name
+    // ACA LOGIC: Determine by which COLUMN has money, not by Comm Class label
     if (lob === 'ACA') {
       splitApplies = false;
       bsiShare = 0;
       
-      if (isCommissionRow) {
-        // ACA Commission → Agent gets 100%
+      // Check which COLUMN has the value (ignore Comm Class label)
+      if (commissionAmount > 0) {
+        // Money in COMMISSION column → Agent gets 100%
         theiShare = 0;
-        producerPayable = grossCommission;
+        producerPayable = commissionAmount;
         recordType = 'ACA Agent Commission';
+      } else if (overrideAmount > 0) {
+        // Money in OVERRIDE column → THEI keeps 100%
+        theiShare = overrideAmount;
+        producerPayable = 0;
+        recordType = 'ACA Agency Override';
       } else {
-        // ACA Override → THEI keeps 100%
+        // Fallback (shouldn't happen)
         theiShare = grossCommission;
         producerPayable = 0;
         recordType = 'ACA Agency Override';
