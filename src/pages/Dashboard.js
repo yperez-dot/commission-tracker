@@ -380,6 +380,31 @@ export default function Dashboard({ user, onNavigate }) {
             </div>
           </div>
 
+          {/* LOB Breakdown Cards */}
+          {summary?.byLOB && summary.byLOB.length > 0 && (
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(280px, 1fr))',gap:10,marginBottom:16}}>
+              {summary.byLOB.filter(lob => lob.lob && lob.lob !== 'null').map((lobData, idx) => {
+                const lobName = lobData.lob || 'Unknown';
+                const isACA = lobName === 'ACA';
+                const displayValue = isACA ? parseFloat(lobData.agent_payable || 0) : parseFloat(lobData.thei_total || 0);
+                const count = parseInt(lobData.count || 0);
+                return (
+                  <div key={idx} style={{...card,padding:'16px 20px',borderTop:`3px solid ${isACA ? '#C9A96E' : '#4A7260'}`}}>
+                    <div style={{fontSize:10,color:C.textMuted,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.8px',marginBottom:8}}>
+                      {lobName} {isACA ? 'Agent Commissions' : 'Commissions'}
+                    </div>
+                    <div style={{fontSize:28,fontWeight:600,color:isACA ? C.accent : C.green,lineHeight:1.1,marginBottom:6}}>
+                      {loading ? '—' : fmt(displayValue)}
+                    </div>
+                    <div style={{fontSize:11,color:C.textMuted}}>
+                      {count.toLocaleString()} {isACA ? 'payable to agents' : 'policies'}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10,marginBottom:16}}>
             {(() => {
               const calcChange = (current, prev) => {

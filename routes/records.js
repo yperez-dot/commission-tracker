@@ -163,7 +163,7 @@ router.get('/summary', requireAuth, async (req, res) => {
 
     const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
 
-    const [totalComm, totalRec, agentCnt, carrierCnt, byAgent, byCarrier, byPeriod] = await Promise.all([
+    const [totalComm, totalRec, agentCnt, carrierCnt, byAgent, byCarrier, byPeriod, byLOB] = await Promise.all([
       pool.query(`SELECT COALESCE(SUM(commission),0) as total FROM commission_records ${wc}`, params),
       pool.query(`SELECT COUNT(*) as count FROM commission_records ${wc}`, params),
       pool.query(`SELECT COUNT(DISTINCT agent_name) as count FROM commission_records ${wc}`, params),
@@ -171,6 +171,7 @@ router.get('/summary', requireAuth, async (req, res) => {
       pool.query(`SELECT agent_name, SUM(commission) as total, COUNT(*) as count FROM commission_records ${wc} GROUP BY agent_name ORDER BY total DESC`, params),
       pool.query(`SELECT carrier, SUM(commission) as total, COUNT(*) as count FROM commission_records ${wc} GROUP BY carrier ORDER BY total DESC`, params),
       pool.query(`SELECT payment_period as period, SUM(commission) as total, COUNT(*) as count, ABS(SUM(CASE WHEN commission < 0 THEN commission ELSE 0 END)) as chargebacks FROM commission_records ${wc} GROUP BY payment_period ORDER BY payment_period ASC`, params),
+      pool.query(`SELECT lob, SUM(commission) as total, SUM(COALESCE(producer_payable,0)) as agent_payable, SUM(COALESCE(thei_share,0)) as thei_total, COUNT(*) as count FROM commission_records ${wc} GROUP BY lob ORDER BY lob`, params),
     ]);
 
     res.json({
@@ -181,6 +182,7 @@ router.get('/summary', requireAuth, async (req, res) => {
       byAgent: byAgent.rows,
       byCarrier: byCarrier.rows,
       byPeriod: byPeriod.rows,
+      byLOB: byLOB.rows,
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
