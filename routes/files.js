@@ -941,17 +941,18 @@ function parseNHPRows(wb) {
         recordType = 'Agency Override';
         
         // Christian Munoz & Horacio Mendieta special handling
-        // Fixed rates on Doctors/Solis/HealthSun NEW BUSINESS only
+        // Fixed rates on UHC/Doctors/Solis/HealthSun NEW BUSINESS only
         const agentLower = agent.toLowerCase();
         const carrierLower = carrier.toLowerCase();
         const isChristianOrHoracio = agentLower.includes('christian munoz') || agentLower.includes('horacio mendieta');
-        const isSpecialCarrier = carrierLower.includes('doctors') || carrierLower.includes('solis') || carrierLower.includes('healthsun');
+        const isSpecialCarrier = carrierLower.includes('unitedhealthcare') || carrierLower.includes('united healthcare') || carrierLower.includes('doctors') || carrierLower.includes('solis') || carrierLower.includes('healthsun');
         const isNewBusiness = commClassLower.includes('new') || commClassLower.includes('initial') || (!commClassLower.includes('renewal') && !commClassLower.includes('carry'));
         
         if (isChristianOrHoracio && isSpecialCarrier && isNewBusiness && grossCommission > 0) {
           // Determine fixed rate
           let fixedRate = 0;
-          if (carrierLower.includes('doctors')) fixedRate = 50;
+          if (carrierLower.includes('unitedhealthcare') || carrierLower.includes('united healthcare')) fixedRate = 82.50;
+          else if (carrierLower.includes('doctors')) fixedRate = 50;
           else if (carrierLower.includes('solis')) fixedRate = 62.50;
           else if (carrierLower.includes('healthsun')) fixedRate = 52.50;
           
