@@ -714,4 +714,42 @@ router.post('/fix-med-lob', requireAuth, async (req, res) => {
   }
 });
 
+// ─── FIX ACA CLASSIFICATIONS ─────────────────────────────────────────────────
+router.post('/fix-aca-classifications', requireAuth, async (req, res) => {
+  try {
+    const pool = getPool();
+    
+    // Fix 1: Old "Override" with producer_payable > 0 → "ACA Agent Commission"
+    const agentCommResult = await pool.query(`
+      UPDATE commission_records 
+      SET classification = 'ACA Agent Commission'
+      WHERE lob = 'ACA' 
+        AND classification = 'Override' 
+        AND COALESCE(producer_payable, 0) > 0
+      RETURNING id
+    `);
+    
+    // Fix 2: Old "Override" with thei_share > 0 and producer_payable = 0 → "ACA Agency Override"
+    const agencyOverrideResult = await pool.query(`
+      UPDATE commission_records 
+      SET classification = 'ACA Agency Override'
+      WHERE lob = 'ACA' 
+        AND classification = 'Override' 
+        AND COALESCE(thei_share, 0) > 0
+        AND COALESCE(producer_payable, 0) = 0
+      RETURNING id
+    `);
+    
+    res.json({ 
+      success: true, 
+      agentCommissions: agentCommResult.rowCount,
+      agencyOverrides: agencyOverrideResult.rowCount,
+      total: agentCommResult.rowCount + agencyOverrideResult.rowCount
+    });
+  } catch (error) {
+    console.error('Fix ACA classifications error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 module.exports = router;

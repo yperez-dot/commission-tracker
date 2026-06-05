@@ -193,11 +193,14 @@ export default function Payroll({ user }) {
           const classification = (r.classification || '').toLowerCase();
           const lob = (r.lob || '').toUpperCase();
           const hasSubAgentOverride = parseFloat(r.sub_agent_override || 0) > 0;
+          const producerPayable = parseFloat(r.producer_payable || 0);
           
+          // ACA payable: either "Agent Commission" OR "Override" with producer_payable > 0
           const isACACommission = lob === 'ACA' && classification.includes('agent commission');
+          const isACAOverridePayable = lob === 'ACA' && classification === 'override' && producerPayable > 0;
           const isChargeback = classification.includes('chargeback');
           
-          return (isACACommission || hasSubAgentOverride || isChargeback) && !isYourTeam(r.agent_name);
+          return (isACACommission || isACAOverridePayable || hasSubAgentOverride || isChargeback) && !isYourTeam(r.agent_name);
         });
       }
 
@@ -216,7 +219,9 @@ export default function Payroll({ user }) {
         grouped[agent].total += commission;
         // Track if agent has at least one positive payable record (ACA or sub-agent override, NOT chargeback)
         const isChargeback = (r.classification || '').toLowerCase().includes('chargeback');
-        const isACAPayable = r.lob === 'ACA' && (r.classification || '').toLowerCase().includes('agent commission') && !isChargeback;
+        const classLower = (r.classification || '').toLowerCase();
+        const producerPayable = parseFloat(r.producer_payable || 0);
+        const isACAPayable = r.lob === 'ACA' && (classLower.includes('agent commission') || (classLower === 'override' && producerPayable > 0)) && !isChargeback;
         const hasSubAgentOV = parseFloat(r.sub_agent_override) > 0 && !isChargeback;
         if ((isACAPayable || hasSubAgentOV) && commission > 0) grouped[agent].hasPositivePayable = true;
       }
