@@ -269,7 +269,7 @@ export default function AllData({ user, initialFilters = {} }) {
     ...(hasSplitData ? [{ col: 'producer_payable', label: 'Agent Pay' }] : []),
     ...(hasSubAgentOverride ? [{ col: 'sub_agent_override', label: 'Sub-Agent OV' }] : []),
     ...(hasMGA ? [{ col: 'mga', label: 'MGA' }] : []),
-  ];}]}
+  ];
 
   return (
     <>
