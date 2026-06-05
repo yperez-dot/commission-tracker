@@ -119,7 +119,9 @@ function PayoutRow({ p, isPaid, paidDate, onTogglePaid, onExport, periodLabel, i
             </tr></thead>
             <tbody>
               {p.records.map((r,j) => {
-                const amount = parseFloat(r.producer_payable) > 0 ? parseFloat(r.producer_payable) : parseFloat(r.commission) || 0;
+                const amount = parseFloat(r.sub_agent_override) > 0 
+                  ? parseFloat(r.sub_agent_override) 
+                  : (parseFloat(r.producer_payable) > 0 ? parseFloat(r.producer_payable) : parseFloat(r.commission) || 0);
                 return (
                   <tr key={j} style={{ borderBottom:'0.5px solid var(--border)' }}>
                     <td style={{ padding:'6px 8px', color:'var(--accent-dark)', fontWeight:500, fontSize:11 }}>{r.policy_number||'—'}</td>
@@ -185,20 +187,26 @@ export default function Payroll({ user }) {
           return c.includes('new business') || c.includes('chargeback');
         });
       } else {
-        // THEI: Agent Commission type (includes ACA) + Chargebacks, exclude agency/team names
+        // THEI: ONLY ACA Agent Commissions (you pay agents) + Sub-Agent Overrides (Christian/Horacio) + Chargebacks
         allRecs = allRecs.filter(r => {
           const classification = (r.classification || '').toLowerCase();
-          const isAgentCommission = classification.includes('agent commission');
+          const lob = (r.lob || '').toUpperCase();
+          const hasSubAgentOverride = parseFloat(r.sub_agent_override || 0) > 0;
+          
+          const isACACommission = lob === 'ACA' && classification.includes('agent commission');
           const isChargeback = classification.includes('chargeback');
-          return (isAgentCommission || isChargeback) && !isYourTeam(r.agent_name);
+          
+          return (isACACommission || hasSubAgentOverride || isChargeback) && !isYourTeam(r.agent_name);
         });
       }
 
       const grouped = {}, seen = new Set();
       for (const r of allRecs) {
         const agent = r.agent_name || 'Unknown';
-        // Use producer_payable for ACA, commission for Medicare
-        const commission = parseFloat(r.producer_payable) > 0 ? parseFloat(r.producer_payable) : parseFloat(r.commission) || 0;
+        // Use sub_agent_override (Christian/Horacio), or producer_payable (ACA), or commission (fallback)
+        const commission = parseFloat(r.sub_agent_override) > 0 
+          ? parseFloat(r.sub_agent_override) 
+          : (parseFloat(r.producer_payable) > 0 ? parseFloat(r.producer_payable) : parseFloat(r.commission) || 0);
         const key = `${agent}|${r.client_full_name}|${r.carrier}|${r.payment_period}|${r.policy_number}`;
         if (seen.has(key)) continue;
         seen.add(key);
