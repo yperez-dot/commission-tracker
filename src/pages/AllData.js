@@ -121,13 +121,15 @@ export default function AllData({ user, initialFilters = {} }) {
       if (selLOB.length === 1) params.set('lob', selLOB[0]);
       if (selLOB.length > 1) params.set('lobs', selLOB.join(','));
       if (search.trim()) params.set('search', search.trim());
+      if (sortCol) params.set('sortCol', sortCol);
+      if (sortDir) params.set('sortDir', sortDir);
       const data = await apiFetch(`/records?${params}`);
       setRecords(data.records || []);
       setTotal(data.total || 0);
       setSelected(new Set());
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
-  }, [selAgents, selCarriers, selPeriods, selTypes, selPayees, selLOB, search, user.agency]);
+  }, [selAgents, selCarriers, selPeriods, selTypes, selPayees, selLOB, search, sortCol, sortDir, user.agency]);
 
   useEffect(() => { setPage(0); loadRecords(0); }, [loadRecords]);
 
@@ -173,17 +175,8 @@ export default function AllData({ user, initialFilters = {} }) {
   function handleSort(col) {
     if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
     else { setSortCol(col); setSortDir('asc'); }
+    setPage(0); // Reset to first page when sorting
   }
-
-  const sortedRecords = [...records].sort((a, b) => {
-    if (!sortCol) return 0;
-    const aVal = String(a[sortCol] || '').toLowerCase();
-    const bVal = String(b[sortCol] || '').toLowerCase();
-    const numA = parseFloat(a[sortCol]);
-    const numB = parseFloat(b[sortCol]);
-    if (!isNaN(numA) && !isNaN(numB)) return sortDir === 'asc' ? numA - numB : numB - numA;
-    return sortDir === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
-  });
 
   const grandTotal = records.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0);
   const hasFilters = selAgents.length || selCarriers.length || selPeriods.length || selTypes.length || selPayees.length || selLOB.length || search.trim();
@@ -441,7 +434,7 @@ export default function AllData({ user, initialFilters = {} }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {sortedRecords.map((r, i) => {
+                    {records.map((r, i) => {
                       const isSel = selected.has(r.id);
                       return (
                         <tr key={r.id} style={{ background: isSel ? 'var(--accent-light)' : 'transparent' }}>

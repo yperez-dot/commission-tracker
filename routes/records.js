@@ -34,7 +34,7 @@ function agencyFilter(req, alias) {
 router.get('/', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
-    const { agent, agents, carrier, carriers, period, periods, classification, classifications, lob, lobs, planType, payee, search, upload_id, limit = 100, offset = 0 } = req.query;
+    const { agent, agents, carrier, carriers, period, periods, classification, classifications, lob, lobs, planType, payee, search, upload_id, sortCol, sortDir = 'asc', limit = 100, offset = 0 } = req.query;
     let where = [], params = [], idx = 1;
 
     if (req.user.role === 'agent') {
@@ -60,6 +60,29 @@ router.get('/', requireAuth, async (req, res) => {
 
     const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
 
+    // Build ORDER BY clause - validate sortCol to prevent SQL injection
+    const validCols = {
+      'agent_name': 'cr.agent_name',
+      'carrier': 'cr.carrier',
+      'client_full_name': 'cr.client_full_name',
+      'effective_date': 'cr.effective_date',
+      'premium': 'cr.premium',
+      'commission': 'cr.commission',
+      'classification': 'cr.classification',
+      'payment_period': 'cr.payment_period',
+      'policy_number': 'cr.policy_number',
+      'lob': 'cr.lob',
+      'gross_commission': 'cr.gross_commission',
+      'thei_share': 'cr.thei_share',
+      'bsi_share': 'cr.bsi_share',
+      'producer_payable': 'cr.producer_payable',
+      'sub_agent_override': 'cr.sub_agent_override',
+      'created_at': 'cr.created_at'
+    };
+    const orderCol = sortCol && validCols[sortCol] ? validCols[sortCol] : 'cr.created_at';
+    const orderDir = sortDir.toLowerCase() === 'desc' ? 'DESC' : 'ASC';
+    const orderBy = `ORDER BY ${orderCol} ${orderDir}`;
+
     const records = await pool.query(
       `SELECT cr.id, cr.agent_name, cr.carrier,
         COALESCE(cr.plan_type, '') as plan_type,
@@ -70,7 +93,7 @@ router.get('/', requireAuth, async (req, res) => {
         cr.lob, cr.gross_commission, cr.thei_share, cr.bsi_share, 
         cr.producer_payable, cr.sub_agent_override
        FROM commission_records cr LEFT JOIN uploads u ON cr.upload_id = u.id
-       ${wc} ORDER BY cr.created_at DESC LIMIT $${idx++} OFFSET $${idx++}`,
+       ${wc} ${orderBy} LIMIT $${idx++} OFFSET $${idx++}`,
       [...params, parseInt(limit), parseInt(offset)]
     );
 
