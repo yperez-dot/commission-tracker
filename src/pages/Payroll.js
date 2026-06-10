@@ -7,9 +7,7 @@ function fmt(n) {
 }
 
 const YOUR_TEAM = [
-  'yahoska perez', 'katy robles', 'gina berenguer', 'jill taylor',
-  'osmary orozco', 'sabri perez', 'the health experts insurance',
-  'health experts insurance'
+  'yahoska perez', 'katy robles'
 ];
 
 function isYourTeam(name) {
