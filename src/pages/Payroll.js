@@ -215,7 +215,7 @@ export default function Payroll({ user }) {
           : hasProducerPayable
           ? parseFloat(r.producer_payable)
           : parseFloat(r.commission) || 0;
-        const key = `${agent}|${r.client_full_name}|${r.statement_month || r.carrier}|${r.payment_period}|${r.policy_number}`;
+        const key = `${agent}|${r.client_full_name}|${r.statement_month || r.carrier}|${r.payment_period}|${r.policy_number}|${r.classification}`;
         if (seen.has(key)) continue;
         seen.add(key);
         if (!grouped[agent]) grouped[agent] = { agent, records: [], total: 0, hasPositivePayable: false };
