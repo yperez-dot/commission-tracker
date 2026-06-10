@@ -258,7 +258,7 @@ export default function Dashboard({ user, onNavigate }) {
 
   function drillDown(overrides={}) {
     if (!onNavigate) return;
-    const agentOverride = viewMode === 'agent' 
+    const agentOverride = viewMode === 'agent'
       ? (overrides.agent || PRINCIPAL_AGENTS[0])
       : (overrides.agent||(selAgents.length===1?selAgents[0]:''));
     onNavigate('alldata', {
@@ -425,7 +425,15 @@ export default function Dashboard({ user, onNavigate }) {
               return true;
             });
             return (
-              <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(280px, 1fr))',gap:10,marginBottom:16}}>
+              <div style={{marginBottom:16}}>
+                {selLOBs.length > 0 && (
+                  <button onClick={() => setSelLOBs([])} style={{
+                    background:'none', border:`0.5px solid ${C.border}`, borderRadius:6,
+                    padding:'5px 12px', fontSize:12, cursor:'pointer', color:C.textMuted,
+                    marginBottom:10, display:'inline-flex', alignItems:'center', gap:6
+                  }}>← Back to all</button>
+                )}
+                <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(280px, 1fr))',gap:10}}>
                 {cards.map((cardData, idx) => {
                   const isACA = cardData.displayName === 'ACA';
                   const isActive = selLOBs.length > 0 && cardData.lobCodes.some(code => selLOBs.includes(code));
@@ -459,6 +467,7 @@ export default function Dashboard({ user, onNavigate }) {
                     </div>
                   );
                 })}
+              </div>
               </div>
             );
           })()}
@@ -597,7 +606,7 @@ export default function Dashboard({ user, onNavigate }) {
                         )}
                       </td>
                       <td style={{padding:'9px 12px',fontWeight:500,color:a.total_commission<0?C.red:C.green,fontSize:13}}>{fmt(a.total_commission)}</td>
-                      <td style={{padding:'9px 12px',color:C.text}}>{a.total_count.toLocaleString()}</td>
+                      <td onClick={e=>{e.stopPropagation();drillDown({agent:a.agent_name});}} style={{padding:'9px 12px',color:C.accent,fontWeight:600,cursor:'pointer',textDecoration:'underline'}}>{a.total_count.toLocaleString()}</td>
                       <td style={{padding:'9px 12px',color:C.text}}>{fmtPct(a.distribution_pct)}</td>
                       <td style={{padding:'9px 12px',color:a.advance_amount>0?C.accentDark:C.text}}>{fmt(a.advance_amount)}</td>
                       <td style={{padding:'9px 12px',color:a.chargeback_amount>0?C.red:C.text}}>{a.chargeback_amount>0?'- ':''}{fmt(a.chargeback_amount)}</td>
