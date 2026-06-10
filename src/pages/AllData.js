@@ -202,7 +202,12 @@ export default function AllData({ user, initialFilters = {} }) {
       
       // Build CSV with all records
       const headers = ['Agent', 'Carrier', 'Client', 'Policy #', 'Effective Date', 'Premium', 'Comm Value', 'Type', 'Period', 'Payee', 'MGA'];
-      const rows = allRecords.map(r => [r.agent_name, formatCarrier(r.carrier), r.client_full_name, r.policy_number, r.effective_date, r.premium, r.commission, r.classification, r.payment_period, r.payee, r.mga]);
+      const rows = allRecords.map(r => {
+        const commValue = r.producer_payable != null && parseFloat(r.producer_payable) !== 0
+          ? r.producer_payable
+          : r.commission;
+        return [r.agent_name, formatCarrier(r.carrier), r.client_full_name, r.policy_number, r.effective_date, r.premium, commValue, r.classification, r.payment_period, r.payee, r.mga];
+      });
       const csv = [headers, ...rows].map(r => r.map(v => `"${String(v||'').replace(/"/g,'""')}"`).join(',')).join('\n');
       
       const blob = new Blob([csv], { type: 'text/csv' });
