@@ -90,8 +90,9 @@ router.get('/', requireAuth, async (req, res) => {
         cr.classification, cr.payment_period, cr.policy_number, cr.created_at,
         cr.upload_id, cr.payee, COALESCE(cr.mga, '') as mga,
         cr.raw_data, u.original_name as upload_name,
-        cr.lob, cr.gross_commission, cr.thei_share, cr.bsi_share, 
-        cr.producer_payable, cr.sub_agent_override
+        cr.lob, cr.gross_commission, cr.thei_share, cr.bsi_share,
+        cr.producer_payable, cr.sub_agent_override,
+        cr.members, cr.statement_month
        FROM commission_records cr LEFT JOIN uploads u ON cr.upload_id = u.id
        ${wc} ${orderBy} LIMIT $${idx++} OFFSET $${idx++}`,
       [...params, parseInt(limit), parseInt(offset)]
@@ -216,9 +217,6 @@ router.get('/kpi', requireAuth, async (req, res) => {
 
     const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
 
-    // Restored original simple SQL after plan-change detection broke production.
-    // Plan-change tagging now happens in the frontend (Reports.js) where it's
-    // easier to test + iterate. KPI endpoint is back to known-good shape.
     const rows = await pool.query(`
       SELECT agent_name,
         COUNT(*) as total_count,
@@ -272,9 +270,6 @@ router.get('/missing-renewals', requireAuth, async (req, res) => {
     if (!lastPeriod || !thisPeriod) return res.status(400).json({ error: 'lastPeriod and thisPeriod required' });
     const _af = agencyFilter(req, null);
 
-    // Default scope: only Yahoska + Katy's personal production.
-    // Pass scope='all' to override and check the entire BOB.
-    // Per Yahoska 2026-05-12: "We only check for mine and Katy's BOB."
     const THEI_PRINCIPAL_FILTER = `AND (
       LOWER(agent_name) LIKE '%yahoska%'
       OR LOWER(agent_name) LIKE '%katy%'
@@ -337,8 +332,6 @@ router.get('/filters', requireAuth, async (req, res) => {
     try {
       const classBase = baseWhere ? baseWhere + ` AND classification IS NOT NULL AND classification != ''` : `WHERE classification IS NOT NULL AND classification != ''`;
       const cl = await pool.query(`SELECT DISTINCT classification FROM commission_records ${classBase} ORDER BY classification`);
-      // Filter out plan types that ended up in classification column
-      // Exclude anything with carrier names + product types (Aetna MAPD, UnitedHealthcare Med Adv, etc.)
       const planTypeKeywords = /AARP|CSNP|DSNP|MAPD|PDP|MED SUP|MED ADV|MEDIGAP|SUPPLEMENT|HMO|PPO|Aetna|UnitedHealthcare|Humana|Cigna|Devoted|WellCare|Solis|Doctors|HealthSun/i;
       classifications = cl.rows.map(c => c.classification).filter(c => c && !planTypeKeywords.test(c));
     } catch (e) { console.log('classification not available:', e.message); }
@@ -370,25 +363,6 @@ router.post('/normalize-agents', requireAuth, requireAdmin, async (req, res) => 
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// ADP Payable Report — list of producers THEI owes for ACA pass-through.
-//
-// Use case: Each pay period, Yahoska needs to know exactly how much to pay
-// each ACA pass-through producer (Patsy, Eduardo, Jessica, Sabri, Jill,
-// Josseline, Osmary) via ADP. This endpoint gives her that list.
-//
-// Query params:
-//   period (string) - filter by payment_period (e.g., '202604'). Optional.
-//   year (string)   - filter by YYYY of payment_period. Optional.
-//   group_by_carrier (bool) - if true, return per-carrier breakdown per producer
-//
-// Returns:
-//   {
-//     period_filter: string | null,
-//     totals: { gross, paid_count },
-//     producers: [
-//       { name, total_payable, record_count, by_carrier: { Molina: $, Cigna: $, ... } }
-//     ]
-//   }
 router.get('/adp-payable', requireAuth, requireAdmin, async (req, res) => {
   try {
     const pool = getPool();
@@ -407,7 +381,6 @@ router.get('/adp-payable', requireAuth, requireAdmin, async (req, res) => {
     }
     const whereClause = `WHERE ${whereParts.join(' AND ')}`;
 
-    // Per-producer totals
     const perProducer = await pool.query(
       `SELECT agent_name,
               SUM(producer_payable) as total_payable,
@@ -419,7 +392,6 @@ router.get('/adp-payable', requireAuth, requireAdmin, async (req, res) => {
       params
     );
 
-    // Optional per-carrier breakdown
     let perCarrier = [];
     if (groupByCarrier) {
       const carrierResult = await pool.query(
@@ -435,7 +407,6 @@ router.get('/adp-payable', requireAuth, requireAdmin, async (req, res) => {
       perCarrier = carrierResult.rows;
     }
 
-    // Build response
     const producers = perProducer.rows.map(r => {
       const out = {
         name: r.agent_name,
@@ -469,7 +440,6 @@ router.get('/adp-payable', requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
-// Agency P&L summary — what THEI actually earned + what's owed
 router.get('/agency-summary', requireAuth, requireAdmin, async (req, res) => {
   try {
     const pool = getPool();
@@ -537,15 +507,10 @@ router.get('/agency-summary', requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
-// Backfill OliComm business-rule columns onto existing commission_records.
-// Computes source/lob/split fields from the data we already have.
-// Safe to run multiple times — idempotent (only updates rows where the new
-// columns are still NULL).
 router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, res) => {
   try {
     const pool = getPool();
 
-    // Inline the rule constants so this works without depending on files.js exports
     const NO_SPLIT_AGENTS = [
       'patsy pernia', 'eduardo pernia', 'josseline silber', 'josseline mena',
       'jessica sifontes', 'sabri perez', 'jill taylor', 'osmary orozco',
@@ -555,10 +520,6 @@ router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, r
     ];
     const ACA_AGENCY_PAYS_PRODUCER = ['molina', 'cigna', 'ambetter', 'florida blue'];
 
-    // Decision: does the THE↔BSI 50/50 split apply?
-    // Per Yahoska 2026-05-12 clarification:
-    //   - Medicare lines always split 50/50, regardless of agent.
-    //   - ACA never splits (whether or not the agent is a pass-through producer).
     function shouldSplit(agentName, carrier) {
       const c = String(carrier || '').toLowerCase().trim();
       if (ACA_CARRIERS_LIST.some(x => c.includes(x))) return false;
@@ -569,7 +530,6 @@ router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, r
       return ACA_AGENCY_PAYS_PRODUCER.some(x => c.includes(x));
     }
 
-    // ?force=true forces a re-backfill of ALL rows (use after rule corrections).
     const force = req.query.force === 'true';
     const whereClause = force ? '' : 'WHERE cr.source IS NULL';
 
@@ -587,7 +547,6 @@ router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, r
     const sources = { BSI: 0, NHP: 0, direct_carrier: 0, manual: 0 };
 
     for (const row of sel.rows) {
-      // Infer source from the upload filename / payee
       const fn = String(row.upload_name || '').toLowerCase();
       const payeeLc = String(row.payee || '').toLowerCase();
       let source = 'manual';
@@ -596,16 +555,10 @@ router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, r
       else if (payeeLc) source = 'direct_carrier';
       sources[source] = (sources[source] || 0) + 1;
 
-      // Compute split / payable
       const agent = row.agent_name;
       const carrier = row.carrier;
       const classification = String(row.classification || '').toLowerCase();
       const isCommissionRow = classification.includes('agent commission') || classification === 'commission';
-
-      // The historical `commission` column is already the NET-after-split value
-      // (per the existing parsers). We can't recover the gross from there alone,
-      // BUT for split records we can derive it: gross = net * 2.
-      // For no-split records, gross = net.
       const netCommission = parseFloat(row.commission) || 0;
 
       const isAcaPassThroughAgent = NO_SPLIT_AGENTS.some(a => String(agent || '').toLowerCase().includes(a));
@@ -613,38 +566,30 @@ router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, r
       let splitApplies, theiShare, bsiShare, producerPayable, grossCommission;
 
       if (isCommissionRow) {
-        // Producer's own commission flowing through THEI (ADP payable)
         splitApplies = false;
         grossCommission = netCommission;
         theiShare = 0;
         bsiShare = 0;
         producerPayable = grossCommission;
       } else if (isAcaCarrier) {
-        // ACA override: no BSI split
         splitApplies = false;
         grossCommission = netCommission;
         if (isAcaAgencyPaysProducer(carrier) && isAcaPassThroughAgent) {
-          // Pass-through to producer via ADP
           theiShare = 0;
           bsiShare = 0;
           producerPayable = grossCommission;
         } else {
-          // ACA but THEI keeps the override
           theiShare = grossCommission;
           bsiShare = 0;
           producerPayable = 0;
         }
       } else if (source === 'direct_carrier') {
-        // Direct carrier portal pulls show YOUR (Yahoska/Katy) PERSONAL
-        // production only. No BSI split applies — it's the writer's own money.
-        // Confirmed by Yahoska 2026-05-12.
         splitApplies = false;
         grossCommission = netCommission;
         theiShare = netCommission;
         bsiShare = 0;
         producerPayable = 0;
       } else {
-        // BSI / NHP Medicare override -> 50/50 BSI split
         splitApplies = true;
         grossCommission = Math.round(netCommission * 2 * 100) / 100;
         theiShare = netCommission;
@@ -652,7 +597,6 @@ router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, r
         producerPayable = 0;
       }
 
-      // LOB inference from plan_type / carrier
       const planType = String(row.plan_type || '').toLowerCase();
       const carrierLc = String(carrier || '').toLowerCase();
       let lob = null;
@@ -665,7 +609,6 @@ router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, r
       else if (/life/.test(planType)) lob = 'Life';
       else if (/medicare|humana|aetna|united|devoted/.test(carrierLc)) lob = 'MA';
 
-      // Parse effective_date (often MM/DD/YYYY string) -> YYYY-MM-DD
       let policyWrittenDate = null;
       const ed = String(row.effective_date || '');
       const m1 = ed.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
@@ -719,7 +662,6 @@ router.post('/fix-aca-classifications', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
     
-    // Fix 1: Old "Override" with producer_payable > 0 → "ACA Agent Commission"
     const agentCommResult = await pool.query(`
       UPDATE commission_records 
       SET classification = 'ACA Agent Commission'
@@ -729,7 +671,6 @@ router.post('/fix-aca-classifications', requireAuth, async (req, res) => {
       RETURNING id
     `);
     
-    // Fix 2: Old "Override" with thei_share > 0 and producer_payable = 0 → "ACA Agency Override"
     const agencyOverrideResult = await pool.query(`
       UPDATE commission_records 
       SET classification = 'ACA Agency Override'
