@@ -199,6 +199,7 @@ export default function Dashboard({ user, onNavigate }) {
     if (selTypes.length) p.set('classifications', selTypes.join(','));
     if (selPlanTypes.length) p.set('planTypes', selPlanTypes.join(','));
     if (selLOBs.length) p.set('lobs', selLOBs.join(','));
+    if (viewMode === 'agent') p.set('view', 'agent');
     return p;
   }, [selAgents, selCarriers, selPeriods, selTypes, selPlanTypes, selLOBs, viewMode, allFilters.agents]);
 
@@ -419,8 +420,9 @@ export default function Dashboard({ user, onNavigate }) {
             });
 
             const cards = Object.values(combined).filter(cardData => {
-              // In agent view, hide Dental and PDP (those are agent-only LOBs, not useful here)
+              // In agent view, hide Dental and PDP, and hide any $0 cards
               if (viewMode === 'agent' && (cardData.displayName === 'Dental' || cardData.displayName === 'PDP')) return false;
+              if (viewMode === 'agent' && cardData.total === 0) return false;
               return true;
             });
             return (
