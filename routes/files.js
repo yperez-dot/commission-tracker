@@ -812,6 +812,41 @@ function parseBSIRows(wb, filename) {
   return records;
 }
 
+// Extract period from NHP "Carrier-Statement Month" column (e.g., "Cigna - April 2026" → "202604")
+function extractPeriodFromStatementMonth(statementMonth) {
+  if (!statementMonth) return null;
+  const s = String(statementMonth).toLowerCase();
+  
+  // Extract month name and year
+  const monthNames = {
+    'january': '01', 'jan': '01',
+    'february': '02', 'feb': '02',
+    'march': '03', 'mar': '03',
+    'april': '04', 'apr': '04',
+    'may': '05',
+    'june': '06', 'jun': '06',
+    'july': '07', 'jul': '07',
+    'august': '08', 'aug': '08',
+    'september': '09', 'sep': '09', 'sept': '09',
+    'october': '10', 'oct': '10',
+    'november': '11', 'nov': '11',
+    'december': '12', 'dec': '12'
+  };
+  
+  // Try to find month and year
+  const yearMatch = s.match(/\b(20\d{2})\b/);
+  if (!yearMatch) return null;
+  const year = yearMatch[1];
+  
+  for (const [monthName, monthNum] of Object.entries(monthNames)) {
+    if (s.includes(monthName)) {
+      return `${year}${monthNum}`;
+    }
+  }
+  
+  return null;
+}
+
 function parseNHPRows(wb) {
   const records = [];
   const ws = wb.Sheets[wb.SheetNames[0]];
@@ -870,7 +905,13 @@ function parseNHPRows(wb) {
     const effectiveDateRaw = row[effectiveDateIdx + shift];
     const effectiveDate = formatDate(effectiveDateRaw);
     const rawPeriod = row[commDateIdx + shift];
-    const period = normalizePeriod(rawPeriod);
+    let period = normalizePeriod(rawPeriod);
+    
+    // Fallback: If Commission Date is broken, extract period from "Carrier-Statement Month" column
+    if (!period || period === 'Unknown') {
+      period = extractPeriodFromStatementMonth(carrierRaw) || 'Unknown';
+    }
+    
     const commType = String(row[commTypeIdx + shift] || '').trim();
     const commClass = String(row[commClassIdx + shift] || '').trim();
     
