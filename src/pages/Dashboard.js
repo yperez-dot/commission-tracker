@@ -266,6 +266,7 @@ export default function Dashboard({ user, onNavigate }) {
       carrier: overrides.carrier||(selCarriers.length===1?selCarriers[0]:''),
       period: overrides.period||(selPeriods.length===1?selPeriods[0]:''),
       classification: overrides.classification||(selTypes.length===1?selTypes[0]:''),
+      lob: overrides.lob || (selLOBs.length===1?selLOBs[0]:''),
     });
   }
 
@@ -606,7 +607,7 @@ export default function Dashboard({ user, onNavigate }) {
                         )}
                       </td>
                       <td style={{padding:'9px 12px',fontWeight:500,color:a.total_commission<0?C.red:C.green,fontSize:13}}>{fmt(a.total_commission)}</td>
-                      <td onClick={e=>{e.stopPropagation();drillDown({agent:a.agent_name});}} style={{padding:'9px 12px',color:C.accent,fontWeight:600,cursor:'pointer',textDecoration:'underline'}}>{a.total_count.toLocaleString()}</td>
+                      <td onClick={e=>{e.stopPropagation();drillDown({agent:a.agent_name, lob: selLOBs.length===1?selLOBs[0]:''});}} style={{padding:'9px 12px',color:C.accent,fontWeight:600,cursor:'pointer',textDecoration:'underline'}}>{a.total_count.toLocaleString()}</td>
                       <td style={{padding:'9px 12px',color:C.text}}>{fmtPct(a.distribution_pct)}</td>
                       <td style={{padding:'9px 12px',color:a.advance_amount>0?C.accentDark:C.text}}>{fmt(a.advance_amount)}</td>
                       <td style={{padding:'9px 12px',color:a.chargeback_amount>0?C.red:C.text}}>{a.chargeback_amount>0?'- ':''}{fmt(a.chargeback_amount)}</td>

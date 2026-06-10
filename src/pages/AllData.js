@@ -78,7 +78,7 @@ export default function AllData({ user, initialFilters = {} }) {
   const [selPeriods, setSelPeriods] = useState(initialFilters.period ? [initialFilters.period] : []);
   const [selTypes, setSelTypes] = useState(initialFilters.classification ? [initialFilters.classification] : []);
   const [selPayees, setSelPayees] = useState([]);
-  const [selLOB, setSelLOB] = useState([]);
+  const [selLOB, setSelLOB] = useState(initialFilters.lob ? [initialFilters.lob] : []);
   const [search, setSearch] = useState('');
   const [sortCol, setSortCol] = useState('');
   const [sortDir, setSortDir] = useState('asc');
@@ -102,8 +102,9 @@ export default function AllData({ user, initialFilters = {} }) {
     if (initialFilters.carrier) setSelCarriers([initialFilters.carrier]);
     if (initialFilters.period) setSelPeriods([initialFilters.period]);
     if (initialFilters.classification) setSelTypes([initialFilters.classification]);
+    if (initialFilters.lob) setSelLOB([initialFilters.lob]);
     setPage(0);
-  }, [initialFilters.agent, initialFilters.carrier, initialFilters.period, initialFilters.classification]);
+  }, [initialFilters.agent, initialFilters.carrier, initialFilters.period, initialFilters.classification, initialFilters.lob]);
 
   const loadRecords = useCallback(async (offset = 0) => {
     setLoading(true);
