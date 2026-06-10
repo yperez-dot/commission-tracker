@@ -257,8 +257,11 @@ export default function Dashboard({ user, onNavigate }) {
 
   function drillDown(overrides={}) {
     if (!onNavigate) return;
+    const agentOverride = viewMode === 'agent' 
+      ? (overrides.agent || PRINCIPAL_AGENTS[0])
+      : (overrides.agent||(selAgents.length===1?selAgents[0]:''));
     onNavigate('alldata', {
-      agent: overrides.agent||(selAgents.length===1?selAgents[0]:''),
+      agent: agentOverride,
       carrier: overrides.carrier||(selCarriers.length===1?selCarriers[0]:''),
       period: overrides.period||(selPeriods.length===1?selPeriods[0]:''),
       classification: overrides.classification||(selTypes.length===1?selTypes[0]:''),
@@ -408,11 +411,18 @@ export default function Dashboard({ user, onNavigate }) {
                 combined[displayName] = { displayName, lobCodes: [], total: 0, count: 0 };
               }
               combined[displayName].lobCodes.push(lobName);
-              combined[displayName].total += parseFloat(lobData.thei_total || 0);
+              const amount = (viewMode === 'agent' && lobName === 'ACA')
+                ? parseFloat(lobData.agent_payable || 0)
+                : parseFloat(lobData.thei_total || 0);
+              combined[displayName].total += amount;
               combined[displayName].count += parseInt(lobData.count || 0);
             });
 
-            const cards = Object.values(combined);
+            const cards = Object.values(combined).filter(cardData => {
+              // In agent view, hide Dental and PDP (those are agent-only LOBs, not useful here)
+              if (viewMode === 'agent' && (cardData.displayName === 'Dental' || cardData.displayName === 'PDP')) return false;
+              return true;
+            });
             return (
               <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(280px, 1fr))',gap:10,marginBottom:16}}>
                 {cards.map((cardData, idx) => {
@@ -436,7 +446,7 @@ export default function Dashboard({ user, onNavigate }) {
                       }}
                     >
                       <div style={{fontSize:10,color:C.textMuted,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.8px',marginBottom:8}}>
-                        {cardData.displayName} {isACA ? 'Agency Override' : 'Commissions'}
+                        {cardData.displayName} {isACA ? (viewMode === 'agent' ? 'Agent Commissions' : 'Agency Override') : 'Commissions'}
                         {isActive && ' ✓'}
                       </div>
                       <div style={{fontSize:28,fontWeight:600,color:isACA ? C.accent : C.green,lineHeight:1.1,marginBottom:6}}>
