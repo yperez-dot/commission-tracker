@@ -879,13 +879,19 @@ function parseNHPRows(wb, uploadPeriod) {
   const policyNumIdx = headerRowData.findIndex(h => String(h).toLowerCase().includes('policy number'));
   const clientIdx = headerRowData.findIndex(h => String(h).toLowerCase().includes('subscriber') || String(h).toLowerCase().includes('member name'));
   const stateIdx = headerRowData.findIndex(h => String(h).toLowerCase() === 'state');
-  const membersIdx = headerRowData.findIndex(h => String(h).toLowerCase() === 'members');
+  const membersIdx = headerRowData.findIndex(h => String(h || '').trim().toLowerCase() === 'members') !== -1
+    ? headerRowData.findIndex(h => String(h || '').trim().toLowerCase() === 'members')
+    : 8; // Column I fallback
   const effectiveDateIdx = headerRowData.findIndex(h => String(h).toLowerCase().includes('policy effective'));
   const commDateIdx = headerRowData.findIndex(h => String(h).toLowerCase().includes('commission') && String(h).toLowerCase().includes('date'));
   const commTypeIdx = headerRowData.findIndex(h => String(h).toLowerCase() === 'commission type');
   const commClassIdx = headerRowData.findIndex(h => String(h).toLowerCase().includes('comm class'));
-  const commissionIdx = headerRowData.findIndex(h => String(h).toLowerCase() === 'commission');
-  const overrideIdx = headerRowData.findIndex(h => String(h).toLowerCase() === 'override');
+  const commissionIdx = headerRowData.findIndex(h => String(h || '').trim().toLowerCase() === 'commission') !== -1
+    ? headerRowData.findIndex(h => String(h || '').trim().toLowerCase() === 'commission')
+    : 13; // Column N fallback
+  const overrideIdx = headerRowData.findIndex(h => String(h || '').trim().toLowerCase() === 'override') !== -1
+    ? headerRowData.findIndex(h => String(h || '').trim().toLowerCase() === 'override')
+    : 14; // Column O fallback
   const feeIdx = headerRowData.findIndex(h => String(h).toLowerCase() === 'fee');
   
   const rows = rawRows.slice(1); // Skip header row
@@ -951,6 +957,18 @@ function parseNHPRows(wb, uploadPeriod) {
 
     // ACA LOGIC: Determine by which COLUMN has money, not by Comm Class label
     if (lob === 'ACA') {
+      // DEBUG: Log first 3 ACA records
+      if (records.filter(r => r.lob === 'ACA').length < 3) {
+        console.log('\n🔍 NHP ACA DEBUG — Record', records.filter(r => r.lob === 'ACA').length + 1);
+        console.log('  Headers detected:');
+        console.log('    commissionIdx:', commissionIdx, '| overrideIdx:', overrideIdx, '| membersIdx:', membersIdx);
+        console.log('  Raw row data:', row.slice(0, 16)); // First 16 columns
+        console.log('  Parsed values:');
+        console.log('    agent:', agent, '| client:', client, '| policy:', policyNumber);
+        console.log('    carrierRaw:', carrierRaw, '| members:', members);
+        console.log('    commissionAmount:', commissionAmount, '| overrideAmount:', overrideAmount);
+        console.log('    shift:', shift, '| hasLOB:', hasLOB);
+      }
       splitApplies = false;
       bsiShare = 0;
       
