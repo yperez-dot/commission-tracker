@@ -29,18 +29,39 @@ function getRaw(r) {
   catch(e) { return {}; }
 }
 
-function generateStatement(agent, records, periodLabel, total, isBSI) {
-  const agencyName = isBSI ? 'Broker Society Insurance / Level Up Insurance' : 'The Health Experts Insurance';
-  const filename = isBSI
-    ? `BSI_Statement_${agent.replace(/\s+/g,'_')}_${periodLabel.replace(/\s+/g,'_')}.csv`
-    : `THEI_Statement_${agent.replace(/\s+/g,'_')}_${periodLabel.replace(/\s+/g,'_')}.csv`;
+async function generateStatement(agent, records, periodLabel, total, isBSI) {
+  const ExcelJS = (await import('exceljs')).default;
+  const { saveAs } = await import('file-saver');
 
-  const fmtCsv = n => '$' + Number(n||0).toFixed(2);
-  
+  const PURPLE = 'FF452068';
+  const PINK = 'FFFF1090';
+  const WHITE = 'FFFFFFFF';
+  const DARK = 'FF333333';
+  const MID = 'FF666666';
+  const HDRPURPLE = 'FF6B3FA0';
+
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Commission Statement');
+  ws.views = [{ showGridLines: false }];
+
+  // Column widths
+  ws.columns = [
+    { width: 2 }, // A spacer
+    { width: 18 }, // B Policy #
+    { width: 30 }, // C Client
+    { width: 22 }, // D Statement
+    { width: 8 }, // E Lives
+    { width: 16 }, // F Effective
+    { width: 16 }, // G Amount
+    { width: 18 }, // H Type
+    { width: 2 }, // I spacer
+  ];
+
   const getAmount = r => {
     const hasProducerPayable = r.producer_payable != null;
     return hasProducerPayable ? parseFloat(r.producer_payable) : parseFloat(r.commission) || 0;
   };
+  const fmtMoney = n => '$' + Number(n||0).toFixed(2);
 
   const positives = records.filter(r => getAmount(r) >= 0);
   const negatives = records.filter(r => getAmount(r) < 0);
@@ -48,39 +69,182 @@ function generateStatement(agent, records, periodLabel, total, isBSI) {
   const chargebackTotal = negatives.reduce((s,r) => s + getAmount(r), 0);
   const netTotal = grossTotal + chargebackTotal;
 
-  const headers = ['Policy #','Client','Statement','Lives','Effective Date','Commission','Type'];
+  // Helper: style a cell
+  const styleCell = (cell, { bold=false, size=10, color=DARK, bg=null, align='left', italic=false } = {}) => {
+    cell.font = { name: 'Arial', bold, size, color: { argb: color }, italic };
+    cell.alignment = { horizontal: align, vertical: 'middle' };
+    if (bg) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: bg } };
+  };
 
-  const rows = [
-    [`*** AGENT: ${agent} ***`,'','','','','',''],
-    [`Period: ${periodLabel}`,'','','','','',''],
-    ['','','','','','',''],
-    headers,
-    ...positives.map(r => [
-      r.policy_number||'—', r.client_full_name, r.statement_month || r.carrier,
-      r.members != null && r.members !== 0 ? r.members : '',
-      r.effective_date||'—', fmtCsv(getAmount(r)), r.classification||'—'
-    ]),
-    ...(negatives.length ? [
-      ['--- CHARGEBACKS ---','','','','','',''],
-      ...negatives.map(r => [
-        r.policy_number||'—', r.client_full_name, r.statement_month || r.carrier,
-        r.members != null && r.members !== 0 ? r.members : '',
-        r.effective_date||'—', fmtCsv(getAmount(r)), r.classification||'—'
-      ])
-    ] : []),
-    ['','','','','','',''],
-    ['Gross Commission','','','','',fmtCsv(grossTotal),''],
-    ...(negatives.length ? [['Chargebacks','','','','',fmtCsv(chargebackTotal),'']] : []),
-    ['NET TOTAL','','','','',fmtCsv(netTotal),''],
-    ['','','','','','',''],
-  ];
+  const fillRow = (rowNum, colStart, colEnd, argb) => {
+    const row = ws.getRow(rowNum);
+    for (let c = colStart; c <= colEnd; c++) {
+      row.getCell(c).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb } };
+    }
+  };
 
-  const csv = rows.map(r => r.map(v => `"${String(v||'').replace(/"/g,'""')}"`).join(',')).join('\n');
-  const blob = new Blob([csv], { type: 'text/csv' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = filename; a.click();
-  URL.revokeObjectURL(url);
+  // ── ROW 1: spacer ──
+  ws.getRow(1).height = 8;
+
+  // ── ROW 2: Logo + Title ──
+  ws.getRow(2).height = 70;
+
+  // Logo — fetch from public folder
+  try {
+    const logoResp = await fetch('/thei_logo.png');
+    const logoBlob = await logoResp.arrayBuffer();
+    const imgId = wb.addImage({ buffer: logoBlob, extension: 'png' });
+    ws.addImage(imgId, { tl: { col: 1, row: 1 }, ext: { width: 280, height: 85 } });
+  } catch(e) { console.warn('Logo not loaded:', e); }
+
+  const titleCell = ws.getRow(2).getCell(4);
+  titleCell.value = 'Commission Statement';
+  styleCell(titleCell, { bold: true, size: 15, color: PURPLE, align: 'center' });
+  ws.mergeCells('D2:G2');
+
+  const periodCell = ws.getRow(2).getCell(8);
+  periodCell.value = periodLabel;
+  styleCell(periodCell, { bold: true, size: 13, color: PINK, align: 'right' });
+
+  // ── ROW 3: spacer ──
+  ws.getRow(3).height = 8;
+
+  // ── ROW 4: Pink divider ──
+  ws.getRow(4).height = 4;
+  fillRow(4, 2, 8, 'FFFF1090');
+
+  // ── ROW 5: spacer ──
+  ws.getRow(5).height = 10;
+
+  // ── ROWS 6-8: Agent info ──
+  ws.getRow(6).height = 20;
+  styleCell(ws.getRow(6).getCell(2), { bold: true, size: 9, color: MID });
+  ws.getRow(6).getCell(2).value = 'AGENT';
+  styleCell(ws.getRow(6).getCell(3), { bold: true, size: 13, color: PURPLE });
+  ws.getRow(6).getCell(3).value = agent;
+
+  ws.getRow(7).height = 18;
+  ws.getRow(7).getCell(2).value = 'PERIOD';
+  styleCell(ws.getRow(7).getCell(2), { bold: true, size: 9, color: MID });
+  ws.getRow(7).getCell(3).value = periodLabel;
+  styleCell(ws.getRow(7).getCell(3), { size: 11, color: DARK });
+
+  ws.getRow(8).height = 18;
+  ws.getRow(8).getCell(2).value = 'GENERATED';
+  styleCell(ws.getRow(8).getCell(2), { bold: true, size: 9, color: MID });
+  ws.getRow(8).getCell(3).value = new Date().toLocaleDateString('en-US');
+  styleCell(ws.getRow(8).getCell(3), { size: 11, color: DARK });
+
+  ws.getRow(9).height = 10;
+
+  // ── ROW 10: Summary header ──
+  ws.getRow(10).height = 20;
+  ws.getRow(10).getCell(2).value = 'SUMMARY BY CARRIER';
+  styleCell(ws.getRow(10).getCell(2), { bold: true, size: 10, color: DARK });
+
+  // Carrier summary rows
+  const carrierTotals = {};
+  for (const r of positives) {
+    const key = r.carrier || 'Unknown';
+    carrierTotals[key] = (carrierTotals[key] || 0) + getAmount(r);
+  }
+  let summaryRow = 11;
+  for (const [carrier, amt] of Object.entries(carrierTotals)) {
+    ws.getRow(summaryRow).height = 20;
+    ws.getRow(summaryRow).getCell(2).value = carrier;
+    styleCell(ws.getRow(summaryRow).getCell(2), { bold: true, size: 11, color: PURPLE });
+    ws.getRow(summaryRow).getCell(8).value = fmtMoney(amt);
+    styleCell(ws.getRow(summaryRow).getCell(8), { bold: true, size: 11, color: DARK, align: 'right' });
+    summaryRow++;
+  }
+
+  // Total payment row — pink
+  ws.getRow(summaryRow).height = 24;
+  fillRow(summaryRow, 2, 8, 'FFFF1090');
+  ws.getRow(summaryRow).getCell(2).value = 'TOTAL PAYMENT';
+  styleCell(ws.getRow(summaryRow).getCell(2), { bold: true, size: 11, color: WHITE, bg: 'FFFF1090' });
+  ws.getRow(summaryRow).getCell(8).value = fmtMoney(grossTotal);
+  styleCell(ws.getRow(summaryRow).getCell(8), { bold: true, size: 12, color: WHITE, bg: 'FFFF1090', align: 'right' });
+
+  let cur = summaryRow + 1;
+  ws.getRow(cur).height = 12;
+  cur++;
+
+  // ── Policy Detail header — purple ──
+  ws.getRow(cur).height = 22;
+  fillRow(cur, 2, 8, PURPLE);
+  ws.getRow(cur).getCell(2).value = 'POLICY DETAIL';
+  styleCell(ws.getRow(cur).getCell(2), { bold: true, size: 10, color: WHITE, bg: PURPLE });
+  cur++;
+
+  // Column headers
+  ws.getRow(cur).height = 20;
+  const colHdrs = ['POLICY #','CLIENT','STATEMENT','LIVES','EFFECTIVE DATE','AMOUNT','TYPE'];
+  [2,3,4,5,6,7,8].forEach((col, i) => {
+    const c = ws.getRow(cur).getCell(col);
+    c.value = colHdrs[i];
+    c.font = { name: 'Arial', bold: true, size: 9, color: { argb: WHITE } };
+    c.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: HDRPURPLE } };
+    c.alignment = { horizontal: 'center', vertical: 'middle' };
+  });
+  cur++;
+
+  // Policy rows
+  const allRows = [...positives, ...(negatives.length ? negatives : [])];
+  for (const r of allRows) {
+    ws.getRow(cur).height = 20;
+    const amt = getAmount(r);
+    const isChargeback = amt < 0;
+    const vals = [
+      { col: 2, val: r.policy_number || '—', bold: true, color: PURPLE, align: 'center' },
+      { col: 3, val: r.client_full_name, bold: false, color: DARK, align: 'left' },
+      { col: 4, val: r.statement_month || r.carrier, bold: false, color: MID, align: 'left' },
+      { col: 5, val: r.members != null && r.members !== 0 ? String(r.members) : '—', bold: true, color: DARK, align: 'center' },
+      { col: 6, val: r.effective_date || '—', bold: false, color: MID, align: 'center' },
+      { col: 7, val: fmtMoney(amt), bold: true, color: isChargeback ? 'FFCC0000' : DARK, align: 'right' },
+      { col: 8, val: r.classification || '—', bold: false, color: MID, align: 'left' },
+    ];
+    for (const { col, val, bold, color, align } of vals) {
+      const cell = ws.getRow(cur).getCell(col);
+      cell.value = val;
+      cell.font = { name: 'Arial', bold, size: 10, color: { argb: color } };
+      cell.alignment = { horizontal: align, vertical: 'middle' };
+      cell.border = { bottom: { style: 'thin', color: { argb: 'FFEEEEEE' } } };
+    }
+    cur++;
+  }
+
+  // Chargebacks separator if needed
+  ws.getRow(cur).height = 10;
+  cur++;
+
+  // Net total
+  ws.getRow(cur).height = 22;
+  const netLabelCell = ws.getRow(cur).getCell(7);
+  netLabelCell.value = 'NET TOTAL';
+  netLabelCell.font = { name: 'Arial', bold: true, size: 11, color: { argb: PURPLE } };
+  netLabelCell.alignment = { horizontal: 'right', vertical: 'middle' };
+  const netAmtCell = ws.getRow(cur).getCell(8);
+  netAmtCell.value = fmtMoney(netTotal);
+  netAmtCell.font = { name: 'Arial', bold: true, size: 12, color: { argb: PURPLE } };
+  netAmtCell.alignment = { horizontal: 'right', vertical: 'middle' };
+  cur += 2;
+
+  // Footer
+  ws.getRow(cur).height = 20;
+  fillRow(cur, 2, 8, PURPLE);
+  const footerCell = ws.getRow(cur).getCell(2);
+  footerCell.value = 'The Health Experts Insurance | healthexps.com | 1-800-380-6821';
+  footerCell.font = { name: 'Arial', size: 9, color: { argb: WHITE }, italic: true };
+  footerCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: PURPLE } };
+  footerCell.alignment = { horizontal: 'left', vertical: 'middle' };
+  ws.mergeCells(`B${cur}:H${cur}`);
+
+  // Generate and download
+  const buffer = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const filename = `THEI_Statement_${agent.replace(/\s+/g,'_')}_${periodLabel.replace(/\s+/g,'_')}.xlsx`;
+  saveAs(blob, filename);
 }
 
 function PayoutRow({ p, isPaid, paidDate, onTogglePaid, onExport, periodLabel, isBSI }) {
