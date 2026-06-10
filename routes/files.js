@@ -1017,6 +1017,7 @@ function parseNHPRows(wb) {
       splitApplies,
       lob,
       subAgentOverride,
+      statementMonth: carrierRaw,
       raw: row,
     });
   }
@@ -2027,6 +2028,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS mga TEXT DEFAULT ''`); } catch(e) {}
     try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS payee TEXT DEFAULT ''`); } catch(e) {}
     try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS sub_agent_override NUMERIC DEFAULT 0`); } catch(e) {}
+    try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS statement_month TEXT`); } catch(e) {}
 
     for (const r of records) {
       await pool.query(
@@ -2035,14 +2037,14 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
            premium, commission, classification, payment_period, policy_number, payee, mga,
            raw_data,
            source, policy_written_date, gross_commission, thei_share, bsi_share,
-           producer_payable, split_applies, lob, sub_agent_override
+           producer_payable, split_applies, lob, sub_agent_override, statement_month
          )
          VALUES (
            $1,$2,$3,$4,$5,$6,
            $7,$8,$9,$10,$11,$12,$13,
            $14,
            $15,$16,$17,$18,$19,
-           $20,$21,$22,$23
+           $20,$21,$22,$23,$24
          )`,
         [
           uploadId, r.agent, r.carrier, r.planType || '', r.client, r.effectiveDate,
@@ -2065,6 +2067,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
           r.splitApplies != null ? r.splitApplies : null,
           r.lob || null,
           r.subAgentOverride != null ? r.subAgentOverride : 0,
+          r.statementMonth || null,
         ]
       );
     }
