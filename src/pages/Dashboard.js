@@ -16,6 +16,7 @@ const MY_AGENTS = [
   'Gina Berenguer','Jill Taylor','Katy Robles','Osmary Orozco',
   'Sabri Perez','The Health Experts Insurance','Yahoska Perez',
 ];
+const PRINCIPAL_AGENTS = ['Yahoska Perez', 'Katy Robles', 'The Health Experts Insurance'];
 const CLASSIFICATION_TYPES = ['New Business','Renewal','Agent Commission','Agency Override','Chargeback','HRA/Bonus'];
 
 const C = {
@@ -83,7 +84,7 @@ function VerticalBarChart({ data, loading, metric }) {
           const isRecent = i >= data.length-4;
           const barColor = metric==='chargebacks' ? C.red : isNeg ? C.red : isRecent ? C.barActive : C.barMuted;
           return (
-            <div key={i} 
+            <div key={i}
               style={{flex:1,minWidth:44,maxWidth:90,display:'flex',flexDirection:'column',alignItems:'center',height:'100%',justifyContent:'flex-end',position:'relative'}}>
               <span style={{fontSize:12,fontWeight:500,color:isNeg||metric==='chargebacks'?C.red:C.text,marginBottom:4,whiteSpace:'nowrap'}}>{fmtVal(d)}</span>
               <div style={{width:'60%',height:`${Math.max(pct,0)}%`,minHeight:3,background:barColor,borderRadius:'3px 3px 0 0',transition:'height 0.4s ease'}}/>
@@ -179,6 +180,7 @@ export default function Dashboard({ user, onNavigate }) {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [prevPeriodData, setPrevPeriodData] = useState(null);
   const [quickActionsOpen, setQuickActionsOpen] = useState(false);
+  const [viewMode, setViewMode] = useState('agency'); // 'agency' | 'agent'
 
   function handleKpiSort(col) {
     if (kpiSortCol === col) setKpiSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -187,14 +189,18 @@ export default function Dashboard({ user, onNavigate }) {
 
   const buildParams = useCallback(() => {
     const p = new URLSearchParams();
-    if (selAgents.length) p.set('agents', selAgents.join(','));
+    // In agent mode, force filter to principals only
+    const agentsToUse = viewMode === 'agent'
+      ? PRINCIPAL_AGENTS.filter(a => allFilters.agents.includes(a))
+      : selAgents;
+    if (agentsToUse.length) p.set('agents', agentsToUse.join(','));
     if (selCarriers.length) p.set('carriers', selCarriers.join(','));
     if (selPeriods.length) p.set('periods', selPeriods.join(','));
     if (selTypes.length) p.set('classifications', selTypes.join(','));
     if (selPlanTypes.length) p.set('planTypes', selPlanTypes.join(','));
     if (selLOBs.length) p.set('lobs', selLOBs.join(','));
     return p;
-  }, [selAgents, selCarriers, selPeriods, selTypes, selPlanTypes, selLOBs]);
+  }, [selAgents, selCarriers, selPeriods, selTypes, selPlanTypes, selLOBs, viewMode, allFilters.agents]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -205,7 +211,6 @@ export default function Dashboard({ user, onNavigate }) {
       if (s?.byPeriod) {
         const sorted = [...s.byPeriod].filter(p=>p.period&&p.period!=='Unknown'&&String(p.period).match(/^\d{6}$/)).sort((a,b)=>String(a.period).localeCompare(String(b.period)));
         setPeriodData(sorted.slice(-chartRange));
-        // Calculate previous period comparison
         const currentPeriods = sorted.slice(-chartRange);
         const prevStart = Math.max(0, sorted.length - chartRange * 2);
         const prevPeriods = sorted.slice(prevStart, sorted.length - chartRange);
@@ -223,12 +228,10 @@ export default function Dashboard({ user, onNavigate }) {
     finally { setLoading(false); }
   }, [buildParams, agencyView, chartRange]);
 
-  // On load/agency switch: default to current year periods
   useEffect(() => {
     setSelAgents([]); setSelCarriers([]); setSelTypes([]); setSelPlanTypes([]); setSelLOBs([]);
     apiFetch('/records/filters').then(d => {
       setAllFilters(d);
-      // Auto-select all periods from current year
       const currentYear = new Date().getFullYear().toString();
       const currentYearPeriods = (d.periods || []).filter(p =>
         String(p).match(/^\d{6}$/) && String(p).startsWith(currentYear)
@@ -239,7 +242,6 @@ export default function Dashboard({ user, onNavigate }) {
 
   useEffect(() => { loadData(); }, [loadData]);
 
-  // Close quick actions menu when clicking outside
   useEffect(() => {
     const handleClickOutside = (e) => {
       if (quickActionsOpen && !e.target.closest('[data-quick-actions]')) {
@@ -294,7 +296,7 @@ export default function Dashboard({ user, onNavigate }) {
       {/* Filter sidebar */}
       <div style={{width:sidebarCollapsed?50:210,minWidth:sidebarCollapsed?50:210,background:C.bg,borderRight:`0.5px solid ${C.border}`,overflowY:'auto',padding:sidebarCollapsed?'16px 8px':'16px 12px',flexShrink:0,transition:'width 0.3s ease, min-width 0.3s ease'}}>
         <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}}>
-          <button 
+          <button
             onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
             style={{background:C.accent,color:C.sidebar,border:'none',borderRadius:6,padding:'6px 8px',cursor:'pointer',fontSize:16,lineHeight:1,fontWeight:500,display:'flex',alignItems:'center',justifyContent:'center',width:sidebarCollapsed?'100%':'auto'}}
             title={sidebarCollapsed ? 'Expand filters' : 'Collapse filters'}
@@ -347,8 +349,22 @@ export default function Dashboard({ user, onNavigate }) {
                   ))}
                 </div>
               )}
+
+              {/* Agency / Agent toggle */}
+              <div style={{display:'flex',borderRadius:8,border:`0.5px solid ${C.border}`,overflow:'hidden'}}>
+                {[['agency','🏢 Agency'],['agent','👤 Agent']].map(([mode, label]) => (
+                  <button key={mode} onClick={() => setViewMode(mode)} style={{
+                    padding:'7px 14px', fontSize:12, border:'none', cursor:'pointer',
+                    fontWeight: viewMode===mode ? 600 : 400,
+                    background: viewMode===mode ? C.accentDark : 'transparent',
+                    color: viewMode===mode ? '#F5EDD4' : C.textMuted,
+                    transition:'all 0.15s'
+                  }}>{label}</button>
+                ))}
+              </div>
+
               <div style={{position:'relative'}} data-quick-actions>
-                <button 
+                <button
                   onClick={() => setQuickActionsOpen(!quickActionsOpen)}
                   style={{background:C.accent,color:C.sidebar,border:'none',borderRadius:8,padding:'8px 14px',cursor:'pointer',fontSize:13,fontWeight:600,display:'flex',alignItems:'center',gap:6,boxShadow:'0 1px 3px rgba(0,0,0,0.1)',transition:'transform 0.1s'}}
                   onMouseEnter={e=>e.target.style.transform='scale(1.02)'}
@@ -384,11 +400,9 @@ export default function Dashboard({ user, onNavigate }) {
 
           {/* LOB Breakdown Cards */}
           {summary?.byLOB && summary.byLOB.length > 0 && (() => {
-            // Combine MA + MedSupp into one Medicare card
             const combined = {};
             summary.byLOB.filter(lob => lob.lob && lob.lob !== 'null').forEach(lobData => {
               const lobName = lobData.lob;
-              // Combine MA and MedSupp
               const displayName = (lobName === 'MA' || lobName === 'MedSupp') ? 'Medicare' : lobName;
               if (!combined[displayName]) {
                 combined[displayName] = { displayName, lobCodes: [], total: 0, count: 0 };
@@ -403,18 +417,13 @@ export default function Dashboard({ user, onNavigate }) {
               <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(280px, 1fr))',gap:10,marginBottom:16}}>
                 {cards.map((cardData, idx) => {
                   const isACA = cardData.displayName === 'ACA';
-                  const isMedicare = cardData.displayName === 'Medicare';
                   const isActive = selLOBs.length > 0 && cardData.lobCodes.some(code => selLOBs.includes(code));
                   return (
-                    <div 
-                      key={idx} 
+                    <div
+                      key={idx}
                       onClick={() => {
-                        // Toggle filter: click card to show only this LOB, click again to clear
-                        if (isActive) {
-                          setSelLOBs([]);
-                        } else {
-                          setSelLOBs(cardData.lobCodes);
-                        }
+                        if (isActive) { setSelLOBs([]); }
+                        else { setSelLOBs(cardData.lobCodes); }
                       }}
                       style={{
                         ...card,
@@ -456,7 +465,7 @@ export default function Dashboard({ user, onNavigate }) {
               const prevCB = prevPeriodData?.chargebacks || 0;
               const totalChange = calcChange(currentTotal, prevTotal);
               const cbChange = calcChange(currentCB, prevCB);
-              
+
               return [
                 {label:'Total Commissions', value:fmt(summary?.totalCommission), color:C.green, sub:`${(summary?.totalRecords||0).toLocaleString()} records`, change: totalChange},
                 {label:'Net Sales', value:fmt(netSales), color:C.accentDark, sub:'after chargebacks', change: null},
