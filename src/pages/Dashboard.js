@@ -412,16 +412,15 @@ export default function Dashboard({ user, onNavigate }) {
                 combined[displayName] = { displayName, lobCodes: [], total: 0, count: 0 };
               }
               combined[displayName].lobCodes.push(lobName);
-              const amount = (viewMode === 'agent' && lobName === 'ACA')
-                ? parseFloat(lobData.agent_payable || 0)
-                : parseFloat(lobData.thei_total || 0);
+              // Agent view: use thei_total for all LOBs (personal production flows through thei_total)
+              // Agency view: use thei_total for non-ACA, agent_payable for ACA overrides
+              const amount = parseFloat(lobData.thei_total || 0);
               combined[displayName].total += amount;
               combined[displayName].count += parseInt(lobData.count || 0);
             });
 
             const cards = Object.values(combined).filter(cardData => {
-              // In agent view, hide Dental and PDP, and hide any $0 cards
-              if (viewMode === 'agent' && (cardData.displayName === 'Dental' || cardData.displayName === 'PDP')) return false;
+              // In agent view, hide $0 cards only
               if (viewMode === 'agent' && cardData.total === 0) return false;
               return true;
             });
