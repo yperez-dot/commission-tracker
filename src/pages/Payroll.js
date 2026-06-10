@@ -35,10 +35,8 @@ function generateStatement(agent, records, periodLabel, total, isBSI) {
     ? `BSI_Statement_${agent.replace(/\s+/g,'_')}_${periodLabel.replace(/\s+/g,'_')}.csv`
     : `THEI_Statement_${agent.replace(/\s+/g,'_')}_${periodLabel.replace(/\s+/g,'_')}.csv`;
 
-  // Format currency without commas so CSV doesn't break columns
   const fmtCsv = n => '$' + Number(n||0).toFixed(2);
   
-  // Helper: Get correct amount field (producer_payable for ACA, commission otherwise)
   const getAmount = r => {
     const hasProducerPayable = r.producer_payable != null;
     return hasProducerPayable ? parseFloat(r.producer_payable) : parseFloat(r.commission) || 0;
@@ -58,13 +56,15 @@ function generateStatement(agent, records, periodLabel, total, isBSI) {
     ['','','','','','',''],
     headers,
     ...positives.map(r => [
-      r.policy_number||'—', r.client_full_name, r.statement_month || r.carrier, r.members || '',
+      r.policy_number||'—', r.client_full_name, r.statement_month || r.carrier,
+      r.members != null && r.members !== 0 ? r.members : '',
       r.effective_date||'—', fmtCsv(getAmount(r)), r.classification||'—'
     ]),
     ...(negatives.length ? [
       ['--- CHARGEBACKS ---','','','','','',''],
       ...negatives.map(r => [
-        r.policy_number||'—', r.client_full_name, r.statement_month || r.carrier, r.members || '',
+        r.policy_number||'—', r.client_full_name, r.statement_month || r.carrier,
+        r.members != null && r.members !== 0 ? r.members : '',
         r.effective_date||'—', fmtCsv(getAmount(r)), r.classification||'—'
       ])
     ] : []),
@@ -135,7 +135,7 @@ function PayoutRow({ p, isPaid, paidDate, onTogglePaid, onExport, periodLabel, i
                     <td style={{ padding:'6px 8px', color:'var(--accent-dark)', fontWeight:500, fontSize:11 }}>{r.policy_number||'—'}</td>
                     <td style={{ padding:'6px 8px', color:'var(--text)' }}>{r.client_full_name}</td>
                     <td style={{ padding:'6px 8px', color:'var(--text-muted)', fontSize:11 }}>{r.statement_month || r.carrier}</td>
-                    <td style={{ padding:'6px 8px', color:'var(--accent)', fontWeight:500, fontSize:11, textAlign:'center' }}>{r.members || '—'}</td>
+                    <td style={{ padding:'6px 8px', color:'var(--accent)', fontWeight:500, fontSize:11, textAlign:'center' }}>{r.members != null && r.members !== 0 ? r.members : '—'}</td>
                     <td style={{ padding:'6px 8px', color:'var(--text-muted)', fontSize:11 }}>{r.effective_date||'—'}</td>
                     <td style={{ padding:'6px 8px', color:'var(--text-muted)', fontSize:11 }}>{r.payment_period||'—'}</td>
                     <td style={{ padding:'6px 8px', color:'var(--text-muted)', fontSize:11 }}>{r.classification||'—'}</td>
@@ -190,24 +190,18 @@ export default function Payroll({ user }) {
       let allRecs = data.records || [];
 
       if (isBSI) {
-        // BSI: only New Business and Chargebacks — no renewals
         allRecs = allRecs.filter(r => {
           const c = (r.classification || '').toLowerCase();
           return c.includes('new business') || c.includes('chargeback');
         });
       } else {
-        // THEI: Include ACA, sub-agent overrides, and chargebacks
-        // Will filter agents after grouping (must have at least one positive payable record)
         allRecs = allRecs.filter(r => {
           const classification = (r.classification || '').toLowerCase();
           const lob = (r.lob || '').toUpperCase();
           const hasSubAgentOverride = parseFloat(r.sub_agent_override || 0) > 0;
           const producerPayable = parseFloat(r.producer_payable || 0);
-          
-          // ACA payable: ANY record with producer_payable !== 0 (includes chargebacks)
           const isACAPayable = lob === 'ACA' && producerPayable !== 0;
           const isChargeback = classification.includes('chargeback');
-          
           return (isACAPayable || hasSubAgentOverride || isChargeback) && !isYourTeam(r.agent_name);
         });
       }
@@ -215,8 +209,6 @@ export default function Payroll({ user }) {
       const grouped = {}, seen = new Set();
       for (const r of allRecs) {
         const agent = r.agent_name || 'Unknown';
-        // Use sub_agent_override (Christian/Horacio), or producer_payable (ACA), or commission (fallback)
-        // Note: producer_payable can be negative (chargebacks)
         const hasSubAgentOV = parseFloat(r.sub_agent_override || 0) !== 0;
         const hasProducerPayable = r.producer_payable != null;
         const commission = hasSubAgentOV 
@@ -230,15 +222,13 @@ export default function Payroll({ user }) {
         if (!grouped[agent]) grouped[agent] = { agent, records: [], total: 0, hasPositivePayable: false };
         grouped[agent].records.push(r);
         grouped[agent].total += commission;
-        // Track if agent has at least one positive payable record (ACA or sub-agent override, NOT chargeback)
-        const isChargeback = (r.classification || '').toLowerCase().includes('chargeback');
-        const producerPayable = parseFloat(r.producer_payable || 0);
-        const isACAPayable = r.lob === 'ACA' && producerPayable > 0 && !isChargeback;
-        const hasSubAgentOverride = parseFloat(r.sub_agent_override) > 0 && !isChargeback;
-        if ((isACAPayable || hasSubAgentOverride) && commission > 0) grouped[agent].hasPositivePayable = true;
+
+        // FIX: Show agent if they have ANY non-zero producer_payable (including chargeback-only agents)
+        const isACAPayableCheck = (r.lob || '').toUpperCase() === 'ACA' && parseFloat(r.producer_payable || 0) !== 0;
+        const hasSubAgentOverride = parseFloat(r.sub_agent_override || 0) > 0;
+        if (isACAPayableCheck || hasSubAgentOverride) grouped[agent].hasPositivePayable = true;
       }
 
-      // Only show agents who have at least one positive payable record (not just chargebacks)
       setPayouts(Object.values(grouped).filter(p => p.hasPositivePayable).sort((a,b) => b.total - a.total));
       const saved = JSON.parse(localStorage.getItem(`payroll_period_${period}`)||'{}');
       setPaidStatus(saved.paid||{}); setPaidDates(saved.dates||{});
@@ -284,10 +274,10 @@ export default function Payroll({ user }) {
       lines.push(`"*** AGENT: ${p.agent} ***"`);
       lines.push(`"Status: ${paidStatus[p.agent]?`Paid ${paidDates[p.agent]}`:'Unpaid'}"`);
       lines.push(`"Policy #","Client","Statement","Lives","Effective","Commission","Type"`);
-      for (const r of positives) lines.push(`"${r.policy_number||''}","${r.client_full_name}","${r.statement_month || r.carrier}","${r.members||''}","${r.effective_date}","${fmtCsv(getAmount(r))}","${r.classification||''}"`);
+      for (const r of positives) lines.push(`"${r.policy_number||''}","${r.client_full_name}","${r.statement_month || r.carrier}","${r.members != null && r.members !== 0 ? r.members : ''}","${r.effective_date}","${fmtCsv(getAmount(r))}","${r.classification||''}"`);
       if (negatives.length) {
         lines.push(`"--- CHARGEBACKS ---"`);
-        for (const r of negatives) lines.push(`"${r.policy_number||''}","${r.client_full_name}","${r.statement_month || r.carrier}","${r.members||''}","${r.effective_date}","${fmtCsv(getAmount(r))}","${r.classification||''}"`);
+        for (const r of negatives) lines.push(`"${r.policy_number||''}","${r.client_full_name}","${r.statement_month || r.carrier}","${r.members != null && r.members !== 0 ? r.members : ''}","${r.effective_date}","${fmtCsv(getAmount(r))}","${r.classification||''}"`);
       }
       lines.push(`"Gross Commission","","","","${fmtCsv(gross)}",""`);
       if (negatives.length) lines.push(`"Chargebacks","","","","${fmtCsv(cb)}",""`);
