@@ -847,7 +847,7 @@ function extractPeriodFromStatementMonth(statementMonth) {
   return null;
 }
 
-function parseNHPRows(wb) {
+function parseNHPRows(wb, uploadPeriod) {
   const records = [];
   const ws = wb.Sheets[wb.SheetNames[0]];
   const range = XLSX.utils.decode_range(ws['!ref']);
@@ -904,13 +904,9 @@ function parseNHPRows(wb) {
     const policyNumber = String(row[policyNumIdx + shift] || '').trim();
     const effectiveDateRaw = row[effectiveDateIdx + shift];
     const effectiveDate = formatDate(effectiveDateRaw);
-    const rawPeriod = row[commDateIdx + shift];
-    let period = normalizePeriod(rawPeriod);
     
-    // Fallback: If Commission Date is broken, extract period from "Carrier-Statement Month" column
-    if (!period || period === 'Unknown') {
-      period = extractPeriodFromStatementMonth(carrierRaw) || 'Unknown';
-    }
+    // Use upload date as period for ALL records (one statement = one payroll batch)
+    const period = uploadPeriod || 'Unknown';
     
     const commType = String(row[commTypeIdx + shift] || '').trim();
     const commClass = String(row[commClassIdx + shift] || '').trim();
@@ -1954,7 +1950,10 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       } else if (isBSIFile(req.file.originalname)) {
         records = parseBSIRows(wb, req.file.originalname);
       } else if (isNHPFile(req.file.originalname)) {
-        records = parseNHPRows(wb);
+        // Use upload date as period for all NHP records
+        const now = new Date();
+        const uploadPeriod = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+        records = parseNHPRows(wb, uploadPeriod);
       } else if (isYourFMOFile(req.file.originalname)) {
         records = parseYourFMORows(wb, req.file.originalname);
       } else if (isHumanaFile(req.file.originalname)) {
