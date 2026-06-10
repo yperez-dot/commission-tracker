@@ -201,8 +201,7 @@ export default function Payroll({ user }) {
           const hasSubAgentOverride = parseFloat(r.sub_agent_override || 0) > 0;
           const producerPayable = parseFloat(r.producer_payable || 0);
           const isACAPayable = lob === 'ACA' && producerPayable !== 0;
-          const isChargeback = classification.includes('chargeback');
-          return (isACAPayable || hasSubAgentOverride || isChargeback) && !isYourTeam(r.agent_name);
+          return (isACAPayable || hasSubAgentOverride) && !isYourTeam(r.agent_name);
         });
       }
 
