@@ -952,21 +952,21 @@ function parseNHPRows(wb, uploadPeriod) {
       bsiShare = 0;
       
       // Check which COLUMN has the value (ignore Comm Class label)
-      if (commissionAmount > 0) {
-        // Money in COMMISSION column → Agent gets 100%
+      if (commissionAmount !== 0) {
+        // Money in COMMISSION column → Agent gets 100% (positive OR negative)
         theiShare = 0;
         producerPayable = commissionAmount;
-        recordType = 'ACA Agent Commission';
-      } else if (overrideAmount > 0) {
+        recordType = commissionAmount < 0 ? 'ACA Agent Chargeback' : 'ACA Agent Commission';
+      } else if (overrideAmount !== 0) {
         // Money in OVERRIDE column → THEI keeps 100%
         theiShare = overrideAmount;
         producerPayable = 0;
-        recordType = 'ACA Agency Override';
+        recordType = overrideAmount < 0 ? 'ACA Override Chargeback' : 'ACA Agency Override';
       } else {
-        // Fallback (shouldn't happen)
-        theiShare = grossCommission;
+        // Fallback (both columns zero - skip)
+        theiShare = 0;
         producerPayable = 0;
-        recordType = 'ACA Agency Override';
+        recordType = 'ACA Zero Amount';
       }
     }
     // MEDICARE LOGIC
