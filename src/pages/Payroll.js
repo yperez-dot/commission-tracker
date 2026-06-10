@@ -117,9 +117,13 @@ function PayoutRow({ p, isPaid, paidDate, onTogglePaid, onExport, periodLabel, i
             </tr></thead>
             <tbody>
               {p.records.map((r,j) => {
-                const amount = parseFloat(r.sub_agent_override) > 0 
-                  ? parseFloat(r.sub_agent_override) 
-                  : (parseFloat(r.producer_payable) > 0 ? parseFloat(r.producer_payable) : parseFloat(r.commission) || 0);
+                const hasSubAgentOV = parseFloat(r.sub_agent_override || 0) !== 0;
+                const hasProducerPayable = r.producer_payable != null;
+                const amount = hasSubAgentOV 
+                  ? parseFloat(r.sub_agent_override)
+                  : hasProducerPayable
+                  ? parseFloat(r.producer_payable)
+                  : parseFloat(r.commission) || 0;
                 return (
                   <tr key={j} style={{ borderBottom:'0.5px solid var(--border)' }}>
                     <td style={{ padding:'6px 8px', color:'var(--accent-dark)', fontWeight:500, fontSize:11 }}>{r.policy_number||'—'}</td>
@@ -205,9 +209,14 @@ export default function Payroll({ user }) {
       for (const r of allRecs) {
         const agent = r.agent_name || 'Unknown';
         // Use sub_agent_override (Christian/Horacio), or producer_payable (ACA), or commission (fallback)
-        const commission = parseFloat(r.sub_agent_override) > 0 
-          ? parseFloat(r.sub_agent_override) 
-          : (parseFloat(r.producer_payable) > 0 ? parseFloat(r.producer_payable) : parseFloat(r.commission) || 0);
+        // Note: producer_payable can be negative (chargebacks)
+        const hasSubAgentOV = parseFloat(r.sub_agent_override || 0) !== 0;
+        const hasProducerPayable = r.producer_payable != null;
+        const commission = hasSubAgentOV 
+          ? parseFloat(r.sub_agent_override)
+          : hasProducerPayable
+          ? parseFloat(r.producer_payable)
+          : parseFloat(r.commission) || 0;
         const key = `${agent}|${r.client_full_name}|${r.statement_month || r.carrier}|${r.payment_period}|${r.policy_number}`;
         if (seen.has(key)) continue;
         seen.add(key);
