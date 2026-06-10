@@ -227,8 +227,8 @@ export default function Payroll({ user }) {
         const isChargeback = (r.classification || '').toLowerCase().includes('chargeback');
         const producerPayable = parseFloat(r.producer_payable || 0);
         const isACAPayable = r.lob === 'ACA' && producerPayable > 0 && !isChargeback;
-        const hasSubAgentOV = parseFloat(r.sub_agent_override) > 0 && !isChargeback;
-        if ((isACAPayable || hasSubAgentOV) && commission > 0) grouped[agent].hasPositivePayable = true;
+        const hasSubAgentOverride = parseFloat(r.sub_agent_override) > 0 && !isChargeback;
+        if ((isACAPayable || hasSubAgentOverride) && commission > 0) grouped[agent].hasPositivePayable = true;
       }
 
       // Only show agents who have at least one positive payable record (not just chargebacks)
