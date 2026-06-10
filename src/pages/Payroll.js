@@ -44,29 +44,29 @@ function generateStatement(agent, records, periodLabel, total, isBSI) {
   const chargebackTotal = negatives.reduce((s,r) => s + (parseFloat(r.commission)||0), 0);
   const netTotal = grossTotal + chargebackTotal;
 
-  const headers = ['Policy #','Client','Statement','Effective Date','Commission','Type'];
+  const headers = ['Policy #','Client','Statement','Lives','Effective Date','Commission','Type'];
 
   const rows = [
-    [`*** AGENT: ${agent} ***`,'','','','',''],
-    [`Period: ${periodLabel}`,'','','','',''],
-    ['','','','','',''],
+    [`*** AGENT: ${agent} ***`,'','','','','',''],
+    [`Period: ${periodLabel}`,'','','','','',''],
+    ['','','','','','',''],
     headers,
     ...positives.map(r => [
-      r.policy_number||'—', r.client_full_name, r.statement_month || r.carrier,
+      r.policy_number||'—', r.client_full_name, r.statement_month || r.carrier, r.members || '',
       r.effective_date||'—', fmtCsv(r.commission), r.classification||'—'
     ]),
     ...(negatives.length ? [
-      ['--- CHARGEBACKS ---','','','','',''],
+      ['--- CHARGEBACKS ---','','','','','',''],
       ...negatives.map(r => [
-        r.policy_number||'—', r.client_full_name, r.statement_month || r.carrier,
+        r.policy_number||'—', r.client_full_name, r.statement_month || r.carrier, r.members || '',
         r.effective_date||'—', fmtCsv(r.commission), r.classification||'—'
       ])
     ] : []),
-    ['','','','','',''],
-    ['Gross Commission','','','',fmtCsv(grossTotal),''],
-    ...(negatives.length ? [['Chargebacks','','','',fmtCsv(chargebackTotal),'']] : []),
-    ['NET TOTAL','','','',fmtCsv(netTotal),''],
-    ['','','','','',''],
+    ['','','','','','',''],
+    ['Gross Commission','','','','',fmtCsv(grossTotal),''],
+    ...(negatives.length ? [['Chargebacks','','','','',fmtCsv(chargebackTotal),'']] : []),
+    ['NET TOTAL','','','','',fmtCsv(netTotal),''],
+    ['','','','','','',''],
   ];
 
   const csv = rows.map(r => r.map(v => `"${String(v||'').replace(/"/g,'""')}"`).join(',')).join('\n');
@@ -111,7 +111,7 @@ function PayoutRow({ p, isPaid, paidDate, onTogglePaid, onExport, periodLabel, i
         <div style={{ background:'var(--bg-subtle)', padding:'0 14px 12px 54px' }}>
           <table style={{ width:'100%', fontSize:12, borderCollapse:'collapse' }}>
             <thead><tr>
-              {['Policy #','Client','Statement','Effective','Period','Type','Amount'].map(h => (
+              {['Policy #','Client','Statement','Lives','Effective','Period','Type','Amount'].map(h => (
                 <th key={h} style={{ textAlign: h==='Amount' ? 'right' : 'left', padding:'6px 8px', color:'var(--text-muted)', fontWeight:500, fontSize:11, borderBottom:'0.5px solid var(--border)' }}>{h}</th>
               ))}
             </tr></thead>
@@ -129,6 +129,7 @@ function PayoutRow({ p, isPaid, paidDate, onTogglePaid, onExport, periodLabel, i
                     <td style={{ padding:'6px 8px', color:'var(--accent-dark)', fontWeight:500, fontSize:11 }}>{r.policy_number||'—'}</td>
                     <td style={{ padding:'6px 8px', color:'var(--text)' }}>{r.client_full_name}</td>
                     <td style={{ padding:'6px 8px', color:'var(--text-muted)', fontSize:11 }}>{r.statement_month || r.carrier}</td>
+                    <td style={{ padding:'6px 8px', color:'var(--accent)', fontWeight:500, fontSize:11, textAlign:'center' }}>{r.members || '—'}</td>
                     <td style={{ padding:'6px 8px', color:'var(--text-muted)', fontSize:11 }}>{r.effective_date||'—'}</td>
                     <td style={{ padding:'6px 8px', color:'var(--text-muted)', fontSize:11 }}>{r.payment_period||'—'}</td>
                     <td style={{ padding:'6px 8px', color:'var(--text-muted)', fontSize:11 }}>{r.classification||'—'}</td>
@@ -272,11 +273,11 @@ export default function Payroll({ user }) {
       const net = gross + cb;
       lines.push(`"*** AGENT: ${p.agent} ***"`);
       lines.push(`"Status: ${paidStatus[p.agent]?`Paid ${paidDates[p.agent]}`:'Unpaid'}"`);
-      lines.push(`"Policy #","Client","Statement","Effective","Commission","Type"`);
-      for (const r of positives) lines.push(`"${r.policy_number||''}","${r.client_full_name}","${r.statement_month || r.carrier}","${r.effective_date}","${fmtCsv(r.commission)}","${r.classification||''}"`);
+      lines.push(`"Policy #","Client","Statement","Lives","Effective","Commission","Type"`);
+      for (const r of positives) lines.push(`"${r.policy_number||''}","${r.client_full_name}","${r.statement_month || r.carrier}","${r.members||''}","${r.effective_date}","${fmtCsv(r.commission)}","${r.classification||''}"`);
       if (negatives.length) {
         lines.push(`"--- CHARGEBACKS ---"`);
-        for (const r of negatives) lines.push(`"${r.policy_number||''}","${r.client_full_name}","${r.statement_month || r.carrier}","${r.effective_date}","${fmtCsv(r.commission)}","${r.classification||''}"`);
+        for (const r of negatives) lines.push(`"${r.policy_number||''}","${r.client_full_name}","${r.statement_month || r.carrier}","${r.members||''}","${r.effective_date}","${fmtCsv(r.commission)}","${r.classification||''}"`);
       }
       lines.push(`"Gross Commission","","","","${fmtCsv(gross)}",""`);
       if (negatives.length) lines.push(`"Chargebacks","","","","${fmtCsv(cb)}",""`);
