@@ -147,7 +147,7 @@ router.post('/bulk-delete', requireAuth, requireAdmin, async (req, res) => {
 router.get('/summary', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
-    const { agents, carriers, periods, classifications, planTypes, lobs } = req.query;
+    const { agents, carriers, periods, classifications, planTypes, lobs, view } = req.query;
     let where = [], params = [], idx = 1;
 
     if (req.user.role === 'agent') {
@@ -163,7 +163,10 @@ router.get('/summary', requireAuth, async (req, res) => {
     if (planTypes) { const list = planTypes.split(',').map(p=>p.trim()).filter(Boolean); if (list.length) { where.push(`COALESCE(plan_type,'') = ANY($${idx++})`); params.push(list); } }
     if (lobs) { const list = lobs.split(',').map(l=>l.trim()).filter(Boolean); if (list.length) { where.push(`lob = ANY($${idx++})`); params.push(list); } }
 
-    // Dashboard should show AGENCY income only - exclude ACA Agent Commissions (paid to agents)
+    // Agency view: exclude ACA Agent Commissions. Agent view: include everything.
+    if (view !== 'agent') {
+      where.push(`NOT (lob = 'ACA' AND classification ILIKE '%agent commission%')`);
+    }
     where.push(`NOT (lob = 'ACA' AND classification ILIKE '%agent commission%')`);
 
     const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
@@ -196,7 +199,7 @@ router.get('/summary', requireAuth, async (req, res) => {
 router.get('/kpi', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
-    const { agents, carriers, periods, classifications, planTypes, lobs } = req.query;
+    const { agents, carriers, periods, classifications, planTypes, lobs, view } = req.query;
     let where = [], params = [], idx = 1;
 
     if (req.user.role === 'agent') {
@@ -212,7 +215,10 @@ router.get('/kpi', requireAuth, async (req, res) => {
     if (planTypes) { const list = planTypes.split(',').map(p=>p.trim()).filter(Boolean); if (list.length) { where.push(`COALESCE(plan_type,'') = ANY($${idx++})`); params.push(list); } }
     if (lobs) { const list = lobs.split(',').map(l=>l.trim()).filter(Boolean); if (list.length) { where.push(`lob = ANY($${idx++})`); params.push(list); } }
 
-    // Dashboard should show AGENCY income only - exclude ACA Agent Commissions (paid to agents)
+    // Agency view: exclude ACA Agent Commissions. Agent view: include everything.
+    if (view !== 'agent') {
+      where.push(`NOT (lob = 'ACA' AND classification ILIKE '%agent commission%')`);
+    }
     where.push(`NOT (lob = 'ACA' AND classification ILIKE '%agent commission%')`);
 
     const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
