@@ -421,7 +421,9 @@ export default function Dashboard({ user, onNavigate }) {
             });
 
             const cards = Object.values(combined).filter(cardData => {
-              // In agent view, hide $0 cards only
+              // Agency view: hide Dental and PDP (personal agent commissions, not agency income)
+              if (viewMode === 'agency' && (cardData.displayName === 'Dental' || cardData.displayName === 'PDP')) return false;
+              // Agent view: hide $0 cards only
               if (viewMode === 'agent' && cardData.total === 0) return false;
               return true;
             });
