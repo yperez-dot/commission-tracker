@@ -396,6 +396,9 @@ router.post('/build-from-statements', requireAuth, async (req, res) => {
         if (status === 'deceased') {
           bobStatus = 'inactive';
           resolution = 'Deceased';
+        } else if (status === 'inactive') {
+          bobStatus = 'inactive';
+          resolution = 'Termed';
         } else if (status === 'prospect') {
           bobStatus = 'active';
           resolution = 'Prospect';
@@ -489,6 +492,9 @@ router.post('/reset-and-rebuild', requireAuth, async (req, res) => {
         if (status === 'deceased') {
           bobStatus = 'inactive';
           resolution = 'Deceased';
+        } else if (status === 'inactive') {
+          bobStatus = 'inactive';
+          resolution = 'Termed';
         } else if (status === 'prospect') {
           bobStatus = 'active';
           resolution = 'Prospect';
