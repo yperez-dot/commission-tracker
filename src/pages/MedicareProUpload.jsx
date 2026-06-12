@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { apiFetch } from '../api';
+import { apiFetch, apiUpload } from '../api';
 
 export default function MedicareProUpload() {
   const [file, setFile] = useState(null);
@@ -13,8 +13,6 @@ export default function MedicareProUpload() {
   const [viewingBatch, setViewingBatch] = useState(null);
   const [batchData, setBatchData] = useState([]);
   const [loadingBatchData, setLoadingBatchData] = useState(false);
-
-  const API_URL = process.env.REACT_APP_API_URL || '';
 
   // Load upload history on mount
   useEffect(() => {
@@ -52,16 +50,16 @@ export default function MedicareProUpload() {
     const confirmDelete = window.confirm(
       `⚠️ Delete batch ${batch}?\n\nThis will permanently delete:\n- All upload logs for this batch\n- All sales records for this batch\n\nThis cannot be undone.`
     );
-    
+
     if (!confirmDelete) return;
-    
+
     try {
       const result = await apiFetch(`/medicarepro/batch/${batch}`, {
         method: 'DELETE'
       });
-      
+
       alert(`✅ Deleted batch ${batch}\n\n${result.deleted_sales} sales records deleted\n${result.deleted_uploads} upload logs deleted`);
-      
+
       // Reload history
       await loadUploadHistory();
     } catch (err) {
@@ -121,29 +119,8 @@ export default function MedicareProUpload() {
       const formData = new FormData();
       formData.append('file', file);
 
-      const uploadUrl = `${API_URL}/api/medicarepro/upload`;
-      
-      const response = await fetch(uploadUrl, {
-        method: 'POST',
-        body: formData,
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('token')}`
-        }
-      });
+      const result = await apiUpload('/medicarepro/upload', formData);
 
-      const text = await response.text();
-      
-      if (!response.ok) {
-        throw new Error(text || 'Upload failed');
-      }
-
-      let result = {};
-      try {
-        result = JSON.parse(text);
-      } catch (e) {
-        result = { message: text };
-      }
-      
       setSuccess(`✅ Upload successful! ${result.message || ''}`);
       setFile(null);
       setPreview([]);
@@ -255,14 +232,14 @@ export default function MedicareProUpload() {
                   {preview.map((row, i) => {
                     // Detect format and extract fields
                     const hasAgentColumns = 'Agent First' in row || 'Member First' in row;
-                    const name = hasAgentColumns 
+                    const name = hasAgentColumns
                       ? `${row['Member First'] || ''} ${row['Member Last'] || ''}`.trim()
                       : row.Name;
                     const company = row['Company Name'] || row.Company;
                     const policyType = row['Policy Type'];
                     const effDate = row['Policy Effective Date'] || row['Effective Date'];
                     const status = row['Policy Status'] || row.Status;
-                    
+
                     return (
                       <tr key={i}>
                         <td style={{ fontWeight: 500 }}>{name || '—'}</td>
@@ -271,7 +248,7 @@ export default function MedicareProUpload() {
                         <td style={{ fontSize: 12 }}>{effDate || '—'}</td>
                         <td>
                           <span className="badge" style={{
-                            background: 
+                            background:
                               status === 'Active' ? '#D4EDDA' :
                               status === 'Pending' ? '#FFF3CD' :
                               status === 'Canceled' || status === 'Replaced' ? '#F8D7DA' :
@@ -359,15 +336,15 @@ export default function MedicareProUpload() {
                   {uploadHistory.map((upload) => (
                     <tr key={upload.id}>
                       <td>
-                        <a 
-                          href="#" 
+                        <a
+                          href="#"
                           onClick={(e) => {
                             e.preventDefault();
                             viewBatchData(upload.upload_batch);
                           }}
-                          style={{ 
-                            fontWeight: 500, 
-                            color: 'var(--blue)', 
+                          style={{
+                            fontWeight: 500,
+                            color: 'var(--blue)',
                             textDecoration: 'none',
                             cursor: 'pointer'
                           }}
@@ -414,7 +391,7 @@ export default function MedicareProUpload() {
 
         {/* Batch Data Viewer Modal */}
         {viewingBatch && (
-          <div 
+          <div
             style={{
               position: 'fixed',
               top: 0,
@@ -429,12 +406,12 @@ export default function MedicareProUpload() {
             }}
             onClick={() => setViewingBatch(null)}
           >
-            <div 
-              className="card" 
-              style={{ 
-                width: '90%', 
-                maxWidth: 1200, 
-                maxHeight: '80vh', 
+            <div
+              className="card"
+              style={{
+                width: '90%',
+                maxWidth: 1200,
+                maxHeight: '80vh',
                 overflow: 'auto',
                 margin: 20
               }}
@@ -447,7 +424,7 @@ export default function MedicareProUpload() {
                     {batchData.length} records
                   </div>
                 </div>
-                <button 
+                <button
                   className="btn btn-secondary"
                   onClick={() => setViewingBatch(null)}
                   style={{ fontSize: 20, padding: '4px 12px' }}
