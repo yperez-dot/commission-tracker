@@ -82,7 +82,9 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         
         carrier = (row['Company Name'] || '').substring(0, 100);
         policyType = (row['Policy Type'] || '').substring(0, 50);
-        statusValue = (row['Policy Status'] || '').substring(0, 50);
+        // Status column maps: "Active Client" → "Active", "Prospect" → "Prospect", "Deceased" → "Deceased"
+        const rawStatus = (row['Status'] || '').trim();
+        statusValue = rawStatus === 'Active Client' ? 'Active' : rawStatus.substring(0, 50);
         policyNumber = (row['Policy #'] || '').substring(0, 100);
         planName = (row['Plan Name'] || '').substring(0, 255);
       } else {
@@ -100,9 +102,21 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       const effDateField = formatType === 'sales_by_agency' ? row['Policy Effective Date'] : row['Effective Date'];
       if (effDateField) {
         try {
-          const d = new Date(effDateField);
-          if (!isNaN(d.getTime())) {
-            effectiveDate = d.toISOString().split('T')[0];
+          // Parse date in a timezone-neutral way to avoid off-by-one errors
+          const dateStr = String(effDateField).trim();
+          
+          // If already in YYYY-MM-DD format, use it directly
+          if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+            effectiveDate = dateStr;
+          } else {
+            // Otherwise parse and format (handles MM/DD/YYYY, etc.)
+            const d = new Date(effDateField + 'T00:00:00'); // Force midnight local time
+            if (!isNaN(d.getTime())) {
+              const year = d.getFullYear();
+              const month = String(d.getMonth() + 1).padStart(2, '0');
+              const day = String(d.getDate()).padStart(2, '0');
+              effectiveDate = `${year}-${month}-${day}`;
+            }
           }
         } catch (e) {
           // Invalid date, leave as null

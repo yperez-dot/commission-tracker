@@ -379,6 +379,30 @@ router.post('/build-from-statements', requireAuth, async (req, res) => {
 
     let added = 0, updated = 0;
     for (const rec of records.rows) {
+      // Check MedicarePro for status (Deceased, Prospect, etc.)
+      const mpStatus = await pool.query(
+        `SELECT status FROM medicarepro_sales
+         WHERE LOWER(TRIM(client_name)) = LOWER(TRIM($1)) AND LOWER(carrier) = LOWER($2)
+         ORDER BY uploaded_at DESC LIMIT 1`,
+        [rec.client_full_name, rec.carrier]
+      );
+      
+      // Map MedicarePro status → BOB status + resolution
+      let bobStatus = 'active';
+      let resolution = null;
+      
+      if (mpStatus.rows.length > 0) {
+        const status = (mpStatus.rows[0].status || '').toLowerCase();
+        if (status === 'deceased') {
+          bobStatus = 'inactive';
+          resolution = 'Deceased';
+        } else if (status === 'prospect') {
+          bobStatus = 'active';
+          resolution = 'Prospect';
+        }
+        // "Active" or "Active Client" → bobStatus='active', resolution=null (default)
+      }
+
       const existing = await pool.query(
         `SELECT id, effective_date FROM book_of_business
          WHERE LOWER(TRIM(client_full_name)) = LOWER($1) AND LOWER(carrier) = LOWER($2)
@@ -390,9 +414,9 @@ router.post('/build-from-statements', requireAuth, async (req, res) => {
         // Insert new
         await pool.query(
           `INSERT INTO book_of_business
-             (agent_name, carrier, client_full_name, effective_date, last_commission_date, last_commission_amount, source, status)
-           VALUES ($1, $2, $3, $4, $5, $6, 'statement', 'active')`,
-          [rec.agent_name, rec.carrier, rec.client_full_name, rec.effective_date, rec.payment_period, rec.commission]
+             (agent_name, carrier, client_full_name, effective_date, last_commission_date, last_commission_amount, source, status, resolution)
+           VALUES ($1, $2, $3, $4, $5, $6, 'statement', $7, $8)`,
+          [rec.agent_name, rec.carrier, rec.client_full_name, rec.effective_date, rec.payment_period, rec.commission, bobStatus, resolution]
         );
         added++;
       } else {
@@ -412,9 +436,11 @@ router.post('/build-from-statements', requireAuth, async (req, res) => {
              effective_date = COALESCE(NULLIF($2,''), effective_date),
              last_commission_date = $3,
              last_commission_amount = $4,
+             status = $5,
+             resolution = $6,
              updated_at = NOW()
-           WHERE id = $5`,
-          [rec.agent_name, newEffDate, rec.payment_period, rec.commission, existing.rows[0].id]
+           WHERE id = $7`,
+          [rec.agent_name, newEffDate, rec.payment_period, rec.commission, bobStatus, resolution, existing.rows[0].id]
         );
         updated++;
       }
@@ -446,11 +472,34 @@ router.post('/reset-and-rebuild', requireAuth, async (req, res) => {
 
     let added = 0;
     for (const rec of records.rows) {
+      // Check MedicarePro for status (Deceased, Prospect, etc.)
+      const mpStatus = await pool.query(
+        `SELECT status FROM medicarepro_sales
+         WHERE LOWER(TRIM(client_name)) = LOWER(TRIM($1)) AND LOWER(carrier) = LOWER($2)
+         ORDER BY uploaded_at DESC LIMIT 1`,
+        [rec.client_full_name, rec.carrier]
+      );
+      
+      // Map MedicarePro status → BOB status + resolution
+      let bobStatus = 'active';
+      let resolution = null;
+      
+      if (mpStatus.rows.length > 0) {
+        const status = (mpStatus.rows[0].status || '').toLowerCase();
+        if (status === 'deceased') {
+          bobStatus = 'inactive';
+          resolution = 'Deceased';
+        } else if (status === 'prospect') {
+          bobStatus = 'active';
+          resolution = 'Prospect';
+        }
+      }
+
       await pool.query(
         `INSERT INTO book_of_business
-           (agent_name, carrier, client_full_name, effective_date, last_commission_date, last_commission_amount, source, status)
-         VALUES ($1, $2, $3, $4, $5, $6, 'statement', 'active')`,
-        [rec.agent_name, rec.carrier, rec.client_full_name, rec.effective_date, rec.payment_period, rec.commission]
+           (agent_name, carrier, client_full_name, effective_date, last_commission_date, last_commission_amount, source, status, resolution)
+         VALUES ($1, $2, $3, $4, $5, $6, 'statement', $7, $8)`,
+        [rec.agent_name, rec.carrier, rec.client_full_name, rec.effective_date, rec.payment_period, rec.commission, bobStatus, resolution]
       );
       added++;
     }
