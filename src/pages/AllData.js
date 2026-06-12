@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiFetch } from '../api';
 import { formatCarrier } from '../utils/formatCarrier';
+import { formatDate } from '../utils/dateFormat';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -207,7 +208,7 @@ export default function AllData({ user, initialFilters = {} }) {
         const commValue = r.producer_payable != null && parseFloat(r.producer_payable) !== 0
           ? r.producer_payable
           : r.commission;
-        return [r.agent_name, formatCarrier(r.carrier), r.client_full_name, r.policy_number, r.effective_date, r.premium, commValue, r.classification, r.payment_period, r.payee, r.mga];
+        return [r.agent_name, formatCarrier(r.carrier), r.client_full_name, r.policy_number, formatDate(r.effective_date), r.premium, commValue, r.classification, r.payment_period, r.payee, r.mga];
       });
       const csv = [headers, ...rows].map(r => r.map(v => `"${String(v||'').replace(/"/g,'""')}"`).join(',')).join('\n');
       
@@ -290,7 +291,7 @@ export default function AllData({ user, initialFilters = {} }) {
                 ['Carrier', policyModal.carrier],
                 ['Plan Type', policyModal.plan_type],
                 ['LOB', policyModal.lob],
-                ['Effective Date', policyModal.effective_date],
+                ['Effective Date', formatDate(policyModal.effective_date)],
                 ['Period', policyModal.payment_period],
                 ['Type', policyModal.classification],
                 ['Payee', policyModal.payee],
@@ -456,7 +457,7 @@ export default function AllData({ user, initialFilters = {} }) {
                               : '—'}
                           </td>
                           <td style={{ fontSize: 13 }}>{r.client_full_name || '—'}</td>
-                          <td style={{ fontSize: 12 }}>{r.effective_date || '—'}</td>
+                          <td style={{ fontSize: 12 }}>{formatDate(r.effective_date)}</td>
                           <td>{r.premium ? fmt(r.premium) : '—'}</td>
                           <td style={{ fontWeight: 500, color: parseFloat(r.commission) < 0 ? 'var(--red)' : 'var(--green)' }}>{fmt(r.commission)}</td>
                           {hasCommSplit && (() => { const s = getCommSplit(r); return (

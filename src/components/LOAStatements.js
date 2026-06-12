@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../api';
+import { formatDateTime } from '../utils/dateFormat';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -428,7 +429,7 @@ export default function LOAStatements() {
                 <tr key={stmt.id} style={{ borderBottom: '1px solid var(--border)' }}>
                   <td style={{ padding: '10px 12px', fontWeight: 500, color: 'var(--text)', fontSize: 13 }}>{stmt.agent_name}</td>
                   <td style={{ padding: '10px 12px', color: 'var(--text)', fontSize: 13 }}>{stmt.period_label || '—'}</td>
-                  <td style={{ padding: '10px 12px', color: 'var(--text)', fontSize: 13 }}>{new Date(stmt.payment_date).toLocaleDateString()}</td>
+                  <td style={{ padding: '10px 12px', color: 'var(--text)', fontSize: 13 }}>{formatDateTime(stmt.payment_date)}</td>
                   <td style={{ padding: '10px 12px', textAlign: 'right', fontWeight: 600, color: 'var(--green)' }}>
                     {fmt(stmt.total_amount)}
                   </td>

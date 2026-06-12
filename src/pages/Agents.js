@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../api';
+import { formatDateTime } from '../utils/dateFormat';
 
 export default function Agents({ user }) {
   const [agents, setAgents] = useState([]);
@@ -108,7 +109,7 @@ export default function Agents({ user }) {
                       </td>
                       <td style={{color:'var(--text-muted)', fontSize:13}}>{a.email}</td>
                       <td><span className={`badge ${a.role === 'admin' ? 'badge-blue' : 'badge-gray'}`}>{a.role}</span></td>
-                      <td style={{fontSize:12, color:'var(--text-muted)'}}>{new Date(a.created_at).toLocaleDateString()}</td>
+                      <td style={{fontSize:12, color:'var(--text-muted)'}}>{formatDateTime(a.created_at)}</td>
                     </tr>
                   ))}
                 </tbody>

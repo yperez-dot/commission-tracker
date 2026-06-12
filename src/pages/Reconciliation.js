@@ -1,21 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../api';
+import { formatDate as formatDateUtil } from '../utils/dateFormat';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+// Use standardized MM-DD-YYYY format
 function formatDate(dateStr) {
-  if (!dateStr) return '—';
-  try {
-    // Strip time component to avoid timezone conversion issues
-    const dateOnly = dateStr.split('T')[0];  // "2026-05-01"
-    const [year, month, day] = dateOnly.split('-');
-    const date = new Date(year, month - 1, day);  // Create date in local timezone
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  } catch {
-    return dateStr;
-  }
+  return formatDateUtil(dateStr);
 }
 
 // Normalize names for fuzzy matching

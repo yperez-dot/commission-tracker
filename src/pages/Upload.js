@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiFetch, apiUpload } from '../api';
+import { formatDate, formatDateTime } from '../utils/dateFormat';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -143,7 +144,7 @@ export default function Upload({ user }) {
               <div>
                 <div style={{ fontWeight: 700, fontSize: 15 }}>{viewUpload.original_name}</div>
                 <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-                  {viewUpload.row_count} records · {fmt(viewUpload.commission_sum)} · {viewUpload.carrier} · {new Date(viewUpload.uploaded_at).toLocaleDateString()}
+                  {viewUpload.row_count} records · {fmt(viewUpload.commission_sum)} · {viewUpload.carrier} · {formatDateTime(viewUpload.uploaded_at)}
                 </div>
               </div>
               <button onClick={() => setViewUpload(null)} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: 'var(--text-muted)', padding: '0 4px' }}>✕</button>
@@ -169,7 +170,7 @@ export default function Upload({ user }) {
                         <td style={{ padding: '7px 12px', fontWeight: 500 }}>{r.agent_name}</td>
                         <td style={{ padding: '7px 12px', color: 'var(--text-muted)' }}>{r.carrier}</td>
                         <td style={{ padding: '7px 12px' }}>{r.client_full_name || '—'}</td>
-                        <td style={{ padding: '7px 12px', color: 'var(--text-muted)' }}>{r.effective_date || '—'}</td>
+                        <td style={{ padding: '7px 12px', color: 'var(--text-muted)' }}>{formatDate(r.effective_date)}</td>
                         <td style={{ padding: '7px 12px', fontWeight: 600, color: parseFloat(r.commission) < 0 ? '#E24B4A' : '#1D9E75' }}>{fmt(r.commission)}</td>
                         <td style={{ padding: '7px 12px' }}>
                           <span style={{

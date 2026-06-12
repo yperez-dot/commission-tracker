@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../api';
 import { formatCarrier } from '../utils/formatCarrier';
+import { formatDate as formatDateUtil } from '../utils/dateFormat';
 
 // Version: 2026-06-04-19:03 - HealthSun consolidation fix
 
@@ -8,16 +9,9 @@ function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+// Use standardized MM-DD-YYYY format
 function formatDate(dateStr) {
-  if (!dateStr) return '—';
-  try {
-    const dateOnly = dateStr.split('T')[0];
-    const [year, month, day] = dateOnly.split('-');
-    const date = new Date(year, month - 1, day);
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  } catch {
-    return dateStr;
-  }
+  return formatDateUtil(dateStr);
 }
 
 function normalizeName(name) {

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../api';
+import { formatDateTime } from '../utils/dateFormat';
 
 const ROLES = ['admin', 'agent'];
 
@@ -195,7 +196,7 @@ export default function AdminUsers({ user }) {
                         }}>{u.role}</span>
                       </td>
                       <td style={{fontSize:11,color:'var(--text-muted)'}}>
-                        {u.created_at ? new Date(u.created_at).toLocaleDateString() : '—'}
+                        {formatDateTime(u.created_at)}
                       </td>
                       <td>
                         <div style={{display:'flex',gap:6}}>

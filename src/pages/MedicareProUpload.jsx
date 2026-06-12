@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch, apiUpload } from '../api';
-
+import { formatDate } from '../utils/dateFormat';
 export default function MedicareProUpload() {
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState([]);
@@ -462,7 +462,7 @@ export default function MedicareProUpload() {
                           <td>{sale.carrier}</td>
                           <td style={{ fontSize: 12 }}>{sale.plan_name || '—'}</td>
                           <td style={{ fontSize: 12 }}>
-                            {sale.effective_date ? new Date(sale.effective_date.split('T')[0]).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+                            {formatDate(sale.effective_date)}
                           </td>
                           <td>
                             <span className="badge" style={{

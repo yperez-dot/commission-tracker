@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../api';
 import LOAStatements from '../components/LOAStatements';
+import { formatDate } from '../utils/dateFormat';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -58,14 +59,14 @@ function generateStatement(agent, records, periodLabel, total, isBSI) {
     ...positives.map(r => [
       r.policy_number||'—', r.client_full_name, r.statement_month || r.carrier,
       r.members != null && r.members !== 0 ? r.members : '',
-      r.effective_date||'—', fmtCsv(getAmount(r)), r.classification||'—'
+      formatDate(r.effective_date), fmtCsv(getAmount(r)), r.classification||'—'
     ]),
     ...(negatives.length ? [
       ['--- CHARGEBACKS ---','','','','','',''],
       ...negatives.map(r => [
         r.policy_number||'—', r.client_full_name, r.statement_month || r.carrier,
         r.members != null && r.members !== 0 ? r.members : '',
-        r.effective_date||'—', fmtCsv(getAmount(r)), r.classification||'—'
+        formatDate(r.effective_date), fmtCsv(getAmount(r)), r.classification||'—'
       ])
     ] : []),
     ['','','','','','',''],
@@ -136,7 +137,7 @@ function PayoutRow({ p, isPaid, paidDate, onTogglePaid, onExport, periodLabel, i
                     <td style={{ padding:'6px 8px', color:'var(--text)' }}>{r.client_full_name}</td>
                     <td style={{ padding:'6px 8px', color:'var(--text-muted)', fontSize:11 }}>{r.statement_month || r.carrier}</td>
                     <td style={{ padding:'6px 8px', color:'var(--accent)', fontWeight:500, fontSize:11, textAlign:'center' }}>{r.members != null && r.members !== 0 ? r.members : '—'}</td>
-                    <td style={{ padding:'6px 8px', color:'var(--text-muted)', fontSize:11 }}>{r.effective_date||'—'}</td>
+                    <td style={{ padding:'6px 8px', color:'var(--text-muted)', fontSize:11 }}>{formatDate(r.effective_date)}</td>
                     <td style={{ padding:'6px 8px', color:'var(--text-muted)', fontSize:11 }}>{r.payment_period||'—'}</td>
                     <td style={{ padding:'6px 8px', color:'var(--text-muted)', fontSize:11 }}>{r.classification||'—'}</td>
                     <td style={{ padding:'6px 8px', textAlign:'right', fontWeight:500, color: amount<0?'var(--red)':'var(--green)' }}>{fmt(amount)}</td>
@@ -273,10 +274,10 @@ export default function Payroll({ user }) {
       lines.push(`"*** AGENT: ${p.agent} ***"`);
       lines.push(`"Status: ${paidStatus[p.agent]?`Paid ${paidDates[p.agent]}`:'Unpaid'}"`);
       lines.push(`"Policy #","Client","Statement","Lives","Effective","Commission","Type"`);
-      for (const r of positives) lines.push(`"${r.policy_number||''}","${r.client_full_name}","${r.statement_month || r.carrier}","${r.members != null && r.members !== 0 ? r.members : ''}","${r.effective_date}","${fmtCsv(getAmount(r))}","${r.classification||''}"`);
+      for (const r of positives) lines.push(`"${r.policy_number||''}","${r.client_full_name}","${r.statement_month || r.carrier}","${r.members != null && r.members !== 0 ? r.members : ''}","${formatDate(r.effective_date)}","${fmtCsv(getAmount(r))}","${r.classification||''}"`);
       if (negatives.length) {
         lines.push(`"--- CHARGEBACKS ---"`);
-        for (const r of negatives) lines.push(`"${r.policy_number||''}","${r.client_full_name}","${r.statement_month || r.carrier}","${r.members != null && r.members !== 0 ? r.members : ''}","${r.effective_date}","${fmtCsv(getAmount(r))}","${r.classification||''}"`);
+        for (const r of negatives) lines.push(`"${r.policy_number||''}","${r.client_full_name}","${r.statement_month || r.carrier}","${r.members != null && r.members !== 0 ? r.members : ''}","${formatDate(r.effective_date)}","${fmtCsv(getAmount(r))}","${r.classification||''}"`);
       }
       lines.push(`"Gross Commission","","","","${fmtCsv(gross)}",""`);
       if (negatives.length) lines.push(`"Chargebacks","","","","${fmtCsv(cb)}",""`);
