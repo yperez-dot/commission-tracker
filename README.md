@@ -1,4 +1,4 @@
-# OliComm 🍼
+# OliComm 
 
 Commission tracking system for **The Health Experts Insurance** + the broader THEI/BSI hierarchy.
 
