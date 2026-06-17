@@ -1864,7 +1864,6 @@ async function parseBSIConsolidatedPDF(filePath, filename) {
     const dataBuffer = fs.readFileSync(filePath);
     const data = await pdfParse(dataBuffer);
     const lines = data.text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-    console.log('[BSI-LINES]', JSON.stringify(lines.slice(0, 20)));
 
     const now = new Date();
     const uploadPeriod = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -2081,7 +2080,6 @@ async function parseBSIConsolidatedPDF(filePath, filename) {
     }
 
     summaryDeductions.forEach(r => records.push(r));
-    console.log('[BSI-DEDUCTIONS]', summaryDeductions.length, summaryDeductions.map(r => `${r.carrier}: ${r.commission}`));
 
     console.log(`[BSI-CONSOLIDATED] parsed ${records.length} records:`,
       records.reduce((acc, r) => { acc[r.carrier] = (acc[r.carrier]||0)+1; return acc; }, {}));
