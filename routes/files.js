@@ -1802,13 +1802,14 @@ async function parseTHEStatementPDF(filePath, filename) {
           continue;
         }
 
-        // Humana/Aetna: handle split lines where date+amount is on next line
-        // Format: "AGENTHUMANA00000000K_HMOClient Name" + next line: "02/01/2026$55.00"
-        if ((currentCarrier === 'Humana' || currentCarrier === 'Aetna') && i + 1 < lines.length) {
-          const nextLine = lines[i + 1];
-          const nextMatch = nextLine.match(/^(\d{2}\/\d{2}\/\d{4})(-?\$[\d,]+\.\d{2})$/);
-          if (nextMatch) {
-            const combined = line + nextMatch[1] + nextMatch[2];
+        // Handle 3-part split: LINE=agent+carrier+policy+client, LINE+1=date, LINE+2=amount
+        if (i + 2 < lines.length) {
+          const dateLine = lines[i + 1];
+          const amountLine = lines[i + 2];
+          const dateOnly = dateLine.match(/^(\d{2}\/\d{2}\/\d{4})$/);
+          const amountOnly = amountLine.match(/^(-?\$[\d,]+\.\d{2})$/);
+          if (dateOnly && amountOnly) {
+            const combined = line + dateOnly[1] + amountOnly[1];
             const parsedCombined = parseSingleLine(combined);
             if (parsedCombined) {
               records.push({
@@ -1825,7 +1826,7 @@ async function parseTHEStatementPDF(filePath, filename) {
                 payee: 'THE',
                 raw: {}
               });
-              i += 2;
+              i += 3;
               continue;
             }
           }
