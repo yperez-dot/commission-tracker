@@ -1865,6 +1865,13 @@ async function parseBSIConsolidatedPDF(filePath, filename) {
     const data = await pdfParse(dataBuffer);
     const lines = data.text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
+    // Find where Humana section starts in pdf-parse output
+    const balanceIdx = lines.findIndex(l => l.includes('Balance:') && l.includes('16,126'));
+    console.log('[BSI-BALANCE-IDX]', balanceIdx);
+    if (balanceIdx >= 0) {
+      console.log('[BSI-HUMANA-START]', JSON.stringify(lines.slice(balanceIdx, balanceIdx + 10)));
+    }
+
     const now = new Date();
     const uploadPeriod = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
 
