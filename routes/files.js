@@ -1616,15 +1616,134 @@ async function parseBSIPDF(filePath, filename) {
   return records;
 }
 
+async function parseTHEStatementPDF(filePath, filename) {
+  const records = [];
+  if (!pdfParse) { console.error('pdf-parse not installed'); return records; }
+  try {
+    const dataBuffer = fs.readFileSync(filePath);
+    const data = await pdfParse(dataBuffer);
+    const text = data.text;
+    const lines = text.split('\n');
+
+    const sectionHeaders = {
+      'Detailed Compensation Statement (UHC)': 'UnitedHealthcare',
+      'Detailed Compensation Statement (HUMANA)': 'Humana',
+      'Detailed Compensation Statement(AETNA)': 'Aetna',
+      'Detailed Compensation Statement (AETNA)': 'Aetna',
+    };
+
+    const carrierTokens = [
+      { token: 'UNITED HEALTH CARE', carrier: 'UnitedHealthcare' },
+      { token: 'HUMANA', carrier: 'Humana' },
+      { token: 'AETNA', carrier: 'Aetna' },
+    ];
+
+    const skipPatterns = [
+      /^Agent\s+Company/i,
+      /^Balance:/i,
+      /^CARRIER SUMMARY/i,
+      /^TOTAL/i,
+      /^APRIL STATEMENT/i,
+      /^UNITED HEALTH CARE\s+\(/i,
+      /^HUMANA\/DEVOTED/i,
+      /^AETNA\s+\(/i,
+      /^Detailed Compensation Statement/i,
+    ];
+
+    const toTitleCase = (str) =>
+      str.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+
+    const normalizeAgent = (raw) => {
+      raw = raw.trim();
+      if (raw.includes(',')) {
+        const parts = raw.split(',');
+        return toTitleCase(`${parts[1].trim()} ${parts[0].trim()}`);
+      }
+      return toTitleCase(raw);
+    };
+
+    const dateToPeriod = (dateStr) => {
+      const parts = dateStr.trim().split('/');
+      return parts.length === 3 ? parts[2] + parts[0] : null;
+    };
+
+    let currentCarrier = null;
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+
+      for (const [header, carrier] of Object.entries(sectionHeaders)) {
+        if (trimmed.includes(header)) { currentCarrier = carrier; break; }
+      }
+      if (!currentCarrier) continue;
+      if (skipPatterns.some(p => p.test(trimmed))) continue;
+
+      const trailMatch = trimmed.match(/(\d{2}\/\d{2}\/\d{4})\s+(-?\$[\d,]+\.\d{2})$/);
+      if (!trailMatch) continue;
+
+      const dateStr = trailMatch[1];
+      const amountStr = trailMatch[2];
+      const beforeDate = trimmed.slice(0, trailMatch.index).trim();
+
+      let agentPart = null, policyPart = null, clientPart = null;
+
+      for (const { token, carrier } of carrierTokens) {
+        const idx = beforeDate.indexOf(token);
+        if (idx !== -1) {
+          agentPart = beforeDate.slice(0, idx).trim();
+          const rest = beforeDate.slice(idx + token.length).trim();
+          const restMatch = rest.match(/^(\S+)\s+(.+)$/);
+          if (restMatch) { policyPart = restMatch[1]; clientPart = restMatch[2].trim(); }
+          break;
+        }
+      }
+
+      if (!agentPart || !policyPart || !clientPart) continue;
+
+      const commission = parseFloat(amountStr.replace(/[$,]/g, '')) || 0;
+      const period = dateToPeriod(dateStr);
+
+      records.push({
+        agent: normalizeAgent(agentPart),
+        carrier: currentCarrier,
+        planType: derivePlanType(currentCarrier, 'MAPD', policyPart, ''),
+        client: toTitleCase(clientPart),
+        effectiveDate: dateStr,
+        premium: 0,
+        commission,
+        classification: commission < 0 ? 'Chargeback' : 'Agency Override',
+        period,
+        policyNumber: policyPart,
+        payee: 'THE',
+        raw: {}
+      });
+    }
+  } catch (err) {
+    console.error('parseTHEStatementPDF error:', err.message);
+  }
+  return records;
+}
+
+function isTHEStatementPDF(filename) {
+  const f = filename.toLowerCase().replace(/\s+/g, '_');
+  if (!f.endsWith('.pdf')) return false;
+  return (
+    f.includes('medicare_statement-the') ||
+    f.includes('medicare_statement_the') ||
+    f.includes('the_statement') ||
+    (f.includes('statement') && f.includes('-the-') )
+  );
+}
+
 function isBSIPDF(filename) {
   const f = filename.toLowerCase().replace(/\s+/g, '_');
   if (!f.endsWith('.pdf')) return false;
+  // Exclude THE upline statements — those have their own parser
+  if (isTHEStatementPDF(filename)) return false;
   return f.includes('bsi') ||
          f.includes('broker_society') ||
-         f.includes('brokersociety') ||
-         f.includes('medicare_statement-the') ||
-         f.includes('medicare_statement_-the') ||
-         /medicare[\s_-]+statement.*the[\s_-]+health/i.test(f);
+         f.includes('brokersociety');
 }
 
 async function parseMutualOmahaPDF(filePath, filename) {
@@ -1909,6 +2028,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
 
     const determinePayee = (filename) => {
       const f = filename.toLowerCase();
+      if (f.includes('medicare_statement-the') || f.includes('medicare_statement_the')) return 'THE';
       if (f.includes('commission_statement_2737247')) return 'UnitedHealthcare';
       if (f.includes('statement-health_experts') || f.includes('statement_health_experts')) return 'BSI';
       if (f.includes('the_health_experts_insurance_statement') || f.includes('the_health_experst_insurance') || (f.includes('yahoska') && f.includes('katy'))) return 'NHP';
@@ -1931,6 +2051,16 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       if (!records.length) {
         try { fs.unlinkSync(req.file.path); } catch(e) {}
         return res.status(400).json({ error: 'No payable records found in MOO Excel statement.' });
+      }
+    } else if (isTHEStatementPDF(req.file.originalname)) {
+      if (!pdfParse) {
+        try { fs.unlinkSync(req.file.path); } catch(e) {}
+        return res.status(500).json({ error: 'PDF parsing not available on server.' });
+      }
+      records = await parseTHEStatementPDF(req.file.path, req.file.originalname);
+      if (!records.length) {
+        try { fs.unlinkSync(req.file.path); } catch(e) {}
+        return res.status(400).json({ error: 'No records found in THE statement PDF.' });
       }
     } else if (isBSIPDF(req.file.originalname)) {
       if (!pdfParse) {
