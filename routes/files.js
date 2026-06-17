@@ -256,6 +256,12 @@ function isSolisFile(filename) {
   return f.includes('commissions_ledger') || f.includes('solis');
 }
 
+function isHealthSunFile(filename) {
+  const f = filename.toLowerCase().replace(/\s+/g, '_');
+  return (f.includes('healthsun') || f.includes('commission_report')) &&
+         (f.endsWith('.csv') || f.endsWith('.xlsx'));
+}
+
 function isAPLFile(filename) {
   const f = filename.toLowerCase().replace(/[\s()]/g, '_');
   return f.includes('commission-statement') || f.includes('commission_statement_2026') && !f.includes('2737247') ||
@@ -1078,6 +1084,60 @@ function parseNHPRows(wb, uploadPeriod) {
       subAgentOverride,
       statementMonth: carrierRaw,
       raw: row,
+    });
+  }
+  return records;
+}
+
+function parseHealthSunRows(ws, filename) {
+  const records = [];
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
+
+  for (const row of rows) {
+    const client = String(row['Member Name'] || '').trim();
+    const policyNumber = String(row['Member ID'] || '').trim();
+    const agentRaw = String(row['Agent Name'] || '').trim();
+    const commission = parseFloat(row['PaidAmount']) || 0;
+    const effectiveDateRaw = String(row['Effective Date'] || '').trim();
+    const compensationMonth = String(row['Compensation Month'] || '').trim();
+    const commissionType = String(row['Commission Type'] || '').trim();
+    const initialRenewal = String(row['Initial / Renewal'] || '').trim();
+    const planName = String(row['Product Plan Name'] || '').trim();
+    const productType = String(row['Product Type'] || '').trim();
+
+    if (!client || commission === 0) continue;
+
+    // Parse period from Compensation Month (2026-05-01 → 202605)
+    const periodMatch = compensationMonth.match(/^(\d{4})-(\d{2})/);
+    const period = periodMatch ? periodMatch[1] + periodMatch[2] : 'Unknown';
+
+    // Parse effective date
+    const effectiveDate = formatDate(effectiveDateRaw);
+
+    // Classification
+    const classification = commission < 0 ? 'Chargeback'
+      : commissionType.toLowerCase().includes('audit') ? 'Adjustment'
+      : initialRenewal.toLowerCase() === 'initial' ? 'New Business'
+      : 'Renewal';
+
+    // Plan type
+    const planType = productType.toLowerCase().includes('snp') || productType.toLowerCase().includes('d-snp')
+      ? 'HealthSun D-SNP'
+      : 'HealthSun Med Adv';
+
+    records.push({
+      agent: normalizeAgentName(agentRaw) || 'The Health Experts Insurance',
+      carrier: 'HealthSun',
+      planType,
+      client,
+      effectiveDate,
+      premium: 0,
+      commission,
+      classification,
+      period,
+      policyNumber,
+      payee: 'HealthSun',
+      raw: row
     });
   }
   return records;
@@ -2476,6 +2536,16 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         records = parseSolisRows(wb, req.file.originalname);
       } else if (isSolisFile(req.file.originalname)) {
         records = parseSolisRows(wb, req.file.originalname);
+      } else if (isHealthSunFile(req.file.originalname)) {
+        const ws = wb ? wb.Sheets[wb.SheetNames[0]] : null;
+        // Handle CSV — parse manually
+        const csvText = fs.readFileSync(req.file.path, 'utf-8');
+        const csvWb = XLSX.read(csvText, { type: 'string' });
+        records = parseHealthSunRows(csvWb.Sheets[csvWb.SheetNames[0]], req.file.originalname);
+        if (!records.length) {
+          try { fs.unlinkSync(req.file.path); } catch(e) {}
+          return res.status(400).json({ error: 'No records found in HealthSun commission report.' });
+        }
       } else if (isAPLFile(req.file.originalname)) {
         records = parseAPLRows(wb);
       } else if (isAetnaFile(req.file.originalname)) {
