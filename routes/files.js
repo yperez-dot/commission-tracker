@@ -1833,11 +1833,12 @@ async function parseTHEStatementPDF(filePath, filename) {
 function isTHEStatementPDF(filename) {
   const f = filename.toLowerCase().replace(/\s+/g, '_');
   if (!f.endsWith('.pdf')) return false;
+  if (f.includes('medicare_statement_-the-')) return false;
   return (
     f.includes('medicare_statement-the') ||
     f.includes('medicare_statement_the') ||
     f.includes('the_statement') ||
-    (f.includes('statement') && f.includes('-the-') )
+    (f.includes('statement') && f.includes('-the-'))
   );
 }
 
@@ -1857,7 +1858,8 @@ function isBSIConsolidatedPDF(filename) {
   return f.includes('statement-health_experts') ||
          f.includes('statement_health_experts') ||
          f.includes('health_experts-') ||
-         f.includes('health_experts_');
+         f.includes('health_experts_') ||
+         f.includes('medicare_statement_-the-');
 }
 
 async function parseBSIConsolidatedPDF(filePath, filename) {
@@ -2387,6 +2389,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       if (f.includes('commissiondata') || f.includes('humana')) return 'Humana';
       if (f.includes('devoted')) return 'Devoted';
       if (f.includes('aetna') || f.includes('producerstatement')) return 'Aetna';
+      if (f.includes('medicare_statement_-the-')) return 'THE';
       return 'Direct';
     };
     const defaultPayee = determinePayee(req.file.originalname);
