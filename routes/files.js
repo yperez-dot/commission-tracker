@@ -1624,6 +1624,13 @@ async function parseTHEStatementPDF(filePath, filename) {
     const data = await pdfParse(dataBuffer);
     const lines = data.text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
+    // Find where Humana section starts and log 10 lines around it
+    const humanaIdx = lines.findIndex(l => l.includes('Detailed Compensation Statement (HUMANA)') || l.includes('Detailed Compensation Statement(HUMANA)'));
+    console.log('[THE-HUMANA-IDX]', humanaIdx);
+    if (humanaIdx >= 0) {
+      console.log('[THE-HUMANA-LINES]', JSON.stringify(lines.slice(humanaIdx, humanaIdx + 15)));
+    }
+
     const carrierMap = {
       'UNITED HEALTH CARE': 'UnitedHealthcare',
       'HUMANA': 'Humana',
