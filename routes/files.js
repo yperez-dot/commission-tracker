@@ -1789,7 +1789,37 @@ async function parseTHEStatementPDF(filePath, filename) {
           i++;
           continue;
         }
-        // Log Humana/Aetna lines that fail single-line parsing
+
+        // Humana/Aetna: handle split lines where date+amount is on next line
+        // Format: "AGENTHUMANA00000000K_HMOClient Name" + next line: "02/01/2026$55.00"
+        if ((currentCarrier === 'Humana' || currentCarrier === 'Aetna') && i + 1 < lines.length) {
+          const nextLine = lines[i + 1];
+          const nextMatch = nextLine.match(/^(\d{2}\/\d{2}\/\d{4})(-?\$[\d,]+\.\d{2})$/);
+          if (nextMatch) {
+            const combined = line + nextMatch[1] + nextMatch[2];
+            const parsedCombined = parseSingleLine(combined);
+            if (parsedCombined) {
+              records.push({
+                agent: normalizeAgent(parsedCombined.agent),
+                carrier: parsedCombined.carrier,
+                planType: derivePlanType(parsedCombined.carrier, 'MAPD', parsedCombined.policy, ''),
+                client: toTitleCase(parsedCombined.client),
+                effectiveDate: parsedCombined.date,
+                premium: 0,
+                commission: parsedCombined.amount,
+                classification: parsedCombined.amount < 0 ? 'Chargeback' : 'Agency Override',
+                period: parsedCombined.period,
+                policyNumber: parsedCombined.policy,
+                payee: 'THE',
+                raw: {}
+              });
+              i += 2;
+              continue;
+            }
+          }
+        }
+
+        // Log Humana/Aetna lines that fail both single-line and split-pair parsing
         if ((currentCarrier === 'Humana' || currentCarrier === 'Aetna') && 
             line.length > 20 && !line.startsWith('Balance') && !line.startsWith('Agent') && !line.startsWith('Detailed')) {
           console.log('[HUMANA-MISS]', JSON.stringify(line));
