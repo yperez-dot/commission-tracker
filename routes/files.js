@@ -2102,6 +2102,8 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         return res.status(500).json({ error: 'PDF parsing not available on server.' });
       }
       records = await parseTHEStatementPDF(req.file.path, req.file.originalname);
+      console.log('[THE] parsed:', records.length, 'records by carrier:',
+        records.reduce((acc, r) => { acc[r.carrier] = (acc[r.carrier]||0)+1; return acc; }, {}));
       if (!records.length) {
         try { fs.unlinkSync(req.file.path); } catch(e) {}
         return res.status(400).json({ error: 'No records found in THE statement PDF.' });
