@@ -1710,6 +1710,23 @@ async function parseTHEStatementPDF(filePath, filename) {
 
       if (!currentCarrier) { i++; continue; }
 
+      // Temporary: log any UHC line that doesn't match the 4-line pattern
+      if (currentCarrier === 'UnitedHealthcare' && i + 3 < lines.length) {
+        const agentLine = lines[i];
+        const carrierLine = lines[i + 1];
+        const dataLine = lines[i + 2];
+        const amountLine = lines[i + 3];
+        const carrierKey = Object.keys(carrierMap).find(k => carrierLine.toUpperCase() === k);
+        const amountMatch = amountLine.match(/^-?\$[\d,]+\.\d{2}$/);
+        const parsed = parseUHCDataLine(dataLine);
+        const agentValid = agentLine.match(/^[A-Z][A-Z\s,\.]+$/) && agentLine.length > 3;
+        if (!carrierKey || !amountMatch || !parsed || !agentValid) {
+          if (agentLine.match(/^[A-Z]/) && !agentLine.startsWith('Balance') && !agentLine.startsWith('Agent') && !agentLine.startsWith('Detailed')) {
+            console.log('[UHC-MISS]', JSON.stringify([agentLine, carrierLine, dataLine, amountLine]));
+          }
+        }
+      }
+
       // Skip known non-data lines
       if (line.startsWith('Balance:') || line.startsWith('Agent') ||
           line.startsWith('CARRIER SUMMARY') || line.match(/STATEMENT\s+20\d{2}/) ||
