@@ -2038,19 +2038,6 @@ async function parseBSIConsolidatedPDF(filePath, filename) {
       i++;
     }
 
-    // Temporary: after the while loop, log Aetna records
-    const aetnaLines = [];
-    // re-scan lines to find what pdf-parse sees in Aetna section
-    let inAetna = false;
-    for (const l of lines) {
-      if (l.includes('Balance:') && l.includes('1,417')) inAetna = true;
-      if (inAetna && l.includes('AETNA')) aetnaLines.push(l);
-    }
-    console.log('[BSI-AETNA-LINES]', JSON.stringify(aetnaLines));
-    
-    const aetnaRecs = records.filter(r => r.carrier === 'Aetna');
-    console.log('[BSI-AETNA]', aetnaRecs.length, 'total:', aetnaRecs.reduce((s,r) => s+r.commission, 0).toFixed(2));
-
     // Add summary deduction records from carrier summary
     // NHP deduction and unnamed deduction visible in carrier summary header
     const summaryDeductions = [];
