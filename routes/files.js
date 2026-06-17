@@ -1864,22 +1864,15 @@ async function parseBSIConsolidatedPDF(filePath, filename) {
     const dataBuffer = fs.readFileSync(filePath);
     const data = await pdfParse(dataBuffer);
     const lines = data.text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-    console.log('[BSI-LINES]', JSON.stringify(lines.slice(0, 20)));
 
-    // Extract period from filename e.g. "Statement-health_experts (2).pdf" → use upload date
     const now = new Date();
-    const period = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const uploadPeriod = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
 
     const toTitleCase = (str) =>
       str.trim().toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
 
     const normalizeAgent = (raw) => {
       raw = raw.trim();
-      // Already "First Last" format (mixed case) → normalize
-      if (raw === raw.toLowerCase() || raw[0] === raw[0].toUpperCase() && raw.includes(' ') && raw === raw.split(' ').map(w => w[0].toUpperCase() + w.slice(1).toLowerCase()).join(' ')) {
-        return toTitleCase(raw);
-      }
-      // "LAST, FIRST" format (all caps with comma)
       if (raw.includes(',') && raw === raw.toUpperCase()) {
         const parts = raw.split(',');
         return toTitleCase(`${parts[1].trim()} ${parts[0].trim()}`);
@@ -1887,83 +1880,148 @@ async function parseBSIConsolidatedPDF(filePath, filename) {
       return toTitleCase(raw);
     };
 
-    const carrierTokens = [
-      { token: 'UNITED HEALH CARE', carrier: 'UnitedHealthcare' },
-      { token: 'UNITED HEALTH CARE', carrier: 'UnitedHealthcare' },
-      { token: 'DEVOTED HEALTH', carrier: 'Devoted' },
-      { token: 'HUMANA', carrier: 'Humana' },
-      { token: 'AETNA', carrier: 'Aetna' },
-    ];
+    const carrierMap = {
+      'UNITED HEALH CARE': 'UnitedHealthcare',
+      'UNITED HEALTH CARE': 'UnitedHealthcare',
+      'DEVOTED HEALTH': 'Devoted',
+      'HUMANA': 'Humana',
+      'AETNA': 'Aetna',
+    };
+
+    const skipLines = new Set([
+      'CARRIER SUMMARY DETAILS',
+      'AgentCompanyPolicy #Client NameEffective Date Commission',
+      'Agent Company Policy # Client Name Effective Date Commission',
+    ]);
 
     const skipPatterns = [
       /^CARRIER SUMMARY/i,
-      /^UNITED HEALTH/i,
-      /^HUMANA\//i,
-      /^AETNA\s*\(/i,
+      /^UNITED HEALTH(?: CARE)?\s*\(\$/i,
+      /^HUMANA\/DEVOTED/i,
       /^NHP/i,
-      /^TOTAL/i,
+      /^TOTAL\s*\(\$/i,
       /^Balance:/i,
-      /^Agent\s+Company/i,
       /^Detailed Compensation/i,
+      /^\(\$\(/i,
+      /^AETNA\s*\(\$/i,
     ];
 
-    const dateToPeriod = (dateStr) => {
-      // Handle both MM/DD/YYYY and M/D/YYYY
-      const parts = dateStr.trim().split('/');
-      if (parts.length === 3) return parts[2] + parts[0].padStart(2, '0');
-      return period;
+    // Parse data line: "969862877ALLEN, ELLY01/01/2026$37.50"
+    // or Humana/Aetna: "00023852293K_HMODODOUGLAS RICHMOND A01/01/2026$82.50"
+    const parseDataLine = (line) => {
+      // Amount at end: -$X.XX or $X.XX or $-
+      const amountMatch = line.match(/(-?\$[\d,]+\.\d{2}|\$-)$/);
+      if (!amountMatch) return null;
+      const amountStr = amountMatch[1];
+      if (amountStr === '$-') return null; // skip zero/dash
+
+      const withoutAmount = line.slice(0, line.length - amountStr.length);
+
+      // Date before amount: MM/DD/YYYY or M/D/YYYY
+      const dateMatch = withoutAmount.match(/(\d{1,2}\/\d{1,2}\/\d{4})$/);
+      if (!dateMatch) return null;
+      const dateStr = dateMatch[1];
+      const beforeDate = withoutAmount.slice(0, withoutAmount.length - dateStr.length);
+
+      // Policy: leading alphanumeric block
+      const policyMatch = beforeDate.match(/^([A-Z0-9_]+?)([A-Za-z].+)$/);
+      if (!policyMatch) return null;
+      const policyPart = policyMatch[1];
+      const clientPart = policyMatch[2].trim();
+
+      const dateParts = dateStr.split('/');
+      const period = dateParts.length === 3 ? dateParts[2] + dateParts[0].padStart(2, '0') : uploadPeriod;
+
+      return {
+        policy: policyPart,
+        client: clientPart,
+        date: dateStr,
+        amount: parseFloat(amountStr.replace(/[$,]/g, '')) || 0,
+        period,
+      };
     };
 
-    for (const line of lines) {
-      if (skipPatterns.some(p => p.test(line))) continue;
+    let i = 0;
+    while (i < lines.length) {
+      const line = lines[i];
 
-      // Every data line ends with DATE AMOUNT (with space between them)
-      const trailMatch = line.match(/(\d{1,2}\/\d{1,2}\/\d{4})\s+(-?\$[\d,]+\.\d{2}|-?\$-)$/);
-      if (!trailMatch) continue;
-
-      const dateStr = trailMatch[1];
-      const amountStr = trailMatch[2];
-      const before = line.slice(0, trailMatch.index).trim();
-
-      // Skip $- amounts (zero/dash amounts)
-      if (amountStr === '$-' || amountStr === '-$-') continue;
-
-      let agentPart = null, policyPart = null, clientPart = null, matchedCarrier = null;
-
-      for (const { token, carrier } of carrierTokens) {
-        const idx = before.toUpperCase().indexOf(token.toUpperCase());
-        if (idx === -1) continue;
-        agentPart = before.slice(0, idx).trim();
-        const rest = before.slice(idx + token.length).trim();
-        // rest = "POLICY_NUM CLIENT_NAME" with space separator
-        const spaceIdx = rest.indexOf(' ');
-        if (spaceIdx > 0) {
-          policyPart = rest.slice(0, spaceIdx).trim();
-          clientPart = rest.slice(spaceIdx + 1).trim();
-        }
-        matchedCarrier = carrier;
-        break;
+      if (skipLines.has(line) || skipPatterns.some(p => p.test(line))) {
+        i++; continue;
       }
 
-      if (!agentPart || !policyPart || !clientPart || !matchedCarrier) continue;
+      // Check 3-line pattern: AGENT / CARRIER / DATA
+      if (i + 2 < lines.length) {
+        const agentLine = lines[i];
+        const carrierLine = lines[i + 1];
+        const dataLine = lines[i + 2];
 
-      const commission = parseFloat(amountStr.replace(/[$,]/g, '')) || 0;
-      const recPeriod = dateToPeriod(dateStr);
+        const carrierKey = Object.keys(carrierMap).find(k => carrierLine.toUpperCase() === k.toUpperCase());
+        const parsed = parseDataLine(dataLine);
+        // Agent line: letters, spaces, commas only (no digits)
+        const agentValid = agentLine.length > 2 && !/\d/.test(agentLine) &&
+          !skipPatterns.some(p => p.test(agentLine)) && !skipLines.has(agentLine);
 
-      records.push({
-        agent: normalizeAgent(agentPart),
-        carrier: matchedCarrier,
-        planType: derivePlanType(matchedCarrier, 'MAPD', policyPart, ''),
-        client: toTitleCase(clientPart),
-        effectiveDate: dateStr,
-        premium: 0,
-        commission,
-        classification: commission < 0 ? 'Chargeback' : 'Agency Override',
-        period: recPeriod,
-        policyNumber: policyPart,
-        payee: 'BSI',
-        raw: {}
-      });
+        if (carrierKey && parsed && agentValid) {
+          records.push({
+            agent: normalizeAgent(agentLine),
+            carrier: carrierMap[carrierKey],
+            planType: derivePlanType(carrierMap[carrierKey], 'MAPD', parsed.policy, ''),
+            client: toTitleCase(parsed.client),
+            effectiveDate: parsed.date,
+            premium: 0,
+            commission: parsed.amount,
+            classification: parsed.amount < 0 ? 'Chargeback' : 'Agency Override',
+            period: parsed.period,
+            policyNumber: parsed.policy,
+            payee: 'BSI',
+            raw: {}
+          });
+          i += 3; continue;
+        }
+      }
+
+      // Check single-line pattern (Humana/Aetna section uses "First Last CARRIER POLICY CLIENT DATE AMOUNT")
+      // These appear after Balance: $16,126.01
+      const trailMatch = line.match(/(\d{1,2}\/\d{1,2}\/\d{4})\s+(-?\$[\d,]+\.\d{2})$/);
+      if (trailMatch) {
+        const dateStr = trailMatch[1];
+        const amountStr = trailMatch[2];
+        const before = line.slice(0, trailMatch.index).trim();
+
+        for (const [token, carrier] of Object.entries(carrierMap)) {
+          const idx = before.toUpperCase().indexOf(token.toUpperCase());
+          if (idx === -1) continue;
+          const agentRaw = before.slice(0, idx).trim();
+          const rest = before.slice(idx + token.length).trim();
+          const spaceIdx = rest.indexOf(' ');
+          if (spaceIdx < 1) continue;
+          const policyPart = rest.slice(0, spaceIdx).trim();
+          const clientPart = rest.slice(spaceIdx + 1).trim();
+          if (!agentRaw || !clientPart) continue;
+
+          const dateParts = dateStr.split('/');
+          const period = dateParts.length === 3 ? dateParts[2] + dateParts[0].padStart(2, '0') : uploadPeriod;
+          const commission = parseFloat(amountStr.replace(/[$,]/g, '')) || 0;
+
+          records.push({
+            agent: normalizeAgent(agentRaw),
+            carrier,
+            planType: derivePlanType(carrier, 'MAPD', policyPart, ''),
+            client: toTitleCase(clientPart),
+            effectiveDate: dateStr,
+            premium: 0,
+            commission,
+            classification: commission < 0 ? 'Chargeback' : 'Agency Override',
+            period,
+            policyNumber: policyPart,
+            payee: 'BSI',
+            raw: {}
+          });
+          break;
+        }
+      }
+
+      i++;
     }
 
     console.log(`[BSI-CONSOLIDATED] parsed ${records.length} records:`,
