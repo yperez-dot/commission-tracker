@@ -2032,6 +2032,9 @@ function parseYourFMOXLSXRows(wb) {
 // ─── Upload route ─────────────────────────────────────────────────────────────
 router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  console.log('[UPLOAD] filename:', req.file.originalname);
+  console.log('[UPLOAD] isTHE:', isTHEStatementPDF(req.file.originalname));
+  console.log('[UPLOAD] isBSI:', isBSIPDF(req.file.originalname));
   try {
     const fnLc = String(req.file.originalname || '').toLowerCase();
     if (/moo|mutual.?of.?omaha|united.?of.?omaha/i.test(fnLc)) {
