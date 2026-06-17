@@ -2688,12 +2688,22 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         });
       }
       if (duplicates.length > 0 && skipDuplicates) {
+        // Parse selectedDuplicates from FormData (checkboxes)
+        const selectedKeys = req.body.selectedDuplicates
+          ? new Set(JSON.parse(req.body.selectedDuplicates).map(d =>
+              `${d.client.toLowerCase()}|${d.carrier.toLowerCase()}|${d.date}`
+            ))
+          : new Set();
+
         const dupKeys = new Set(duplicates.map(d =>
           `${d.client.toLowerCase()}|${d.carrier.toLowerCase()}|${d.date}`
         ));
-        records = records.filter(r =>
-          !dupKeys.has(`${r.client?.toLowerCase()}|${r.carrier?.toLowerCase()}|${r.effectiveDate}`)
-        );
+
+        records = records.filter(r => {
+          const key = `${r.client?.toLowerCase()}|${r.carrier?.toLowerCase()}|${r.effectiveDate}`;
+          if (!dupKeys.has(key)) return true; // not a duplicate, always include
+          return selectedKeys.has(key); // duplicate — only include if user selected it
+        });
       }
     }
 
