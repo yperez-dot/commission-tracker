@@ -1689,7 +1689,8 @@ async function parseTHEStatementPDF(filePath, filename) {
           const period = dateToPeriod(effectiveDate);
 
           const beforeDate = dataLine.slice(0, dateMatch.index);
-          const policyMatch = beforeDate.match(/^([A-Za-z0-9_]+)(.+)$/);
+          // UHC policies are numeric only
+          const policyMatch = beforeDate.match(/^(\d+)(.+)$/);
           if (!policyMatch) continue;
           const policyNumber = policyMatch[1];
           const client = policyMatch[2].trim();
@@ -1741,11 +1742,20 @@ async function parseTHEStatementPDF(filePath, filename) {
         const agentPart = beforeDate.slice(0, carrierIdx).trim();
         const afterCarrier = beforeDate.slice(carrierIdx + carrierToken.length);
 
-        // Policy is typically alphanumeric+underscore at start
-        const policyMatch = afterCarrier.match(/^([A-Za-z0-9_]+)(.+)$/);
-        if (!policyMatch) continue;
-        const policyNumber = policyMatch[1];
-        const client = policyMatch[2].trim();
+        let policyNumber, client;
+        if (currentCarrier === 'Humana') {
+          // Humana policies end with _MA (2 letters) or K_HMO/K_PPO (K + 3 letters)
+          const humanaMatch = afterCarrier.match(/^([A-Z0-9]+(?:_MA|K_[A-Z]{3}))(.+)$/);
+          if (!humanaMatch) continue;
+          policyNumber = humanaMatch[1];
+          client = humanaMatch[2].trim();
+        } else {
+          // Aetna policies are NG + digits only
+          const aetnaMatch = afterCarrier.match(/^(NG\d+)(.+)$/);
+          if (!aetnaMatch) continue;
+          policyNumber = aetnaMatch[1];
+          client = aetnaMatch[2].trim();
+        }
 
         records.push({
           agent: normalizeAgent(agentPart),
