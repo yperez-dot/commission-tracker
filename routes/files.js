@@ -1970,7 +1970,7 @@ async function parseBSIConsolidatedPDF(filePath, filename) {
           const suffixMatch = rest.match(/^([A-Z0-9_]+?(?:_HMO|_PPO|_MA|_PDP|_MSUP|K_HMO|K_PPO))(.+)$/i);
           // Fallback: policy is leading alphanumeric block, stop before client name
           // Client names for Aetna contain commas — find the policy by stopping before first lowercase or comma
-          const plainMatch = !suffixMatch ? rest.match(/^([A-Z0-9]{6,16})([A-Z][A-Za-z\s,\.]+.*)$/) : null;
+          const plainMatch = !suffixMatch ? rest.match(/^([A-Z]{2}\d{12})(.+)$/) : null;
           const policyPart = suffixMatch ? suffixMatch[1] : (plainMatch ? plainMatch[1] : null);
           const clientPart = suffixMatch ? suffixMatch[2].trim() : (plainMatch ? plainMatch[2].trim() : null);
           if (!agentRaw || !policyPart || !clientPart) continue;
