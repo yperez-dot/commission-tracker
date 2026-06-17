@@ -1768,8 +1768,8 @@ async function parseTHEStatementPDF(filePath, filename) {
         }
       }
 
-      // Humana/Aetna: single concatenated line
-      if (currentCarrier === 'Humana' || currentCarrier === 'Aetna') {
+      // Single concatenated line — works for Humana, Aetna, AND some UHC records
+      if (currentCarrier === 'Humana' || currentCarrier === 'Aetna' || currentCarrier === 'UnitedHealthcare') {
         const parsed = parseSingleLine(line);
         if (parsed) {
           records.push({
