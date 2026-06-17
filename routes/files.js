@@ -1623,6 +1623,7 @@ async function parseTHEStatementPDF(filePath, filename) {
     const dataBuffer = fs.readFileSync(filePath);
     const data = await pdfParse(dataBuffer);
     const lines = data.text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    console.log('[THE-LINES]', JSON.stringify(lines.slice(0, 25)));
 
     const sectionHeaders = {
       'Detailed Compensation Statement (UHC)': 'UnitedHealthcare',
