@@ -1966,10 +1966,11 @@ async function parseBSIConsolidatedPDF(filePath, filename) {
           const rest = before.slice(idx + token.length).trim();
           // Try suffix split first (_HMO, _PPO, _MA, etc.)
           const suffixMatch = rest.match(/^([A-Z0-9_]+?(?:_HMO|_PPO|_MA|_PDP|_MSUP|K_HMO|K_PPO))(.+)$/i);
-          // Fallback: split at first space
-          const spaceMatch = !suffixMatch ? rest.match(/^(\S+)\s+(.+)$/) : null;
-          const policyPart = suffixMatch ? suffixMatch[1] : (spaceMatch ? spaceMatch[1] : null);
-          const clientPart = suffixMatch ? suffixMatch[2].trim() : (spaceMatch ? spaceMatch[2].trim() : null);
+          // Fallback: policy is leading alphanumeric block, stop before client name
+          // Client names for Aetna contain commas — find the policy by stopping before first lowercase or comma
+          const plainMatch = !suffixMatch ? rest.match(/^([A-Z0-9]{6,16})([A-Z][A-Za-z\s,\.]+.*)$/) : null;
+          const policyPart = suffixMatch ? suffixMatch[1] : (plainMatch ? plainMatch[1] : null);
+          const clientPart = suffixMatch ? suffixMatch[2].trim() : (plainMatch ? plainMatch[2].trim() : null);
           if (!agentRaw || !policyPart || !clientPart) continue;
           const dateParts = dateStr.split('/');
           const period = dateParts.length === 3 ? dateParts[2] + dateParts[0].padStart(2, '0') : uploadPeriod;
