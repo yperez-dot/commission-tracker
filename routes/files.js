@@ -2417,6 +2417,40 @@ function parseYourFMOXLSXRows(wb) {
   return records;
 }
 
+// ─── Duplicate Detection ──────────────────────────────────────────────────────
+async function findDuplicates(pool, records) {
+  if (!records.length) return [];
+  const filtered = records.filter(r => r.client && r.carrier && r.effectiveDate);
+  if (!filtered.length) return [];
+
+  const conditions = filtered.map((r, i) =>
+    `(LOWER(client_full_name) = LOWER($${i*3+1}) AND LOWER(carrier) = LOWER($${i*3+2}) AND effective_date = $${i*3+3})`
+  ).join(' OR ');
+
+  const params = filtered.flatMap(r => [r.client, r.carrier, r.effectiveDate]);
+
+  const result = await pool.query(
+    `SELECT client_full_name, carrier, effective_date FROM commission_records WHERE ${conditions}`,
+    params
+  );
+
+  const existingSet = new Set(result.rows.map(r =>
+    `${r.client_full_name.toLowerCase()}|${r.carrier.toLowerCase()}|${r.effective_date}`
+  ));
+
+  return filtered.filter(r =>
+    existingSet.has(`${r.client.toLowerCase()}|${r.carrier.toLowerCase()}|${r.effectiveDate}`)
+  ).map(r => ({
+    client: r.client,
+    carrier: r.carrier,
+    date: r.effectiveDate,
+    amount: r.commission,
+    agent: r.agent,
+    period: r.period,
+    type: r.classification
+  }));
+}
+
 // ─── Upload route ─────────────────────────────────────────────────────────────
 router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
@@ -2637,6 +2671,31 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     }
 
     if (!records.length) return res.status(400).json({ error: 'No records found in file' });
+
+    // Duplicate detection
+    const skipDuplicates = req.body.skipDuplicates === 'true';
+    const ignoreDuplicates = req.body.ignoreDuplicates === 'true';
+
+    if (!ignoreDuplicates) {
+      const duplicates = await findDuplicates(pool, records);
+      if (duplicates.length > 0 && !skipDuplicates) {
+        try { fs.unlinkSync(req.file.path); } catch(e) {}
+        return res.status(409).json({
+          duplicateWarning: true,
+          duplicateCount: duplicates.length,
+          totalCount: records.length,
+          duplicates: duplicates.slice(0, 23),
+        });
+      }
+      if (duplicates.length > 0 && skipDuplicates) {
+        const dupKeys = new Set(duplicates.map(d =>
+          `${d.client.toLowerCase()}|${d.carrier.toLowerCase()}|${d.date}`
+        ));
+        records = records.filter(r =>
+          !dupKeys.has(`${r.client?.toLowerCase()}|${r.carrier?.toLowerCase()}|${r.effectiveDate}`)
+        );
+      }
+    }
 
     const commissionSum = records.reduce((s, r) => s + (r.commission || 0), 0);
     const carriers = [...new Set(records.map(r => r.carrier).filter(Boolean))];
