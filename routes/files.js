@@ -1625,6 +1625,16 @@ async function parseTHEStatementPDF(filePath, filename) {
     const text = data.text;
     const lines = text.split('\n');
 
+    console.log('[THE-DEBUG] total lines:', lines.length);
+    console.log('[THE-DEBUG] first 20 lines:');
+    lines.slice(0, 20).forEach((l, i) => console.log(` ${i}: "${l.trim()}"`));
+    // Also log where section headers are found
+    lines.forEach((l, i) => {
+      if (l.includes('Detailed Compensation') || l.includes('UNITED HEALTH') || l.includes('HUMANA') || l.includes('AETNA')) {
+        console.log(` [HEADER at ${i}]: "${l.trim()}"`);
+      }
+    });
+
     const sectionHeaders = {
       'Detailed Compensation Statement (UHC)': 'UnitedHealthcare',
       'Detailed Compensation Statement (HUMANA)': 'Humana',
