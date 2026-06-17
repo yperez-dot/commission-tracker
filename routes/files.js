@@ -1864,6 +1864,7 @@ async function parseBSIConsolidatedPDF(filePath, filename) {
     const dataBuffer = fs.readFileSync(filePath);
     const data = await pdfParse(dataBuffer);
     const lines = data.text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    console.log('[BSI-LINES]', JSON.stringify(lines.slice(0, 20)));
 
     // Extract period from filename e.g. "Statement-health_experts (2).pdf" → use upload date
     const now = new Date();
