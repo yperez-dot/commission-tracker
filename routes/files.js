@@ -1722,23 +1722,6 @@ async function parseTHEStatementPDF(filePath, filename) {
 
       if (!currentCarrier) { i++; continue; }
 
-      // Temporary: log any UHC line that doesn't match the 4-line pattern
-      if (currentCarrier === 'UnitedHealthcare' && i + 3 < lines.length) {
-        const agentLine = lines[i];
-        const carrierLine = lines[i + 1];
-        const dataLine = lines[i + 2];
-        const amountLine = lines[i + 3];
-        const carrierKey = Object.keys(carrierMap).find(k => carrierLine.toUpperCase() === k);
-        const amountMatch = amountLine.match(/^-?\$[\d,]+\.\d{2}$/);
-        const parsed = parseUHCDataLine(dataLine);
-        const agentValid = agentLine.match(/^[A-Z][A-Z\s,\.]+$/) && agentLine.length > 3;
-        if (!carrierKey || !amountMatch || !parsed || !agentValid) {
-          if (agentLine.match(/^[A-Z]/) && !agentLine.startsWith('Balance') && !agentLine.startsWith('Agent') && !agentLine.startsWith('Detailed')) {
-            console.log('[UHC-MISS]', JSON.stringify([agentLine, carrierLine, dataLine, amountLine]));
-          }
-        }
-      }
-
       // Skip known non-data lines
       if (line.startsWith('Balance:') || line.startsWith('Agent') ||
           line.startsWith('CARRIER SUMMARY') || line.match(/STATEMENT\s+20\d{2}/) ||
@@ -1832,15 +1815,7 @@ async function parseTHEStatementPDF(filePath, filename) {
           }
         }
 
-        // Log Humana/Aetna lines that fail both single-line and split-pair parsing
-        if ((currentCarrier === 'Humana' || currentCarrier === 'Aetna') && 
-            line.length > 20 && !line.startsWith('Balance') && !line.startsWith('Agent') && !line.startsWith('Detailed')) {
-          console.log('[HUMANA-MISS]', JSON.stringify(line));
-          // For lines with no date, show what the next line is
-          if (!line.match(/\d{2}\/\d{2}\/\d{4}/)) {
-            console.log('[HUMANA-MISS-NEXT]', JSON.stringify(lines[i+1]));
-          }
-        }
+
       }
 
       i++;
@@ -2140,9 +2115,6 @@ function parseYourFMOXLSXRows(wb) {
 // ─── Upload route ─────────────────────────────────────────────────────────────
 router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-  console.log('[UPLOAD] filename:', req.file.originalname);
-  console.log('[UPLOAD] isTHE:', isTHEStatementPDF(req.file.originalname));
-  console.log('[UPLOAD] isBSI:', isBSIPDF(req.file.originalname));
   try {
     const fnLc = String(req.file.originalname || '').toLowerCase();
     if (/moo|mutual.?of.?omaha|united.?of.?omaha/i.test(fnLc)) {
