@@ -1623,16 +1623,47 @@ async function parseTHEStatementPDF(filePath, filename) {
     const dataBuffer = fs.readFileSync(filePath);
     const data = await pdfParse(dataBuffer);
     const text = data.text;
-    const lines = text.split('\n').map(l => l.trim());
+    const lines = text.split('\n');
+
+    const sectionHeaders = {
+      'Detailed Compensation Statement (UHC)': 'UnitedHealthcare',
+      'Detailed Compensation Statement (HUMANA)': 'Humana',
+      'Detailed Compensation Statement(AETNA)': 'Aetna',
+      'Detailed Compensation Statement (AETNA)': 'Aetna',
+    };
+
+    // Order matters — check longer tokens first to avoid HUMANA matching inside lines
+    const carrierTokens = [
+      { token: 'UNITED HEALTH CARE', carrier: 'UnitedHealthcare' },
+      { token: 'AETNA', carrier: 'Aetna' },
+      { token: 'HUMANA', carrier: 'Humana' },
+    ];
+
+    const skipPatterns = [
+      /^Agent\s+Company/i,
+      /^Balance:/i,
+      /^CARRIER SUMMARY/i,
+      /^TOTAL/i,
+      /STATEMENT\s+20\d{2}/i,
+      /^UNITED HEALTH CARE\s+\(\$/i,
+      /^HUMANA\/DEVOTED/i,
+      /^AETNA\s+\(\$/i,
+      /^Detailed Compensation Statement/i,
+    ];
 
     const toTitleCase = (str) =>
-      str.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+      str.trim().toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
 
     const normalizeAgent = (raw) => {
       raw = raw.trim();
+      // Remove any stray carrier text that got concatenated (page break artifacts)
+      raw = raw.replace(/united\s*health\s*care.*/i, '').replace(/humana.*/i, '').replace(/aetna.*/i, '').trim();
+      if (!raw) return '';
       if (raw.includes(',')) {
         const parts = raw.split(',');
-        return toTitleCase(`${parts[1].trim()} ${parts[0].trim()}`);
+        const last = parts[0].trim();
+        const first = parts[1].trim();
+        return toTitleCase(`${first} ${last}`);
       }
       return toTitleCase(raw);
     };
@@ -1643,136 +1674,73 @@ async function parseTHEStatementPDF(filePath, filename) {
     };
 
     let currentCarrier = null;
-    let carrierFormat = null; // 'multi-line' or 'single-line'
 
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
 
-      // Detect section headers
-      if (line.includes('Detailed Compensation Statement (UHC)')) {
-        currentCarrier = 'UnitedHealthcare';
-        carrierFormat = 'multi-line';
-        continue;
+      // Check for section header
+      for (const [header, carrier] of Object.entries(sectionHeaders)) {
+        if (trimmed.includes(header)) { currentCarrier = carrier; break; }
       }
-      if (line.includes('Detailed Compensation Statement (HUMANA)') || line.includes('Detailed Compensation Statement(HUMANA)')) {
-        currentCarrier = 'Humana';
-        carrierFormat = 'single-line';
-        continue;
-      }
-      if (line.includes('Detailed Compensation Statement (AETNA)') || line.includes('Detailed Compensation Statement(AETNA)')) {
-        currentCarrier = 'Aetna';
-        carrierFormat = 'single-line';
-        continue;
-      }
-
       if (!currentCarrier) continue;
+      if (skipPatterns.some(p => p.test(trimmed))) continue;
 
-      // Skip header/summary lines
-      if (/^Agent\s*Company|^Balance:|^CARRIER SUMMARY|^TOTAL|^APRIL STATEMENT|^UNITED HEALTH CARE\s+\(|^HUMANA\/DEVOTED|^AETNA\s+\(/i.test(line)) continue;
+      // Every data line ends with DATE AMOUNT
+      const trailMatch = trimmed.match(/(\d{2}\/\d{2}\/\d{4})\s+(-?\$[\d,]+\.\d{2})$/);
+      if (!trailMatch) continue;
 
-      if (carrierFormat === 'multi-line') {
-        // UHC multi-line format: carrier, data+date, amount, agent
-        if (line === 'UNITED HEALTH CARE') {
-          if (i + 3 >= lines.length) continue;
+      const dateStr = trailMatch[1];
+      const amountStr = trailMatch[2];
+      const beforeDate = trimmed.slice(0, trailMatch.index).trim();
 
-          const dataLine = lines[i + 1];
-          const amountLine = lines[i + 2];
-          const agentLine = lines[i + 3];
+      let agentPart = null, policyPart = null, clientPart = null;
 
-          const amountMatch = amountLine.match(/^(-?\$[\d,]+\.\d{2})$/);
-          if (!amountMatch) continue;
-          const commission = parseFloat(amountMatch[1].replace(/[$,]/g, '')) || 0;
-
-          const dateMatch = dataLine.match(/(\d{2}\/\d{2}\/\d{4})$/);
-          if (!dateMatch) continue;
-          const effectiveDate = dateMatch[1];
-          const period = dateToPeriod(effectiveDate);
-
-          const beforeDate = dataLine.slice(0, dateMatch.index);
-          // UHC policies are numeric only
-          const policyMatch = beforeDate.match(/^(\d+)(.+)$/);
-          if (!policyMatch) continue;
-          const policyNumber = policyMatch[1];
-          const client = policyMatch[2].trim();
-
-          const agent = normalizeAgent(agentLine);
-
-          records.push({
-            agent,
-            carrier: currentCarrier,
-            planType: derivePlanType(currentCarrier, 'MAPD', policyNumber, ''),
-            client: toTitleCase(client),
-            effectiveDate,
-            premium: 0,
-            commission,
-            classification: commission < 0 ? 'Chargeback' : 'Agency Override',
-            period,
-            policyNumber,
-            payee: 'THE',
-            raw: {}
-          });
-
-          i += 3;
+      for (const { token } of carrierTokens) {
+        const idx = beforeDate.toUpperCase().indexOf(token);
+        if (idx !== -1) {
+          agentPart = beforeDate.slice(0, idx).trim();
+          const rest = beforeDate.slice(idx + token.length).trim();
+          // rest = "POLICY_NUM CLIENT_NAME"
+          // Policy number is always the first non-space token
+          const spaceIdx = rest.indexOf(' ');
+          if (spaceIdx > 0) {
+            policyPart = rest.slice(0, spaceIdx).trim();
+            clientPart = rest.slice(spaceIdx + 1).trim();
+          }
+          break;
         }
-      } else if (carrierFormat === 'single-line') {
-        // Humana/Aetna single-line format:
-        // AGENTHUMANA<policy>ClientName<date>$<amount>
-        // Example: PAULETTE ROSTRANHUMANA9UY3E86YV04_MAJorge Gilete01/01/2026$40.63
-        
-        const carrierToken = currentCarrier === 'Humana' ? 'HUMANA' : 'AETNA';
-        if (!line.includes(carrierToken)) continue;
-
-        // Extract amount at end
-        const amountMatch = line.match(/(-?\$[\d,]+\.\d{2})$/);
-        if (!amountMatch) continue;
-        const commission = parseFloat(amountMatch[1].replace(/[$,]/g, '')) || 0;
-
-        // Extract date before amount
-        const beforeAmount = line.slice(0, amountMatch.index);
-        const dateMatch = beforeAmount.match(/(\d{2}\/\d{2}\/\d{4})$/);
-        if (!dateMatch) continue;
-        const effectiveDate = dateMatch[1];
-        const period = dateToPeriod(effectiveDate);
-
-        // Extract agent, policy, client
-        const beforeDate = beforeAmount.slice(0, dateMatch.index);
-        const carrierIdx = beforeDate.indexOf(carrierToken);
-        if (carrierIdx === -1) continue;
-
-        const agentPart = beforeDate.slice(0, carrierIdx).trim();
-        const afterCarrier = beforeDate.slice(carrierIdx + carrierToken.length);
-
-        let policyNumber, client;
-        if (currentCarrier === 'Humana') {
-          // Humana policies end with _MA (2 letters) or K_HMO/K_PPO (K + 3 letters)
-          const humanaMatch = afterCarrier.match(/^([A-Z0-9]+(?:_MA|K_[A-Z]{3}))(.+)$/);
-          if (!humanaMatch) continue;
-          policyNumber = humanaMatch[1];
-          client = humanaMatch[2].trim();
-        } else {
-          // Aetna policies are NG + digits only
-          const aetnaMatch = afterCarrier.match(/^(NG\d+)(.+)$/);
-          if (!aetnaMatch) continue;
-          policyNumber = aetnaMatch[1];
-          client = aetnaMatch[2].trim();
-        }
-
-        records.push({
-          agent: normalizeAgent(agentPart),
-          carrier: currentCarrier,
-          planType: derivePlanType(currentCarrier, 'MAPD', policyNumber, ''),
-          client: toTitleCase(client),
-          effectiveDate,
-          premium: 0,
-          commission,
-          classification: commission < 0 ? 'Chargeback' : 'Agency Override',
-          period,
-          policyNumber,
-          payee: 'THE',
-          raw: {}
-        });
       }
+
+      if (!agentPart || !policyPart || !clientPart) continue;
+
+      // Skip if agent name looks like a garbage concatenation (too long or has digits)
+      if (agentPart.length > 60 || /\d/.test(agentPart)) continue;
+
+      const commission = parseFloat(amountStr.replace(/[$,]/g, '')) || 0;
+      const period = dateToPeriod(dateStr);
+      const agentNormalized = normalizeAgent(agentPart);
+      if (!agentNormalized) continue;
+
+      records.push({
+        agent: agentNormalized,
+        carrier: currentCarrier,
+        planType: derivePlanType(currentCarrier, 'MAPD', policyPart, ''),
+        client: toTitleCase(clientPart),
+        effectiveDate: dateStr,
+        premium: 0,
+        commission,
+        classification: commission < 0 ? 'Chargeback' : 'Agency Override',
+        period,
+        policyNumber: policyPart,
+        payee: 'THE',
+        raw: {}
+      });
     }
+
+    console.log(`[THE] parsed ${records.length} records:`,
+      records.reduce((acc, r) => { acc[r.carrier] = (acc[r.carrier]||0)+1; return acc; }, {}));
+
   } catch (err) {
     console.error('parseTHEStatementPDF error:', err.message);
   }
@@ -2112,8 +2080,6 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         return res.status(500).json({ error: 'PDF parsing not available on server.' });
       }
       records = await parseTHEStatementPDF(req.file.path, req.file.originalname);
-      console.log('[THE] parsed:', records.length, 'records by carrier:',
-        records.reduce((acc, r) => { acc[r.carrier] = (acc[r.carrier]||0)+1; return acc; }, {}));
       if (!records.length) {
         try { fs.unlinkSync(req.file.path); } catch(e) {}
         return res.status(400).json({ error: 'No records found in THE statement PDF.' });
