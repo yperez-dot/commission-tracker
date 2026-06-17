@@ -1956,77 +1956,87 @@ async function parseBSIConsolidatedPDF(filePath, filename) {
         i++; continue;
       }
 
-      // Check 3-line pattern: AGENT / CARRIER / DATA
-      if (i + 2 < lines.length) {
-        const agentLine = lines[i];
-        const carrierLine = lines[i + 1];
-        const dataLine = lines[i + 2];
-
-        const carrierKey = Object.keys(carrierMap).find(k => carrierLine.toUpperCase() === k.toUpperCase());
-        const parsed = parseDataLine(dataLine);
-        // Agent line: letters, spaces, commas only (no digits)
-        const agentValid = agentLine.length > 2 && !/\d/.test(agentLine) &&
-          !skipPatterns.some(p => p.test(agentLine)) && !skipLines.has(agentLine);
-
-        if (carrierKey && parsed && agentValid) {
-          records.push({
-            agent: normalizeAgent(agentLine),
-            carrier: carrierMap[carrierKey],
-            planType: derivePlanType(carrierMap[carrierKey], 'MAPD', parsed.policy, ''),
-            client: toTitleCase(parsed.client),
-            effectiveDate: parsed.date,
-            premium: 0,
-            commission: parsed.amount,
-            classification: parsed.amount < 0 ? 'Chargeback' : 'Agency Override',
-            period: parsed.period,
-            policyNumber: parsed.policy,
-            payee: 'BSI',
-            raw: {}
-          });
-          i += 3; continue;
-        }
-      }
-
-      // Check single-line pattern (Humana/Aetna section uses "First Last CARRIER POLICY CLIENT DATE AMOUNT")
-      // These appear after Balance: $16,126.01
-      const trailMatch = line.match(/(\d{1,2}\/\d{1,2}\/\d{4})\s+(-?\$[\d,]+\.\d{2})$/);
-      if (trailMatch) {
-        const dateStr = trailMatch[1];
-        const amountStr = trailMatch[2];
-        const before = line.slice(0, trailMatch.index).trim();
-
+      // Helper: try to parse a complete data string (agent+carrier+policy+client+date+amount)
+      const tryParseLine = (str) => {
+        const m = str.match(/(\d{1,2}\/\d{1,2}\/\d{4})\s*(-?\$[\d,]+\.\d{2})$/);
+        if (!m) return null;
+        const dateStr = m[1];
+        const amountStr = m[2];
+        const before = str.slice(0, m.index).trim();
         for (const [token, carrier] of Object.entries(carrierMap)) {
           const idx = before.toUpperCase().indexOf(token.toUpperCase());
           if (idx === -1) continue;
           const agentRaw = before.slice(0, idx).trim();
           const rest = before.slice(idx + token.length).trim();
-          const spaceIdx = rest.indexOf(' ');
-          if (spaceIdx < 1) continue;
-          const policyPart = rest.slice(0, spaceIdx).trim();
-          const clientPart = rest.slice(spaceIdx + 1).trim();
-          if (!agentRaw || !clientPart) continue;
-
+          // Try suffix split first (_HMO, _PPO, _MA, etc.)
+          const suffixMatch = rest.match(/^([A-Z0-9_]+?(?:_HMO|_PPO|_MA|_PDP|_MSUP|K_HMO|K_PPO))(.+)$/i);
+          // Fallback: split at first space
+          const spaceMatch = !suffixMatch ? rest.match(/^(\S+)\s+(.+)$/) : null;
+          const policyPart = suffixMatch ? suffixMatch[1] : (spaceMatch ? spaceMatch[1] : null);
+          const clientPart = suffixMatch ? suffixMatch[2].trim() : (spaceMatch ? spaceMatch[2].trim() : null);
+          if (!agentRaw || !policyPart || !clientPart) continue;
           const dateParts = dateStr.split('/');
           const period = dateParts.length === 3 ? dateParts[2] + dateParts[0].padStart(2, '0') : uploadPeriod;
-          const commission = parseFloat(amountStr.replace(/[$,]/g, '')) || 0;
-
-          records.push({
-            agent: normalizeAgent(agentRaw),
-            carrier,
+          return {
+            agent: normalizeAgent(agentRaw), carrier,
             planType: derivePlanType(carrier, 'MAPD', policyPart, ''),
-            client: toTitleCase(clientPart),
-            effectiveDate: dateStr,
-            premium: 0,
-            commission,
-            classification: commission < 0 ? 'Chargeback' : 'Agency Override',
-            period,
-            policyNumber: policyPart,
-            payee: 'BSI',
-            raw: {}
-          });
-          break;
+            client: toTitleCase(clientPart), effectiveDate: dateStr,
+            premium: 0, commission: parseFloat(amountStr.replace(/[$,]/g, '')) || 0,
+            classification: (parseFloat(amountStr.replace(/[$,]/g, '')) || 0) < 0 ? 'Chargeback' : 'Agency Override',
+            period, policyNumber: policyPart, payee: 'BSI', raw: {}
+          };
+        }
+        return null;
+      };
+
+      // Pattern 1: UHC 3-line block (agent / carrier / data+amount)
+      if (i + 2 < lines.length) {
+        const agentLine = lines[i];
+        const carrierLine = lines[i + 1];
+        const dataLine = lines[i + 2];
+        const carrierKey = Object.keys(carrierMap).find(k => carrierLine.toUpperCase() === k.toUpperCase());
+        const agentValid = agentLine.length > 2 && !/\d/.test(agentLine) &&
+          !skipPatterns.some(p => p.test(agentLine)) && !skipLines.has(agentLine);
+        if (carrierKey && agentValid) {
+          // Parse data line directly
+          const dm = dataLine.match(/(\d{1,2}\/\d{1,2}\/\d{4})(-?\$[\d,]+\.\d{2}|\$-)$/);
+          if (dm && dm[2] !== '$-') {
+            const dateStr = dm[1];
+            const amountStr = dm[2];
+            const beforeDate = dataLine.slice(0, dataLine.length - dateStr.length - amountStr.length);
+            const pm = beforeDate.match(/^([A-Z]?\d{6,15}|[A-Z0-9]{8,20})(.+)$/);
+            if (pm) {
+              const dateParts = dateStr.split('/');
+              const period = dateParts.length === 3 ? dateParts[2] + dateParts[0].padStart(2, '0') : uploadPeriod;
+              const commission = parseFloat(amountStr.replace(/[$,]/g, '')) || 0;
+              records.push({
+                agent: normalizeAgent(agentLine), carrier: carrierMap[carrierKey],
+                planType: derivePlanType(carrierMap[carrierKey], 'MAPD', pm[1], ''),
+                client: toTitleCase(pm[2].trim()), effectiveDate: dateStr,
+                premium: 0, commission,
+                classification: commission < 0 ? 'Chargeback' : 'Agency Override',
+                period, policyNumber: pm[1], payee: 'BSI', raw: {}
+              });
+              i += 3; continue;
+            }
+          }
         }
       }
+
+      // Pattern 2: 2-line block (agent+carrier+policy+client+date / $amount)
+      if (i + 1 < lines.length) {
+        const nextLine = lines[i + 1];
+        const amountOnly = nextLine.match(/^(-?\$[\d,]+\.\d{2})$/);
+        if (amountOnly) {
+          const combined = line + amountOnly[1];
+          const rec = tryParseLine(combined);
+          if (rec) { records.push(rec); i += 2; continue; }
+        }
+      }
+
+      // Pattern 3: Single complete line (date + amount with space)
+      const rec = tryParseLine(line);
+      if (rec) { records.push(rec); i++; continue; }
 
       i++;
     }
