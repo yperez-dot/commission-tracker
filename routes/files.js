@@ -1854,7 +1854,10 @@ function isBSIPDF(filename) {
 function isBSIConsolidatedPDF(filename) {
   const f = filename.toLowerCase().replace(/\s+/g, '_');
   if (!f.endsWith('.pdf')) return false;
-  return f.includes('statement-health_experts') || f.includes('statement_health_experts');
+  return f.includes('statement-health_experts') ||
+         f.includes('statement_health_experts') ||
+         f.includes('health_experts-') ||
+         f.includes('health_experts_');
 }
 
 async function parseBSIConsolidatedPDF(filePath, filename) {
