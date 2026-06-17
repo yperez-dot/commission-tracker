@@ -1851,6 +1851,129 @@ function isBSIPDF(filename) {
          f.includes('brokersociety');
 }
 
+function isBSIConsolidatedPDF(filename) {
+  const f = filename.toLowerCase().replace(/\s+/g, '_');
+  if (!f.endsWith('.pdf')) return false;
+  return f.includes('statement-health_experts') || f.includes('statement_health_experts');
+}
+
+async function parseBSIConsolidatedPDF(filePath, filename) {
+  const records = [];
+  if (!pdfParse) { console.error('pdf-parse not installed'); return records; }
+  try {
+    const dataBuffer = fs.readFileSync(filePath);
+    const data = await pdfParse(dataBuffer);
+    const lines = data.text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+
+    // Extract period from filename e.g. "Statement-health_experts (2).pdf" → use upload date
+    const now = new Date();
+    const period = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+    const toTitleCase = (str) =>
+      str.trim().toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+
+    const normalizeAgent = (raw) => {
+      raw = raw.trim();
+      // Already "First Last" format (mixed case) → normalize
+      if (raw === raw.toLowerCase() || raw[0] === raw[0].toUpperCase() && raw.includes(' ') && raw === raw.split(' ').map(w => w[0].toUpperCase() + w.slice(1).toLowerCase()).join(' ')) {
+        return toTitleCase(raw);
+      }
+      // "LAST, FIRST" format (all caps with comma)
+      if (raw.includes(',') && raw === raw.toUpperCase()) {
+        const parts = raw.split(',');
+        return toTitleCase(`${parts[1].trim()} ${parts[0].trim()}`);
+      }
+      return toTitleCase(raw);
+    };
+
+    const carrierTokens = [
+      { token: 'UNITED HEALH CARE', carrier: 'UnitedHealthcare' },
+      { token: 'UNITED HEALTH CARE', carrier: 'UnitedHealthcare' },
+      { token: 'DEVOTED HEALTH', carrier: 'Devoted' },
+      { token: 'HUMANA', carrier: 'Humana' },
+      { token: 'AETNA', carrier: 'Aetna' },
+    ];
+
+    const skipPatterns = [
+      /^CARRIER SUMMARY/i,
+      /^UNITED HEALTH/i,
+      /^HUMANA\//i,
+      /^AETNA\s*\(/i,
+      /^NHP/i,
+      /^TOTAL/i,
+      /^Balance:/i,
+      /^Agent\s+Company/i,
+      /^Detailed Compensation/i,
+    ];
+
+    const dateToPeriod = (dateStr) => {
+      // Handle both MM/DD/YYYY and M/D/YYYY
+      const parts = dateStr.trim().split('/');
+      if (parts.length === 3) return parts[2] + parts[0].padStart(2, '0');
+      return period;
+    };
+
+    for (const line of lines) {
+      if (skipPatterns.some(p => p.test(line))) continue;
+
+      // Every data line ends with DATE AMOUNT (with space between them)
+      const trailMatch = line.match(/(\d{1,2}\/\d{1,2}\/\d{4})\s+(-?\$[\d,]+\.\d{2}|-?\$-)$/);
+      if (!trailMatch) continue;
+
+      const dateStr = trailMatch[1];
+      const amountStr = trailMatch[2];
+      const before = line.slice(0, trailMatch.index).trim();
+
+      // Skip $- amounts (zero/dash amounts)
+      if (amountStr === '$-' || amountStr === '-$-') continue;
+
+      let agentPart = null, policyPart = null, clientPart = null, matchedCarrier = null;
+
+      for (const { token, carrier } of carrierTokens) {
+        const idx = before.toUpperCase().indexOf(token.toUpperCase());
+        if (idx === -1) continue;
+        agentPart = before.slice(0, idx).trim();
+        const rest = before.slice(idx + token.length).trim();
+        // rest = "POLICY_NUM CLIENT_NAME" with space separator
+        const spaceIdx = rest.indexOf(' ');
+        if (spaceIdx > 0) {
+          policyPart = rest.slice(0, spaceIdx).trim();
+          clientPart = rest.slice(spaceIdx + 1).trim();
+        }
+        matchedCarrier = carrier;
+        break;
+      }
+
+      if (!agentPart || !policyPart || !clientPart || !matchedCarrier) continue;
+
+      const commission = parseFloat(amountStr.replace(/[$,]/g, '')) || 0;
+      const recPeriod = dateToPeriod(dateStr);
+
+      records.push({
+        agent: normalizeAgent(agentPart),
+        carrier: matchedCarrier,
+        planType: derivePlanType(matchedCarrier, 'MAPD', policyPart, ''),
+        client: toTitleCase(clientPart),
+        effectiveDate: dateStr,
+        premium: 0,
+        commission,
+        classification: commission < 0 ? 'Chargeback' : 'Agency Override',
+        period: recPeriod,
+        policyNumber: policyPart,
+        payee: 'BSI',
+        raw: {}
+      });
+    }
+
+    console.log(`[BSI-CONSOLIDATED] parsed ${records.length} records:`,
+      records.reduce((acc, r) => { acc[r.carrier] = (acc[r.carrier]||0)+1; return acc; }, {}));
+
+  } catch (err) {
+    console.error('parseBSIConsolidatedPDF error:', err.message);
+  }
+  return records;
+}
+
 async function parseMutualOmahaPDF(filePath, filename) {
   const records = [];
   if (!pdfParse) { console.error('pdf-parse not installed'); return records; }
@@ -2166,6 +2289,16 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       if (!records.length) {
         try { fs.unlinkSync(req.file.path); } catch(e) {}
         return res.status(400).json({ error: 'No records found in THE statement PDF.' });
+      }
+    } else if (isBSIConsolidatedPDF(req.file.originalname)) {
+      if (!pdfParse) {
+        try { fs.unlinkSync(req.file.path); } catch(e) {}
+        return res.status(500).json({ error: 'PDF parsing not available on server.' });
+      }
+      records = await parseBSIConsolidatedPDF(req.file.path, req.file.originalname);
+      if (!records.length) {
+        try { fs.unlinkSync(req.file.path); } catch(e) {}
+        return res.status(400).json({ error: 'No records found in BSI statement PDF.' });
       }
     } else if (isBSIPDF(req.file.originalname)) {
       if (!pdfParse) {
