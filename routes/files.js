@@ -1664,34 +1664,47 @@ async function parseTHEStatementPDF(filePath, filename) {
     // Parse Humana/Aetna single line: "PAULETTE ROSTRANHUMANA9UY3E86YV04_MAJorge Gilete01/01/2026$40.63"
     // or Aetna: "CHRISTIAN MUNOZAETNAXXXXXXXXXXSOTOMAYOR F,JAYNE01/01/2026-$82.50"
     const parseSingleLine = (line) => {
-      // Must end with DATE + AMOUNT
+      // Must end with DATE + AMOUNT (no space between them in pdf-parse output)
       const m = line.match(/(\d{2}\/\d{2}\/\d{4})(-?\$[\d,]+\.\d{2})$/);
       if (!m) return null;
       const dateStr = m[1];
       const amountStr = m[2];
       const before = line.slice(0, m.index);
 
-      // Find carrier token in the middle
       for (const [token, carrier] of Object.entries(carrierMap)) {
         const idx = before.toUpperCase().indexOf(token);
         if (idx === -1) continue;
         const agentRaw = before.slice(0, idx).trim();
         const rest = before.slice(idx + token.length).trim();
-        // Split policy from client on known plan type suffixes
-        const suffixMatch = rest.match(/^([A-Z0-9_]+?(?:_HMO|_PPO|_MSUP|_MA|_PDP))(.+)$/);
-        if (!suffixMatch) continue;
-        const policyPart = suffixMatch[1];
-        const clientPart = suffixMatch[2].trim();
-        if (!agentRaw || !clientPart) continue;
-        return {
-          agent: agentRaw,
-          carrier,
-          policy: policyPart,
-          client: clientPart,
-          date: dateStr,
-          amount: parseFloat(amountStr.replace(/[$,]/g, '')) || 0,
-          period: dateToPeriod(dateStr),
-        };
+
+        // Try suffix-based split first (_HMO, _PPO, _MA, _PDP, _MSUP)
+        const suffixMatch = rest.match(/^([A-Z0-9_]+?(?:_HMO|_PPO|_MSUP|_MA|_PDP|K_HMO|K_PPO))(.+)$/i);
+        if (suffixMatch) {
+          const policyPart = suffixMatch[1];
+          const clientPart = suffixMatch[2].trim();
+          if (!agentRaw || !clientPart) continue;
+          return {
+            agent: agentRaw, carrier,
+            policy: policyPart, client: clientPart,
+            date: dateStr, amount: parseFloat(amountStr.replace(/[$,]/g, '')) || 0,
+            period: dateToPeriod(dateStr),
+          };
+        }
+
+        // Fallback: policy is leading alphanumeric block up to first comma or space+uppercase
+        // Works for Aetna: "NG102212364200SOTOMAYOR F,JAYNE"
+        const plainMatch = rest.match(/^([A-Z0-9]{6,20})(.+)$/);
+        if (plainMatch) {
+          const policyPart = plainMatch[1];
+          const clientPart = plainMatch[2].trim();
+          if (!agentRaw || !clientPart) continue;
+          return {
+            agent: agentRaw, carrier,
+            policy: policyPart, client: clientPart,
+            date: dateStr, amount: parseFloat(amountStr.replace(/[$,]/g, '')) || 0,
+            period: dateToPeriod(dateStr),
+          };
+        }
       }
       return null;
     };
@@ -1822,6 +1835,10 @@ async function parseTHEStatementPDF(filePath, filename) {
         if ((currentCarrier === 'Humana' || currentCarrier === 'Aetna') && 
             line.length > 20 && !line.startsWith('Balance') && !line.startsWith('Agent') && !line.startsWith('Detailed')) {
           console.log('[HUMANA-MISS]', JSON.stringify(line));
+          // For lines with no date, show what the next line is
+          if (!line.match(/\d{2}\/\d{2}\/\d{4}/)) {
+            console.log('[HUMANA-MISS-NEXT]', JSON.stringify(lines[i+1]));
+          }
         }
       }
 
