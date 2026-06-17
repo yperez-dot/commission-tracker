@@ -1789,6 +1789,11 @@ async function parseTHEStatementPDF(filePath, filename) {
           i++;
           continue;
         }
+        // Log Humana/Aetna lines that fail single-line parsing
+        if ((currentCarrier === 'Humana' || currentCarrier === 'Aetna') && 
+            line.length > 20 && !line.startsWith('Balance') && !line.startsWith('Agent') && !line.startsWith('Detailed')) {
+          console.log('[HUMANA-MISS]', JSON.stringify(line));
+        }
       }
 
       i++;
