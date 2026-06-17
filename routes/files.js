@@ -1677,12 +1677,11 @@ async function parseTHEStatementPDF(filePath, filename) {
         if (idx === -1) continue;
         const agentRaw = before.slice(0, idx).trim();
         const rest = before.slice(idx + token.length).trim();
-        // rest = POLICY + CLIENT (no spaces)
-        // Policy: leading alphanum block (digits, letters, underscores) until first space or uppercase name
-        const policyMatch = rest.match(/^([A-Z0-9_]{4,25})/);
-        if (!policyMatch) continue;
-        const policyPart = policyMatch[1];
-        const clientPart = rest.slice(policyPart.length).trim();
+        // Split policy from client on known plan type suffixes
+        const suffixMatch = rest.match(/^([A-Z0-9_]+?(?:_HMO|_PPO|_MSUP|_MA|_PDP))(.+)$/);
+        if (!suffixMatch) continue;
+        const policyPart = suffixMatch[1];
+        const clientPart = suffixMatch[2].trim();
         if (!agentRaw || !clientPart) continue;
         return {
           agent: agentRaw,
