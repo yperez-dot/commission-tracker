@@ -1864,6 +1864,7 @@ async function parseBSIConsolidatedPDF(filePath, filename) {
     const dataBuffer = fs.readFileSync(filePath);
     const data = await pdfParse(dataBuffer);
     const lines = data.text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    console.log('[BSI-LINES]', JSON.stringify(lines.slice(0, 20)));
 
     const now = new Date();
     const uploadPeriod = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -2033,6 +2034,54 @@ async function parseBSIConsolidatedPDF(filePath, filename) {
 
       i++;
     }
+
+    // Add summary deduction records from carrier summary
+    // NHP deduction and unnamed deduction visible in carrier summary header
+    const summaryDeductions = [];
+
+    // Scan first 20 lines for NHP and unnamed deduction amounts
+    for (let j = 0; j < Math.min(20, lines.length); j++) {
+      const l = lines[j];
+      // NHP deduction: "NHP($(10,572.50)" or similar
+      const nhpMatch = l.match(/^NHP[\s\(]*\$\(?([0-9,]+\.\d{2})\)?/i);
+      if (nhpMatch) {
+        summaryDeductions.push({
+          agent: 'The Health Experts Insurance',
+          carrier: 'NHP',
+          planType: 'NHP Med Adv',
+          client: 'NHP Deduction Summary',
+          effectiveDate: '',
+          premium: 0,
+          commission: -(parseFloat(nhpMatch[1].replace(/,/g, '')) || 0),
+          classification: 'Chargeback',
+          period: uploadPeriod,
+          policyNumber: 'NHP-DEDUCTION',
+          payee: 'BSI',
+          raw: {}
+        });
+      }
+      // Unnamed deduction: line starting with "($(2,750.00)" — no carrier label
+      const unnamedMatch = l.match(/^\(\$\(?([0-9,]+\.\d{2})\)?/);
+      if (unnamedMatch) {
+        summaryDeductions.push({
+          agent: 'The Health Experts Insurance',
+          carrier: 'BSI',
+          planType: 'Adjustment',
+          client: 'BSI Deduction Summary',
+          effectiveDate: '',
+          premium: 0,
+          commission: -(parseFloat(unnamedMatch[1].replace(/,/g, '')) || 0),
+          classification: 'Chargeback',
+          period: uploadPeriod,
+          policyNumber: 'BSI-DEDUCTION',
+          payee: 'BSI',
+          raw: {}
+        });
+      }
+    }
+
+    summaryDeductions.forEach(r => records.push(r));
+    console.log('[BSI-DEDUCTIONS]', summaryDeductions.length, summaryDeductions.map(r => `${r.carrier}: ${r.commission}`));
 
     console.log(`[BSI-CONSOLIDATED] parsed ${records.length} records:`,
       records.reduce((acc, r) => { acc[r.carrier] = (acc[r.carrier]||0)+1; return acc; }, {}));
