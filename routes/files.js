@@ -2037,6 +2037,10 @@ async function parseBSIConsolidatedPDF(filePath, filename) {
       i++;
     }
 
+    // Temporary: after the while loop, log Aetna records
+    const aetnaRecs = records.filter(r => r.carrier === 'Aetna');
+    console.log('[BSI-AETNA]', aetnaRecs.length, 'total:', aetnaRecs.reduce((s,r) => s+r.commission, 0).toFixed(2));
+
     // Add summary deduction records from carrier summary
     // NHP deduction and unnamed deduction visible in carrier summary header
     const summaryDeductions = [];
