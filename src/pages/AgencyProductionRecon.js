@@ -47,25 +47,24 @@ function normalizeCarrier(carrier) {
 }
 
 function parseClientName(name) {
-  if (!name) return { first: '', last: '', full: '' };
-  
-  const normalized = normalizeName(name);
-  
-  if (normalized.includes(',')) {
-    const parts = normalized.split(',').map(p => p.trim());
-    const last = parts[0].replace(/[^a-z\s]/g, '').trim();
-    const firstPart = parts[1] || '';
-    const firstWords = firstPart.split(' ').filter(w => w.length > 0);
-    const first = firstWords[0] ? firstWords[0].replace(/[^a-z]/g, '').trim() : '';
-    return { first, last, full: `${first} ${last}`.trim() };
+  if (!name) return { first: '', last: '' };
+  const trimmed = name.trim();
+
+  // Handle "LAST, FIRST" format
+  if (trimmed.includes(',')) {
+    const parts = trimmed.split(',');
+    return {
+      last: parts[0].trim().toLowerCase(),
+      first: parts[1].trim().toLowerCase()
+    };
   }
-  
-  const words = normalized.split(' ').filter(w => w.length > 1);
-  if (words.length >= 2) {
-    return { first: words[0], last: words[words.length - 1], full: normalized };
-  }
-  
-  return { first: '', last: words[0] || '', full: normalized };
+
+  // Handle "FIRST LAST" format
+  const parts = trimmed.split(' ');
+  return {
+    last: parts[parts.length - 1].toLowerCase(),
+    first: parts[0].toLowerCase()
+  };
 }
 
 // Calculate string similarity (0-1, higher is more similar)
