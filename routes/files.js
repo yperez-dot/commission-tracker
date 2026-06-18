@@ -138,6 +138,12 @@ function isUHCFile(filename) {
   return f.includes('commission_statement_2737247') || f.includes('uhc_statement') || (f.includes('uhc') && f.includes('statement'));
 }
 
+function isUHCDirectFile(filename) {
+  const f = filename.toLowerCase().replace(/\s+/g, '_');
+  // Match: commission_statement_706381_YYYY-MM-DD.xlsx
+  return f.includes('commission_statement_706381');
+}
+
 function isBSIFile(filename) {
   const f = filename.toLowerCase().replace(/\s+/g, '_');
   return f.includes('statement-health_experts') || f.includes('statement_health_experts');
@@ -737,6 +743,118 @@ function parseUHCRows(wb) {
 }
 
 // ─── OTHER PARSERS (kept from original) ───────────────────────────────────────
+
+// ─── UHC DIRECT COMMISSION PARSER (706381) ────────────────────────────────────
+function parseUHCDirectRows(wb, filename) {
+  const records = [];
+  try {
+    // Find Commission Transactions sheet
+    const sheetName = wb.SheetNames.find(s => s.toLowerCase().includes('commission trans'));
+    if (!sheetName) {
+      console.log('[UHC-DIRECT] No "Commission Transactions" sheet found');
+      return records;
+    }
+    
+    console.log('[UHC-DIRECT] Using sheet:', sheetName);
+    const ws = wb.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: false });
+    
+    console.log('[UHC-DIRECT] Total rows:', rows.length);
+    
+    let skippedCount = 0;
+    let includedCount = 0;
+    
+    for (const row of rows) {
+      const writingAgentRaw = String(row['Writing Agent Name'] || row['Agent Name'] || '').trim();
+      const client = String(row['Member Name'] || row['Client Name'] || '').trim();
+      const policyNumber = String(row['Policy Number'] || row['Member ID'] || '').trim();
+      const effectiveDate = formatDate(row['Original Effective Date'] || row['Effective Date']);
+      const period = String(row['Payment Period'] || row['Period'] || '').trim();
+      const rawPlanType = String(row['Plan Type'] || row['Product'] || '').trim();
+      const commAction = String(row['Commission Action'] || row['Transaction Type'] || '').trim();
+      
+      // Parse commission
+      const commissionRaw = row['Commission'] || row['Commission Amount'];
+      let commission = 0;
+      if (typeof commissionRaw === 'number') {
+        commission = commissionRaw;
+      } else if (typeof commissionRaw === 'string') {
+        commission = parseFloat(commissionRaw.replace(/[$,]/g, '')) || 0;
+      }
+      
+      if (!client || commission === 0) continue;
+      
+      // FILTER: Include ONLY AARPMODMEDSUP + PartD
+      // Skip MAPD/DSNP/CSNP (these come through BSI to avoid duplicates)
+      const planTypeLower = rawPlanType.toLowerCase();
+      
+      // Skip Medicare Advantage plans (duplicates with BSI)
+      if (planTypeLower.includes('mapd') || planTypeLower.includes('dsnp') || planTypeLower.includes('csnp') || planTypeLower.includes('ma ')) {
+        skippedCount++;
+        if (skippedCount <= 3) {
+          console.log(`[UHC-DIRECT] Skipping MA plan (BSI duplicate): ${rawPlanType}`);
+        }
+        continue;
+      }
+      
+      // Include ONLY AARPMODMEDSUP and PartD
+      if (!planTypeLower.includes('aarpmodmedsup') && !planTypeLower.includes('partd') && !planTypeLower.includes('part d') && !planTypeLower.includes('pdp')) {
+        skippedCount++;
+        if (skippedCount <= 3) {
+          console.log(`[UHC-DIRECT] Skipping non-MedSup/PartD plan: ${rawPlanType}`);
+        }
+        continue;
+      }
+      
+      includedCount++;
+      
+      // Determine plan type
+      let planType = 'UHC MedSup';
+      if (planTypeLower.includes('partd') || planTypeLower.includes('part d') || planTypeLower.includes('pdp')) {
+        planType = 'UHC Part D';
+      } else if (planTypeLower.includes('aarpmodmedsup') || planTypeLower.includes('medsup')) {
+        planType = 'UHC MedSup';
+      }
+      
+      // Classification
+      let classification = 'Agent Commission';
+      const actionLower = commAction.toLowerCase();
+      if (commission < 0) {
+        classification = 'Chargeback';
+      } else if (actionLower.includes('new') || actionLower.includes('initial')) {
+        classification = 'New Business';
+      } else if (actionLower.includes('renewal')) {
+        classification = 'Renewal';
+      }
+      
+      // Normalize agent name
+      const agent = normalizeAgentName(writingAgentRaw) || 'Katy Robles';
+      
+      records.push({
+        agent,
+        carrier: 'UnitedHealthcare',
+        planType,
+        client,
+        effectiveDate,
+        premium: 0,
+        commission,
+        classification,
+        period,
+        policyNumber,
+        payee: 'UnitedHealthcare',
+        lob: planTypeLower.includes('partd') || planTypeLower.includes('part d') ? 'PDP' : 'MedSup',
+        raw: row
+      });
+    }
+    
+    console.log(`[UHC-DIRECT] Included: ${includedCount} records (MedSup + Part D)`);
+    console.log(`[UHC-DIRECT] Skipped: ${skippedCount} records (MA plans or other)`);
+    console.log(`[UHC-DIRECT] Total commission: $${records.reduce((sum, r) => sum + r.commission, 0).toFixed(2)}`);
+  } catch (err) {
+    console.error('[UHC-DIRECT] Parser error:', err.message);
+  }
+  return records;
+}
 
 function parseHumanaRows(wb, filename, rawBuffer) {
   const records = [];
@@ -1525,20 +1643,18 @@ async function parseDevotedPDF(filePath, filename) {
         console.log('[DEVOTED-PDF] Sample line', rowCount, ':', line.substring(0, 100));
       }
       
-      // Pattern: MBI(11) NAME DATE(DD-MM-YY) PLAN $AMOUNT PERIOD TYPE
-      // Allow flexible name capture with date/plan/amount markers
-      const rowMatch = line.match(/^([A-Z0-9]{11})\s+(.+?)\s+(\d{2}-\d{2}-\d{2})\s+(\S+)\s+(\$[\d,]+\.\d{2})\s+([A-Z][a-z]{2}\s+\d{2})\s+(.+?)\s+(Yes|No)$/i);
+      // Pattern: MBI(11) NAME $AMOUNT PERIOD TYPE
+      // Simpler format without date/plan/flag fields
+      const rowMatch = line.match(/^([A-Z0-9]{11})\s+(.+?)\s+(\$[\d,]+\.\d{2})\s+([A-Z][a-z]{2}\s+\d{2})\s+(.+?)$/i);
       
       if (rowMatch) {
         matchCount++;
         const mbi = rowMatch[1].trim();
         const memberName = rowMatch[2].trim();
-        const effectiveDateRaw = rowMatch[3]; // DD-MM-YY
-        const planCode = rowMatch[4];
-        const amountStr = rowMatch[5].replace(/[\$,]/g, '');
+        const amountStr = rowMatch[3].replace(/[\$,]/g, '');
         const commission = parseFloat(amountStr);
-        const periodRaw = rowMatch[6]; // "Mar 26"
-        const typeRaw = rowMatch[7]; // "Renewal - Monthly"
+        const periodRaw = rowMatch[4]; // "Mar 26"
+        const typeRaw = rowMatch[5]; // "Renewal - Monthly"
         
         if (matchCount <= 3) {
           console.log('[DEVOTED-PDF] Matched row', matchCount, ':', { mbi, memberName, commission, periodRaw, typeRaw });
@@ -1559,18 +1675,6 @@ async function parseDevotedPDF(filePath, filename) {
           }
         }
         
-        // Parse effective date: "01-01-25" → "01/01/2025"
-        let effectiveDate = '';
-        const dateMatch = effectiveDateRaw.match(/^(\d{2})-(\d{2})-(\d{2})$/);
-        if (dateMatch) {
-          const mm = dateMatch[1];
-          const dd = dateMatch[2];
-          let yy = dateMatch[3];
-          const yyNum = parseInt(yy);
-          const yyyy = yyNum < 50 ? `20${yy}` : `19${yy}`;
-          effectiveDate = `${mm}/${dd}/${yyyy}`;
-        }
-        
         // Classification from Type column
         let classification = 'Agent Commission';
         const typeLower = typeRaw.toLowerCase();
@@ -1588,7 +1692,7 @@ async function parseDevotedPDF(filePath, filename) {
             carrier: 'Devoted',
             planType: 'Devoted Med Adv',
             client: memberName,
-            effectiveDate,
+            effectiveDate: '', // Not included in this PDF format
             premium: 0,
             commission,
             classification,
@@ -3372,6 +3476,9 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       if (isYourFMOXLSX(req.file.originalname)) {
         console.log('[UPLOAD] Using YourFMO XLSX parser');
         records = parseYourFMOXLSXRows(wb);
+      } else if (isUHCDirectFile(req.file.originalname)) {
+        console.log('[UPLOAD] Using UHC Direct Commission parser (706381 - MedSup + Part D only)');
+        records = parseUHCDirectRows(wb, req.file.originalname);
       } else if (isUHCFile(req.file.originalname)) {
         console.log('[UPLOAD] Using UHC parser');
         records = parseUHCRows(wb);
