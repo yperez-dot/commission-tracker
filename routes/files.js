@@ -1611,128 +1611,136 @@ async function parseDevotedPDF(filePath, filename) {
       }
     }
     
-    // Look for tabular data
-    // Format: MBI NAME DATE PLAN_CODE $AMOUNT PERIOD TYPE FLAG
-    // Example: 5TE9EA2CR15 ESTELA IGLESIAS MORALES 01-01-25 H1290 $28.91 Mar 26 Renewal - Monthly No
-    let inTable = false;
-    let rowCount = 0;
-    let matchCount = 0;
+    // CRITICAL: PDF extracts text with line breaks INSIDE transactions
+    // Example (one transaction split across 3 lines):
+    //   Yahoska Perez 5TE9EA2CR15 ESTELA 01-01-25 H1290 $28.91 Mar 26 Renewal - No
+    //   - 16326554 IGLESIAS Monthly
+    //   MORALES
     
+    // Strategy: Find header, collect ALL remaining lines, use MBI as anchor
+    
+    let headerIndex = -1;
     for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      const lineLower = line.toLowerCase();
-      
-      // Skip Summary table - look for Credits/Debits/Total keywords
-      if (!inTable && (lineLower.includes('credits') || lineLower.includes('debits'))) {
-        console.log('[DEVOTED-PDF] Skipping Summary section at line', i);
-        continue;
-      }
-      
-      // Detect Transactions table header - must contain Agent + MBI + Member
-      if (!inTable && lineLower.includes('agent') && lineLower.includes('mbi') && lineLower.includes('member')) {
-        console.log('[DEVOTED-PDF] Found Transactions table header at line', i, ':', line.substring(0, 80));
-        inTable = true;
-        continue;
-      }
-      
-      if (!inTable) continue;
-      
-      // Stop at final total/summary lines (after transaction table)
-      if (lineLower.includes('total') && line.includes('$') && rowCount > 10) {
-        console.log('[DEVOTED-PDF] Reached end totals section at line', i);
+      const lineLower = lines[i].toLowerCase();
+      // Find Transactions table header (Agent + MBI + Member)
+      if (lineLower.includes('agent') && lineLower.includes('mbi') && lineLower.includes('member')) {
+        console.log('[DEVOTED-PDF] Found Transactions header at line', i);
+        headerIndex = i;
         break;
       }
+    }
+    
+    if (headerIndex === -1) {
+      console.log('[DEVOTED-PDF] No Transactions header found');
+      return records;
+    }
+    
+    // Collect all lines after header into one text block
+    const transactionLines = lines.slice(headerIndex + 1);
+    const transactionText = transactionLines.join(' ');
+    
+    console.log('[DEVOTED-PDF] Transaction text length:', transactionText.length);
+    console.log('[DEVOTED-PDF] Sample:', transactionText.substring(0, 200));
+    
+    // Find all MBIs (11 alphanumeric characters - this is the anchor)
+    const mbiPattern = /\b([A-Z0-9]{11})\b/g;
+    const mbis = [];
+    let match;
+    while ((match = mbiPattern.exec(transactionText)) !== null) {
+      mbis.push({ mbi: match[1], index: match.index });
+    }
+    
+    console.log('[DEVOTED-PDF] Found', mbis.length, 'MBI patterns');
+    
+    // Extract data around each MBI
+    for (let i = 0; i < mbis.length; i++) {
+      const { mbi, index } = mbis[i];
       
-      rowCount++;
+      // Get text around this MBI (from previous MBI to next MBI)
+      const startIdx = i > 0 ? mbis[i-1].index + 11 : 0;
+      const endIdx = i < mbis.length - 1 ? mbis[i+1].index : transactionText.length;
+      const recordText = transactionText.substring(startIdx, endIdx);
       
-      // Sample first 3 lines for debugging
-      if (rowCount <= 3) {
-        console.log('[DEVOTED-PDF] Sample line', rowCount, ':', line.substring(0, 120));
+      // Extract Amount: $XX.XX
+      const amountMatch = recordText.match(/\$(\d+\.\d{2})/);
+      if (!amountMatch) continue;
+      const commission = parseFloat(amountMatch[1]);
+      
+      // Extract Period: "Mar 26"
+      const periodMatch = recordText.match(/\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{2})\b/i);
+      let rowPeriod = period; // default
+      if (periodMatch) {
+        const months = {jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12'};
+        const monthAbbr = periodMatch[1].toLowerCase();
+        let year = periodMatch[2];
+        const yearNum = parseInt(year);
+        year = yearNum < 50 ? `20${year}` : `19${year}`;
+        const month = months[monthAbbr];
+        if (month) {
+          rowPeriod = year + month;
+        }
       }
       
-      // Pattern: AGENT_NAME - NPN MBI(11) NAME DATE PLAN $AMOUNT PERIOD TYPE FLAG
-      // Example: Yahoska Perez - 16326554 5TE9EA2CR15 ESTELA IGLESIAS MORALES 01-01-25 H1290 $28.91 Mar 26 Renewal - Monthly No
-      const rowMatch = line.match(/^([A-Za-z\s]+?)\s*-\s*(\d{8})\s+([A-Z0-9]{11})\s+(.+?)\s+(\d{2}-\d{2}-\d{2})\s+(\S+)\s+(\$[\d,]+\.\d{2})\s+([A-Z][a-z]{2}\s+\d{2})\s+(.+?)\s+(Yes|No)$/i);
+      // Extract Member Name (text between MBI and date pattern)
+      // Name is between MBI and first date-like pattern (XX-XX-XX)
+      const nameMatch = recordText.match(new RegExp(mbi + '\\s+([A-Z\\s]+?)\\s+\\d{2}-\\d{2}-\\d{2}'));
+      let memberName = 'Unknown';
+      if (nameMatch) {
+        memberName = nameMatch[1].trim();
+      } else {
+        // Fallback: grab uppercase words after MBI (before numbers/symbols)
+        const fallbackMatch = recordText.match(new RegExp(mbi + '\\s+([A-Z][A-Z\\s]+?)(?=\\s+[\\d$-]|$)'));
+        if (fallbackMatch) {
+          memberName = fallbackMatch[1].trim();
+        }
+      }
       
-      if (rowMatch) {
-        matchCount++;
-        const agentName = rowMatch[1].trim();
-        const agentNPN = rowMatch[2];
-        const mbi = rowMatch[3].trim();
-        const memberName = rowMatch[4].trim();
-        const effectiveDateRaw = rowMatch[5]; // DD-MM-YY
-        const planCode = rowMatch[6];
-        const amountStr = rowMatch[7].replace(/[\$,]/g, '');
-        const commission = parseFloat(amountStr);
-        const periodRaw = rowMatch[8]; // "Mar 26"
-        const typeRaw = rowMatch[9]; // "Renewal - Monthly"
-        const flag = rowMatch[10];
+      // Extract Effective Date: DD-MM-YY
+      let effectiveDate = '';
+      const dateMatch = recordText.match(/\b(\d{2})-(\d{2})-(\d{2})\b/);
+      if (dateMatch) {
+        const mm = dateMatch[1];
+        const dd = dateMatch[2];
+        let yy = dateMatch[3];
+        const yyNum = parseInt(yy);
+        const yyyy = yyNum < 50 ? `20${yy}` : `19${yy}`;
+        effectiveDate = `${mm}/${dd}/${yyyy}`;
+      }
+      
+      // Classification from text
+      let classification = 'Agent Commission';
+      const textLower = recordText.toLowerCase();
+      if (commission < 0) {
+        classification = 'Chargeback';
+      } else if (textLower.includes('renewal')) {
+        classification = 'Renewal';
+      } else if (textLower.includes('initial') || textLower.includes('new')) {
+        classification = 'New Business';
+      }
+      
+      if (commission !== 0 && memberName !== 'Unknown') {
+        records.push({
+          agent: 'Yahoska Perez',
+          carrier: 'Devoted',
+          planType: 'Devoted Med Adv',
+          client: memberName,
+          effectiveDate,
+          premium: 0,
+          commission,
+          classification,
+          period: rowPeriod,
+          policyNumber: mbi,
+          payee: 'Devoted',
+          lob: 'MA'
+        });
         
-        if (matchCount <= 3) {
-          console.log('[DEVOTED-PDF] Matched row', matchCount, ':', { agentName, mbi, memberName, commission, periodRaw, typeRaw });
-        }
-        
-        // Parse effective date: "01-01-25" → "01/01/2025"
-        let effectiveDate = '';
-        const dateMatch = effectiveDateRaw.match(/^(\d{2})-(\d{2})-(\d{2})$/);
-        if (dateMatch) {
-          const mm = dateMatch[1];
-          const dd = dateMatch[2];
-          let yy = dateMatch[3];
-          const yyNum = parseInt(yy);
-          const yyyy = yyNum < 50 ? `20${yy}` : `19${yy}`;
-          effectiveDate = `${mm}/${dd}/${yyyy}`;
-        }
-        
-        // Parse period: "Mar 26" → "202603"
-        let rowPeriod = period; // Use default from header
-        const periodMatch = periodRaw.match(/^([A-Za-z]{3})\s+(\d{2})$/);
-        if (periodMatch) {
-          const months = {jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12'};
-          const monthAbbr = periodMatch[1].toLowerCase();
-          let year = periodMatch[2];
-          const yearNum = parseInt(year);
-          year = yearNum < 50 ? `20${year}` : `19${year}`;
-          const month = months[monthAbbr];
-          if (month) {
-            rowPeriod = year + month;
-          }
-        }
-        
-        // Classification from Type column
-        let classification = 'Agent Commission';
-        const typeLower = typeRaw.toLowerCase();
-        if (commission < 0) {
-          classification = 'Chargeback';
-        } else if (typeLower.includes('renewal')) {
-          classification = 'Renewal';
-        } else if (typeLower.includes('initial') || typeLower.includes('new')) {
-          classification = 'New Business';
-        }
-        
-        // Normalize agent name from row
-        const agent = normalizeAgentName(agentName) || 'Yahoska Perez';
-        
-        if (commission !== 0 && memberName) {
-          records.push({
-            agent,
-            carrier: 'Devoted',
-            planType: 'Devoted Med Adv',
-            client: memberName,
-            effectiveDate,
-            premium: 0,
-            commission,
-            classification,
-            period: rowPeriod,
-            policyNumber: mbi,
-            payee: 'Devoted',
-            lob: 'MA'
-          });
+        if (records.length <= 3) {
+          console.log('[DEVOTED-PDF] Parsed record', records.length, ':', { mbi, memberName, commission, period: rowPeriod });
         }
       }
     }
     
-    console.log('[DEVOTED-PDF] Examined', rowCount, 'data rows, matched', matchCount, 'records');
+    console.log('[DEVOTED-PDF] Total MBIs found:', mbis.length);
     console.log('[DEVOTED-PDF] Parsed', records.length, 'records, Total:', records.reduce((sum, r) => sum + r.commission, 0).toFixed(2));
   } catch (err) {
     console.error('[DEVOTED-PDF] Parser error:', err.message);
