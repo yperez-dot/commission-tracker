@@ -27,15 +27,14 @@ function normPeriod(p) {
   return null;
 }
 
-// Normalize a name to lowercase, handle "LAST, FIRST" format
+// Normalize a name to match database normalized_name logic
+// Splits by space, sorts parts alphabetically, rejoins with space
 function normName(name) {
   if (!name) return '';
   const s = String(name).toLowerCase().trim();
-  if (s.includes(',')) {
-    const parts = s.split(',').map(p => p.trim());
-    return (parts[1] + ' ' + parts[0]).replace(/\s+/g, ' ').trim();
-  }
-  return s.replace(/\s+/g, ' ').trim();
+  // Split by space, filter empty, sort alphabetically, rejoin
+  const parts = s.split(/\s+/).filter(Boolean).sort();
+  return parts.join(' ');
 }
 
 // Generate name variants to handle Humana's LASTNAME FIRSTNAME format

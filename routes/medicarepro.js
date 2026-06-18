@@ -98,6 +98,18 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         agentName = null;
       }
       
+      // Filter out junk UHC header/summary rows
+      const junkClientNames = [
+        'commission earned (applied to balance)',
+        'commission earned & paid',
+        'balance',
+        'total'
+      ];
+      if (junkClientNames.some(j => clientName.toLowerCase().includes(j))) {
+        skipped++;
+        continue;
+      }
+      
       let effectiveDate = null;
       const effDateField = formatType === 'sales_by_agency' ? row['Policy Effective Date'] : row['Effective Date'];
       if (effDateField) {
