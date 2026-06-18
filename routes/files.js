@@ -262,6 +262,13 @@ function isHealthSunFile(filename) {
          (f.endsWith('.csv') || f.endsWith('.xlsx'));
 }
 
+function isDevotedFile(filename) {
+  const f = filename.toLowerCase().replace(/\s+/g, '_');
+  // Match: Yahoska's NPN + name, OR just "devoted" in filename
+  return (f.includes('16326554') && f.includes('yahoska')) || 
+         f.includes('devoted');
+}
+
 function isAPLFile(filename) {
   const f = filename.toLowerCase().replace(/[\s()]/g, '_');
   return f.includes('commission-statement') || f.includes('commission_statement_2026') && !f.includes('2737247') ||
@@ -1296,6 +1303,89 @@ function parseOscarIFPRows(wb, filename) {
     console.log('[OSCAR-IFP] Commission values:', records.map(r => r.commission).join(', '));
   } catch (err) {
     console.error('[OSCAR-IFP] Parser error:', err.message);
+  }
+  return records;
+}
+
+// ─── DEVOTED HEALTH PARSER ─────────────────────────────────────────────────────
+function parseDevotedRows(wb, filename) {
+  const records = [];
+  try {
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: false });
+    
+    console.log('[DEVOTED] Parsing file:', filename, 'Rows:', rows.length);
+    
+    for (const row of rows) {
+      // Column mappings from Devoted format
+      const agentRaw = String(row['Agent'] || '').trim();
+      const client = String(row['Member'] || '').trim();
+      const mbi = String(row['MBI'] || '').trim(); // Use as policy number
+      const commission = parseFloat(row['Amount'] || row['Commission'] || 0);
+      const periodRaw = String(row['Period'] || '').trim(); // "Mar 26" format
+      const effectiveDateRaw = String(row['Effective'] || row['Effective Date'] || '').trim();
+      const typeRaw = String(row['Type'] || row['Classification'] || '').trim();
+      
+      if (!client || commission === 0) continue;
+      
+      // Parse period: "Mar 26" → "202603"
+      let period = 'Unknown';
+      if (periodRaw) {
+        const months = {
+          jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+          jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12'
+        };
+        // Match "Mar 26" or "March 2026" format
+        const match = periodRaw.match(/^([A-Za-z]{3})\w*\s*(\d{2,4})$/);
+        if (match) {
+          const monthAbbr = match[1].toLowerCase();
+          let year = match[2];
+          // Convert 2-digit year to 4-digit
+          if (year.length === 2) {
+            const yearNum = parseInt(year);
+            year = yearNum < 50 ? `20${year}` : `19${year}`;
+          }
+          const month = months[monthAbbr];
+          if (month) {
+            period = year + month; // "202603"
+          }
+        }
+      }
+      
+      // Parse effective date
+      const effectiveDate = formatDate(effectiveDateRaw);
+      
+      // Classification from Type column
+      let classification = 'Agent Commission';
+      const typeLower = typeRaw.toLowerCase();
+      if (commission < 0) {
+        classification = 'Chargeback';
+      } else if (typeLower.includes('renewal')) {
+        classification = 'Renewal';
+      } else if (typeLower.includes('initial') || typeLower.includes('new')) {
+        classification = 'New Business';
+      }
+      
+      records.push({
+        agent: normalizeAgentName(agentRaw) || 'Yahoska Perez',
+        carrier: 'Devoted',
+        planType: 'Devoted Med Adv',
+        client,
+        effectiveDate,
+        premium: 0,
+        commission,
+        classification,
+        period,
+        policyNumber: mbi,
+        payee: 'Devoted',
+        lob: 'MA',
+        raw: row
+      });
+    }
+    
+    console.log('[DEVOTED] Parsed', records.length, 'records, Total:', records.reduce((sum, r) => sum + r.commission, 0).toFixed(2));
+  } catch (err) {
+    console.error('[DEVOTED] Parser error:', err.message);
   }
   return records;
 }
@@ -3044,6 +3134,9 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       } else if (isBSIFile(req.file.originalname)) {
         console.log('[UPLOAD] Using BSI parser');
         records = parseBSIRows(wb, req.file.originalname);
+      } else if (isDevotedFile(req.file.originalname)) {
+        console.log('[UPLOAD] Using Devoted Health parser');
+        records = parseDevotedRows(wb, req.file.originalname);
       } else if ((console.log('[UPLOAD] Testing Oscar IFP...'), isOscarIFPFile(wb))) {
         console.log('[UPLOAD] ✓ Oscar IFP detection MATCHED!');
         console.log('[UPLOAD] Using Oscar IFP parser');
