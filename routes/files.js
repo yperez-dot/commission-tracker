@@ -1428,20 +1428,40 @@ function parseAetnaDirectCSV(wb, filename) {
       // Skip if no client name or zero commission
       if (!client || payeeAmount === 0) continue;
       
-      // BUG FIX #3: Period = Coverage Period date string "2026-06-01" → "202606"
+      // FIX #2: Period = Coverage Period date string "2026-06-01" → "202606"
       let period = '';
       if (coveragePeriod) {
-        // Handle date string format: "2026-06-01" or "06/01/2026" or "6/1/2026"
-        const isoMatch = coveragePeriod.match(/^(\d{4})-(\d{2})/);
+        // Convert to string in case it's an Excel serial number or Date object
+        const coverageStr = String(coveragePeriod).trim();
+        
+        // Try ISO format first: "2026-06-01" or "2026-06-01 00:00:00"
+        const isoMatch = coverageStr.match(/(\d{4})-(\d{2})/);
         if (isoMatch) {
           period = isoMatch[1] + isoMatch[2]; // "202606"
+          console.log('[AETNA-DIRECT] Period parsed (ISO):', coverageStr, '→', period);
         } else {
           // Try MM/DD/YYYY format
-          const slashMatch = coveragePeriod.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+          const slashMatch = coverageStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
           if (slashMatch) {
             period = slashMatch[3] + slashMatch[1].padStart(2, '0'); // "202606"
+            console.log('[AETNA-DIRECT] Period parsed (slash):', coverageStr, '→', period);
+          } else if (/^\d{5}$/.test(coverageStr)) {
+            // Excel serial number (e.g., 46174 for 2026-06-01)
+            try {
+              const serialNum = parseInt(coverageStr);
+              const excelEpoch = new Date(1899, 11, 30); // Excel epoch
+              const date = new Date(excelEpoch.getTime() + serialNum * 86400000);
+              period = String(date.getFullYear()) + String(date.getMonth() + 1).padStart(2, '0');
+              console.log('[AETNA-DIRECT] Period parsed (Excel serial):', coverageStr, '→', period);
+            } catch (e) {
+              console.log('[AETNA-DIRECT] Excel serial parse failed:', coverageStr);
+            }
+          } else {
+            console.log('[AETNA-DIRECT] Period parse FAILED:', coverageStr, 'Type:', typeof coveragePeriod);
           }
         }
+      } else {
+        console.log('[AETNA-DIRECT] Coverage Period is empty/null');
       }
       
       // Format effective date
@@ -1459,17 +1479,21 @@ function parseAetnaDirectCSV(wb, filename) {
         planType = 'Aetna MAPD';
       }
       
-      // Determine classification from Sales Event field
+      // FIX #1: Classification - map Sales Event directly
       let classification = 'Agent Commission';
-      const salesEventLower = salesEvent.toLowerCase();
+      const salesEventLower = salesEvent.toLowerCase().trim();
+      
+      console.log('[AETNA-DIRECT] Sales Event:', salesEvent, '→ Lower:', salesEventLower);
       
       if (payeeAmount < 0) {
         classification = 'Chargeback';
-      } else if (salesEventLower.includes('new')) {
-        classification = 'New Business';
-      } else if (salesEventLower.includes('renewal')) {
+      } else if (salesEventLower === 'renewal' || salesEventLower.includes('renewal')) {
         classification = 'Renewal';
+      } else if (salesEventLower === 'new' || salesEventLower === 'new business' || salesEventLower.includes('new')) {
+        classification = 'New Business';
       }
+      
+      console.log('[AETNA-DIRECT] Classification:', classification);
       
       records.push({
         agent,
