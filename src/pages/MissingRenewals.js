@@ -63,6 +63,33 @@ function nameVariants(name) {
 }
 
 // Prettify date strings for display: handles YYYYMMDD, MM/DD/YYYY, YYYY-MM-DD, Excel serial numbers
+// Calculate months between last paid and termed date
+function calculateOwedMonths(lastPaidPeriod, termedDate) {
+  if (!lastPaidPeriod || !termedDate) return 0;
+  
+  // Parse lastPaidPeriod (YYYYMM format like 202605)
+  const lastPaidStr = String(lastPaidPeriod).replace(/\D/g, '');
+  let lastPaidYear, lastPaidMonth;
+  if (lastPaidStr.length === 6) {
+    lastPaidYear = parseInt(lastPaidStr.substring(0, 4), 10);
+    lastPaidMonth = parseInt(lastPaidStr.substring(4, 6), 10);
+  } else {
+    return 0;
+  }
+  
+  // Parse termedDate (YYYY-MM-DD format)
+  const termedMatch = String(termedDate).match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (!termedMatch) return 0;
+  const termedYear = parseInt(termedMatch[1], 10);
+  const termedMonth = parseInt(termedMatch[2], 10);
+  
+  // Calculate month difference
+  const monthsDiff = (termedYear - lastPaidYear) * 12 + (termedMonth - lastPaidMonth);
+  
+  // Only show if termed is after last paid (positive difference)
+  return monthsDiff > 0 ? monthsDiff : 0;
+}
+
 function prettifyDate(d) {
   if (!d) return '';
   const s = String(d).trim();
@@ -376,14 +403,16 @@ export default function MissingRenewals({ user }) {
       if (policyStatusData && policyStatusData.length) {
         for (const ps of policyStatusData) {
           const key = `${normName(ps.client_full_name)}|${normCarrier(ps.carrier)}|${normName(ps.agent_name)}`;
-          policyStatusMap[key] = ps.status;
+          policyStatusMap[key] = ps; // Store full object, not just status
         }
       }
 
       // Add policy status to built rows
       for (const row of built) {
         const key = `${normName(row.client)}|${normCarrier(row.carrier)}|${normName(row.agent)}`;
-        row.policyStatus = policyStatusMap[key] || null;
+        const psData = policyStatusMap[key];
+        row.policyStatus = psData?.status || null;
+        row.termedDate = psData?.termed_date || null;
       }
 
       built.sort((a, b) => {
@@ -694,7 +723,24 @@ export default function MissingRenewals({ user }) {
                         </td>
                         <td style={{ fontSize:12,color:'var(--text-muted)' }}>{prettifyDate(r.effectiveDate)||'—'}</td>
                         <td style={{ fontSize:12,color:'var(--text-muted)' }}>
-                          {r.lastPaidPeriod ? formatPeriodLabel(r.lastPaidPeriod) : '—'}
+                          <div>{r.lastPaidPeriod ? formatPeriodLabel(r.lastPaidPeriod) : '—'}</div>
+                          {(() => {
+                            const owedMonths = calculateOwedMonths(r.lastPaidPeriod, r.termedDate);
+                            if (owedMonths > 0) {
+                              return (
+                                <div style={{
+                                  fontSize: 11,
+                                  color: '#F97316',
+                                  fontWeight: 500,
+                                  marginTop: 4,
+                                  fontStyle: 'italic'
+                                }}>
+                                  ⚠️ May be owed {owedMonths} payment{owedMonths > 1 ? 's' : ''} before term
+                                </div>
+                              );
+                            }
+                            return null;
+                          })()}
                         </td>
                         <td style={{ fontWeight:500,color:r.isMissing?'var(--text-muted)':'var(--green)' }}>
                           {r.isMissing ? '$0.00' : fmt(r.commission)}

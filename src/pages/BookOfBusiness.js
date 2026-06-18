@@ -31,6 +31,7 @@ export default function BookOfBusiness({ user }) {
   const [selectedIds, setSelectedIds] = useState([]);
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
+  const [termedDatePicker, setTermedDatePicker] = useState(null); // { client, date }
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -83,11 +84,49 @@ export default function BookOfBusiness({ user }) {
 
   async function updateStatus(id, resolution) {
     try {
-      const status = (resolution === 'Termed' || resolution === 'Deceased') ? 'inactive' : 'active';
+      // If Termed is selected, show date picker modal
+      if (resolution === 'Termed') {
+        const client = clients.find(c => c.id === id);
+        if (client) {
+          const today = new Date().toISOString().split('T')[0];
+          setTermedDatePicker({ client, date: today });
+        }
+        return;
+      }
+      
+      // For other statuses, update immediately
+      const status = (resolution === 'Deceased') ? 'inactive' : 'active';
       await apiFetch(`/bob/${id}`, { method: 'PATCH', body: JSON.stringify({ resolution, status }) });
       setClients(prev => prev.map(c => c.id === id ? { ...c, resolution, status } : c));
       loadData();
     } catch (e) { console.error(e); }
+  }
+
+  async function confirmTermed(client, date) {
+    try {
+      // Call the cascade endpoint (same as Missing Renewals)
+      await apiFetch('/bob/policy-status', {
+        method: 'PUT',
+        body: JSON.stringify({
+          client: client.client_full_name,
+          carrier: client.carrier,
+          agent: client.agent_name,
+          status: 'termed',
+          termedDate: date,
+          notes: null
+        })
+      });
+      
+      // Update local state
+      setClients(prev => prev.map(c => 
+        c.id === client.id ? { ...c, resolution: 'Termed', status: 'inactive' } : c
+      ));
+      setTermedDatePicker(null);
+      loadData();
+    } catch (e) {
+      console.error(e);
+      alert('Error marking as termed: ' + e.message);
+    }
   }
 
   async function deleteClient(id) {
@@ -486,6 +525,86 @@ export default function BookOfBusiness({ user }) {
           </div>
         )}
       </div>
+
+      {/* Termed Date Picker Modal */}
+      {termedDatePicker && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(0,0,0,0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 9999
+        }}>
+          <div style={{
+            background: 'white',
+            borderRadius: 12,
+            padding: '20px',
+            maxWidth: '400px',
+            width: '90%',
+            boxShadow: '0 10px 40px rgba(0,0,0,0.3)'
+          }}>
+            <h3 style={{ margin: '0 0 16px', fontSize: 16, fontWeight: 600 }}>Mark as Termed</h3>
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ fontWeight: 500, marginBottom: 8 }}>
+                {termedDatePicker.client.client_full_name}
+              </div>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                {formatCarrier(termedDatePicker.client.carrier)} · {termedDatePicker.client.agent_name}
+              </div>
+            </div>
+            <div style={{ marginBottom: 16 }}>
+              <label style={{ display: 'block', fontSize: 13, fontWeight: 500, marginBottom: 6 }}>When did they term?</label>
+              <input
+                type="date"
+                value={termedDatePicker.date}
+                onChange={e => setTermedDatePicker({ ...termedDatePicker, date: e.target.value })}
+                style={{
+                  padding: '8px 10px',
+                  fontSize: 13,
+                  border: '1px solid var(--border)',
+                  borderRadius: 6,
+                  width: '100%',
+                  background: 'var(--bg)'
+                }}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+              <button
+                onClick={() => setTermedDatePicker(null)}
+                style={{
+                  padding: '8px 16px',
+                  fontSize: 13,
+                  fontWeight: 500,
+                  border: '1px solid var(--border)',
+                  borderRadius: 6,
+                  background: 'var(--bg)',
+                  color: 'var(--text)',
+                  cursor: 'pointer'
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => confirmTermed(termedDatePicker.client, termedDatePicker.date)}
+                style={{
+                  padding: '8px 16px',
+                  fontSize: 13,
+                  fontWeight: 600,
+                  border: 'none',
+                  borderRadius: 6,
+                  background: '#EF4444',
+                  color: 'white',
+                  cursor: 'pointer'
+                }}
+              >
+                Confirm Termed
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
