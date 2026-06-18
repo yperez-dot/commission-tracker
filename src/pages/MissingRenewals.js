@@ -350,8 +350,12 @@ export default function MissingRenewals({ user }) {
       for (const client of bobClients) {
         const nc = normCarrier(client.carrier);
 
-        // Note: 12-month enrollment filter now handled by backend BOB query
-        // Backend filters: effective_date <= (statement_date - 12 months)
+        const effDate = parseEffDate(client.effective_date);
+if (effDate && checkDate) {
+  const monthsDiff = (checkDate.getFullYear() - effDate.getFullYear()) * 12 
+    + (checkDate.getMonth() - effDate.getMonth());
+  if (monthsDiff < 12) continue;
+}
 
         // Try all name variants for matching
         const variants = nameVariants(client.client_full_name);
