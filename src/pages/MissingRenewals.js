@@ -320,12 +320,12 @@ export default function MissingRenewals({ user }) {
           || a.includes('perez, yahoska') || a.includes('robles, katy');
       });
 
-      const allRecData = await apiFetch('/records?limit=5000');
+      const allRecData = await apiFetch('/records?limit=10000');
       
       // DEBUG: Check records fetch
       console.log('[DEBUG-LILIA] Total records fetched:', allRecData.records?.length);
-      if (allRecData.records?.length >= 5000) {
-        console.warn('[DEBUG-LILIA] ⚠️ WARNING: Hit 5000 record limit! Some records may be missing.');
+      if (allRecData.records?.length >= 10000) {
+        console.warn('[DEBUG-LILIA] ⚠️ WARNING: Hit 10000 record limit! Some records may be missing.');
       }
       const devotedRecords = allRecData.records?.filter(r => 
         String(r.carrier || '').toLowerCase().includes('devoted')
