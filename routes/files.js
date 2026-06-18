@@ -1303,6 +1303,9 @@ function parseOscarIFPRows(wb, filename) {
         console.log(`[OSCAR-IFP] Row ${parsedCount + 1} Commission: raw="${commissionRaw}" (${typeof commissionRaw}) → parsed=${commission} (${typeof commission})`);
       }
       
+      // Debug log for skip condition check
+      console.log('[OSCAR-IFP] Row check: commission=', commission, 'blockReason=', JSON.stringify(blockReason), 'isEmpty=', blockReason === '');
+      
       // Skip rows where Commission = 0 AND Block Reason is not null/empty
       if (commission === 0 && blockReason !== '') {
         skippedCount++;
@@ -1315,6 +1318,11 @@ function parseOscarIFPRows(wb, filename) {
       const client = String(row['Member Name'] || row['Subscriber Name'] || row['Client Name'] || '').trim();
       const policyNumber = String(row['Policy Number'] || row['Member ID'] || row['Subscriber ID'] || '').trim();
       const effectiveDate = formatDate(row['Effective Date'] || row['Policy Effective']);
+      
+      // Debug: check if client is empty (this would also skip the row)
+      if (!client) {
+        console.log('[OSCAR-IFP] Row skipped due to empty client field. Member Name:', JSON.stringify(row['Member Name']), 'Subscriber name:', JSON.stringify(row['Subscriber name']));
+      }
       
       // Period conversion: "2025-12-01" → "202512" (YYYY-MM-DD to YYYYMM)
       const commissionMonthRaw = String(row['Commission month'] || row['Commission Month'] || '').trim();
@@ -1446,6 +1454,108 @@ function parseDevotedRows(wb, filename) {
     console.log('[DEVOTED] Parsed', records.length, 'records, Total:', records.reduce((sum, r) => sum + r.commission, 0).toFixed(2));
   } catch (err) {
     console.error('[DEVOTED] Parser error:', err.message);
+  }
+  return records;
+}
+
+// ─── DEVOTED HEALTH PDF PARSER ────────────────────────────────────────────────
+async function parseDevotedPDF(filePath, filename) {
+  const records = [];
+  if (!pdfParse) { 
+    console.error('[DEVOTED-PDF] pdf-parse not installed'); 
+    return records; 
+  }
+  
+  try {
+    const dataBuffer = fs.readFileSync(filePath);
+    const data = await pdfParse(dataBuffer);
+    const text = data.text;
+    const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+    
+    console.log('[DEVOTED-PDF] Parsing file:', filename);
+    console.log('[DEVOTED-PDF] Total lines:', lines.length);
+    
+    // Extract period from text or filename
+    let period = 'Unknown';
+    // Try to find period in format "Mar 26" or "March 2026" in PDF text
+    const periodMatch = text.match(/(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\w*\s+(\d{2,4})/i);
+    if (periodMatch) {
+      const months = {jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12'};
+      const monthMatch = text.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)/i);
+      if (monthMatch) {
+        const monthAbbr = monthMatch[1].toLowerCase().slice(0,3);
+        let year = periodMatch[1];
+        if (year.length === 2) {
+          const yearNum = parseInt(year);
+          year = yearNum < 50 ? `20${year}` : `19${year}`;
+        }
+        period = year + months[monthAbbr];
+      }
+    }
+    
+    // Look for tabular data with columns: MBI, Member, Amount, etc.
+    // Devoted PDFs typically have clean tables with headers
+    let inTable = false;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      
+      // Detect table header
+      if (line.toLowerCase().includes('mbi') && line.toLowerCase().includes('member')) {
+        console.log('[DEVOTED-PDF] Found table header at line', i);
+        inTable = true;
+        continue;
+      }
+      
+      if (!inTable) continue;
+      
+      // Table row pattern: MBI (alphanumeric), Member (name), Amount ($XX.XX)
+      // Example: "1AB2C34D5E6 John Doe $28.91 Renewal - Monthly"
+      const rowMatch = line.match(/^([A-Z0-9]{11})\s+([A-Za-z\s,\.]+?)\s+(\$[\d,]+\.\d{2})/);
+      if (rowMatch) {
+        const mbi = rowMatch[1].trim();
+        const memberName = rowMatch[2].trim();
+        const amountStr = rowMatch[3].replace(/[\$,]/g, '');
+        const commission = parseFloat(amountStr);
+        
+        // Extract classification from remaining text after amount
+        const afterAmount = line.substring(rowMatch.index + rowMatch[0].length).trim();
+        let classification = 'Agent Commission';
+        if (commission < 0) {
+          classification = 'Chargeback';
+        } else if (afterAmount.toLowerCase().includes('renewal')) {
+          classification = 'Renewal';
+        } else if (afterAmount.toLowerCase().includes('initial') || afterAmount.toLowerCase().includes('new')) {
+          classification = 'New Business';
+        }
+        
+        if (commission !== 0 && memberName) {
+          records.push({
+            agent: 'Yahoska Perez',
+            carrier: 'Devoted',
+            planType: 'Devoted Med Adv',
+            client: memberName,
+            effectiveDate: '', // Not typically in Devoted PDFs
+            premium: 0,
+            commission,
+            classification,
+            period,
+            policyNumber: mbi,
+            payee: 'Devoted',
+            lob: 'MA'
+          });
+        }
+      }
+      
+      // Stop at summary/total lines
+      if (line.toLowerCase().includes('total') && line.includes('$')) {
+        console.log('[DEVOTED-PDF] Reached totals section at line', i);
+        break;
+      }
+    }
+    
+    console.log('[DEVOTED-PDF] Parsed', records.length, 'records, Total:', records.reduce((sum, r) => sum + r.commission, 0).toFixed(2));
+  } catch (err) {
+    console.error('[DEVOTED-PDF] Parser error:', err.message);
   }
   return records;
 }
@@ -3191,6 +3301,17 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       if (!records.length) {
         try { fs.unlinkSync(req.file.path); } catch(e) {}
         return res.status(400).json({ error: 'No records found in PDF.' });
+      }
+    } else if (req.file.originalname.toLowerCase().endsWith('.pdf') && isDevotedFile(req.file.originalname)) {
+      console.log('[UPLOAD] Using Devoted Health PDF parser');
+      if (!pdfParse) {
+        try { fs.unlinkSync(req.file.path); } catch(e) {}
+        return res.status(500).json({ error: 'PDF parsing not available on server.' });
+      }
+      records = await parseDevotedPDF(req.file.path, req.file.originalname);
+      if (!records.length) {
+        try { fs.unlinkSync(req.file.path); } catch(e) {}
+        return res.status(400).json({ error: 'No records found in Devoted PDF. Verify this is a Devoted Health commission statement.' });
       }
     } else {
       console.log('[UPLOAD] Reading Excel file:', req.file.originalname);
