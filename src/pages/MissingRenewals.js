@@ -294,6 +294,34 @@ export default function MissingRenewals({ user }) {
     finally { setClientLoading(false); }
   }
 
+  async function updatePolicyStatus(row, status) {
+    try {
+      await apiFetch('/bob/policy-status', {
+        method: 'PUT',
+        body: JSON.stringify({
+          client: row.client,
+          carrier: row.carrier,
+          agent: row.agent,
+          status: status,
+          notes: null
+        })
+      });
+      
+      // Refresh the data
+      await runCheck();
+      
+      if (status === 'termed') {
+        // Row will disappear on refresh
+      } else if (status === 'chase') {
+        alert('✅ Marked as chasing - will stay on list with badge');
+      } else if (status === 'ignore') {
+        alert('✅ Marked as ignored - will be hidden');
+      }
+    } catch (err) {
+      alert(`Error: ${err.message}`);
+    }
+  }
+
   function exportReport() {
     const headers = ['Agent','Carrier','Payment Period','Client','Effective Date','Commission','Status','Months Missing'];
     const data = filtered.map(r => [
@@ -322,8 +350,8 @@ export default function MissingRenewals({ user }) {
     (!filterCarrier || r.carrier === filterCarrier)
   );
 
-  const missingCount = rows.filter(r => r.isMissing).length;
-  const paidCount = rows.filter(r => !r.isMissing).length;
+  const filteredMissing = filtered.filter(r => r.isMissing).length;
+  const filteredPaid = filtered.filter(r => !r.isMissing).length;
   const totalCommission = filtered.filter(r => !r.isMissing).reduce((s,r) => s + r.commission, 0);
   const periodLabel = formatPeriodLabel(selectedPeriod) || selectedPeriod;
 
@@ -423,18 +451,18 @@ export default function MissingRenewals({ user }) {
             <div style={{ display:'flex',gap:6,alignItems:'center',marginBottom:10,fontSize:13,flexWrap:'wrap' }}>
               <span style={{ color:'var(--text-muted)' }}>Total rows: <strong>{filtered.length}</strong></span>
               <span style={{ color:'var(--text-muted)',margin:'0 4px' }}>|</span>
-              <span style={{ color:'var(--red)',fontWeight:500 }}>Missing: {missingCount}</span>
+              <span style={{ color:'var(--red)',fontWeight:500 }}>Missing: {filteredMissing}</span>
               <span style={{ color:'var(--text-muted)',margin:'0 4px' }}>|</span>
-              <span style={{ color:'var(--green)',fontWeight:500 }}>Paid: {paidCount}</span>
+              <span style={{ color:'var(--green)',fontWeight:500 }}>Paid: {filteredPaid}</span>
               <span style={{ color:'var(--text-muted)',margin:'0 4px' }}>|</span>
               <span>Commission: <strong style={{ color:'var(--green)' }}>{fmt(totalCommission)}</strong></span>
               <span style={{ fontSize:12,color:'var(--text-muted)',marginLeft:8 }}>— {periodLabel}</span>
             </div>
 
             <div className="card" style={{ padding:0 }}>
-              <div className="table-wrap">
+              <div style={{ overflowX:'auto', overflowY:'auto', maxHeight:'calc(100vh - 280px)' }}>
                 <table>
-                  <thead>
+                  <thead style={{ position:'sticky', top:0, background:'var(--bg)', zIndex:1 }}>
                     <tr>
                       <th style={{ width:8 }}></th>
                       <th>#</th>
@@ -442,9 +470,11 @@ export default function MissingRenewals({ user }) {
                       <th>Carrier</th>
                       <th>Client</th>
                       <th>Effective date</th>
+                      <th>Last Paid</th>
                       <th>Commission</th>
                       <th>Status</th>
                       <th>Months missing</th>
+                      <th style={{ width:140 }}>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -462,25 +492,65 @@ export default function MissingRenewals({ user }) {
                           </button>
                         </td>
                         <td style={{ fontSize:12,color:'var(--text-muted)' }}>{prettifyDate(r.effectiveDate)||'—'}</td>
+                        <td style={{ fontSize:12,color:'var(--text-muted)' }}>
+                          {r.lastPaidPeriod ? formatPeriodLabel(r.lastPaidPeriod) : '—'}
+                        </td>
                         <td style={{ fontWeight:500,color:r.isMissing?'var(--text-muted)':'var(--green)' }}>
                           {r.isMissing ? '$0.00' : fmt(r.commission)}
                         </td>
                         <td>
-                          {r.isMissing
-                            ? <span className="badge badge-red">Missing</span>
-                            : <span className="badge badge-green">Paid</span>}
+                          {r.policyStatus === 'chase' && (
+                            <span className="badge badge-amber">🔍 Chasing</span>
+                          )}
+                          {r.policyStatus === 'ignore' && (
+                            <span className="badge badge-gray">🙈 Ignored</span>
+                          )}
+                          {(!r.policyStatus || r.policyStatus === 'active') && (
+                            r.isMissing
+                              ? <span className="badge badge-red">Missing</span>
+                              : <span className="badge badge-green">Paid</span>
+                          )}
                         </td>
                         <td style={{ fontSize:12,color:'var(--text-muted)' }}>
-                          {r.monthsMissing > 0 ? <span style={{ color:'var(--red)',fontWeight:500 }}>{r.monthsMissing} mo</span> : '—'}
+                          {!r.lastPaidPeriod && !r.isMissing
+                            ? <span className="badge badge-blue">New</span>
+                            : r.monthsMissing > 0
+                              ? <span style={{ color:'var(--red)',fontWeight:500 }}>{r.monthsMissing} mo</span>
+                              : '—'
+                          }
+                        </td>
+                        <td style={{ fontSize:11 }}>
+                          {r.isMissing && (!r.policyStatus || r.policyStatus === 'active') && (
+                            <div style={{ display:'flex',gap:4 }}>
+                              <button
+                                onClick={() => updatePolicyStatus(r, 'termed')}
+                                style={{ padding:'3px 8px',fontSize:10,background:'var(--red)',color:'#fff',border:'none',borderRadius:4,cursor:'pointer',fontWeight:500 }}
+                              >
+                                Termed
+                              </button>
+                              <button
+                                onClick={() => updatePolicyStatus(r, 'chase')}
+                                style={{ padding:'3px 8px',fontSize:10,background:'#F59E0B',color:'#fff',border:'none',borderRadius:4,cursor:'pointer',fontWeight:500 }}
+                              >
+                                Chase
+                              </button>
+                              <button
+                                onClick={() => updatePolicyStatus(r, 'ignore')}
+                                style={{ padding:'3px 8px',fontSize:10,background:'var(--text-muted)',color:'#fff',border:'none',borderRadius:4,cursor:'pointer',fontWeight:500 }}
+                              >
+                                Ignore
+                              </button>
+                            </div>
+                          )}
                         </td>
                       </tr>
                     ))}
                   </tbody>
                   <tfoot>
                     <tr style={{ background:'var(--bg-subtle)',fontWeight:500 }}>
-                      <td colSpan={6} style={{ padding:'8px 12px',fontSize:12 }}>Total ({filtered.filter(r=>!r.isMissing).length} paid)</td>
+                      <td colSpan={7} style={{ padding:'8px 12px',fontSize:12 }}>Total ({filtered.filter(r=>!r.isMissing).length} paid)</td>
                       <td style={{ padding:'8px 12px',fontSize:12,color:'var(--green)' }}>{fmt(totalCommission)}</td>
-                      <td colSpan={2}></td>
+                      <td colSpan={3}></td>
                     </tr>
                   </tfoot>
                 </table>
