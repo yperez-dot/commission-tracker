@@ -22,16 +22,27 @@ function normalizeName(name) {
 function normalizeCarrier(carrier) {
   if (!carrier) return '';
   const c = carrier.toLowerCase().trim();
-  
+
   if (c.includes('humana')) return 'humana';
   if (c.includes('aetna')) return 'aetna';
-  if (c.includes('uhc') || c.includes('united')) return 'uhc';
+  if (c.includes('uhc') || c.includes('united')) return 'unitedhealthcare';
   if (c.includes('doctors')) return 'doctors';
   if (c.includes('careplus') || c.includes('care plus')) return 'careplus';
   if (c.includes('devoted')) return 'devoted';
   if (c.includes('solis')) return 'solis';
-  if (c.includes('healthsun')) return 'healthsun';
-  
+  if (c.includes('healthsun') || c.includes('health sun')) return 'healthsun';
+  if (c.includes('oscar')) return 'oscar health';
+  if (c.includes('molina')) return 'molina';
+  if (c.includes('wellcare')) return 'wellcare';
+  if (c.includes('florida blue') || c.includes('bcbs') || c.includes('blue cross')) return 'florida blue';
+  if (c.includes('cigna')) return 'cigna';
+  if (c.includes('avmed')) return 'avmed';
+  if (c.includes('simply')) return 'simply';
+  if (c.includes('gold kidney') || c.includes('goldkidney')) return 'gold kidney';
+  if (c.includes('elevance') || c.includes('anthem')) return 'elevance medicare';
+  if (c.includes('freedom')) return 'freedom';
+  if (c.includes('nhp')) return 'nhp';
+
   return c;
 }
 
