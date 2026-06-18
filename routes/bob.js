@@ -409,13 +409,43 @@ router.post('/build-from-statements', requireAuth, async (req, res) => {
     };
 
     // Get best record per client+carrier (most recent, with effective date preferred)
-    // Use SQL function to normalize names for deduplication
+    // Normalize names to handle both "LAST, FIRST MIDDLE" and "FIRST MIDDLE LAST" formats
+    // Examples: "CORP, JOYCE I." and "JOYCE CORP" both normalize to "joyce corp"
     const records = await pool.query(
-      `SELECT DISTINCT ON (regexp_replace(regexp_replace(LOWER(TRIM(client_full_name)), ',.*', '', 'g'), '\\s+[A-Z]\\s+', ' ', 'g'), LOWER(carrier))
+      `SELECT DISTINCT ON (
+         LOWER(TRIM(
+           CASE 
+             WHEN client_full_name ~ ',' THEN
+               -- "LAST, FIRST MIDDLE" format: extract first word after comma + clean last name
+               CONCAT(
+                 TRIM(SPLIT_PART(SPLIT_PART(client_full_name, ',', 2), ' ', 1)),
+                 ' ',
+                 TRIM(regexp_replace(SPLIT_PART(client_full_name, ',', 1), '\\s+[A-Z]\\.?\\s*$', '', 'i'))
+               )
+             ELSE
+               -- "FIRST MIDDLE LAST" format: remove single-letter middle initials
+               regexp_replace(TRIM(client_full_name), '\\s+[A-Z]\\.?\\s+', ' ', 'gi')
+           END
+         )),
+         LOWER(carrier)
+       )
          client_full_name, carrier, agent_name, effective_date, commission, payment_period
        FROM commission_records
        WHERE client_full_name != '' AND client_full_name IS NOT NULL AND commission > 0 ${af}
-       ORDER BY regexp_replace(regexp_replace(LOWER(TRIM(client_full_name)), ',.*', '', 'g'), '\\s+[A-Z]\\s+', ' ', 'g'), LOWER(carrier),
+       ORDER BY 
+         LOWER(TRIM(
+           CASE 
+             WHEN client_full_name ~ ',' THEN
+               CONCAT(
+                 TRIM(SPLIT_PART(SPLIT_PART(client_full_name, ',', 2), ' ', 1)),
+                 ' ',
+                 TRIM(regexp_replace(SPLIT_PART(client_full_name, ',', 1), '\\s+[A-Z]\\.?\\s*$', '', 'i'))
+               )
+             ELSE
+               regexp_replace(TRIM(client_full_name), '\\s+[A-Z]\\.?\\s+', ' ', 'gi')
+           END
+         )),
+         LOWER(carrier),
          CASE WHEN effective_date IS NOT NULL AND effective_date != '' THEN 0 ELSE 1 END,
          created_at DESC`
     );
@@ -505,13 +535,40 @@ router.post('/reset-and-rebuild', requireAuth, async (req, res) => {
     // Delete all BOB records
     const deleted = await pool.query('DELETE FROM book_of_business');
 
-    // Rebuild from statements using upsert logic
+    // Rebuild from statements using upsert logic with name normalization
     const records = await pool.query(
-      `SELECT DISTINCT ON (LOWER(TRIM(client_full_name)), LOWER(carrier))
+      `SELECT DISTINCT ON (
+         LOWER(TRIM(
+           CASE 
+             WHEN client_full_name ~ ',' THEN
+               CONCAT(
+                 TRIM(SPLIT_PART(SPLIT_PART(client_full_name, ',', 2), ' ', 1)),
+                 ' ',
+                 TRIM(regexp_replace(SPLIT_PART(client_full_name, ',', 1), '\\s+[A-Z]\\.?\\s*$', '', 'i'))
+               )
+             ELSE
+               regexp_replace(TRIM(client_full_name), '\\s+[A-Z]\\.?\\s+', ' ', 'gi')
+           END
+         )),
+         LOWER(carrier)
+       )
          client_full_name, carrier, agent_name, effective_date, commission, payment_period
        FROM commission_records
        WHERE client_full_name != '' AND client_full_name IS NOT NULL AND commission > 0
-       ORDER BY LOWER(TRIM(client_full_name)), LOWER(carrier),
+       ORDER BY 
+         LOWER(TRIM(
+           CASE 
+             WHEN client_full_name ~ ',' THEN
+               CONCAT(
+                 TRIM(SPLIT_PART(SPLIT_PART(client_full_name, ',', 2), ' ', 1)),
+                 ' ',
+                 TRIM(regexp_replace(SPLIT_PART(client_full_name, ',', 1), '\\s+[A-Z]\\.?\\s*$', '', 'i'))
+               )
+             ELSE
+               regexp_replace(TRIM(client_full_name), '\\s+[A-Z]\\.?\\s+', ' ', 'gi')
+           END
+         )),
+         LOWER(carrier),
          CASE WHEN effective_date IS NOT NULL AND effective_date != '' THEN 0 ELSE 1 END,
          created_at DESC`
     );
