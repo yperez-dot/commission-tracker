@@ -31,7 +31,8 @@ function normPeriod(p) {
 // Splits by space, sorts parts alphabetically, rejoins with space
 function normName(name) {
   if (!name) return '';
-  const s = String(name).toLowerCase().trim();
+  const s = String(name).toLowerCase().trim()
+    .replace(/[,\.;:]/g, '');  // Strip punctuation (comma, period, semicolon, colon)
   // Split by space, filter empty, sort alphabetically, rejoin
   const parts = s.split(/\s+/).filter(Boolean).sort();
   return parts.join(' ');
