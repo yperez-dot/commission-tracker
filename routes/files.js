@@ -1355,6 +1355,16 @@ function parseAetnaDirectCSV(wb, filename) {
   
   console.log('[AETNA-DIRECT] Parser triggered for file:', filename);
   
+  // Helper function to find column value by trying multiple name variations
+  function getColumnValue(row, columnNames) {
+    for (const name of columnNames) {
+      if (row[name] !== undefined && row[name] !== null) {
+        return row[name];
+      }
+    }
+    return '';
+  }
+  
   try {
     const ws = wb.Sheets[wb.SheetNames[0]];
     // Read with raw: false to handle strings, then strip BOM from column names
@@ -1364,22 +1374,38 @@ function parseAetnaDirectCSV(wb, filename) {
     const rows = rawRows.map(row => {
       const cleanedRow = {};
       for (const [key, value] of Object.entries(row)) {
-        const cleanKey = key.replace(/^\ufeff/, '').trim();
+        const cleanKey = key.replace(/^[\ufeff\uFEFF]/, '').trim();
         cleanedRow[cleanKey] = value;
       }
       return cleanedRow;
     });
     
     console.log('[AETNA-DIRECT] Total rows:', rows.length);
-    console.log('[AETNA-DIRECT] Sample headers:', Object.keys(rows[0] || {}));
+    const sampleHeaders = Object.keys(rows[0] || {});
+    console.log('[AETNA-DIRECT] Sample headers:', sampleHeaders);
+    console.log('[AETNA-DIRECT] Raw first row sample:', JSON.stringify(rows[0]).substring(0, 200));
     
     for (const row of rows) {
-      // BUG FIX #5: Skip summary rows (Payment Date starts with "Total")
-      // Check all possible total row indicators
-      const paymentDate = String(row['Payment Date'] || '').trim();
-      const memberName = String(row['Member Name'] || '').trim();
+      // EXPLICIT COLUMN MAPPING - Try multiple variations of each column name
+      const paymentDate = String(getColumnValue(row, ['Payment Date', 'PaymentDate', 'Payment_Date'])).trim();
+      const memberName = String(getColumnValue(row, ['Member Name', 'MemberName', 'Member_Name'])).trim();
+      const payeeAmountRaw = getColumnValue(row, ['Payee Amount', 'PayeeAmount', 'Payee_Amount']);
+      const coveragePeriod = String(getColumnValue(row, ['Coverage Period', 'CoveragePeriod', 'Coverage_Period'])).trim();
+      const effectiveDateRaw = getColumnValue(row, ['Effective Date', 'EffectiveDate', 'Effective_Date']);
+      const writingAgentName = String(getColumnValue(row, ['Writing Agent Name', 'WritingAgentName', 'Writing_Agent_Name'])).trim();
+      const memberId = String(getColumnValue(row, ['Member ID', 'MemberID', 'Member_ID'])).trim();
+      const product = String(getColumnValue(row, ['Product', 'Plan Type', 'PlanType'])).trim();
+      const salesEvent = String(getColumnValue(row, ['Sales Event', 'SalesEvent', 'Sales_Event'])).trim();
       
-      console.log('[AETNA-DIRECT] Processing row:', { paymentDate: paymentDate.substring(0, 20), memberName: memberName.substring(0, 30) });
+      console.log('[AETNA-DIRECT] Row values:', {
+        paymentDate: paymentDate.substring(0, 20),
+        memberName: memberName.substring(0, 30),
+        payeeAmount: payeeAmountRaw,
+        coveragePeriod: coveragePeriod.substring(0, 20),
+        agent: writingAgentName.substring(0, 30)
+      });
+      
+      // BUG FIX #5: Skip summary rows
       if (paymentDate.toLowerCase().startsWith('total') || 
           memberName.toLowerCase().startsWith('total') ||
           memberName.toLowerCase().includes('grand total')) {
@@ -1391,7 +1417,6 @@ function parseAetnaDirectCSV(wb, filename) {
       const client = memberName;
       
       // BUG FIX #1: Payee Amount - handle both number and string currency formats
-      const payeeAmountRaw = row['Payee Amount'];
       let payeeAmount = 0;
       if (typeof payeeAmountRaw === 'number') {
         payeeAmount = payeeAmountRaw;
@@ -1404,7 +1429,6 @@ function parseAetnaDirectCSV(wb, filename) {
       if (!client || payeeAmount === 0) continue;
       
       // BUG FIX #3: Period = Coverage Period date string "2026-06-01" → "202606"
-      const coveragePeriod = String(row['Coverage Period'] || '').trim();
       let period = '';
       if (coveragePeriod) {
         // Handle date string format: "2026-06-01" or "06/01/2026" or "6/1/2026"
@@ -1421,17 +1445,10 @@ function parseAetnaDirectCSV(wb, filename) {
       }
       
       // Format effective date
-      const effectiveDateRaw = row['Effective Date'];
       const effectiveDate = formatDate(effectiveDateRaw);
       
       // BUG FIX #2: Agent = Writing Agent Name (not Writing Agent NPN)
-      const writingAgentName = String(row['Writing Agent Name'] || '').trim();
       const agent = normalizeAgentName(writingAgentName) || 'The Health Experts Insurance';
-      
-      // Extract additional fields needed for classification
-      const memberId = String(row['Member ID'] || '').trim();
-      const product = String(row['Product'] || '').trim();
-      const salesEvent = String(row['Sales Event'] || '').trim();
       
       // Determine plan type from Product field
       let planType = 'Aetna MAPD';
