@@ -339,6 +339,15 @@ export default function MissingRenewals({ user }) {
         recMap[key].push(r);
       }
 
+      // DEBUG: Show all Devoted keys in recMap
+      console.log('[DEBUG-LILIA] All Devoted keys in recMap:');
+      Object.keys(recMap).filter(k => k.includes('devoted')).forEach(k => {
+        console.log('[DEBUG-LILIA]   Key:', k, '→', recMap[k].length, 'records');
+        if (k.includes('lilia') || k.includes('torres')) {
+          console.log('[DEBUG-LILIA]   >>> LILIA/TORRES MATCH FOUND IN RECMAP!', recMap[k]);
+        }
+      });
+
       // Build last-name lookup for fuzzy fallback
       const lastNameMap = {};
       for (const r of allRecs) {
@@ -358,6 +367,18 @@ export default function MissingRenewals({ user }) {
 
       for (const client of bobClients) {
         const nc = normCarrier(client.carrier);
+
+        // DEBUG: Lilia Torres matching
+        if (client.client_full_name.includes('LILIA') || client.client_full_name.includes('Torres')) {
+          console.log('[DEBUG-LILIA] BOB client:', client.client_full_name, client.carrier);
+          console.log('[DEBUG-LILIA] normName:', normName(client.client_full_name));
+          console.log('[DEBUG-LILIA] normCarrier:', normCarrier(client.carrier));
+          console.log('[DEBUG-LILIA] lookup key:', normName(client.client_full_name) + '|' + normCarrier(client.carrier));
+          console.log('[DEBUG-LILIA] recMap has key?', !!recMap[normName(client.client_full_name) + '|' + normCarrier(client.carrier)]);
+          if (recMap[normName(client.client_full_name) + '|' + normCarrier(client.carrier)]) {
+            console.log('[DEBUG-LILIA] recMap records:', recMap[normName(client.client_full_name) + '|' + normCarrier(client.carrier)]);
+          }
+        }
 
         const effDate = parseEffDate(client.effective_date);
 if (effDate && checkDate) {
