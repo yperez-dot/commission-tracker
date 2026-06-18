@@ -210,7 +210,33 @@ router.patch('/:id', requireAuth, async (req, res) => {
     updates.push(`updated_at = NOW()`);
     if (updates.length === 1) return res.status(400).json({ error: 'Nothing to update' });
     params.push(req.params.id);
+    
+    // Update BOB record
     await pool.query(`UPDATE book_of_business SET ${updates.join(', ')} WHERE id = $${idx}`, params);
+    
+    // Cascade plan_change status to policy_status table
+    if (status === 'plan_change') {
+      // Get BOB record details for cascade
+      const bobRecord = await pool.query(
+        `SELECT client_full_name, carrier, agent_name FROM book_of_business WHERE id = $1`,
+        [req.params.id]
+      );
+      
+      if (bobRecord.rows.length > 0) {
+        const { client_full_name, carrier, agent_name } = bobRecord.rows[0];
+        const updated_by = req.user.name || req.user.email;
+        
+        console.log('[BOB-API] Cascading PLAN_CHANGE status to policy_status...');
+        await pool.query(`
+          INSERT INTO policy_status (client_full_name, carrier, agent_name, status, notes, updated_by, updated_at)
+          VALUES ($1, $2, $3, 'plan_change', $4, $5, NOW())
+          ON CONFLICT (client_full_name, carrier, agent_name)
+          DO UPDATE SET status = 'plan_change', notes = $4, updated_by = $5, updated_at = NOW()
+        `, [client_full_name, carrier, agent_name, notes || null, updated_by]);
+        console.log('[BOB-API] Policy status updated to plan_change');
+      }
+    }
+    
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
