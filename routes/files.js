@@ -1315,7 +1315,7 @@ function parseOscarIFPRows(wb, filename) {
         continue;
       }
       
-      const client = String(row['Member Name'] || row['Subscriber Name'] || row['Client Name'] || '').trim();
+      const client = String(row['Subscriber name'] || row['Member Name'] || row['Subscriber Name'] || '').trim();
       const policyNumber = String(row['Policy Number'] || row['Member ID'] || row['Subscriber ID'] || '').trim();
       const effectiveDate = formatDate(row['Effective Date'] || row['Policy Effective']);
       
