@@ -370,6 +370,22 @@ export default function MissingRenewals({ user }) {
         });
       }
 
+      // Fetch policy status for all clients
+      const policyStatusData = await apiFetch('/bob/policy-status');
+      const policyStatusMap = {};
+      if (policyStatusData && policyStatusData.length) {
+        for (const ps of policyStatusData) {
+          const key = `${normName(ps.client_full_name)}|${normCarrier(ps.carrier)}|${normName(ps.agent_name)}`;
+          policyStatusMap[key] = ps.status;
+        }
+      }
+
+      // Add policy status to built rows
+      for (const row of built) {
+        const key = `${normName(row.client)}|${normCarrier(row.carrier)}|${normName(row.agent)}`;
+        row.policyStatus = policyStatusMap[key] || null;
+      }
+
       built.sort((a, b) => {
         if (a.isMissing !== b.isMissing) return a.isMissing ? -1 : 1;
         if (a.isMissing && b.isMissing) {
@@ -406,6 +422,8 @@ export default function MissingRenewals({ user }) {
 
   async function updatePolicyStatus(row, status) {
     try {
+      const rowKey = `${row.client}|${row.carrier}|${row.agent}`;
+      
       await apiFetch('/bob/policy-status', {
         method: 'PUT',
         body: JSON.stringify({
@@ -417,7 +435,15 @@ export default function MissingRenewals({ user }) {
         })
       });
       
-      // Refresh the data
+      // Update row state immediately (before refetch)
+      setRows(prevRows => prevRows.map(r => {
+        if (`${r.client}|${r.carrier}|${r.agent}` === rowKey) {
+          return { ...r, policyStatus: status };
+        }
+        return r;
+      }));
+      
+      // Refresh the data in background for consistency
       await runCheck();
       
       if (status === 'termed') {
@@ -675,15 +701,15 @@ export default function MissingRenewals({ user }) {
                         </td>
                         <td>
                           {r.policyStatus === 'chase' && (
-                            <span className="badge badge-amber">🔍 Chasing</span>
+                            <span className="badge badge-amber" data-status-key={rowKey}>🔍 Chasing</span>
                           )}
                           {r.policyStatus === 'pending' && (
-                            <span className="badge badge-gray">⏳ Pending</span>
+                            <span className="badge badge-gray" data-status-key={rowKey}>⏳ Pending</span>
                           )}
                           {(!r.policyStatus || r.policyStatus === 'active') && (
                             r.isMissing
-                              ? <span className="badge badge-red">Missing</span>
-                              : <span className="badge badge-green">Paid</span>
+                              ? <span className="badge badge-red" data-status-key={rowKey}>Missing</span>
+                              : <span className="badge badge-green" data-status-key={rowKey}>Paid</span>
                           )}
                         </td>
                         <td style={{ fontSize:12,color:'var(--text-muted)' }}>

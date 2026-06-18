@@ -162,6 +162,11 @@ tfoot td { padding: 9px 12px; }
 .badge-gray { background: var(--gray-100); color: var(--text-muted); }
 .badge-amber { background: #F5EFE5; color: #8B7556; }      /* Warm sand */
 
+/* Status badges for policy tracking */
+.status-chase { background: #f97316; color: white; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; } /* orange */
+.status-termed { background: #6b7280; color: white; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; } /* gray */
+.status-ignore { background: #9ca3af; color: white; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; } /* light gray */
+
 /* ─── Buttons ────────────────────────────────────────────────── */
 .btn { display: inline-flex; align-items: center; gap: 6px; padding: 8px 15px; border-radius: 7px; border: 0.5px solid var(--border); font-size: 15px; font-weight: 500; cursor: pointer; transition: all 0.15s; background: var(--bg); color: var(--text); }
 .btn:hover { background: var(--bg-subtle); }

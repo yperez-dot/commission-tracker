@@ -543,6 +543,21 @@ router.delete('/:id', requireAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ─── GET policy-status ────────────────────────────────────────────────────────
+router.get('/policy-status', requireAuth, async (req, res) => {
+  try {
+    const pool = getPool();
+    const result = await pool.query(
+      `SELECT client_full_name, carrier, agent_name, status, termed_date, updated_by, updated_at 
+       FROM policy_status 
+       ORDER BY updated_at DESC`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── PUT policy-status ────────────────────────────────────────────────────────
 router.put('/policy-status', requireAuth, async (req, res) => {
   const pool = getPool();
