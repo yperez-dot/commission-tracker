@@ -170,6 +170,7 @@ export default function MissingRenewals({ user }) {
   const [filterAgent, setFilterAgent] = useState('');
   const [filterCarrier, setFilterCarrier] = useState('');
   const [filterLOB, setFilterLOB] = useState('');
+  const [filterClient, setFilterClient] = useState('');
   const [selectedClient, setSelectedClient] = useState(null);
   const [clientRecords, setClientRecords] = useState([]);
   const [clientLoading, setClientLoading] = useState(false);
@@ -524,6 +525,7 @@ if (effDate && checkDate) {
       (!filterAgent || r.agent === filterAgent) &&
       (!filterCarrier || r.carrier === filterCarrier) &&
       (!filterLOB || r.lob === filterLOB) &&
+      (!filterClient || r.client.toLowerCase().includes(filterClient.toLowerCase())) &&
       !ignoredRows.has(rowKey) &&
       !grayedRows.has(rowKey) // Hide grayed rows (pending termed)
     );
@@ -622,6 +624,21 @@ if (effDate && checkDate) {
                 <option value="">All carriers</option>
                 {carriers.map(c => <option key={c} value={c}>{c}</option>)}
               </select>
+              <input 
+                type="text" 
+                placeholder="Search client name..." 
+                value={filterClient} 
+                onChange={e => setFilterClient(e.target.value)}
+                style={{
+                  padding: '6px 10px',
+                  fontSize: 12,
+                  border: '0.5px solid var(--border)',
+                  borderRadius: 6,
+                  background: 'var(--bg)',
+                  color: 'var(--text)',
+                  width: 180
+                }}
+              />
               <button onClick={exportReport} style={{ marginLeft:'auto',background:'none',border:'0.5px solid var(--border)',borderRadius:6,padding:'7px 14px',fontSize:12,cursor:'pointer',color:'var(--text)' }}>
                 ↓ Download
               </button>

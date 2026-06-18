@@ -220,14 +220,18 @@ export default function AgencyProductionRecon() {
   const getCategory = (m) => {
     if (m.override) return 'paid';
     const status = m.production.status?.toLowerCase() || '';
+    if (status.includes('plan denied') || status.includes('plan_denied') || status.includes('denied')) return 'plandenied';
     if (status.includes('plan change') || status.includes('plan_change')) return 'planchange';
     if (status.includes('cancel') || status.includes('terminated')) return 'cancelled';
+    if (status.includes('chase') || status.includes('chasing')) return 'chase';
     return 'missing'; // No override = missing
   };
 
   const categorized = {
     missing: matches.filter(m => getCategory(m) === 'missing'),
     planchange: matches.filter(m => getCategory(m) === 'planchange'),
+    plandenied: matches.filter(m => getCategory(m) === 'plandenied'),
+    chase: matches.filter(m => getCategory(m) === 'chase'),
     cancelled: matches.filter(m => getCategory(m) === 'cancelled'),
     paid: matches.filter(m => getCategory(m) === 'paid')
   };
@@ -266,9 +270,11 @@ export default function AgencyProductionRecon() {
   const displayData = 
     tab === 'missing' ? filtered.missing :
     tab === 'planchange' ? filtered.planchange :
+    tab === 'plandenied' ? filtered.plandenied :
+    tab === 'chase' ? filtered.chase :
     tab === 'cancelled' ? filtered.cancelled :
     tab === 'paid' ? filtered.paid :
-    [...filtered.missing, ...filtered.planchange, ...filtered.cancelled, ...filtered.paid];
+    [...filtered.missing, ...filtered.planchange, ...filtered.plandenied, ...filtered.chase, ...filtered.cancelled, ...filtered.paid];
 
   const agents = [...new Set(production.map(p => p.agent_name).filter(Boolean))].sort();
   // Get unique carriers and format them consistently
@@ -621,6 +627,12 @@ export default function AgencyProductionRecon() {
               <button style={tabStyle('planchange')} onClick={() => setTab('planchange')}>
                 Plan Change ({filtered.planchange.length})
               </button>
+              <button style={tabStyle('plandenied')} onClick={() => setTab('plandenied')}>
+                Plan Denied ({filtered.plandenied.length})
+              </button>
+              <button style={tabStyle('chase')} onClick={() => setTab('chase')}>
+                Chase ({filtered.chase.length})
+              </button>
               <button style={tabStyle('cancelled')} onClick={() => setTab('cancelled')}>
                 Cancelled ({filtered.cancelled.length})
               </button>
@@ -628,7 +640,7 @@ export default function AgencyProductionRecon() {
                 Paid ({filtered.paid.length})
               </button>
               <button style={tabStyle('all')} onClick={() => setTab('all')}>
-                All ({filtered.missing.length + filtered.planchange.length + filtered.cancelled.length + filtered.paid.length})
+                All ({filtered.missing.length + filtered.planchange.length + filtered.plandenied.length + filtered.chase.length + filtered.cancelled.length + filtered.paid.length})
               </button>
             </div>
 
@@ -697,6 +709,14 @@ export default function AgencyProductionRecon() {
                                 displayStatus = 'Plan Change';
                                 bgColor = '#E9D5FF';
                                 textColor = '#6B21A8';
+                              } else if (status.includes('plan denied') || status.includes('plan_denied') || status.includes('denied')) {
+                                displayStatus = 'Plan Denied';
+                                bgColor = '#FFF3CD';
+                                textColor = '#856404';
+                              } else if (status.includes('chase') || status.includes('chasing')) {
+                                displayStatus = 'Chase';
+                                bgColor = '#D1ECF1';
+                                textColor = '#0C5460';
                               } else if (status.includes('missing') || status.includes('pending') || status.includes('not found')) {
                                 displayStatus = 'Missing';
                                 bgColor = '#F8F9FA';
