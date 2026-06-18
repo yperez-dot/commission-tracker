@@ -1298,6 +1298,119 @@ function parseAetnaRows(wb, filename) {
   return records;
 }
 
+// ─── AETNA DIRECT CSV PARSER ─────────────────────────────────────────────────
+
+/**
+ * Detection function for Aetna Direct CSV format
+ * Matches files with columns: Medicare Number, Member ID, Payee Amount, Coverage Period
+ * Example: The_Health_Experts_Insurance_med_comm_202606.csv
+ */
+function isAetnaDirectCSV(wb) {
+  if (!wb || !wb.Sheets || !wb.SheetNames || !wb.SheetNames.length) return false;
+  
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
+  if (!rows.length) return false;
+  
+  const headers = Object.keys(rows[0]).map(h => h.toLowerCase());
+  
+  // Must have all 4 key columns
+  const requiredColumns = ['medicare number', 'member id', 'payee amount', 'coverage period'];
+  const hasAllColumns = requiredColumns.every(col => 
+    headers.some(h => h.includes(col.replace(' ', '')))
+  );
+  
+  return hasAllColumns;
+}
+
+/**
+ * Parser for Aetna Direct CSV format
+ * Format: carrier statement CSV with member-level commission data
+ */
+function parseAetnaDirectCSV(wb, filename) {
+  const records = [];
+  
+  try {
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
+    
+    for (const row of rows) {
+      // Skip summary rows (Payment Date starts with "Total")
+      const paymentDate = String(row['Payment Date'] || '').trim();
+      if (paymentDate.startsWith('Total')) continue;
+      
+      // Extract fields
+      const memberName = String(row['Member Name'] || '').trim();
+      const memberId = String(row['Member ID'] || '').trim();
+      const payeeAmount = parseFloat(row['Payee Amount']) || 0;
+      const coveragePeriod = String(row['Coverage Period'] || '').trim(); // e.g., "2026-06-01"
+      const effectiveDateRaw = row['Effective Date'];
+      const writingAgentName = String(row['Writing Agent Name'] || '').trim();
+      const product = String(row['Product'] || '').trim(); // MAPD, PDP
+      const salesEvent = String(row['Sales Event'] || '').trim(); // Renewal, New
+      
+      // Skip if no client name or zero commission
+      if (!memberName || payeeAmount === 0) continue;
+      
+      // Convert Coverage Period to YYYYMM format (e.g., "2026-06-01" → "202606")
+      let period = '';
+      if (coveragePeriod) {
+        const match = coveragePeriod.match(/^(\d{4})-(\d{2})/);
+        if (match) {
+          period = match[1] + match[2]; // "202606"
+        }
+      }
+      
+      // Format effective date
+      const effectiveDate = formatDate(effectiveDateRaw);
+      
+      // Normalize agent name
+      const agent = normalizeAgentName(writingAgentName) || 'The Health Experts Insurance';
+      
+      // Determine plan type from Product field
+      let planType = 'Aetna MAPD';
+      const productLower = product.toLowerCase();
+      if (productLower.includes('pdp')) {
+        planType = 'Aetna PDP';
+      } else if (productLower.includes('mapd')) {
+        planType = 'Aetna MAPD';
+      }
+      
+      // Determine classification from Sales Event field
+      let classification = 'Agent Commission';
+      const salesEventLower = salesEvent.toLowerCase();
+      
+      if (payeeAmount < 0) {
+        classification = 'Chargeback';
+      } else if (salesEventLower.includes('new')) {
+        classification = 'New Business';
+      } else if (salesEventLower.includes('renewal')) {
+        classification = 'Renewal';
+      }
+      
+      // Build record
+      records.push({
+        agent,
+        carrier: 'Aetna',
+        planType,
+        client: memberName,
+        effectiveDate,
+        premium: 0,
+        commission: payeeAmount,
+        classification,
+        period,
+        policyNumber: memberId,
+        payee: 'Aetna',
+        raw: row
+      });
+    }
+  } catch (err) {
+    console.error('parseAetnaDirectCSV error:', err.message);
+  }
+  
+  return records;
+}
+
 function parseSolisRows(wb, filename) {
   const records = [];
   const ws = wb.Sheets[wb.SheetNames[0]];
@@ -2587,6 +2700,8 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         }
       } else if (isAPLFile(req.file.originalname)) {
         records = parseAPLRows(wb);
+      } else if (isAetnaDirectCSV(wb)) {
+        records = parseAetnaDirectCSV(wb, req.file.originalname);
       } else if (isAetnaFile(req.file.originalname)) {
         records = parseAetnaRows(wb, req.file.originalname);
       } else {

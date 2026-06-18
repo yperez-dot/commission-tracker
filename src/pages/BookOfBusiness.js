@@ -17,9 +17,11 @@ export default function BookOfBusiness({ user }) {
   const [tab, setTab] = useState('all');
   const [filterCarrier, setFilterCarrier] = useState('');
   const [filterAgent, setFilterAgent] = useState('');
+  const [filterLOB, setFilterLOB] = useState('');
   const [filterStatus, setFilterStatus] = useState('active');
   const [search, setSearch] = useState('');
   const [agents, setAgents] = useState([]);
+  const [lobs, setLobs] = useState([]);
   const [loading, setLoading] = useState(false);
   const [buildStatus, setBuildStatus] = useState('');
   const [checkPeriod, setCheckPeriod] = useState('');
@@ -42,7 +44,8 @@ export default function BookOfBusiness({ user }) {
       ]);
       setSummary(sum);
       setPeriods(filtersData.periods || []);
-      setAgents(filtersData.agents || []);
+      setAgents((filtersData.agents || []).sort());
+      setLobs((filtersData.lobs || []).sort());
       if (filtersData.periods?.length) setCheckPeriod(filtersData.periods[0]);
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
@@ -53,11 +56,12 @@ export default function BookOfBusiness({ user }) {
       const params = new URLSearchParams();
       if (filterCarrier) params.set('carrier', filterCarrier);
       if (filterAgent) params.set('agent', filterAgent);
+      if (filterLOB) params.set('lob', filterLOB);
       if (filterStatus) params.set('status', filterStatus);
       const data = await apiFetch(`/bob?${params}`);
       setClients(data);
     } catch (e) { console.error(e); }
-  }, [tab, filterCarrier, filterAgent, filterStatus]);
+  }, [tab, filterCarrier, filterAgent, filterLOB, filterStatus]);
 
   useEffect(() => { loadData(); }, [loadData]);
   useEffect(() => { loadClients(); }, [loadClients]);
@@ -322,11 +326,15 @@ export default function BookOfBusiness({ user }) {
               />
               <select className="filter-select" value={filterCarrier} onChange={e=>setFilterCarrier(e.target.value)}>
                 <option value="">All carriers</option>
-                {(summary?.byCarrier||[]).map(c=><option key={c.carrier} value={c.carrier}>{formatCarrier(c.carrier)}</option>)}
+                {(summary?.byCarrier||[]).sort((a,b)=>a.carrier.localeCompare(b.carrier)).map(c=><option key={c.carrier} value={c.carrier}>{formatCarrier(c.carrier)}</option>)}
               </select>
               <select className="filter-select" value={filterAgent} onChange={e=>setFilterAgent(e.target.value)}>
                 <option value="">All agents</option>
                 {agents.map(a=><option key={a} value={a}>{a}</option>)}
+              </select>
+              <select className="filter-select" value={filterLOB} onChange={e=>setFilterLOB(e.target.value)}>
+                <option value="">All LOB</option>
+                {lobs.map(l=><option key={l} value={l}>{l}</option>)}
               </select>
               <span style={{fontSize:12,color:'var(--text-muted)'}}>
                 {search.trim() ? `${filteredClients.length} of ${clients.length}` : `${clients.length}`} clients

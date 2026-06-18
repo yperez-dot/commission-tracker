@@ -510,6 +510,7 @@ export default function MissingRenewals({ user }) {
 
   const agents = [...new Set(rows.map(r => r.agent).filter(Boolean))].sort();
   const carriers = [...new Set(rows.map(r => r.carrier).filter(Boolean))].sort();
+  const lobs = [...new Set(rows.map(r => r.lob).filter(Boolean))].sort();
 
   const filtered = rows.filter(r => {
     const rowKey = `${r.client}|${r.carrier}|${r.agent}`;
@@ -517,6 +518,7 @@ export default function MissingRenewals({ user }) {
       (!showMissingOnly || r.isMissing) &&
       (!filterAgent || r.agent === filterAgent) &&
       (!filterCarrier || r.carrier === filterCarrier) &&
+      (!filterLOB || r.lob === filterLOB) &&
       !ignoredRows.has(rowKey) &&
       !grayedRows.has(rowKey) // Hide grayed rows (pending termed)
     );
@@ -603,6 +605,10 @@ export default function MissingRenewals({ user }) {
                 <input type="checkbox" id="missingOnly" checked={showMissingOnly} onChange={e => setShowMissingOnly(e.target.checked)} style={{ cursor:'pointer',width:14,height:14,accentColor:'var(--accent)' }} />
                 <label htmlFor="missingOnly" style={{ fontSize:13,cursor:'pointer',fontWeight:showMissingOnly?500:400,color:showMissingOnly?'var(--red)':'var(--text)' }}>Show only missing</label>
               </div>
+              <select className="filter-select" value={filterLOB} onChange={e => setFilterLOB(e.target.value)}>
+                <option value="">All LOB</option>
+                {lobs.map(l => <option key={l} value={l}>{l}</option>)}
+              </select>
               <select className="filter-select" value={filterAgent} onChange={e => setFilterAgent(e.target.value)}>
                 <option value="">All agents</option>
                 {agents.map(a => <option key={a} value={a}>{a}</option>)}

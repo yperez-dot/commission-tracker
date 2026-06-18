@@ -133,23 +133,39 @@ function agencyFilter(req, alias) {
 router.get('/', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
-    const { carrier, agent, status, missing } = req.query;
+    const { carrier, agent, status, missing, lob } = req.query;
     let where = ['1=1'];
     let params = [];
     let idx = 1;
-    if (req.user.role === 'agent') { where.push(`agent_name ILIKE $${idx++}`); params.push(`%${req.user.name}%`); }
+    if (req.user.role === 'agent') { where.push(`b.agent_name ILIKE $${idx++}`); params.push(`%${req.user.name}%`); }
     else {
       const af = agencyFilter(req, null);
       if (af) { where.push(af); }
     }
-    if (carrier) { where.push(`carrier = $${idx++}`); params.push(carrier); }
-    if (agent) { where.push(`agent_name = $${idx++}`); params.push(agent); }
-    if (status) { where.push(`status = $${idx++}`); params.push(status); }
-    if (missing === 'true') { where.push(`months_missing > 0 AND status = 'active'`); }
-    const result = await pool.query(
-      `SELECT * FROM book_of_business WHERE ${where.join(' AND ')} ORDER BY months_missing DESC, client_full_name ASC`,
-      params
-    );
+    if (carrier) { where.push(`b.carrier = $${idx++}`); params.push(carrier); }
+    if (agent) { where.push(`b.agent_name = $${idx++}`); params.push(agent); }
+    if (status) { where.push(`b.status = $${idx++}`); params.push(status); }
+    if (missing === 'true') { where.push(`b.months_missing > 0 AND b.status = 'active'`); }
+    if (lob) { where.push(`($${idx} = 'all' OR LOWER(cr.lob) = LOWER($${idx}))`); params.push(lob); idx++; }
+    
+    // If LOB filter is present, join with commission_records to get LOB
+    let query;
+    if (lob) {
+      query = `
+        SELECT DISTINCT ON (b.id) b.*
+        FROM book_of_business b
+        LEFT JOIN commission_records cr
+          ON LOWER(TRIM(b.client_full_name)) = LOWER(TRIM(cr.client_full_name))
+          AND LOWER(TRIM(b.carrier)) = LOWER(TRIM(cr.carrier))
+          AND LOWER(TRIM(b.agent_name)) = LOWER(TRIM(cr.agent_name))
+        WHERE ${where.join(' AND ')}
+        ORDER BY b.id, cr.created_at DESC
+      `;
+    } else {
+      query = `SELECT * FROM book_of_business b WHERE ${where.join(' AND ')} ORDER BY b.months_missing DESC, b.client_full_name ASC`;
+    }
+    
+    const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
