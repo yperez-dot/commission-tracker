@@ -145,6 +145,29 @@ export default function MissingRenewals({ user }) {
   const [coverageWarning, setCoverageWarning] = useState(null);
   const [showCoverageWarning, setShowCoverageWarning] = useState(true);
 
+  // Toast notification helper
+  function showToast(message, type = 'success') {
+    const toast = document.createElement('div');
+    toast.style.cssText = `
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: ${type === 'success' ? '#452068' : '#e53e3e'};
+      color: white;
+      padding: 12px 20px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      z-index: 9999;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+      transition: opacity 0.3s ease;
+    `;
+    toast.textContent = message;
+    document.body.appendChild(toast);
+    setTimeout(() => { toast.style.opacity = '0'; }, 2500);
+    setTimeout(() => { toast.remove(); }, 2800);
+  }
+
   useEffect(() => {
     apiFetch('/records/filters').then(d => {
       const valid = (d.periods || []).filter(p => {
@@ -328,14 +351,14 @@ export default function MissingRenewals({ user }) {
       await runCheck();
       
       if (status === 'termed') {
-        // Row will disappear on refresh
+        showToast('✅ Marked as termed — row removed from list', 'success');
       } else if (status === 'chase') {
-        alert('✅ Marked as chasing - will stay on list with badge');
+        showToast('✅ Marked as chasing — will stay on list with badge', 'success');
       } else if (status === 'pending') {
-        alert('✅ Marked as pending - will stay on list with gray badge');
+        showToast('✅ Marked as pending — will stay on list with gray badge', 'success');
       }
     } catch (err) {
-      alert(`Error: ${err.message}`);
+      showToast(`Error: ${err.message}`, 'error');
     }
   }
 
@@ -596,15 +619,18 @@ export default function MissingRenewals({ user }) {
                         <td style={{ fontSize:11 }}>
                           {r.isMissing && (!r.policyStatus || r.policyStatus === 'active') && (
                             <select
-                              onChange={(e) => {
+                              onChange={async (e) => {
                                 const action = e.target.value;
+                                if (!action) return;
+                                
                                 if (action === 'termed') {
-                                  updatePolicyStatus(r, 'termed');
+                                  await updatePolicyStatus(r, 'termed');
                                 } else if (action === 'chase') {
-                                  updatePolicyStatus(r, 'chase');
+                                  await updatePolicyStatus(r, 'chase');
                                 } else if (action === 'ignore') {
                                   const rowKey = `${r.client}|${r.carrier}|${r.agent}`;
                                   setIgnoredRows(prev => new Set([...prev, rowKey]));
+                                  showToast('⚫ Ignored for this session', 'success');
                                 }
                                 e.target.value = ''; // Reset dropdown
                               }}
@@ -619,7 +645,7 @@ export default function MissingRenewals({ user }) {
                                 fontWeight: 500
                               }}
                             >
-                              <option value="">Update Status ▼</option>
+                              <option value="">Update Status</option>
                               <option value="termed">🔴 Termed</option>
                               <option value="chase">🟠 Chase Payment</option>
                               <option value="ignore">⚫ Ignore this month</option>
