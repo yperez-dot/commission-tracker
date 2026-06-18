@@ -1428,7 +1428,7 @@ function parseAetnaDirectCSV(wb, filename) {
       // Skip if no client name or zero commission
       if (!client || payeeAmount === 0) continue;
       
-      // FIX #2: Period = Coverage Period date string "2026-06-01" → "202606"
+      // FIX #2: Period = Coverage Period date string → "202606"
       let period = '';
       if (coveragePeriod) {
         // Convert to string in case it's an Excel serial number or Date object
@@ -1440,10 +1440,16 @@ function parseAetnaDirectCSV(wb, filename) {
           period = isoMatch[1] + isoMatch[2]; // "202606"
           console.log('[AETNA-DIRECT] Period parsed (ISO):', coverageStr, '→', period);
         } else {
-          // Try MM/DD/YYYY format
-          const slashMatch = coverageStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+          // Try MM/DD/YYYY or MM/D/YY format (handles "6/1/26")
+          const slashMatch = coverageStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
           if (slashMatch) {
-            period = slashMatch[3] + slashMatch[1].padStart(2, '0'); // "202606"
+            let year = slashMatch[3];
+            // Handle 2-digit year: 26 → 2026
+            if (year.length === 2) {
+              const yearNum = parseInt(year);
+              year = yearNum < 50 ? `20${year}` : `19${year}`; // 00-49 = 2000s, 50-99 = 1900s
+            }
+            period = year + slashMatch[1].padStart(2, '0'); // "202606"
             console.log('[AETNA-DIRECT] Period parsed (slash):', coverageStr, '→', period);
           } else if (/^\d{5}$/.test(coverageStr)) {
             // Excel serial number (e.g., 46174 for 2026-06-01)
@@ -1479,17 +1485,19 @@ function parseAetnaDirectCSV(wb, filename) {
         planType = 'Aetna MAPD';
       }
       
-      // FIX #1: Classification - map Sales Event directly
+      // FIX #1: Classification - map Sales Event directly (strip ALL whitespace)
+      // Note: Some fields have trailing spaces (e.g., "N " for CMS New)
+      const salesEventClean = salesEvent.replace(/\s+/g, ' ').trim().toLowerCase();
       let classification = 'Agent Commission';
-      const salesEventLower = salesEvent.toLowerCase().trim();
       
-      console.log('[AETNA-DIRECT] Sales Event:', salesEvent, '→ Lower:', salesEventLower);
+      console.log('[AETNA-DIRECT] Sales Event raw:', JSON.stringify(salesEvent));
+      console.log('[AETNA-DIRECT] Sales Event clean:', salesEventClean);
       
       if (payeeAmount < 0) {
         classification = 'Chargeback';
-      } else if (salesEventLower === 'renewal' || salesEventLower.includes('renewal')) {
+      } else if (salesEventClean === 'renewal' || salesEventClean.includes('renewal')) {
         classification = 'Renewal';
-      } else if (salesEventLower === 'new' || salesEventLower === 'new business' || salesEventLower.includes('new')) {
+      } else if (salesEventClean === 'new' || salesEventClean === 'new business' || salesEventClean.includes('new')) {
         classification = 'New Business';
       }
       
