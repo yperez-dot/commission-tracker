@@ -31,6 +31,7 @@ const AGENT_ALIASES = {
   'berenguer gina f': 'Gina Berenguer',
   'gina berenguer': 'Gina Berenguer',
   'berenguer, gina': 'Gina Berenguer',
+  'gina ferro berenguer': 'Gina Berenguer', // NHP uses full name with middle name
 
   'orozco, osmary': 'Osmary Orozco',
   'orozco osmary': 'Osmary Orozco',
@@ -40,8 +41,11 @@ const AGENT_ALIASES = {
   'sabri uriel perez': 'Sabri Perez',
   'sabri perez': 'Sabri Perez',
 
-  'the health experts insurance': 'The Health Experts Insurance',
+  'health experts': 'The Health Experts Insurance',
+  'the health experts': 'The Health Experts Insurance',
   'health experts insurance': 'The Health Experts Insurance',
+  'the health experts insurance': 'The Health Experts Insurance',
+  'the health experts insurance inc': 'The Health Experts Insurance',
 
   'rostran, paulette': 'Paulette Rostran',
   'paulette rostran': 'Paulette Rostran',
