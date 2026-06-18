@@ -530,32 +530,35 @@ export default function MissingRenewals({ user }) {
                         </td>
                         <td style={{ fontSize:11 }}>
                           {r.isMissing && (!r.policyStatus || r.policyStatus === 'active') && (
-                            <div style={{ display:'flex',gap:4 }}>
-                              <button
-                                onClick={() => updatePolicyStatus(r, 'termed')}
-                                style={{ padding:'3px 8px',fontSize:10,background:'var(--red)',color:'#fff',border:'none',borderRadius:4,cursor:'pointer',fontWeight:500 }}
-                                title="Mark as terminated - removes from list"
-                              >
-                                🔴 Termed
-                              </button>
-                              <button
-                                onClick={() => updatePolicyStatus(r, 'chase')}
-                                style={{ padding:'3px 8px',fontSize:10,background:'#F59E0B',color:'#fff',border:'none',borderRadius:4,cursor:'pointer',fontWeight:500 }}
-                                title="Mark as chasing - adds orange badge"
-                              >
-                                🟠 Chase
-                              </button>
-                              <button
-                                onClick={() => {
+                            <select
+                              onChange={(e) => {
+                                const action = e.target.value;
+                                if (action === 'termed') {
+                                  updatePolicyStatus(r, 'termed');
+                                } else if (action === 'chase') {
+                                  updatePolicyStatus(r, 'chase');
+                                } else if (action === 'ignore') {
                                   const rowKey = `${r.client}|${r.carrier}|${r.agent}`;
                                   setIgnoredRows(prev => new Set([...prev, rowKey]));
-                                }}
-                                style={{ padding:'3px 8px',fontSize:10,background:'#666',color:'#fff',border:'none',borderRadius:4,cursor:'pointer',fontWeight:500 }}
-                                title="Hide this month only (session-only)"
-                              >
-                                ⚫ Ignore
-                              </button>
-                            </div>
+                                }
+                                e.target.value = ''; // Reset dropdown
+                              }}
+                              style={{
+                                padding: '4px 8px',
+                                fontSize: 11,
+                                border: '1px solid var(--border)',
+                                borderRadius: 4,
+                                background: 'var(--bg)',
+                                color: 'var(--text)',
+                                cursor: 'pointer',
+                                fontWeight: 500
+                              }}
+                            >
+                              <option value="">Update Status ▼</option>
+                              <option value="termed">🔴 Termed</option>
+                              <option value="chase">🟠 Chase Payment</option>
+                              <option value="ignore">⚫ Ignore this month</option>
+                            </select>
                           )}
                         </td>
                       </tr>
