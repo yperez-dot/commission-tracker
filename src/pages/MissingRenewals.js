@@ -528,19 +528,9 @@ export default function MissingRenewals({ user }) {
                               </span>
                           }
                         </td>
-                        <td
-                          style={{ fontSize:11,position:'relative' }}
-                          onMouseEnter={(e) => {
-                            const btns = e.currentTarget.querySelector('.action-buttons');
-                            if (btns) btns.style.display = 'flex';
-                          }}
-                          onMouseLeave={(e) => {
-                            const btns = e.currentTarget.querySelector('.action-buttons');
-                            if (btns) btns.style.display = 'none';
-                          }}
-                        >
+                        <td style={{ fontSize:11 }}>
                           {r.isMissing && (!r.policyStatus || r.policyStatus === 'active') && (
-                            <div className="action-buttons" style={{ display:'none',gap:4 }}>
+                            <div style={{ display:'flex',gap:4 }}>
                               <button
                                 onClick={() => updatePolicyStatus(r, 'termed')}
                                 style={{ padding:'3px 8px',fontSize:10,background:'var(--red)',color:'#fff',border:'none',borderRadius:4,cursor:'pointer',fontWeight:500 }}
