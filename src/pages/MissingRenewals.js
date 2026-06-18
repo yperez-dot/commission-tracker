@@ -144,6 +144,7 @@ export default function MissingRenewals({ user }) {
   const [ignoredRows, setIgnoredRows] = useState(new Set());
   const [coverageWarning, setCoverageWarning] = useState(null);
   const [showCoverageWarning, setShowCoverageWarning] = useState(true);
+  const [grayedRows, setGrayedRows] = useState(new Set());
 
   // Toast notification helper
   function showToast(message, type = 'success') {
@@ -166,6 +167,74 @@ export default function MissingRenewals({ user }) {
     document.body.appendChild(toast);
     setTimeout(() => { toast.style.opacity = '0'; }, 2500);
     setTimeout(() => { toast.remove(); }, 2800);
+  }
+
+  // Countdown toast with undo button
+  function showCountdownToast(message, seconds, onUndo) {
+    let undone = false;
+    let remaining = seconds;
+    
+    const toast = document.createElement('div');
+    toast.style.cssText = `
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: #452068;
+      color: white;
+      padding: 14px 20px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 500;
+      z-index: 9999;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      min-width: 320px;
+    `;
+    
+    toast.innerHTML = `
+      <span id="toast-msg">${message} (${remaining}s)</span>
+      <button id="toast-undo" style="
+        background: white;
+        color: #452068;
+        border: none;
+        padding: 4px 12px;
+        border-radius: 4px;
+        font-weight: 600;
+        cursor: pointer;
+        font-size: 13px;
+      ">Undo</button>
+    `;
+    
+    document.body.appendChild(toast);
+    
+    // Countdown timer
+    const interval = setInterval(() => {
+      remaining--;
+      const msg = toast.querySelector('#toast-msg');
+      if (msg) msg.textContent = `${message} (${remaining}s)`;
+      if (remaining <= 0) {
+        clearInterval(interval);
+        toast.remove();
+      }
+    }, 1000);
+    
+    // Undo button
+    toast.querySelector('#toast-undo').addEventListener('click', () => {
+      undone = true;
+      clearInterval(interval);
+      toast.remove();
+      onUndo();
+    });
+    
+    // Auto remove after seconds
+    setTimeout(() => {
+      clearInterval(interval);
+      if (toast.parentNode) toast.remove();
+    }, seconds * 1000);
+    
+    return () => undone;
   }
 
   useEffect(() => {
@@ -390,7 +459,8 @@ export default function MissingRenewals({ user }) {
       (!showMissingOnly || r.isMissing) &&
       (!filterAgent || r.agent === filterAgent) &&
       (!filterCarrier || r.carrier === filterCarrier) &&
-      !ignoredRows.has(rowKey)
+      !ignoredRows.has(rowKey) &&
+      !grayedRows.has(rowKey) // Hide grayed rows (pending termed)
     );
   });
 
@@ -576,7 +646,11 @@ export default function MissingRenewals({ user }) {
                   </thead>
                   <tbody>
                     {filtered.map((r, i) => (
-                      <tr key={i} style={{ background: r.isMissing ? '#FFF8F5' : 'transparent' }}>
+                      <tr key={i} style={{ 
+                        background: r.isMissing ? '#FFF8F5' : 'transparent',
+                        opacity: grayedRows.has(`${r.client}|${r.carrier}|${r.agent}`) ? 0.4 : 1,
+                        transition: 'opacity 0.3s ease'
+                      }}>
                         <td style={{ padding:'4px 6px' }}>
                           {r.isMissing && <span style={{ display:'block',width:3,height:'100%',background:'var(--red)',borderRadius:2 }}></span>}
                         </td>
@@ -622,17 +696,46 @@ export default function MissingRenewals({ user }) {
                               onChange={async (e) => {
                                 const action = e.target.value;
                                 if (!action) return;
+                                e.target.value = ''; // Reset dropdown immediately
+                                
+                                const rowKey = `${r.client}|${r.carrier}|${r.agent}`;
                                 
                                 if (action === 'termed') {
-                                  await updatePolicyStatus(r, 'termed');
+                                  let undone = false;
+                                  
+                                  // Gray out row immediately
+                                  setGrayedRows(prev => new Set([...prev, rowKey]));
+                                  
+                                  // Show countdown toast with undo
+                                  showCountdownToast(
+                                    `${r.client} marked as Termed`,
+                                    10,
+                                    () => {
+                                      // Undo clicked
+                                      undone = true;
+                                      setGrayedRows(prev => {
+                                        const newSet = new Set(prev);
+                                        newSet.delete(rowKey);
+                                        return newSet;
+                                      });
+                                      showToast('Undo successful', 'success');
+                                    }
+                                  );
+                                  
+                                  // After 10 seconds, save if not undone
+                                  setTimeout(async () => {
+                                    if (!undone) {
+                                      await updatePolicyStatus(r, 'termed');
+                                    }
+                                  }, 10000);
                                 } else if (action === 'chase') {
+                                  // Chase saves immediately (no undo needed)
                                   await updatePolicyStatus(r, 'chase');
                                 } else if (action === 'ignore') {
-                                  const rowKey = `${r.client}|${r.carrier}|${r.agent}`;
+                                  // Ignore is session-only (no undo needed)
                                   setIgnoredRows(prev => new Set([...prev, rowKey]));
                                   showToast('⚫ Ignored for this session', 'success');
                                 }
-                                e.target.value = ''; // Reset dropdown
                               }}
                               style={{
                                 padding: '4px 8px',

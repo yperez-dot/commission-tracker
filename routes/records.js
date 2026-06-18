@@ -92,8 +92,14 @@ router.get('/', requireAuth, async (req, res) => {
         cr.raw_data, u.original_name as upload_name,
         cr.lob, cr.gross_commission, cr.thei_share, cr.bsi_share,
         cr.producer_payable, cr.sub_agent_override,
-        cr.members, cr.statement_month
-       FROM commission_records cr LEFT JOIN uploads u ON cr.upload_id = u.id
+        cr.members, cr.statement_month,
+        CASE WHEN ps.status = 'termed' THEN true ELSE false END as is_termed
+       FROM commission_records cr 
+       LEFT JOIN uploads u ON cr.upload_id = u.id
+       LEFT JOIN policy_status ps 
+         ON LOWER(TRIM(cr.client_full_name)) = LOWER(TRIM(ps.client_full_name))
+         AND LOWER(TRIM(cr.carrier)) = LOWER(TRIM(ps.carrier))
+         AND LOWER(TRIM(cr.agent_name)) = LOWER(TRIM(ps.agent_name))
        ${wc} ${orderBy} LIMIT $${idx++} OFFSET $${idx++}`,
       [...params, parseInt(limit), parseInt(offset)]
     );

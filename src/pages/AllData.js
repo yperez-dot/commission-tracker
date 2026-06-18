@@ -89,6 +89,7 @@ export default function AllData({ user, initialFilters = {} }) {
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [hideTermed, setHideTermed] = useState(false);
   const PAGE_SIZE = 100;
   const [policyModal, setPolicyModal] = useState(null);
 
@@ -126,12 +127,17 @@ export default function AllData({ user, initialFilters = {} }) {
       if (sortCol) params.set('sortCol', sortCol);
       if (sortDir) params.set('sortDir', sortDir);
       const data = await apiFetch(`/records?${params}`);
-      setRecords(data.records || []);
+      let filteredRecords = data.records || [];
+      // Client-side filter for termed clients if checkbox is checked
+      if (hideTermed) {
+        filteredRecords = filteredRecords.filter(r => !r.is_termed);
+      }
+      setRecords(filteredRecords);
       setTotal(data.total || 0);
       setSelected(new Set());
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
-  }, [selAgents, selCarriers, selPeriods, selTypes, selPayees, selLOB, search, sortCol, sortDir, user.agency]);
+  }, [selAgents, selCarriers, selPeriods, selTypes, selPayees, selLOB, search, sortCol, sortDir, hideTermed, user.agency]);
 
   useEffect(() => { setPage(0); loadRecords(0); }, [loadRecords]);
 
@@ -379,6 +385,15 @@ export default function AllData({ user, initialFilters = {} }) {
             onChange={e => { setSearch(e.target.value); setPage(0); }}
             style={{ padding: '6px 10px', borderRadius: 6, border: '0.5px solid var(--border)', fontSize: 12, minWidth: 200, background: 'var(--bg)', color: 'var(--text)' }}
           />
+          <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, cursor: 'pointer', padding: '6px 10px', borderRadius: 6, border: '0.5px solid var(--border)', background: 'var(--bg)', color: 'var(--text)' }}>
+            <input
+              type="checkbox"
+              checked={hideTermed}
+              onChange={e => { setHideTermed(e.target.checked); setPage(0); }}
+              style={{ cursor: 'pointer', accentColor: 'var(--accent)' }}
+            />
+            Hide termed clients
+          </label>
           {hasFilters && (
             <button onClick={clearAll} style={{ padding: '6px 10px', borderRadius: 6, border: '0.5px solid var(--red)', background: 'none', color: 'var(--red)', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>
               Reset all
@@ -456,7 +471,23 @@ export default function AllData({ user, initialFilters = {} }) {
                               ? <span onClick={()=>setPolicyModal(r)} style={{cursor:'pointer',color:'var(--accent-dark)',fontWeight:500}}>{r.policy_number}</span>
                               : '—'}
                           </td>
-                          <td style={{ fontSize: 13 }}>{r.client_full_name || '—'}</td>
+                          <td style={{ fontSize: 13 }}>
+                            {r.client_full_name || '—'}
+                            {r.is_termed && (
+                              <span style={{
+                                marginLeft: 6,
+                                padding: '2px 6px',
+                                borderRadius: 4,
+                                background: '#E5E7EB',
+                                color: '#6B7280',
+                                fontSize: 10,
+                                fontWeight: 500,
+                                textTransform: 'uppercase'
+                              }}>
+                                Termed
+                              </span>
+                            )}
+                          </td>
                           <td style={{ fontSize: 12 }}>{formatDate(r.effective_date)}</td>
                           <td>{r.premium ? fmt(r.premium) : '—'}</td>
                           <td style={{ fontWeight: 500, color: parseFloat(r.commission) < 0 ? 'var(--red)' : 'var(--green)' }}>{fmt(r.commission)}</td>

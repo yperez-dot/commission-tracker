@@ -556,12 +556,27 @@ router.put('/policy-status', requireAuth, async (req, res) => {
     
     const updated_by = req.user.name || req.user.email;
     const pool = getPool();
+    
+    // 1. Save to policy_status
     await pool.query(`
       INSERT INTO policy_status (client_full_name, carrier, agent_name, status, notes, updated_by, updated_at)
       VALUES ($1, $2, $3, $4, $5, $6, NOW())
       ON CONFLICT (client_full_name, carrier, agent_name)
       DO UPDATE SET status = $4, notes = $5, updated_by = $6, updated_at = NOW()
     `, [client, carrier, agent, status, notes, updated_by]);
+    
+    // 2. If status is 'termed', cascade to book_of_business
+    if (status === 'termed') {
+      await pool.query(`
+        UPDATE book_of_business
+        SET status = 'termed',
+            updated_at = NOW()
+        WHERE LOWER(TRIM(client_full_name)) = LOWER(TRIM($1))
+          AND LOWER(TRIM(carrier)) = LOWER(TRIM($2))
+          AND LOWER(TRIM(agent_name)) = LOWER(TRIM($3))
+      `, [client, carrier, agent]);
+    }
+    
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
