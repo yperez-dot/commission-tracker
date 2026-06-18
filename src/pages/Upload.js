@@ -56,6 +56,7 @@ export default function Upload({ user }) {
       if (result.status === 409 && result.duplicateWarning) {
         setDuplicateModal({
           file,
+          sourceType: result.sourceType || 'other', // 'statement' or 'other'
           duplicateCount: result.duplicateCount,
           totalCount: result.totalCount,
           duplicates: result.duplicates || []
