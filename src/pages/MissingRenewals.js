@@ -780,7 +780,7 @@ if (effDate && checkDate) {
                           }
                         </td>
                         <td style={{ fontSize:11 }}>
-                          {r.isMissing && (!r.policyStatus || r.policyStatus === 'active') && (
+                          {r.isMissing && (!r.policyStatus || r.policyStatus === 'active' || r.policyStatus === 'chase') && (
                             <select
                               onChange={async (e) => {
                                 const action = e.target.value;
@@ -800,6 +800,8 @@ if (effDate && checkDate) {
                                   // Ignore is session-only (no undo needed)
                                   setIgnoredRows(prev => new Set([...prev, rowKey]));
                                   showToast('⚫ Ignored for this session', 'success');
+                                } else if (action === 'clear') {
+                                  await updatePolicyStatus(r, 'active');
                                 }
                               }}
                               style={{
@@ -817,6 +819,7 @@ if (effDate && checkDate) {
                               <option value="termed">🔴 Termed</option>
                               <option value="chase">🟠 Chase Payment</option>
                               <option value="ignore">⚫ Ignore this month</option>
+                              <option value="clear">✅ Clear Chase</option>
                             </select>
                           )}
                         </td>
