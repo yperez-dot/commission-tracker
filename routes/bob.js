@@ -543,4 +543,20 @@ router.delete('/:id', requireAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ─── PUT policy-status ────────────────────────────────────────────────────────
+router.put('/policy-status', requireAuth, async (req, res) => {
+  try {
+    const { client, carrier, agent, status, notes } = req.body;
+    const updated_by = req.user.name || req.user.email;
+    const pool = getPool();
+    await pool.query(`
+      INSERT INTO policy_status (client_full_name, carrier, agent_name, status, notes, updated_by, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, NOW())
+      ON CONFLICT (client_full_name, carrier, agent_name)
+      DO UPDATE SET status = $4, notes = $5, updated_by = $6, updated_at = NOW()
+    `, [client, carrier, agent, status, notes, updated_by]);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 module.exports = router;
