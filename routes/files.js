@@ -2682,6 +2682,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         try { fs.unlinkSync(req.file.path); } catch(e) {}
         return res.status(409).json({
           duplicateWarning: true,
+          sourceType: 'statement', // Commission statement upload (softer warning for reconciliation)
           duplicateCount: duplicates.length,
           totalCount: records.length,
           duplicates: duplicates.slice(0, 23),

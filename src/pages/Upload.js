@@ -285,8 +285,19 @@ export default function Upload({ user }) {
             <div style={{ background: 'var(--bg)', borderRadius: 8, maxWidth: 800, width: '90%', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
               {/* Modal Header */}
               <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
-                <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>⚠️ {duplicateModal.duplicateCount} duplicate records found</div>
-                <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Found in {duplicateModal.totalCount} records uploaded</div>
+                {duplicateModal.sourceType === 'statement' ? (
+                  <>
+                    <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 4, color: 'var(--blue)' }}>ℹ️ These records already exist in OliComm</div>
+                    <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                      {duplicateModal.duplicateCount} of {duplicateModal.totalCount} records match existing entries by client + carrier + effective date. This may be a reconciliation copy — you can import anyway or cancel.
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>⚠️ {duplicateModal.duplicateCount} duplicate records found</div>
+                    <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Found in {duplicateModal.totalCount} records uploaded</div>
+                  </>
+                )}
               </div>
 
               {/* Summary Bar */}
