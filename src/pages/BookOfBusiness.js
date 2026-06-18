@@ -414,10 +414,20 @@ export default function BookOfBusiness({ user }) {
                             {c.last_commission_amount && parseFloat(c.last_commission_amount) > 0 ? fmt(c.last_commission_amount) : '—'}
                           </td>
                           <td>
-                            <select value={c.resolution||''} onChange={e=>updateStatus(c.id,e.target.value)}
-                              style={{fontSize:11,padding:'3px 6px',borderRadius:5,border:'1px solid var(--border)',background:c.status==='termed'?'var(--bg-subtle)':'var(--bg)',color:'var(--text)'}}>
-                              {STATUSES.map(r=><option key={r} value={r}>{r||'Active'}</option>)}
-                            </select>
+                            {tab === 'termed' ? (
+                              // Termed/Deceased tab: show badge based on c.status
+                              c.status === 'termed' ? (
+                                <span className="badge badge-red">Termed</span>
+                              ) : (
+                                <span className="badge badge-green">Active</span>
+                              )
+                            ) : (
+                              // Active/All tab: show dropdown for manual status changes
+                              <select value={c.resolution||''} onChange={e=>updateStatus(c.id,e.target.value)}
+                                style={{fontSize:11,padding:'3px 6px',borderRadius:5,border:'1px solid var(--border)',background:c.status==='termed'?'var(--bg-subtle)':'var(--bg)',color:'var(--text)'}}>
+                                {STATUSES.map(r=><option key={r} value={r}>{r||'Active'}</option>)}
+                              </select>
+                            )}
                           </td>
                           <td>
                             <button onClick={()=>setConfirmDelete(c)}
