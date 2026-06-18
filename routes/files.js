@@ -264,9 +264,37 @@ function isHealthSunFile(filename) {
 
 function isDevotedFile(filename) {
   const f = filename.toLowerCase().replace(/\s+/g, '_');
-  // Match: Yahoska's NPN + name, OR just "devoted" in filename
+  // Pattern 1: Yahoska's NPN + name
+  // Pattern 2: Just "devoted" in filename
+  // Pattern 3: {NPN}_{Name}_{Date}.xls format
   return (f.includes('16326554') && f.includes('yahoska')) || 
-         f.includes('devoted');
+         f.includes('devoted') ||
+         /^\d{8}_[a-z_]+_\d{8}\.(xls|xlsx)$/.test(f);
+}
+
+function isDevotedXLS(wb) {
+  // Check for Summary + Detail sheet structure
+  if (!wb || !wb.Sheets || !wb.SheetNames) return false;
+  
+  const hasSummary = wb.SheetNames.some(s => s.toLowerCase() === 'summary');
+  const hasDetail = wb.SheetNames.some(s => s.toLowerCase() === 'detail');
+  
+  if (hasSummary && hasDetail) {
+    // Check if Detail sheet has expected Devoted columns
+    const detailSheet = wb.SheetNames.find(s => s.toLowerCase() === 'detail');
+    const ws = wb.Sheets[detailSheet];
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true, header: 1 });
+    
+    if (rows.length) {
+      const headers = rows[0] || [];
+      const headerStr = headers.map(h => String(h || '').toLowerCase()).join(' ');
+      // Check for Devoted-specific columns: MBI, Member, Amount
+      return headerStr.includes('mbi') || 
+             (headerStr.includes('member') && headerStr.includes('amount'));
+    }
+  }
+  
+  return false;
 }
 
 function isAPLFile(filename) {
@@ -299,39 +327,60 @@ function isOscarIFPFile(wb) {
   
   console.log('[OSCAR-IFP-DETECT] Sheet names:', wb.SheetNames);
   
-  // Check if any sheet name contains "IFP Commissions"
+  // Pattern 1: Single sheet "IFP Commissions"
   const hasIFPSheet = wb.SheetNames.some(s => s.toLowerCase().includes('ifp commissions'));
   console.log('[OSCAR-IFP-DETECT] Has IFP sheet:', hasIFPSheet);
   
-  if (!hasIFPSheet) return false;
-  
-  // Check if sheet has "Commission month" column
-  const sheetName = wb.SheetNames.find(s => s.toLowerCase().includes('ifp commissions'));
-  console.log('[OSCAR-IFP-DETECT] Using sheet:', sheetName);
-  
-  const ws = wb.Sheets[sheetName];
-  const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true, header: 1 });
-  
-  if (!rows.length) {
-    console.log('[OSCAR-IFP-DETECT] No rows found');
-    return false;
+  if (hasIFPSheet) {
+    const sheetName = wb.SheetNames.find(s => s.toLowerCase().includes('ifp commissions'));
+    console.log('[OSCAR-IFP-DETECT] Using sheet:', sheetName);
+    
+    const ws = wb.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true, header: 1 });
+    
+    if (!rows.length) {
+      console.log('[OSCAR-IFP-DETECT] No rows found');
+      return false;
+    }
+    
+    const headers = rows[0] || [];
+    const hasCommissionMonth = headers.some(h => 
+      String(h || '').toLowerCase().includes('commission month')
+    );
+    
+    if (hasCommissionMonth) {
+      console.log('[OSCAR-IFP-DETECT] Pattern 1 matched: IFP Commissions sheet with Commission month');
+      return true;
+    }
   }
   
-  const headers = rows[0] || [];
-  console.log('[OSCAR-IFP-DETECT] Headers:', headers.slice(0, 10), '... (total:', headers.length, ')');
-  console.log('[OSCAR-IFP-DETECT] Looking for "Commission month"...');
+  // Pattern 2: Summary + Detail sheets with Commission month in Detail
+  const hasSummary = wb.SheetNames.some(s => s.toLowerCase() === 'summary');
+  const hasDetail = wb.SheetNames.some(s => s.toLowerCase() === 'detail');
   
-  const hasCommissionMonth = headers.some(h => {
-    const lower = String(h || '').toLowerCase();
-    const match = lower.includes('commission month');
-    if (match) console.log('[OSCAR-IFP-DETECT] Found match:', h);
-    return match;
-  });
+  console.log('[OSCAR-IFP-DETECT] Has Summary sheet:', hasSummary);
+  console.log('[OSCAR-IFP-DETECT] Has Detail sheet:', hasDetail);
   
-  console.log('[OSCAR-IFP-DETECT] Has Commission month column:', hasCommissionMonth);
-  console.log('[OSCAR-IFP-DETECT] Detection result:', hasCommissionMonth);
+  if (hasSummary && hasDetail) {
+    const detailSheet = wb.SheetNames.find(s => s.toLowerCase() === 'detail');
+    const ws = wb.Sheets[detailSheet];
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true, header: 1 });
+    
+    if (rows.length) {
+      const headers = rows[0] || [];
+      const hasCommissionMonth = headers.some(h => 
+        String(h || '').toLowerCase().includes('commission month')
+      );
+      
+      if (hasCommissionMonth) {
+        console.log('[OSCAR-IFP-DETECT] Pattern 2 matched: Summary+Detail sheets with Commission month in Detail');
+        return true;
+      }
+    }
+  }
   
-  return hasCommissionMonth;
+  console.log('[OSCAR-IFP-DETECT] No pattern matched');
+  return false;
 }
 
 function isAetnaFile(filename) {
@@ -1222,13 +1271,19 @@ function parseMolinaACARows(wb, filename) {
 function parseOscarIFPRows(wb, filename) {
   const records = [];
   try {
-    // Find the "IFP Commissions" sheet
-    const sheetName = wb.SheetNames.find(s => s.toLowerCase().includes('ifp commissions'));
+    // Find the data sheet: "IFP Commissions" or "Detail"
+    let sheetName = wb.SheetNames.find(s => s.toLowerCase().includes('ifp commissions'));
     if (!sheetName) {
-      console.log('[OSCAR-IFP] No "IFP Commissions" sheet found');
+      // Try Detail sheet (Summary+Detail format)
+      sheetName = wb.SheetNames.find(s => s.toLowerCase() === 'detail');
+    }
+    
+    if (!sheetName) {
+      console.log('[OSCAR-IFP] No data sheet found (tried "IFP Commissions" and "Detail")');
       return records;
     }
     
+    console.log('[OSCAR-IFP] Using sheet:', sheetName);
     const ws = wb.Sheets[sheetName];
     const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: false });
     
@@ -1311,7 +1366,12 @@ function parseOscarIFPRows(wb, filename) {
 function parseDevotedRows(wb, filename) {
   const records = [];
   try {
-    const ws = wb.Sheets[wb.SheetNames[0]];
+    // Use Detail sheet if it exists (Summary+Detail format), otherwise use first sheet
+    const detailSheet = wb.SheetNames.find(s => s.toLowerCase() === 'detail');
+    const sheetName = detailSheet || wb.SheetNames[0];
+    console.log('[DEVOTED] Using sheet:', sheetName);
+    
+    const ws = wb.Sheets[sheetName];
     const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: false });
     
     console.log('[DEVOTED] Parsing file:', filename, 'Rows:', rows.length);
@@ -1952,15 +2012,29 @@ function parseRows(rows, mapping, filename) {
   const isDevoted = carrier === 'Devoted' || filename.toLowerCase().includes('devoted');
   
   // Try to extract period from filename as fallback
+  // Extract LAST 8 consecutive digits before extension (skip NPN numbers at start)
   let filenamePeriod = 'Unknown';
-  const fnMatch = filename.match(/(\d{4})(\d{2})|([A-Z][a-z]{2,8})\s*(\d{4})/i);
-  if (fnMatch) {
-    if (fnMatch[1] && fnMatch[2]) {
-      filenamePeriod = fnMatch[1] + fnMatch[2]; // YYYYMM
-    } else if (fnMatch[3] && fnMatch[4]) {
-      const months = {jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12'};
-      const m = months[fnMatch[3].toLowerCase().slice(0,3)];
-      if (m) filenamePeriod = fnMatch[4] + m;
+  
+  // Remove extension first
+  const nameWithoutExt = filename.replace(/\.(xls|xlsx|csv|pdf)$/i, '');
+  
+  // Try to find last 8 digits (YYYYMMDD format) and convert to YYYYMM
+  const date8Match = nameWithoutExt.match(/(\d{8})(?!.*\d{8})/);
+  if (date8Match) {
+    // Found YYYYMMDD at end: 20260327 → 202603
+    const yyyymmdd = date8Match[1];
+    filenamePeriod = yyyymmdd.substring(0, 6); // YYYYMM
+  } else {
+    // Fallback: try to find YYYYMM or "Month YYYY" pattern
+    const fnMatch = nameWithoutExt.match(/(\d{4})(\d{2})|([A-Z][a-z]{2,8})\s*(\d{4})/i);
+    if (fnMatch) {
+      if (fnMatch[1] && fnMatch[2]) {
+        filenamePeriod = fnMatch[1] + fnMatch[2]; // YYYYMM
+      } else if (fnMatch[3] && fnMatch[4]) {
+        const months = {jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12'};
+        const m = months[fnMatch[3].toLowerCase().slice(0,3)];
+        if (m) filenamePeriod = fnMatch[4] + m;
+      }
     }
   }
   
@@ -3134,7 +3208,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       } else if (isBSIFile(req.file.originalname)) {
         console.log('[UPLOAD] Using BSI parser');
         records = parseBSIRows(wb, req.file.originalname);
-      } else if (isDevotedFile(req.file.originalname)) {
+      } else if (isDevotedFile(req.file.originalname) || isDevotedXLS(wb)) {
         console.log('[UPLOAD] Using Devoted Health parser');
         records = parseDevotedRows(wb, req.file.originalname);
       } else if ((console.log('[UPLOAD] Testing Oscar IFP...'), isOscarIFPFile(wb))) {
