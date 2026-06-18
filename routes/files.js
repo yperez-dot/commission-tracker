@@ -2929,6 +2929,11 @@ async function findDuplicates(pool, records) {
 
 // ─── Upload route ─────────────────────────────────────────────────────────────
 router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
+  console.log('[UPLOAD] ===== FILE RECEIVED =====');
+  console.log('[UPLOAD] Filename:', req.file?.originalname);
+  console.log('[UPLOAD] Mimetype:', req.file?.mimetype);
+  console.log('[UPLOAD] Size:', req.file?.size, 'bytes');
+  
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   try {
     const fnLc = String(req.file.originalname || '').toLowerCase();
@@ -3028,6 +3033,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       const wb = XLSX.readFile(req.file.path);
       const ws = wb.Sheets[wb.SheetNames[0]];
       console.log('[UPLOAD] Workbook sheets:', wb.SheetNames);
+      console.log('[UPLOAD] Starting parser detection chain...');
       
       if (isYourFMOXLSX(req.file.originalname)) {
         console.log('[UPLOAD] Using YourFMO XLSX parser');
@@ -3038,7 +3044,8 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       } else if (isBSIFile(req.file.originalname)) {
         console.log('[UPLOAD] Using BSI parser');
         records = parseBSIRows(wb, req.file.originalname);
-      } else if (isOscarIFPFile(wb)) {
+      } else if ((console.log('[UPLOAD] Testing Oscar IFP...'), isOscarIFPFile(wb))) {
+        console.log('[UPLOAD] ✓ Oscar IFP detection MATCHED!');
         console.log('[UPLOAD] Using Oscar IFP parser');
         records = parseOscarIFPRows(wb, req.file.originalname);
       } else if (isMolinaACAFile(req.file.originalname)) {
