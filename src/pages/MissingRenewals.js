@@ -350,11 +350,12 @@ export default function MissingRenewals({ user }) {
       for (const client of bobClients) {
         const nc = normCarrier(client.carrier);
 
-        // Skip clients enrolled in same calendar year or later than check period
         const effDate = parseEffDate(client.effective_date);
-        const checkYear = checkDate ? checkDate.getFullYear() : null;
-        const effYear = effDate ? effDate.getFullYear() : null;
-        if (checkYear && effYear && effYear >= checkYear) continue;
+if (effDate && checkDate) {
+  const monthsDiff = (checkDate.getFullYear() - effDate.getFullYear()) * 12 
+    + (checkDate.getMonth() - effDate.getMonth());
+  if (monthsDiff < 12) continue;
+}
 
         // Try all name variants for matching
         const variants = nameVariants(client.client_full_name);
