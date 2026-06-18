@@ -566,4 +566,41 @@ router.put('/policy-status', requireAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ─── GET /api/bob/coverage — check statement coverage for period ───────────
+router.get('/coverage', requireAuth, async (req, res) => {
+  try {
+    const pool = getPool();
+    const { period } = req.query;
+
+    if (!period) {
+      return res.status(400).json({ error: 'period required' });
+    }
+
+    // Get all carriers in Book of Business
+    const bobCarriers = await pool.query(
+      `SELECT DISTINCT carrier FROM book_of_business WHERE carrier IS NOT NULL AND carrier != '' ORDER BY carrier`
+    );
+
+    // Get all carriers that have records in commission_records for this period
+    const coveredCarriers = await pool.query(
+      `SELECT DISTINCT carrier FROM commission_records WHERE payment_period = $1 AND carrier IS NOT NULL AND carrier != ''`,
+      [period]
+    );
+
+    const covered = new Set(coveredCarriers.rows.map(r => r.carrier.toLowerCase().trim()));
+
+    const missing = bobCarriers.rows
+      .filter(r => !covered.has(r.carrier.toLowerCase().trim()))
+      .map(r => r.carrier);
+
+    res.json({
+      period,
+      covered: coveredCarriers.rows.map(r => r.carrier),
+      missingStatements: missing
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;

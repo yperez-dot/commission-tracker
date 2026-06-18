@@ -142,6 +142,8 @@ export default function MissingRenewals({ user }) {
   const [clientRecords, setClientRecords] = useState([]);
   const [clientLoading, setClientLoading] = useState(false);
   const [ignoredRows, setIgnoredRows] = useState(new Set());
+  const [coverageWarning, setCoverageWarning] = useState(null);
+  const [showCoverageWarning, setShowCoverageWarning] = useState(true);
 
   useEffect(() => {
     apiFetch('/records/filters').then(d => {
@@ -166,9 +168,19 @@ export default function MissingRenewals({ user }) {
     if (!selectedPeriod) return;
     setLoading(true);
     setRows([]);
+    setCoverageWarning(null);
+    setShowCoverageWarning(true);
     try {
       const targetNorm = normPeriod(selectedPeriod);
       const checkDate = periodToDate(selectedPeriod);
+
+      // Check statement coverage
+      try {
+        const coverage = await apiFetch(`/bob/coverage?period=${selectedPeriod}`);
+        setCoverageWarning(coverage);
+      } catch (err) {
+        console.error('Coverage check failed:', err);
+      }
 
       const bobData = await apiFetch('/bob?status=active');
       // Filter to only Yahoska + Katy's BOB (THEI's own production).
@@ -457,6 +469,59 @@ export default function MissingRenewals({ user }) {
 
         {rows.length > 0 && (
           <>
+            {/* Statement Coverage Warning/Confirmation */}
+            {coverageWarning && showCoverageWarning && (
+              <div style={{
+                background: coverageWarning.missingStatements.length > 0 ? '#FFF9E6' : '#EAF3DE',
+                border: coverageWarning.missingStatements.length > 0 ? '0.5px solid #F5C842' : '0.5px solid #C0DD97',
+                borderRadius: 8,
+                padding: '12px 16px',
+                marginBottom: 12,
+                fontSize: 13,
+                color: coverageWarning.missingStatements.length > 0 ? '#A16207' : '#3B6D11',
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 12
+              }}>
+                <div style={{ flex: 1 }}>
+                  {coverageWarning.missingStatements.length > 0 ? (
+                    <>
+                      <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                        ⚠️ Missing statements for {formatPeriodLabel(selectedPeriod)} — upload before chasing payments:
+                      </div>
+                      <div style={{ marginBottom: 8 }}>
+                        {coverageWarning.missingStatements.join(' · ')}
+                      </div>
+                      <div style={{ fontSize: 12, color: '#A16207', opacity: 0.8 }}>
+                        These carriers have active clients in your BOB but no commission records uploaded for this month. Upload their statements first.
+                      </div>
+                    </>
+                  ) : (
+                    <div style={{ fontWeight: 500 }}>
+                      ✅ All carrier statements uploaded for {formatPeriodLabel(selectedPeriod)} — Missing records are genuine unpaid commissions.
+                    </div>
+                  )}
+                </div>
+                <button
+                  onClick={() => setShowCoverageWarning(false)}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    fontSize: 18,
+                    cursor: 'pointer',
+                    color: coverageWarning.missingStatements.length > 0 ? '#A16207' : '#3B6D11',
+                    padding: 0,
+                    lineHeight: 1,
+                    opacity: 0.6,
+                    flexShrink: 0
+                  }}
+                  title="Dismiss"
+                >
+                  ×
+                </button>
+              </div>
+            )}
+
             <div style={{ display:'flex',gap:6,alignItems:'center',marginBottom:10,fontSize:13,flexWrap:'wrap' }}>
               <span style={{ color:'var(--text-muted)' }}>Total rows: <strong>{filtered.length}</strong></span>
               <span style={{ color:'var(--text-muted)',margin:'0 4px' }}>|</span>
