@@ -161,6 +161,7 @@ tfoot td { padding: 9px 12px; }
 .badge-blue { background: var(--accent-light); color: var(--accent-dark); }
 .badge-gray { background: var(--gray-100); color: var(--text-muted); }
 .badge-amber { background: #F5EFE5; color: #8B7556; }      /* Warm sand */
+.badge-purple { background: #E9D5FF; color: #6B21A8; }     /* Soft purple */
 
 /* Status badges for policy tracking */
 .status-chase { background: #f97316; color: white; padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 500; } /* orange */

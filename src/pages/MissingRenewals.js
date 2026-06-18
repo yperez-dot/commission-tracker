@@ -762,6 +762,9 @@ if (effDate && checkDate) {
                           {r.policyStatus === 'chase' && (
                             <span className="badge badge-amber" data-status-key={rowKey}>🔍 Chasing</span>
                           )}
+                          {r.policyStatus === 'plan_change' && (
+                            <span className="badge badge-purple" data-status-key={rowKey}>🔄 Plan Change</span>
+                          )}
                           {r.policyStatus === 'pending' && (
                             <span className="badge badge-gray" data-status-key={rowKey}>⏳ Pending</span>
                           )}
@@ -780,7 +783,7 @@ if (effDate && checkDate) {
                           }
                         </td>
                         <td style={{ fontSize:11 }}>
-                          {r.isMissing && (!r.policyStatus || r.policyStatus === 'active' || r.policyStatus === 'chase') && (
+                          {r.isMissing && (!r.policyStatus || r.policyStatus === 'active' || r.policyStatus === 'chase' || r.policyStatus === 'plan_change') && (
                             <select
                               onChange={async (e) => {
                                 const action = e.target.value;
@@ -802,6 +805,8 @@ if (effDate && checkDate) {
                                   showToast('⚫ Ignored for this session', 'success');
                                 } else if (action === 'clear') {
                                   await updatePolicyStatus(r, 'active');
+                                } else if (action === 'plan_change') {
+                                  await updatePolicyStatus(r, 'plan_change');
                                 }
                               }}
                               style={{
@@ -818,6 +823,7 @@ if (effDate && checkDate) {
                               <option value="">Update Status</option>
                               <option value="termed">🔴 Termed</option>
                               <option value="chase">🟠 Chase Payment</option>
+                              <option value="plan_change">🔄 Plan Change</option>
                               <option value="ignore">⚫ Ignore this month</option>
                               <option value="clear">✅ Clear Chase</option>
                             </select>
