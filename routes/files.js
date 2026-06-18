@@ -1859,7 +1859,28 @@ function normalizeClassification(raw, commission) {
 
 function parseRows(rows, mapping, filename) {
   const carrier = detectCarrierFromFilename(filename);
-  return rows.map(row => {
+  const isDevoted = carrier === 'Devoted' || filename.toLowerCase().includes('devoted');
+  
+  // Try to extract period from filename as fallback
+  let filenamePeriod = 'Unknown';
+  const fnMatch = filename.match(/(\d{4})(\d{2})|([A-Z][a-z]{2,8})\s*(\d{4})/i);
+  if (fnMatch) {
+    if (fnMatch[1] && fnMatch[2]) {
+      filenamePeriod = fnMatch[1] + fnMatch[2]; // YYYYMM
+    } else if (fnMatch[3] && fnMatch[4]) {
+      const months = {jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12'};
+      const m = months[fnMatch[3].toLowerCase().slice(0,3)];
+      if (m) filenamePeriod = fnMatch[4] + m;
+    }
+  }
+  
+  if (isDevoted) {
+    console.log('[DEVOTED-PARSER] Processing file:', filename);
+    console.log('[DEVOTED-PARSER] Mapping:', JSON.stringify(mapping));
+    console.log('[DEVOTED-PARSER] Filename period:', filenamePeriod);
+  }
+  
+  return rows.map((row, idx) => {
     const agent = normalizeAgentName(mapping.agent ? String(row[mapping.agent] || '').trim() : '');
     const rawPlanType = mapping.planType ? String(row[mapping.planType] || '').trim() : '';
     const policyNumber = mapping.policyNumber ? String(row[mapping.policyNumber] || '').trim() : '';
@@ -1867,6 +1888,26 @@ function parseRows(rows, mapping, filename) {
     const rawClass = mapping.classification ? String(row[mapping.classification] || '').trim() : '';
     const agencyType = isAgencyName(agent) ? 'Agent Commission' : 'Agency Override';
     const classification = normalizeClassification(rawClass, commission) || agencyType;
+    
+    // Try to get period from mapped column first
+    let period = 'Unknown';
+    if (mapping.period) {
+      const rawPeriod = String(row[mapping.period] || '').trim();
+      period = normalizePeriod(rawPeriod);
+      
+      if (isDevoted && idx < 2) {
+        console.log(`[DEVOTED-PARSER] Row ${idx + 1} period: raw="${rawPeriod}" → normalized="${period}"`);
+      }
+    }
+    
+    // Fallback to filename period if still unknown
+    if (period === 'Unknown' && filenamePeriod !== 'Unknown') {
+      period = filenamePeriod;
+      if (isDevoted && idx < 2) {
+        console.log(`[DEVOTED-PARSER] Row ${idx + 1} using filename period: ${period}`);
+      }
+    }
+    
     return {
       agent: agent || 'The Health Experts Insurance',
       carrier,
@@ -1876,7 +1917,7 @@ function parseRows(rows, mapping, filename) {
       premium: mapping.premium ? parseFloat(row[mapping.premium]) || 0 : 0,
       commission,
       classification,
-      period: mapping.period ? String(row[mapping.period] || '').trim() : 'Unknown',
+      period,
       policyNumber,
       raw: row
     };
