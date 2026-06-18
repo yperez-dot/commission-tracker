@@ -13,6 +13,7 @@ const STATUSES = ['','Termed','Deceased','Plan changed','Duplicate','Resolved'];
 export default function BookOfBusiness({ user }) {
   const [summary, setSummary] = useState(null);
   const [clients, setClients] = useState([]);
+  const [allClients, setAllClients] = useState([]); // Full unfiltered list for tab counts
   const [periods, setPeriods] = useState([]);
   const [tab, setTab] = useState('all');
   const [filterCarrier, setFilterCarrier] = useState('');
@@ -53,6 +54,11 @@ export default function BookOfBusiness({ user }) {
 
   const loadClients = useCallback(async () => {
     try {
+      // Load full list for tab counts (no status filter)
+      const allData = await apiFetch('/bob');
+      setAllClients(allData);
+      
+      // Load filtered list for display
       const params = new URLSearchParams();
       if (filterCarrier) params.set('carrier', filterCarrier);
       if (filterAgent) params.set('agent', filterAgent);
@@ -231,8 +237,9 @@ export default function BookOfBusiness({ user }) {
     return sortDir === 'asc' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
   });
 
-  const activeCount = clients.filter(c => c.status === 'active').length;
-  const termedCount = clients.filter(c => c.status === 'termed').length;
+  // Calculate counts from FULL unfiltered dataset, not filtered view
+  const activeCount = allClients.filter(c => c.status !== 'termed').length;
+  const termedCount = allClients.filter(c => c.status === 'termed').length;
 
   const tabStyle = (id) => ({
     padding:'7px 14px', border:'none', background:'none', fontSize:13, cursor:'pointer',
