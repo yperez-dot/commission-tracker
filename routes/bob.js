@@ -305,6 +305,7 @@ router.post('/check-renewals', requireAuth, async (req, res) => {
       if (s.includes('united') || s.includes('uhc')) return 'unitedhealthcare';
       if (s.includes('humana')) return 'humana';
       if (s.includes('aetna')) return 'aetna';
+      if (s.includes('devoted')) return 'devoted health';
       return s;
     }
 

@@ -122,7 +122,7 @@ function normCarrier(c) {
   if (s.includes('united') || s.includes('uhc')) return 'unitedhealthcare';
   if (s.includes('humana')) return 'humana';
   if (s.includes('aetna')) return 'aetna';
-  if (s.includes('devoted')) return 'devoted';
+  if (s.includes('devoted')) return 'devoted health';
   if (s.includes('cigna')) return 'cigna';
   if (s.includes('oscar')) return 'oscar health';
   if (s.includes('florida blue') || s.includes('bcbs')) return 'florida blue';
