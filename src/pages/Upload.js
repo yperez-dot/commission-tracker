@@ -308,7 +308,7 @@ export default function Upload({ user }) {
               </div>
 
               {/* Duplicates List */}
-              <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
+              <div style={{ flex: 1, overflowY: 'auto', maxHeight: '400px', padding: '8px 0' }}>
                 {/* Select All Header */}
                 <div style={{ padding: '8px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10, background: 'var(--bg-muted)' }}>
                   <input
