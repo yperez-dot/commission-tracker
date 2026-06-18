@@ -158,8 +158,10 @@ function convertLastFirstToFirstLast(name) {
 
 function normalizeAgentName(raw) {
   if (!raw) return raw;
-  const key = raw.trim().toLowerCase();
-  return AGENT_ALIASES[key] || convertLastFirstToFirstLast(raw.trim());
+  // Collapse multiple spaces to single space
+  const cleaned = raw.trim().replace(/\s+/g, ' ');
+  const key = cleaned.toLowerCase();
+  return AGENT_ALIASES[key] || convertLastFirstToFirstLast(cleaned);
 }
 
 async function normalizeAllRecords(pool) {
