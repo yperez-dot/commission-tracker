@@ -332,6 +332,11 @@ function formatDate(value) {
       const [y, m, d] = value.split('-');
       return `${m}/${d}/${y}`;
     }
+    // Doctors Healthcare format: 20260101 → 01/01/2026
+    if (value.match(/^\d{8}$/) && parseInt(value.slice(0,4)) > 1900) {
+      const y = value.slice(0,4), m = value.slice(4,6), d = value.slice(6,8);
+      return `${m}/${d}/${y}`;
+    }
     return value;
   }
   if (typeof value === 'number') {
