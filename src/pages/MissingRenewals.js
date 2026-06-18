@@ -165,6 +165,7 @@ export default function MissingRenewals({ user }) {
   const [showMissingOnly, setShowMissingOnly] = useState(false);
   const [filterAgent, setFilterAgent] = useState('');
   const [filterCarrier, setFilterCarrier] = useState('');
+  const [filterLOB, setFilterLOB] = useState('');
   const [selectedClient, setSelectedClient] = useState(null);
   const [clientRecords, setClientRecords] = useState([]);
   const [clientLoading, setClientLoading] = useState(false);
@@ -393,7 +394,8 @@ export default function MissingRenewals({ user }) {
           isMissing: matchedRecs.length === 0,
           monthsMissing: client.months_missing || 0,
           bobId: client.id,
-          records: matchedRecs
+          records: matchedRecs,
+          lob: matchedRecs.length > 0 ? (matchedRecs[0].lob || '') : ''
         });
       }
 

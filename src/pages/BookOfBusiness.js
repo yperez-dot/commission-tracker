@@ -220,7 +220,7 @@ export default function BookOfBusiness({ user }) {
   });
 
   const activeCount = clients.filter(c => c.status === 'active').length;
-  const termedCount = clients.filter(c => c.status === 'inactive').length;
+  const termedCount = clients.filter(c => c.status === 'termed').length;
 
   const tabStyle = (id) => ({
     padding:'7px 14px', border:'none', background:'none', fontSize:13, cursor:'pointer',
@@ -296,7 +296,7 @@ export default function BookOfBusiness({ user }) {
 
         <div style={{display:'flex',gap:8,marginBottom:12,borderBottom:'1px solid var(--border)',flexWrap:'wrap'}}>
           <button style={tabStyle('all')} onClick={()=>{setTab('all');setFilterStatus('active');}}>All active ({summary?.totalActive||0})</button>
-          <button style={tabStyle('termed')} onClick={()=>{setTab('termed');setFilterStatus('inactive');}}>Termed / Deceased ({termedCount})</button>
+          <button style={tabStyle('termed')} onClick={()=>{setTab('termed');setFilterStatus('termed');}}>Termed / Deceased ({termedCount})</button>
           <button style={tabStyle('carriers')} onClick={()=>setTab('carriers')}>By carrier</button>
           <button style={tabStyle('setup')} onClick={()=>setTab('setup')}>Setup & tools</button>
         </div>
@@ -373,7 +373,7 @@ export default function BookOfBusiness({ user }) {
                     </thead>
                     <tbody>
                       {sortedClients.map((c,i) => (
-                        <tr key={c.id} style={{background: selectedIds.includes(c.id) ? 'var(--accent-light)' : c.status==='inactive' ? 'var(--bg-subtle)' : 'transparent'}}>
+                        <tr key={c.id} style={{background: selectedIds.includes(c.id) ? 'var(--accent-light)' : c.status==='termed' ? 'var(--bg-subtle)' : 'transparent'}}>
                           <td style={{paddingLeft:12}}>
                             <input type="checkbox"
                               checked={selectedIds.includes(c.id)}
@@ -399,7 +399,7 @@ export default function BookOfBusiness({ user }) {
                           </td>
                           <td>
                             <select value={c.resolution||''} onChange={e=>updateStatus(c.id,e.target.value)}
-                              style={{fontSize:11,padding:'3px 6px',borderRadius:5,border:'1px solid var(--border)',background:c.status==='inactive'?'var(--bg-subtle)':'var(--bg)',color:'var(--text)'}}>
+                              style={{fontSize:11,padding:'3px 6px',borderRadius:5,border:'1px solid var(--border)',background:c.status==='termed'?'var(--bg-subtle)':'var(--bg)',color:'var(--text)'}}>
                               {STATUSES.map(r=><option key={r} value={r}>{r||'Active'}</option>)}
                             </select>
                           </td>
