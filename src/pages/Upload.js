@@ -282,9 +282,22 @@ export default function Upload({ user }) {
         {/* Duplicate Detection Modal */}
         {duplicateModal && (
           <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-            <div style={{ background: 'var(--bg)', borderRadius: 8, maxWidth: 800, width: '90%', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
+            <div style={{ 
+              background: 'var(--bg)', 
+              borderRadius: 8, 
+              maxWidth: 800, 
+              width: '90%', 
+              maxHeight: '80vh', 
+              display: 'flex', 
+              flexDirection: 'column',
+              border: duplicateModal.sourceType === 'statement' ? '2px solid #2196F3' : '2px solid #FFC107'
+            }}>
               {/* Modal Header */}
-              <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
+              <div style={{ 
+                padding: '16px 20px', 
+                borderBottom: '1px solid var(--border)',
+                background: duplicateModal.sourceType === 'statement' ? '#E3F2FD' : '#FFF9E6'
+              }}>
                 {duplicateModal.sourceType === 'statement' ? (
                   <>
                     <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 4, color: 'var(--blue)' }}>ℹ️ These records already exist in OliComm</div>

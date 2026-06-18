@@ -534,6 +534,9 @@ export default function AgencyProductionRecon() {
                   )}
                 </div>
                 
+                <div style={{ color: 'var(--text-muted)', fontWeight: 500 }}>Period:</div>
+                <div style={{ fontWeight: 500 }}>{selectedProduction.upload_batch ? formatPeriodLabel(selectedProduction.upload_batch) : '—'}</div>
+                
                 <div style={{ color: 'var(--text-muted)', fontWeight: 500 }}>Batch:</div>
                 <div style={{ fontFamily: 'monospace', fontSize: 12 }}>{selectedProduction.upload_batch || '—'}</div>
                 
