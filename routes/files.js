@@ -1312,13 +1312,18 @@ function isAetnaDirectCSV(wb) {
   const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
   if (!rows.length) return false;
   
-  const headers = Object.keys(rows[0]).map(h => h.toLowerCase());
+  // Strip BOM (\ufeff) from all headers
+  const headers = Object.keys(rows[0]).map(h => h.replace(/^\ufeff/, '').toLowerCase().trim());
   
-  // Must have all 4 key columns
-  const requiredColumns = ['medicare number', 'member id', 'payee amount', 'coverage period'];
+  console.log('[DEBUG] isAetnaDirectCSV - Headers found:', headers);
+  
+  // Must have all 4 key columns (check for partial matches to be flexible)
+  const requiredColumns = ['payment date', 'member id', 'payee amount', 'coverage period'];
   const hasAllColumns = requiredColumns.every(col => 
-    headers.some(h => h.includes(col.replace(' ', '')))
+    headers.some(h => h.includes(col.replace(/ /g, '')))
   );
+  
+  console.log('[DEBUG] isAetnaDirectCSV - Detection result:', hasAllColumns);
   
   return hasAllColumns;
 }
@@ -1330,18 +1335,37 @@ function isAetnaDirectCSV(wb) {
 function parseAetnaDirectCSV(wb, filename) {
   const records = [];
   
+  console.log('[AETNA-DIRECT] Parser triggered for file:', filename);
+  
   try {
     const ws = wb.Sheets[wb.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: false }); // raw: false to handle strings properly
+    // Read with raw: false to handle strings, then strip BOM from column names
+    const rawRows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: false });
+    
+    // Strip BOM (\ufeff) from all column names
+    const rows = rawRows.map(row => {
+      const cleanedRow = {};
+      for (const [key, value] of Object.entries(row)) {
+        const cleanKey = key.replace(/^\ufeff/, '').trim();
+        cleanedRow[cleanKey] = value;
+      }
+      return cleanedRow;
+    });
+    
+    console.log('[AETNA-DIRECT] Total rows:', rows.length);
+    console.log('[AETNA-DIRECT] Sample headers:', Object.keys(rows[0] || {}));
     
     for (const row of rows) {
       // BUG FIX #5: Skip summary rows (Payment Date starts with "Total")
       // Check all possible total row indicators
       const paymentDate = String(row['Payment Date'] || '').trim();
       const memberName = String(row['Member Name'] || '').trim();
+      
+      console.log('[AETNA-DIRECT] Processing row:', { paymentDate: paymentDate.substring(0, 20), memberName: memberName.substring(0, 30) });
       if (paymentDate.toLowerCase().startsWith('total') || 
           memberName.toLowerCase().startsWith('total') ||
           memberName.toLowerCase().includes('grand total')) {
+        console.log('[AETNA-DIRECT] Skipping total row');
         continue;
       }
       
@@ -1427,8 +1451,10 @@ function parseAetnaDirectCSV(wb, filename) {
         raw: row
       });
     }
+    
+    console.log('[AETNA-DIRECT] Parsed', records.length, 'records, Total:', records.reduce((sum, r) => sum + r.commission, 0).toFixed(2));
   } catch (err) {
-    console.error('parseAetnaDirectCSV error:', err.message);
+    console.error('[AETNA-DIRECT] Parser error:', err.message);
   }
   
   return records;
