@@ -308,6 +308,9 @@ router.post('/check-renewals', requireAuth, async (req, res) => {
       return s;
     }
 
+    // CRITICAL: Match on client_name|carrier ONLY - do NOT include effective_date
+    // Effective dates vary across different statement sources (BSI, NHP, direct carrier)
+    // and would cause false "missing" flags for the same client
     const paidSet = new Set(matchingRecords.map(r => `${normName(r.client_key)}|${normCarrier(r.carrier)}`));
     const paidLastNameSet = new Set(matchingRecords.map(r => {
       const n = normName(r.client_key);

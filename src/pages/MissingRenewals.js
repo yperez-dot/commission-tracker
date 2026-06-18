@@ -328,6 +328,9 @@ export default function MissingRenewals({ user }) {
       });
 
       // Build full-name lookup: "normname|carrier" → records[]
+      // CRITICAL: Match on client_name|carrier ONLY - do NOT include effective_date
+      // Effective dates vary across different statement sources (BSI, NHP, direct carrier)
+      // and would cause false "missing" flags for the same client
       const recMap = {};
       for (const r of allRecs) {
         const key = normName(r.client_full_name) + '|' + normCarrier(r.carrier);

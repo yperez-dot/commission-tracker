@@ -307,6 +307,10 @@ router.get('/missing-renewals', requireAuth, async (req, res) => {
       pool.query(`SELECT agent_name, carrier, client_full_name, commission FROM commission_records WHERE payment_period = $1 ${af}`, [lastPeriod]),
       pool.query(`SELECT agent_name, carrier, client_full_name, commission FROM commission_records WHERE payment_period = $1 ${af}`, [thisPeriod])
     ]);
+    
+    // CRITICAL: Match on client_name|carrier ONLY - do NOT include effective_date
+    // Effective dates vary across different statement sources (BSI, NHP, direct carrier)
+    // and would cause false "missing" flags for the same client
     const thisKeys = new Set(thisMonth.rows.map(r => `${r.agent_name}|${r.carrier}|${r.client_full_name}`.toLowerCase()));
     const lastKeys = new Set(lastMonth.rows.map(r => `${r.agent_name}|${r.carrier}|${r.client_full_name}`.toLowerCase()));
     const missing = lastMonth.rows.filter(r => !thisKeys.has(`${r.agent_name}|${r.carrier}|${r.client_full_name}`.toLowerCase()));
