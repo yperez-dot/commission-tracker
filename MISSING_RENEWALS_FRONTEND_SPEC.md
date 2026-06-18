@@ -85,8 +85,8 @@
         {r.policyStatus === 'chase' && (
           <span className="badge badge-amber">🔍 Chasing</span>
         )}
-        {r.policyStatus === 'ignore' && (
-          <span className="badge badge-gray">🙈 Ignored</span>
+        {r.policyStatus === 'pending' && (
+          <span className="badge badge-gray">⏳ Pendingd</span>
         )}
         {(!r.policyStatus || r.policyStatus === 'active') && (
           r.isMissing
@@ -121,10 +121,10 @@
               Chase
             </button>
             <button
-              onClick={() => updatePolicyStatus(r, 'ignore')}
+              onClick={() => updatePolicyStatus(r, 'pending')}
               style={{ padding:'3px 8px',fontSize:10,background:'var(--text-muted)',color:'#fff',border:'none',borderRadius:4,cursor:'pointer',fontWeight:500 }}
             >
-              Ignore
+              Pending
             </button>
           </div>
         )}
@@ -159,7 +159,7 @@ async function updatePolicyStatus(row, status) {
       // Row will disappear on refresh
     } else if (status === 'chase') {
       alert('✅ Marked as chasing - will stay on list with badge');
-    } else if (status === 'ignore') {
+    } else if (status === 'pending') {
       // Row will be filtered out on refresh
     }
   } catch (err) {
@@ -276,7 +276,7 @@ The Missing Renewals API response must include these fields for each row:
   commission: 0,  // 0 if missing, actual amount if paid
   isMissing: true,
   monthsMissing: 2,
-  policyStatus: 'active',  // NEW - from policy_status table (active, termed, chase, ignore)
+  policyStatus: 'active',  // NEW - from policy_status table (active, termed, chase, pending)
   notes: null  // NEW - from policy_status table
 }
 ```
@@ -311,8 +311,8 @@ The Missing Renewals API response must include these fields for each row:
 // Amber (Chasing)
 <span className="badge badge-amber">🔍 Chasing</span>
 
-// Gray (Ignored)
-<span className="badge badge-gray">🙈 Ignored</span>
+// Gray (Pendingd)
+<span className="badge badge-gray">⏳ Pendingd</span>
 
 // Blue (New)
 <span className="badge badge-blue">New</span>
@@ -369,7 +369,7 @@ After implementation:
 - [ ] Action buttons appear only on missing rows
 - [ ] "Termed" button removes row immediately (after refresh)
 - [ ] "Chase" button adds orange badge and keeps row visible
-- [ ] "Ignore" button hides row (filters it out)
+- [ ] "Pending" button hides row (filters it out)
 - [ ] Table scrolls vertically with sticky header
 - [ ] Header stays visible when scrolling down
 - [ ] Filter counts update when carrier/agent filters applied

@@ -314,8 +314,8 @@ export default function MissingRenewals({ user }) {
         // Row will disappear on refresh
       } else if (status === 'chase') {
         alert('✅ Marked as chasing - will stay on list with badge');
-      } else if (status === 'ignore') {
-        alert('✅ Marked as ignored - will be hidden');
+      } else if (status === 'pending') {
+        alert('✅ Marked as pending - needs follow-up');
       }
     } catch (err) {
       alert(`Error: ${err.message}`);
@@ -502,8 +502,8 @@ export default function MissingRenewals({ user }) {
                           {r.policyStatus === 'chase' && (
                             <span className="badge badge-amber">🔍 Chasing</span>
                           )}
-                          {r.policyStatus === 'ignore' && (
-                            <span className="badge badge-gray">🙈 Ignored</span>
+                          {r.policyStatus === 'pending' && (
+                            <span className="badge badge-gray">⏳ Pending</span>
                           )}
                           {(!r.policyStatus || r.policyStatus === 'active') && (
                             r.isMissing
@@ -535,10 +535,10 @@ export default function MissingRenewals({ user }) {
                                 Chase
                               </button>
                               <button
-                                onClick={() => updatePolicyStatus(r, 'ignore')}
+                                onClick={() => updatePolicyStatus(r, 'pending')}
                                 style={{ padding:'3px 8px',fontSize:10,background:'var(--text-muted)',color:'#fff',border:'none',borderRadius:4,cursor:'pointer',fontWeight:500 }}
                               >
-                                Ignore
+                                Pending
                               </button>
                             </div>
                           )}
