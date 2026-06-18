@@ -1663,13 +1663,23 @@ async function parseDevotedPDF(filePath, filename) {
       const endIdx = i < mbis.length - 1 ? mbis[i+1].index : transactionText.length;
       const recordText = transactionText.substring(startIdx, endIdx);
       
+      console.log(`[DEVOTED-PDF] ===== Processing MBI ${i+1}/${mbis.length} =====`);
+      console.log('[DEVOTED-PDF] MBI:', mbi);
+      console.log('[DEVOTED-PDF] Text chunk (first 150 chars):', recordText.substring(0, 150));
+      
       // Extract Amount: $XX.XX
       const amountMatch = recordText.match(/\$(\d+\.\d{2})/);
-      if (!amountMatch) continue;
+      console.log('[DEVOTED-PDF] Amount match:', amountMatch ? amountMatch[0] : 'NOT FOUND');
+      if (!amountMatch) {
+        console.log('[DEVOTED-PDF] ❌ Skipping - no amount found');
+        continue;
+      }
       const commission = parseFloat(amountMatch[1]);
       
-      // Extract Period: "Mar 26"
-      const periodMatch = recordText.match(/\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{2})\b/i);
+      // Extract Period: "Jan 26" (month name + 2-digit year)
+      // No word boundaries - text is concatenated without spaces
+      const periodMatch = recordText.match(/(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{2})/i);
+      console.log('[DEVOTED-PDF] Period match:', periodMatch ? `${periodMatch[1]} ${periodMatch[2]}` : 'NOT FOUND');
       let rowPeriod = period; // default
       if (periodMatch) {
         const months = {jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12'};
@@ -1683,23 +1693,20 @@ async function parseDevotedPDF(filePath, filename) {
         }
       }
       
-      // Extract Member Name (text between MBI and date pattern)
-      // Name is between MBI and first date-like pattern (XX-XX-XX)
-      const nameMatch = recordText.match(new RegExp(mbi + '\\s+([A-Z\\s]+?)\\s+\\d{2}-\\d{2}-\\d{2}'));
+      // Extract Member Name (immediately after MBI, no space required)
+      // Format: 5TE9EA2CR15ESTELA IGLESIAS MORALES 01-01-25
+      // Pattern: MBI + uppercase letters/spaces until date pattern
+      const nameMatch = recordText.match(new RegExp(mbi + '([A-Z][A-Z\\s]*?)(?=\\s*\\d{2}-\\d{2}-\\d{2})'));
       let memberName = 'Unknown';
       if (nameMatch) {
         memberName = nameMatch[1].trim();
-      } else {
-        // Fallback: grab uppercase words after MBI (before numbers/symbols)
-        const fallbackMatch = recordText.match(new RegExp(mbi + '\\s+([A-Z][A-Z\\s]+?)(?=\\s+[\\d$-]|$)'));
-        if (fallbackMatch) {
-          memberName = fallbackMatch[1].trim();
-        }
       }
+      console.log('[DEVOTED-PDF] Member name extracted:', memberName);
       
       // Extract Effective Date: DD-MM-YY
+      // No word boundaries - text is concatenated without spaces
       let effectiveDate = '';
-      const dateMatch = recordText.match(/\b(\d{2})-(\d{2})-(\d{2})\b/);
+      const dateMatch = recordText.match(/(\d{2})-(\d{2})-(\d{2})/);
       if (dateMatch) {
         const mm = dateMatch[1];
         const dd = dateMatch[2];
@@ -1720,25 +1727,35 @@ async function parseDevotedPDF(filePath, filename) {
         classification = 'New Business';
       }
       
-      if (commission !== 0 && memberName !== 'Unknown') {
-        records.push({
-          agent: 'Yahoska Perez',
-          carrier: 'Devoted',
-          planType: 'Devoted Med Adv',
-          client: memberName,
-          effectiveDate,
-          premium: 0,
-          commission,
-          classification,
-          period: rowPeriod,
-          policyNumber: mbi,
-          payee: 'Devoted',
-          lob: 'MA'
-        });
-        
-        if (records.length <= 3) {
-          console.log('[DEVOTED-PDF] Parsed record', records.length, ':', { mbi, memberName, commission, period: rowPeriod });
-        }
+      if (commission === 0) {
+        console.log('[DEVOTED-PDF] ❌ Skipping - commission is 0');
+        continue;
+      }
+      
+      if (memberName === 'Unknown') {
+        console.log('[DEVOTED-PDF] ❌ Skipping - member name not found');
+        continue;
+      }
+      
+      console.log('[DEVOTED-PDF] ✅ Record valid - adding to results');
+      
+      records.push({
+        agent: 'Yahoska Perez',
+        carrier: 'Devoted',
+        planType: 'Devoted Med Adv',
+        client: memberName,
+        effectiveDate,
+        premium: 0,
+        commission,
+        classification,
+        period: rowPeriod,
+        policyNumber: mbi,
+        payee: 'Devoted',
+        lob: 'MA'
+      });
+      
+      if (records.length <= 3) {
+        console.log('[DEVOTED-PDF] 📊 Parsed record', records.length, ':', { mbi, memberName, commission, period: rowPeriod });
       }
     }
     
