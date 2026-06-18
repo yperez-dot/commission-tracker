@@ -145,6 +145,7 @@ export default function MissingRenewals({ user }) {
   const [coverageWarning, setCoverageWarning] = useState(null);
   const [showCoverageWarning, setShowCoverageWarning] = useState(true);
   const [grayedRows, setGrayedRows] = useState(new Set());
+  const [termedDatePicker, setTermedDatePicker] = useState(null); // { rowKey, date }
 
   // Toast notification helper
   function showToast(message, type = 'success') {
@@ -645,10 +646,13 @@ export default function MissingRenewals({ user }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {filtered.map((r, i) => (
+                    {filtered.map((r, i) => {
+                      const rowKey = `${r.client}|${r.carrier}|${r.agent}`;
+                      const showingDatePicker = termedDatePicker && termedDatePicker.rowKey === rowKey;
+                      return (<>
                       <tr key={i} style={{ 
                         background: r.isMissing ? '#FFF8F5' : 'transparent',
-                        opacity: grayedRows.has(`${r.client}|${r.carrier}|${r.agent}`) ? 0.4 : 1,
+                        opacity: grayedRows.has(rowKey) ? 0.4 : 1,
                         transition: 'opacity 0.3s ease'
                       }}>
                         <td style={{ padding:'4px 6px' }}>
@@ -701,33 +705,9 @@ export default function MissingRenewals({ user }) {
                                 const rowKey = `${r.client}|${r.carrier}|${r.agent}`;
                                 
                                 if (action === 'termed') {
-                                  let undone = false;
-                                  
-                                  // Gray out row immediately
-                                  setGrayedRows(prev => new Set([...prev, rowKey]));
-                                  
-                                  // Show countdown toast with undo
-                                  showCountdownToast(
-                                    `${r.client} marked as Termed`,
-                                    10,
-                                    () => {
-                                      // Undo clicked
-                                      undone = true;
-                                      setGrayedRows(prev => {
-                                        const newSet = new Set(prev);
-                                        newSet.delete(rowKey);
-                                        return newSet;
-                                      });
-                                      showToast('Undo successful', 'success');
-                                    }
-                                  );
-                                  
-                                  // After 10 seconds, save if not undone
-                                  setTimeout(async () => {
-                                    if (!undone) {
-                                      await updatePolicyStatus(r, 'termed');
-                                    }
-                                  }, 10000);
+                                  // Show date picker inline
+                                  const today = new Date().toISOString().split('T')[0];
+                                  setTermedDatePicker({ rowKey, clientName: r.client, date: today, row: r });
                                 } else if (action === 'chase') {
                                   // Chase saves immediately (no undo needed)
                                   await updatePolicyStatus(r, 'chase');
@@ -756,7 +736,102 @@ export default function MissingRenewals({ user }) {
                           )}
                         </td>
                       </tr>
-                    ))}
+                        {showingDatePicker && (
+                          <tr key={`${i}-date-picker`}>
+                            <td colSpan="11" style={{ padding: '12px 16px', background: '#FFF3CD', borderLeft: '3px solid #FFC107' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                                <strong style={{ fontSize: 13, color: '#856404' }}>
+                                  {termedDatePicker.clientName} — When did they term?
+                                </strong>
+                                <input
+                                  type="date"
+                                  value={termedDatePicker.date}
+                                  onChange={e => setTermedDatePicker({ ...termedDatePicker, date: e.target.value })}
+                                  style={{
+                                    padding: '6px 10px',
+                                    fontSize: 13,
+                                    border: '1px solid #FFC107',
+                                    borderRadius: 4,
+                                    background: 'white'
+                                  }}
+                                />
+                                <button
+                                  onClick={async () => {
+                                    const { date, row } = termedDatePicker;
+                                    let undone = false;
+                                    
+                                    // Gray out row and hide date picker
+                                    setGrayedRows(prev => new Set([...prev, rowKey]));
+                                    setTermedDatePicker(null);
+                                    
+                                    // Show countdown toast with undo
+                                    showCountdownToast(
+                                      `${row.client} marked as Termed`,
+                                      10,
+                                      () => {
+                                        // Undo clicked
+                                        undone = true;
+                                        setGrayedRows(prev => {
+                                          const newSet = new Set(prev);
+                                          newSet.delete(rowKey);
+                                          return newSet;
+                                        });
+                                        showToast('Undo successful', 'success');
+                                      }
+                                    );
+                                    
+                                    // After 10 seconds, save if not undone
+                                    setTimeout(async () => {
+                                      if (!undone) {
+                                        await apiFetch('/bob/policy-status', {
+                                          method: 'PUT',
+                                          body: JSON.stringify({
+                                            client: row.client,
+                                            carrier: row.carrier,
+                                            agent: row.agent,
+                                            status: 'termed',
+                                            termedDate: date,
+                                            notes: null
+                                          })
+                                        });
+                                        await runCheck(); // Refresh data
+                                      }
+                                    }, 10000);
+                                  }}
+                                  style={{
+                                    padding: '6px 12px',
+                                    fontSize: 12,
+                                    fontWeight: 600,
+                                    background: '#28A745',
+                                    color: 'white',
+                                    border: 'none',
+                                    borderRadius: 4,
+                                    cursor: 'pointer'
+                                  }}
+                                >
+                                  Confirm Termed
+                                </button>
+                                <button
+                                  onClick={() => setTermedDatePicker(null)}
+                                  style={{
+                                    padding: '6px 12px',
+                                    fontSize: 12,
+                                    fontWeight: 600,
+                                    background: '#6C757D',
+                                    color: 'white',
+                                    border: 'none',
+                                    borderRadius: 4,
+                                    cursor: 'pointer'
+                                  }}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </>);
+                    })}
                   </tbody>
                   <tfoot>
                     <tr style={{ background:'var(--bg-subtle)',fontWeight:500 }}>

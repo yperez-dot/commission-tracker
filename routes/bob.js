@@ -549,7 +549,7 @@ router.put('/policy-status', requireAuth, async (req, res) => {
   const dbClient = await pool.connect();
   
   try {
-    const { client, carrier, agent, status, notes } = req.body;
+    const { client, carrier, agent, status, notes, termedDate } = req.body;
     
     // Validate status values
     const validStatuses = ['active', 'termed', 'chase', 'pending'];
@@ -562,25 +562,25 @@ router.put('/policy-status', requireAuth, async (req, res) => {
     // Start transaction - all 3 updates must succeed or roll back
     await dbClient.query('BEGIN');
     
-    // 1. Save to policy_status
+    // 1. Save to policy_status (with termed_date)
     await dbClient.query(`
-      INSERT INTO policy_status (client_full_name, carrier, agent_name, status, notes, updated_by, updated_at)
-      VALUES ($1, $2, $3, $4, $5, $6, NOW())
+      INSERT INTO policy_status (client_full_name, carrier, agent_name, status, notes, termed_date, updated_by, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
       ON CONFLICT (client_full_name, carrier, agent_name)
-      DO UPDATE SET status = $4, notes = $5, updated_by = $6, updated_at = NOW()
-    `, [client, carrier, agent, status, notes, updated_by]);
+      DO UPDATE SET status = $4, notes = $5, termed_date = $6, updated_by = $7, updated_at = NOW()
+    `, [client, carrier, agent, status, notes, termedDate || null, updated_by]);
     
-    // 2. If status is 'termed', cascade to book_of_business
+    // 2. If status is 'termed', cascade to book_of_business and commission_records
     if (status === 'termed') {
       await dbClient.query(`
         UPDATE book_of_business
         SET status = 'termed',
-            termed_date = NOW(),
+            termed_date = $4,
             updated_at = NOW()
         WHERE LOWER(TRIM(client_full_name)) = LOWER(TRIM($1))
           AND LOWER(TRIM(carrier)) = LOWER(TRIM($2))
           AND LOWER(TRIM(agent_name)) = LOWER(TRIM($3))
-      `, [client, carrier, agent]);
+      `, [client, carrier, agent, termedDate || null]);
       
       // 3. Flag commission_records
       await dbClient.query(`
