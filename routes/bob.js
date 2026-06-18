@@ -545,6 +545,9 @@ router.delete('/:id', requireAuth, async (req, res) => {
 
 // ─── PUT policy-status ────────────────────────────────────────────────────────
 router.put('/policy-status', requireAuth, async (req, res) => {
+  const pool = getPool();
+  const dbClient = await pool.connect();
+  
   try {
     const { client, carrier, agent, status, notes } = req.body;
     
@@ -555,10 +558,12 @@ router.put('/policy-status', requireAuth, async (req, res) => {
     }
     
     const updated_by = req.user.name || req.user.email;
-    const pool = getPool();
+    
+    // Start transaction - all 3 updates must succeed or roll back
+    await dbClient.query('BEGIN');
     
     // 1. Save to policy_status
-    await pool.query(`
+    await dbClient.query(`
       INSERT INTO policy_status (client_full_name, carrier, agent_name, status, notes, updated_by, updated_at)
       VALUES ($1, $2, $3, $4, $5, $6, NOW())
       ON CONFLICT (client_full_name, carrier, agent_name)
@@ -567,18 +572,36 @@ router.put('/policy-status', requireAuth, async (req, res) => {
     
     // 2. If status is 'termed', cascade to book_of_business
     if (status === 'termed') {
-      await pool.query(`
+      await dbClient.query(`
         UPDATE book_of_business
         SET status = 'termed',
+            termed_date = NOW(),
             updated_at = NOW()
+        WHERE LOWER(TRIM(client_full_name)) = LOWER(TRIM($1))
+          AND LOWER(TRIM(carrier)) = LOWER(TRIM($2))
+          AND LOWER(TRIM(agent_name)) = LOWER(TRIM($3))
+      `, [client, carrier, agent]);
+      
+      // 3. Flag commission_records
+      await dbClient.query(`
+        UPDATE commission_records
+        SET is_termed = true
         WHERE LOWER(TRIM(client_full_name)) = LOWER(TRIM($1))
           AND LOWER(TRIM(carrier)) = LOWER(TRIM($2))
           AND LOWER(TRIM(agent_name)) = LOWER(TRIM($3))
       `, [client, carrier, agent]);
     }
     
+    // Commit transaction - all 3 updates succeeded
+    await dbClient.query('COMMIT');
     res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    // Roll back all changes if any update failed
+    await dbClient.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  } finally {
+    dbClient.release();
+  }
 });
 
 // ─── GET /api/bob/coverage — check statement coverage for period ───────────
