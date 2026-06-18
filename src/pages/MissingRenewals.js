@@ -321,12 +321,39 @@ export default function MissingRenewals({ user }) {
       });
 
       const allRecData = await apiFetch('/records?limit=5000');
+      
+      // DEBUG: Check records fetch
+      console.log('[DEBUG-LILIA] Total records fetched:', allRecData.records?.length);
+      if (allRecData.records?.length >= 5000) {
+        console.warn('[DEBUG-LILIA] ⚠️ WARNING: Hit 5000 record limit! Some records may be missing.');
+      }
+      const devotedRecords = allRecData.records?.filter(r => 
+        String(r.carrier || '').toLowerCase().includes('devoted')
+      ) || [];
+      console.log('[DEBUG-LILIA] Devoted records in fetch:', devotedRecords.length);
+      
+      const devotedLiliaRecords = devotedRecords.filter(r => {
+        const name = String(r.client_full_name || '').toLowerCase();
+        return name.includes('lilia') || name.includes('torres');
+      });
+      console.log('[DEBUG-LILIA] Devoted records with Lilia/Torres:', devotedLiliaRecords);
+      
       const allRecs = (allRecData.records || []).filter(r => {
         if (!r.payment_period) return false;
         if (r.payment_period === selectedPeriod) return true;
         const n = normPeriod(r.payment_period);
         return n && targetNorm && n === targetNorm;
       });
+      
+      // DEBUG: Check if Lilia records survived the period filter
+      const devotedLiliaAfterFilter = allRecs.filter(r => {
+        const name = String(r.client_full_name || '').toLowerCase();
+        const carrier = String(r.carrier || '').toLowerCase();
+        return carrier.includes('devoted') && (name.includes('lilia') || name.includes('torres'));
+      });
+      console.log('[DEBUG-LILIA] Devoted Lilia/Torres records AFTER period filter:', devotedLiliaAfterFilter);
+      console.log('[DEBUG-LILIA] Selected period:', selectedPeriod);
+      console.log('[DEBUG-LILIA] Target normalized period:', targetNorm);
 
       // Build full-name lookup: "normname|carrier" → records[]
       // CRITICAL: Match on client_name|carrier ONLY - do NOT include effective_date
