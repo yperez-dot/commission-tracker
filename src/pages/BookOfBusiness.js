@@ -119,7 +119,7 @@ export default function BookOfBusiness({ user }) {
       
       // Update local state
       setClients(prev => prev.map(c => 
-        c.id === client.id ? { ...c, resolution: 'Termed', status: 'inactive' } : c
+        c.id === client.id ? { ...c, resolution: 'Termed', status: 'termed' } : c
       ));
       setTermedDatePicker(null);
       loadData();
