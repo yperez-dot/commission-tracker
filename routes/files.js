@@ -283,22 +283,46 @@ function isMolinaACAFile(filename) {
 }
 
 function isOscarIFPFile(wb) {
-  if (!wb || !wb.Sheets || !wb.SheetNames || !wb.SheetNames.length) return false;
+  console.log('[OSCAR-IFP-DETECT] Starting detection...');
+  
+  if (!wb || !wb.Sheets || !wb.SheetNames || !wb.SheetNames.length) {
+    console.log('[OSCAR-IFP-DETECT] No workbook/sheets');
+    return false;
+  }
+  
+  console.log('[OSCAR-IFP-DETECT] Sheet names:', wb.SheetNames);
   
   // Check if any sheet name contains "IFP Commissions"
   const hasIFPSheet = wb.SheetNames.some(s => s.toLowerCase().includes('ifp commissions'));
+  console.log('[OSCAR-IFP-DETECT] Has IFP sheet:', hasIFPSheet);
+  
   if (!hasIFPSheet) return false;
   
   // Check if sheet has "Commission month" column
   const sheetName = wb.SheetNames.find(s => s.toLowerCase().includes('ifp commissions'));
+  console.log('[OSCAR-IFP-DETECT] Using sheet:', sheetName);
+  
   const ws = wb.Sheets[sheetName];
   const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true, header: 1 });
-  if (!rows.length) return false;
+  
+  if (!rows.length) {
+    console.log('[OSCAR-IFP-DETECT] No rows found');
+    return false;
+  }
   
   const headers = rows[0] || [];
-  const hasCommissionMonth = headers.some(h => 
-    String(h || '').toLowerCase().includes('commission month')
-  );
+  console.log('[OSCAR-IFP-DETECT] Headers:', headers.slice(0, 10), '... (total:', headers.length, ')');
+  console.log('[OSCAR-IFP-DETECT] Looking for "Commission month"...');
+  
+  const hasCommissionMonth = headers.some(h => {
+    const lower = String(h || '').toLowerCase();
+    const match = lower.includes('commission month');
+    if (match) console.log('[OSCAR-IFP-DETECT] Found match:', h);
+    return match;
+  });
+  
+  console.log('[OSCAR-IFP-DETECT] Has Commission month column:', hasCommissionMonth);
+  console.log('[OSCAR-IFP-DETECT] Detection result:', hasCommissionMonth);
   
   return hasCommissionMonth;
 }
@@ -2940,15 +2964,22 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         return res.status(400).json({ error: 'No records found in PDF.' });
       }
     } else {
+      console.log('[UPLOAD] Reading Excel file:', req.file.originalname);
       const wb = XLSX.readFile(req.file.path);
       const ws = wb.Sheets[wb.SheetNames[0]];
+      console.log('[UPLOAD] Workbook sheets:', wb.SheetNames);
+      
       if (isYourFMOXLSX(req.file.originalname)) {
+        console.log('[UPLOAD] Using YourFMO XLSX parser');
         records = parseYourFMOXLSXRows(wb);
       } else if (isUHCFile(req.file.originalname)) {
+        console.log('[UPLOAD] Using UHC parser');
         records = parseUHCRows(wb);
       } else if (isBSIFile(req.file.originalname)) {
+        console.log('[UPLOAD] Using BSI parser');
         records = parseBSIRows(wb, req.file.originalname);
       } else if (isOscarIFPFile(wb)) {
+        console.log('[UPLOAD] Using Oscar IFP parser');
         records = parseOscarIFPRows(wb, req.file.originalname);
       } else if (isMolinaACAFile(req.file.originalname)) {
         records = parseMolinaACARows(wb, req.file.originalname);
@@ -2985,9 +3016,11 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         console.log('[ROUTING] Matched generic Aetna parser for:', req.file.originalname);
         records = parseAetnaRows(wb, req.file.originalname);
       } else {
+        console.log('[UPLOAD] No specific parser matched, using generic AI mapper');
         const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
         if (!rows.length) return res.status(400).json({ error: 'File is empty' });
         const headers = Object.keys(rows[0]);
+        console.log('[UPLOAD] Generic parser headers:', headers.slice(0, 10));
         const mapping = await mapColumnsWithAI(headers, rows.slice(0, 3));
         records = parseRows(rows, mapping, req.file.originalname);
       }
