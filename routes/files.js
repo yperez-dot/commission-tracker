@@ -1643,7 +1643,9 @@ async function parseDevotedPDF(filePath, filename) {
     console.log('[DEVOTED-PDF] Sample:', transactionText.substring(0, 200));
     
     // Find all MBIs (11 alphanumeric characters - this is the anchor)
-    const mbiPattern = /\b([A-Z0-9]{11})\b/g;
+    // Pattern: Negative lookbehind (no alphanumeric before) + 11 chars + positive lookahead (uppercase letter after)
+    // This matches MBI immediately followed by name: 5TE9EA2CR15ESTELA
+    const mbiPattern = /(?<![A-Z0-9])([A-Z0-9]{11})(?=[A-Z])/g;
     const mbis = [];
     let match;
     while ((match = mbiPattern.exec(transactionText)) !== null) {
