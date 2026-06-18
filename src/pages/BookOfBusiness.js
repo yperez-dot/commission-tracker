@@ -117,12 +117,9 @@ export default function BookOfBusiness({ user }) {
         })
       });
       
-      // Update local state
-      setClients(prev => prev.map(c => 
-        c.id === client.id ? { ...c, resolution: 'Termed', status: 'termed' } : c
-      ));
+      // Close modal and refresh client list
       setTermedDatePicker(null);
-      loadData();
+      await loadData(); // Re-fetch to get fresh termed_date and updated status
     } catch (e) {
       console.error(e);
       alert('Error marking as termed: ' + e.message);
