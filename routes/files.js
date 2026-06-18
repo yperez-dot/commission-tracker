@@ -1304,7 +1304,7 @@ function parseOscarIFPRows(wb, filename) {
       }
       
       // Debug log for skip condition check
-      console.log('[OSCAR-IFP] Row check: commission=', commission, 'blockReason=', JSON.stringify(blockReason), 'isEmpty=', blockReason === '');
+      console.log('[OSCAR-IFP] Row check: commission=', commission, 'blockReason=', JSON.stringify(blockReason));
       
       // Skip rows where Commission = 0 AND Block Reason is not null/empty
       if (commission === 0 && blockReason !== '') {
