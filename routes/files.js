@@ -1493,38 +1493,92 @@ async function parseDevotedPDF(filePath, filename) {
       }
     }
     
-    // Look for tabular data with columns: MBI, Member, Amount, etc.
-    // Devoted PDFs typically have clean tables with headers
+    // Look for tabular data
+    // Format: MBI NAME DATE PLAN_CODE $AMOUNT PERIOD TYPE FLAG
+    // Example: 5TE9EA2CR15 ESTELA IGLESIAS MORALES 01-01-25 H1290 $28.91 Mar 26 Renewal - Monthly No
     let inTable = false;
+    let rowCount = 0;
+    let matchCount = 0;
+    
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       
       // Detect table header
-      if (line.toLowerCase().includes('mbi') && line.toLowerCase().includes('member')) {
-        console.log('[DEVOTED-PDF] Found table header at line', i);
+      if (line.toLowerCase().includes('mbi') || line.toLowerCase().includes('member')) {
+        console.log('[DEVOTED-PDF] Found table header at line', i, ':', line.substring(0, 80));
         inTable = true;
         continue;
       }
       
       if (!inTable) continue;
       
-      // Table row pattern: MBI (alphanumeric), Member (name), Amount ($XX.XX)
-      // Example: "1AB2C34D5E6 John Doe $28.91 Renewal - Monthly"
-      const rowMatch = line.match(/^([A-Z0-9]{11})\s+([A-Za-z\s,\.]+?)\s+(\$[\d,]+\.\d{2})/);
+      // Stop at summary/total lines
+      if (line.toLowerCase().includes('total') && line.includes('$')) {
+        console.log('[DEVOTED-PDF] Reached totals section at line', i);
+        break;
+      }
+      
+      rowCount++;
+      
+      // Sample first 3 lines for debugging
+      if (rowCount <= 3) {
+        console.log('[DEVOTED-PDF] Sample line', rowCount, ':', line.substring(0, 100));
+      }
+      
+      // Pattern: MBI(11) NAME DATE(DD-MM-YY) PLAN $AMOUNT PERIOD TYPE
+      // Allow flexible name capture with date/plan/amount markers
+      const rowMatch = line.match(/^([A-Z0-9]{11})\s+(.+?)\s+(\d{2}-\d{2}-\d{2})\s+(\S+)\s+(\$[\d,]+\.\d{2})\s+([A-Z][a-z]{2}\s+\d{2})\s+(.+?)\s+(Yes|No)$/i);
+      
       if (rowMatch) {
+        matchCount++;
         const mbi = rowMatch[1].trim();
         const memberName = rowMatch[2].trim();
-        const amountStr = rowMatch[3].replace(/[\$,]/g, '');
+        const effectiveDateRaw = rowMatch[3]; // DD-MM-YY
+        const planCode = rowMatch[4];
+        const amountStr = rowMatch[5].replace(/[\$,]/g, '');
         const commission = parseFloat(amountStr);
+        const periodRaw = rowMatch[6]; // "Mar 26"
+        const typeRaw = rowMatch[7]; // "Renewal - Monthly"
         
-        // Extract classification from remaining text after amount
-        const afterAmount = line.substring(rowMatch.index + rowMatch[0].length).trim();
+        if (matchCount <= 3) {
+          console.log('[DEVOTED-PDF] Matched row', matchCount, ':', { mbi, memberName, commission, periodRaw, typeRaw });
+        }
+        
+        // Parse period: "Mar 26" → "202603"
+        let rowPeriod = period; // Use default from header
+        const periodMatch = periodRaw.match(/^([A-Za-z]{3})\s+(\d{2})$/);
+        if (periodMatch) {
+          const months = {jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12'};
+          const monthAbbr = periodMatch[1].toLowerCase();
+          let year = periodMatch[2];
+          const yearNum = parseInt(year);
+          year = yearNum < 50 ? `20${year}` : `19${year}`;
+          const month = months[monthAbbr];
+          if (month) {
+            rowPeriod = year + month;
+          }
+        }
+        
+        // Parse effective date: "01-01-25" → "01/01/2025"
+        let effectiveDate = '';
+        const dateMatch = effectiveDateRaw.match(/^(\d{2})-(\d{2})-(\d{2})$/);
+        if (dateMatch) {
+          const mm = dateMatch[1];
+          const dd = dateMatch[2];
+          let yy = dateMatch[3];
+          const yyNum = parseInt(yy);
+          const yyyy = yyNum < 50 ? `20${yy}` : `19${yy}`;
+          effectiveDate = `${mm}/${dd}/${yyyy}`;
+        }
+        
+        // Classification from Type column
         let classification = 'Agent Commission';
+        const typeLower = typeRaw.toLowerCase();
         if (commission < 0) {
           classification = 'Chargeback';
-        } else if (afterAmount.toLowerCase().includes('renewal')) {
+        } else if (typeLower.includes('renewal')) {
           classification = 'Renewal';
-        } else if (afterAmount.toLowerCase().includes('initial') || afterAmount.toLowerCase().includes('new')) {
+        } else if (typeLower.includes('initial') || typeLower.includes('new')) {
           classification = 'New Business';
         }
         
@@ -1534,25 +1588,20 @@ async function parseDevotedPDF(filePath, filename) {
             carrier: 'Devoted',
             planType: 'Devoted Med Adv',
             client: memberName,
-            effectiveDate: '', // Not typically in Devoted PDFs
+            effectiveDate,
             premium: 0,
             commission,
             classification,
-            period,
+            period: rowPeriod,
             policyNumber: mbi,
             payee: 'Devoted',
             lob: 'MA'
           });
         }
       }
-      
-      // Stop at summary/total lines
-      if (line.toLowerCase().includes('total') && line.includes('$')) {
-        console.log('[DEVOTED-PDF] Reached totals section at line', i);
-        break;
-      }
     }
     
+    console.log('[DEVOTED-PDF] Examined', rowCount, 'data rows, matched', matchCount, 'records');
     console.log('[DEVOTED-PDF] Parsed', records.length, 'records, Total:', records.reduce((sum, r) => sum + r.commission, 0).toFixed(2));
   } catch (err) {
     console.error('[DEVOTED-PDF] Parser error:', err.message);
