@@ -287,7 +287,14 @@ router.get('/', requireAuth, async (req, res) => {
     const pool = getPool();
     const { batch, carrier, agent, limit = 100, offset = 0 } = req.query;
 
-    let query = 'SELECT * FROM agency_production WHERE 1=1';
+    let query = `SELECT 
+      ap.*, 
+      apu.filename as upload_filename,
+      apu.uploaded_at as upload_date,
+      apu.uploaded_by as uploaded_by_user
+    FROM agency_production ap
+    LEFT JOIN agency_production_uploads apu ON ap.upload_batch = apu.upload_batch
+    WHERE 1=1`;
     const params = [];
 
     if (batch) {
@@ -311,7 +318,7 @@ router.get('/', requireAuth, async (req, res) => {
     const result = await pool.query(query, params);
 
     // Get total count
-    let countQuery = 'SELECT COUNT(*) as count FROM agency_production WHERE 1=1';
+    let countQuery = 'SELECT COUNT(*) as count FROM agency_production ap WHERE 1=1';
     const countParams = [];
     if (batch) {
       countQuery += ` AND upload_batch = $${countParams.length + 1}`;

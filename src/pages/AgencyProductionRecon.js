@@ -164,11 +164,12 @@ export default function AgencyProductionRecon() {
   const [error, setError] = useState(null);
   const [production, setProduction] = useState([]);
   const [overrides, setOverrides] = useState([]);
-  const [tab, setTab] = useState('all');
+  const [tab, setTab] = useState('missing'); // Default to Missing tab
   const [filterCarrier, setFilterCarrier] = useState('all');
   const [filterAgent, setFilterAgent] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedOverride, setSelectedOverride] = useState(null);
+  const [selectedProduction, setSelectedProduction] = useState(null);
 
   useEffect(() => {
     loadData();
@@ -205,38 +206,59 @@ export default function AgencyProductionRecon() {
     override: findOverrideMatch(prod, overrides)
   }));
 
-  const paid = matches.filter(m => m.override);
-  const unpaid = matches.filter(m => !m.override);
+  // Categorize by status
+  const getCategory = (m) => {
+    if (m.override) return 'paid';
+    const status = m.production.status?.toLowerCase() || '';
+    if (status.includes('plan change') || status.includes('plan_change')) return 'planchange';
+    if (status.includes('cancel') || status.includes('terminated')) return 'cancelled';
+    return 'missing'; // No override = missing
+  };
 
-  // Apply filters
-  let filteredPaid = paid;
-  let filteredUnpaid = unpaid;
+  const categorized = {
+    missing: matches.filter(m => getCategory(m) === 'missing'),
+    planchange: matches.filter(m => getCategory(m) === 'planchange'),
+    cancelled: matches.filter(m => getCategory(m) === 'cancelled'),
+    paid: matches.filter(m => getCategory(m) === 'paid')
+  };
 
-  if (filterAgent !== 'all') {
-    filteredPaid = paid.filter(m => m.production.agent_name === filterAgent);
-    filteredUnpaid = unpaid.filter(m => m.production.agent_name === filterAgent);
-  }
+  // Apply filters to each category
+  const applyFilters = (list) => {
+    let filtered = list;
+    
+    if (filterAgent !== 'all') {
+      filtered = filtered.filter(m => m.production.agent_name === filterAgent);
+    }
+    
+    if (filterCarrier !== 'all') {
+      filtered = filtered.filter(m => normalizeCarrier(m.production.carrier) === normalizeCarrier(filterCarrier));
+    }
+    
+    if (searchTerm.trim()) {
+      const search = searchTerm.toLowerCase();
+      filtered = filtered.filter(m => 
+        (m.production.client_name || '').toLowerCase().includes(search) ||
+        (m.production.agent_name || '').toLowerCase().includes(search) ||
+        (m.production.carrier || '').toLowerCase().includes(search)
+      );
+    }
+    
+    return filtered;
+  };
 
-  if (filterCarrier !== 'all') {
-    filteredPaid = filteredPaid.filter(m => normalizeCarrier(m.production.carrier) === normalizeCarrier(filterCarrier));
-    filteredUnpaid = filteredUnpaid.filter(m => normalizeCarrier(m.production.carrier) === normalizeCarrier(filterCarrier));
-  }
+  const filtered = {
+    missing: applyFilters(categorized.missing),
+    planchange: applyFilters(categorized.planchange),
+    cancelled: applyFilters(categorized.cancelled),
+    paid: applyFilters(categorized.paid)
+  };
 
-  if (searchTerm.trim()) {
-    const search = searchTerm.toLowerCase();
-    filteredPaid = filteredPaid.filter(m => 
-      (m.production.client_name || '').toLowerCase().includes(search) ||
-      (m.production.agent_name || '').toLowerCase().includes(search) ||
-      (m.production.carrier || '').toLowerCase().includes(search)
-    );
-    filteredUnpaid = filteredUnpaid.filter(m => 
-      (m.production.client_name || '').toLowerCase().includes(search) ||
-      (m.production.agent_name || '').toLowerCase().includes(search) ||
-      (m.production.carrier || '').toLowerCase().includes(search)
-    );
-  }
-
-  const displayData = tab === 'paid' ? filteredPaid : tab === 'unpaid' ? filteredUnpaid : [...filteredPaid, ...filteredUnpaid];
+  const displayData = 
+    tab === 'missing' ? filtered.missing :
+    tab === 'planchange' ? filtered.planchange :
+    tab === 'cancelled' ? filtered.cancelled :
+    tab === 'paid' ? filtered.paid :
+    [...filtered.missing, ...filtered.planchange, ...filtered.cancelled, ...filtered.paid];
 
   const agents = [...new Set(production.map(p => p.agent_name).filter(Boolean))].sort();
   // Get unique carriers and format them consistently
@@ -254,14 +276,20 @@ export default function AgencyProductionRecon() {
     let dataToExport = [];
     let filename = '';
     
-    if (tab === 'paid') {
-      dataToExport = filteredPaid;
+    if (tab === 'missing') {
+      dataToExport = filtered.missing;
+      filename = `agency-overrides-missing-${new Date().toISOString().split('T')[0]}.csv`;
+    } else if (tab === 'planchange') {
+      dataToExport = filtered.planchange;
+      filename = `agency-overrides-planchange-${new Date().toISOString().split('T')[0]}.csv`;
+    } else if (tab === 'cancelled') {
+      dataToExport = filtered.cancelled;
+      filename = `agency-overrides-cancelled-${new Date().toISOString().split('T')[0]}.csv`;
+    } else if (tab === 'paid') {
+      dataToExport = filtered.paid;
       filename = `agency-overrides-paid-${new Date().toISOString().split('T')[0]}.csv`;
-    } else if (tab === 'unpaid') {
-      dataToExport = filteredUnpaid;
-      filename = `agency-overrides-unpaid-${new Date().toISOString().split('T')[0]}.csv`;
     } else {
-      dataToExport = [...filteredPaid, ...filteredUnpaid];
+      dataToExport = [...filtered.missing, ...filtered.planchange, ...filtered.cancelled, ...filtered.paid];
       filename = `agency-overrides-all-${new Date().toISOString().split('T')[0]}.csv`;
     }
     
@@ -439,6 +467,87 @@ export default function AgencyProductionRecon() {
         </div>
       )}
 
+      {selectedProduction && (
+        <div 
+          onClick={() => setSelectedProduction(null)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999
+          }}
+        >
+          <div 
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: 'white',
+              borderRadius: 12,
+              maxWidth: '500px',
+              width: '90%',
+              boxShadow: '0 10px 40px rgba(0,0,0,0.3)'
+            }}
+          >
+            <div style={{
+              padding: '16px 20px',
+              borderBottom: '1px solid var(--border)',
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center'
+            }}>
+              <div>
+                <h2 style={{ margin: 0, fontSize: 16, color: 'var(--text)', fontWeight: 600 }}>
+                  📄 Upload Source
+                </h2>
+                <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>
+                  {selectedProduction.client_name}
+                </p>
+              </div>
+              <button 
+                onClick={() => setSelectedProduction(null)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  fontSize: 20,
+                  cursor: 'pointer',
+                  color: 'var(--text-muted)',
+                  padding: 4
+                }}
+              >
+                ×
+              </button>
+            </div>
+            <div style={{ padding: '16px 20px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '100px 1fr', gap: '10px', fontSize: 13 }}>
+                <div style={{ color: 'var(--text-muted)', fontWeight: 500 }}>Source:</div>
+                <div style={{ fontWeight: 500, color: 'var(--text)' }}>{selectedProduction.upload_filename || '—'}</div>
+                
+                <div style={{ color: 'var(--text-muted)', fontWeight: 500 }}>Uploaded:</div>
+                <div>
+                  {selectedProduction.upload_date ? formatDate(selectedProduction.upload_date) : '—'}
+                  {selectedProduction.uploaded_by_user && (
+                    <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+                      {' · by '}{selectedProduction.uploaded_by_user}
+                    </span>
+                  )}
+                </div>
+                
+                <div style={{ color: 'var(--text-muted)', fontWeight: 500 }}>Batch:</div>
+                <div style={{ fontFamily: 'monospace', fontSize: 12 }}>{selectedProduction.upload_batch || '—'}</div>
+                
+                <div style={{ color: 'var(--text-muted)', fontWeight: 500 }}>Carrier:</div>
+                <div>{formatCarrier(selectedProduction.carrier)}</div>
+                
+                <div style={{ color: 'var(--text-muted)', fontWeight: 500 }}>Agent:</div>
+                <div>{selectedProduction.agent_name || '—'}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="page-header">
         <div className="page-title">🏢 Agency Override Reconciliation</div>
       </div>
@@ -493,14 +602,20 @@ export default function AgencyProductionRecon() {
         {!loading && (
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
             <div style={{ borderBottom: '1px solid var(--border)', padding: '0 20px', display: 'flex', gap: 2 }}>
-              <button style={tabStyle('all')} onClick={() => setTab('all')}>
-                All ({paid.length + unpaid.length})
+              <button style={tabStyle('missing')} onClick={() => setTab('missing')}>
+                Missing ({filtered.missing.length})
+              </button>
+              <button style={tabStyle('planchange')} onClick={() => setTab('planchange')}>
+                Plan Change ({filtered.planchange.length})
+              </button>
+              <button style={tabStyle('cancelled')} onClick={() => setTab('cancelled')}>
+                Cancelled ({filtered.cancelled.length})
               </button>
               <button style={tabStyle('paid')} onClick={() => setTab('paid')}>
-                Override Paid ({paid.length})
+                Paid ({filtered.paid.length})
               </button>
-              <button style={tabStyle('unpaid')} onClick={() => setTab('unpaid')}>
-                Missing Override ({unpaid.length})
+              <button style={tabStyle('all')} onClick={() => setTab('all')}>
+                All ({filtered.missing.length + filtered.planchange.length + filtered.cancelled.length + filtered.paid.length})
               </button>
             </div>
 
@@ -512,9 +627,9 @@ export default function AgencyProductionRecon() {
                     : 'No results match your filters.'}
                 </div>
               ) : (
-                <div className="table-wrap">
+                <div style={{ overflowY: 'auto', maxHeight: 'calc(100vh - 280px)' }}>
                   <table>
-                    <thead>
+                    <thead style={{ position: 'sticky', top: 0, background: 'var(--bg)', zIndex: 1 }}>
                       <tr>
                         <th>Agent</th>
                         <th>Client</th>
@@ -530,28 +645,24 @@ export default function AgencyProductionRecon() {
                         <tr key={idx}>
                           <td style={{ fontSize: 13 }}>{m.production.agent_name || '—'}</td>
                           <td style={{ fontWeight: 500 }}>
-                            {m.override ? (
-                              <a 
-                                href="#"
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  setSelectedOverride({ production: m.production, override: m.override });
-                                }}
-                                style={{
-                                  color: 'var(--blue)',
-                                  textDecoration: 'none',
-                                  cursor: 'pointer',
-                                  borderBottom: '1px dashed var(--blue)'
-                                }}
-                                onMouseOver={(e) => e.target.style.borderBottom = '1px solid var(--blue)'}
-                                onMouseOut={(e) => e.target.style.borderBottom = '1px dashed var(--blue)'}
-                                title="Click to view override statement details"
-                              >
-                                {m.production.client_name}
-                              </a>
-                            ) : (
-                              m.production.client_name
-                            )}
+                            <a 
+                              href="#"
+                              onClick={(e) => {
+                                e.preventDefault();
+                                setSelectedProduction(m.production);
+                              }}
+                              style={{
+                                color: 'var(--blue)',
+                                textDecoration: 'none',
+                                cursor: 'pointer',
+                                borderBottom: '1px dashed var(--blue)'
+                              }}
+                              onMouseOver={(e) => e.target.style.borderBottom = '1px solid var(--blue)'}
+                              onMouseOut={(e) => e.target.style.borderBottom = '1px dashed var(--blue)'}
+                              title="Click to view upload details"
+                            >
+                              {m.production.client_name}
+                            </a>
                           </td>
                           <td>{formatCarrier(m.production.carrier)}</td>
                           <td style={{ fontSize: 12 }}>{m.production.plan_name || '—'}</td>
@@ -559,15 +670,41 @@ export default function AgencyProductionRecon() {
                             {m.production.effective_date ? formatDate(m.production.effective_date) : '—'}
                           </td>
                           <td>
-                            <span className="badge" style={{
-                              background: m.production.status?.toLowerCase().includes('active') ? '#D4EDDA' : '#FFF3CD',
-                              color: m.production.status?.toLowerCase().includes('active') ? '#155724' : '#856404',
-                              padding: '4px 8px',
-                              borderRadius: 4,
-                              fontSize: 11
-                            }}>
-                              {m.production.status || '—'}
-                            </span>
+                            {(() => {
+                              const status = m.production.status?.toLowerCase() || '';
+                              let displayStatus = 'Paid';
+                              let bgColor = '#D4EDDA';
+                              let textColor = '#155724';
+                              
+                              if (status.includes('cancel') || status.includes('terminated')) {
+                                displayStatus = 'Cancelled';
+                                bgColor = '#F8D7DA';
+                                textColor = '#721C24';
+                              } else if (status.includes('plan change') || status.includes('planchange')) {
+                                displayStatus = 'Plan Change';
+                                bgColor = '#E9D5FF';
+                                textColor = '#6B21A8';
+                              } else if (status.includes('missing') || status.includes('pending') || status.includes('not found')) {
+                                displayStatus = 'Missing';
+                                bgColor = '#F8F9FA';
+                                textColor = '#6C757D';
+                              } else if (status.includes('paid') || status.includes('complete') || status.includes('active') || status.includes('progress')) {
+                                displayStatus = 'Paid';
+                              }
+                              
+                              return (
+                                <span className="badge" style={{
+                                  background: bgColor,
+                                  color: textColor,
+                                  padding: '4px 8px',
+                                  borderRadius: 4,
+                                  fontSize: 11,
+                                  fontWeight: 500
+                                }}>
+                                  {displayStatus}
+                                </span>
+                              );
+                            })()}
                           </td>
                           <td style={{ textAlign: 'center' }}>
                             {m.override ? (
@@ -593,8 +730,14 @@ export default function AgencyProductionRecon() {
           <ul style={{ paddingLeft: 20, margin: 0 }}>
             <li><strong>Agency Production:</strong> Hector's monthly reports showing ALL sales (uploaded via "Upload Agency Production")</li>
             <li><strong>Override Statements:</strong> BSI commission statements showing what THEI got paid</li>
-            <li><strong>This page:</strong> Matches production to overrides and shows missing payments</li>
-            <li><strong>Missing Override:</strong> Sales exist in production but no override commission found</li>
+            <li><strong>This page:</strong> Matches production to overrides and shows status</li>
+          </ul>
+          <div style={{ fontWeight: 600, marginTop: 12, marginBottom: 8 }}>Status Categories:</div>
+          <ul style={{ paddingLeft: 20, margin: 0 }}>
+            <li><strong>Missing:</strong> Sales exist in production but no override commission found</li>
+            <li><strong>Plan Change:</strong> Client changed plans (may or may not have override)</li>
+            <li><strong>Cancelled:</strong> Application cancelled, denied, or disenrolled</li>
+            <li><strong>Paid:</strong> Override commission found in statements</li>
           </ul>
         </div>
       </div>
