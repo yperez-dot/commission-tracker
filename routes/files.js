@@ -282,6 +282,27 @@ function isMolinaACAFile(filename) {
          (f.includes('molina') && f.includes('aca'));
 }
 
+function isOscarIFPFile(wb) {
+  if (!wb || !wb.Sheets || !wb.SheetNames || !wb.SheetNames.length) return false;
+  
+  // Check if any sheet name contains "IFP Commissions"
+  const hasIFPSheet = wb.SheetNames.some(s => s.toLowerCase().includes('ifp commissions'));
+  if (!hasIFPSheet) return false;
+  
+  // Check if sheet has "Commission month" column
+  const sheetName = wb.SheetNames.find(s => s.toLowerCase().includes('ifp commissions'));
+  const ws = wb.Sheets[sheetName];
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true, header: 1 });
+  if (!rows.length) return false;
+  
+  const headers = rows[0] || [];
+  const hasCommissionMonth = headers.some(h => 
+    String(h || '').toLowerCase().includes('commission month')
+  );
+  
+  return hasCommissionMonth;
+}
+
 function isAetnaFile(filename) {
   const f = filename.toLowerCase().replace(/[\s()]/g, '_');
   return f.includes('aetna') || f.includes('producerstatement');
@@ -1162,6 +1183,76 @@ function parseMolinaACARows(wb, filename) {
     console.log('[MOLINA-ACA] Parsed', records.length, 'records, Total:', records.reduce((sum, r) => sum + r.commission, 0).toFixed(2));
   } catch (err) {
     console.error('[MOLINA-ACA] Parser error:', err.message);
+  }
+  return records;
+}
+
+// ─── OSCAR IFP COMMISSION PARSER ────────────────────────────────────────────────
+function parseOscarIFPRows(wb, filename) {
+  const records = [];
+  try {
+    // Find the "IFP Commissions" sheet
+    const sheetName = wb.SheetNames.find(s => s.toLowerCase().includes('ifp commissions'));
+    if (!sheetName) {
+      console.log('[OSCAR-IFP] No "IFP Commissions" sheet found');
+      return records;
+    }
+    
+    const ws = wb.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: false });
+    
+    console.log('[OSCAR-IFP] Parsing file:', filename, 'Rows:', rows.length);
+    
+    for (const row of rows) {
+      const commission = parseFloat(row['Commission'] || row['Commission Amount'] || 0);
+      const blockReason = String(row['Block Reason'] || row['Block reason'] || '').trim();
+      
+      // Skip rows where Commission = 0 AND Block Reason is not null/empty
+      if (commission === 0 && blockReason !== '') {
+        console.log('[OSCAR-IFP] Skipping blocked zero commission:', row);
+        continue;
+      }
+      
+      const client = String(row['Member Name'] || row['Subscriber Name'] || row['Client Name'] || '').trim();
+      const policyNumber = String(row['Policy Number'] || row['Member ID'] || row['Subscriber ID'] || '').trim();
+      const effectiveDate = formatDate(row['Effective Date'] || row['Policy Effective']);
+      
+      // Period conversion: "2025-12-01" → "202512" (YYYY-MM-DD to YYYYMM)
+      const commissionMonthRaw = String(row['Commission month'] || row['Commission Month'] || '').trim();
+      let period = '';
+      if (commissionMonthRaw) {
+        // Match YYYY-MM-DD format
+        const dateMatch = commissionMonthRaw.match(/^(\d{4})-(\d{2})-(\d{2})/);
+        if (dateMatch) {
+          period = dateMatch[1] + dateMatch[2]; // "202512"
+        } else {
+          // Fallback to normalizePeriod for other formats
+          period = normalizePeriod(commissionMonthRaw);
+        }
+      }
+      
+      if (!client) continue;
+      
+      records.push({
+        agent: 'Yahoska Perez', // This is Yahoska's report only
+        carrier: 'Oscar',
+        planType: 'Oscar IFP',
+        client,
+        effectiveDate,
+        premium: 0,
+        commission,
+        classification: commission < 0 ? 'Chargeback' : 'Agent Commission',
+        period,
+        policyNumber,
+        payee: 'Oscar',
+        lob: 'ACA',
+        raw: row
+      });
+    }
+    
+    console.log('[OSCAR-IFP] Parsed', records.length, 'records, Total:', records.reduce((sum, r) => sum + r.commission, 0).toFixed(2));
+  } catch (err) {
+    console.error('[OSCAR-IFP] Parser error:', err.message);
   }
   return records;
 }
@@ -2857,6 +2948,8 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         records = parseUHCRows(wb);
       } else if (isBSIFile(req.file.originalname)) {
         records = parseBSIRows(wb, req.file.originalname);
+      } else if (isOscarIFPFile(wb)) {
+        records = parseOscarIFPRows(wb, req.file.originalname);
       } else if (isMolinaACAFile(req.file.originalname)) {
         records = parseMolinaACARows(wb, req.file.originalname);
       } else if (isNHPFile(req.file.originalname)) {
