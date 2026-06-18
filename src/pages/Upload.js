@@ -54,6 +54,8 @@ export default function Upload({ user }) {
       
       // Handle 409 duplicate warning
       if (result.status === 409 && result.duplicateWarning) {
+        console.log('🔍 409 Response Data:', result); // ← DEBUG: Check if sourceType is present
+        console.log('🔍 sourceType value:', result.sourceType); // ← DEBUG: Explicit check
         setDuplicateModal({
           file,
           sourceType: result.sourceType || 'other', // 'statement' or 'other'
