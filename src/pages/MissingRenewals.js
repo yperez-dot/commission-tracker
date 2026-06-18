@@ -154,6 +154,10 @@ function parseEffDate(d) {
     const [y, m] = s.split('-');
     return new Date(parseInt(y), parseInt(m)-1, 1);
   }
+  // Handle YYYYMMDD format (e.g., 20260601)
+  if (s.match(/^\d{8}$/)) {
+    return new Date(parseInt(s.slice(0,4)), parseInt(s.slice(4,6))-1, 1);
+  }
   return null;
 }
 
