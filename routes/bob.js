@@ -547,6 +547,13 @@ router.delete('/:id', requireAuth, async (req, res) => {
 router.put('/policy-status', requireAuth, async (req, res) => {
   try {
     const { client, carrier, agent, status, notes } = req.body;
+    
+    // Validate status values
+    const validStatuses = ['active', 'termed', 'chase', 'pending'];
+    if (!validStatuses.includes(status)) {
+      return res.status(400).json({ error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` });
+    }
+    
     const updated_by = req.user.name || req.user.email;
     const pool = getPool();
     await pool.query(`

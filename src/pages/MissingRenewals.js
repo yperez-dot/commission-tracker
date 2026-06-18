@@ -315,7 +315,7 @@ export default function MissingRenewals({ user }) {
       } else if (status === 'chase') {
         alert('✅ Marked as chasing - will stay on list with badge');
       } else if (status === 'pending') {
-        alert('✅ Marked as pending - needs follow-up');
+        alert('✅ Marked as pending - will stay on list with gray badge');
       }
     } catch (err) {
       alert(`Error: ${err.message}`);

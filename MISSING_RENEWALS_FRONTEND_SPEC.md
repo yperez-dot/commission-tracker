@@ -86,7 +86,7 @@
           <span className="badge badge-amber">🔍 Chasing</span>
         )}
         {r.policyStatus === 'pending' && (
-          <span className="badge badge-gray">⏳ Pendingd</span>
+          <span className="badge badge-gray">⏳ Pending</span>
         )}
         {(!r.policyStatus || r.policyStatus === 'active') && (
           r.isMissing
@@ -160,7 +160,7 @@ async function updatePolicyStatus(row, status) {
     } else if (status === 'chase') {
       alert('✅ Marked as chasing - will stay on list with badge');
     } else if (status === 'pending') {
-      // Row will be filtered out on refresh
+      alert('✅ Marked as pending - will stay on list with gray badge');
     }
   } catch (err) {
     alert(`Error: ${err.message}`);
@@ -311,8 +311,8 @@ The Missing Renewals API response must include these fields for each row:
 // Amber (Chasing)
 <span className="badge badge-amber">🔍 Chasing</span>
 
-// Gray (Pendingd)
-<span className="badge badge-gray">⏳ Pendingd</span>
+// Gray (Pending)
+<span className="badge badge-gray">⏳ Pending</span>
 
 // Blue (New)
 <span className="badge badge-blue">New</span>
@@ -369,7 +369,7 @@ After implementation:
 - [ ] Action buttons appear only on missing rows
 - [ ] "Termed" button removes row immediately (after refresh)
 - [ ] "Chase" button adds orange badge and keeps row visible
-- [ ] "Pending" button hides row (filters it out)
+- [ ] "Pending" button adds gray badge and keeps row visible
 - [ ] Table scrolls vertically with sticky header
 - [ ] Header stays visible when scrolling down
 - [ ] Filter counts update when carrier/agent filters applied
