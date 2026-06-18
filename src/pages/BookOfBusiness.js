@@ -95,7 +95,7 @@ export default function BookOfBusiness({ user }) {
       }
       
       // For other statuses, update immediately
-      const status = (resolution === 'Deceased') ? 'inactive' : 'active';
+      const status = (resolution === 'Deceased' || resolution === 'Termed') ? 'termed' : 'active';
       await apiFetch(`/bob/${id}`, { method: 'PATCH', body: JSON.stringify({ resolution, status }) });
       setClients(prev => prev.map(c => c.id === id ? { ...c, resolution, status } : c));
       loadData();
