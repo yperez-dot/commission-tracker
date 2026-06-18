@@ -66,6 +66,13 @@ async function apiUpload(path, formData) {
     },
     body: formData
   });
+  
+  // Handle 409 duplicate warning specially - return data instead of throwing
+  if (res.status === 409) {
+    const data = await res.json().catch(() => ({ error: 'Duplicate detection failed' }));
+    return { status: 409, ...data };
+  }
+  
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(err.error || 'Upload failed');

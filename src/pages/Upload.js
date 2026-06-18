@@ -22,6 +22,10 @@ export default function Upload({ user }) {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterCarrier, setFilterCarrier] = useState('');
   const [sortBy, setSortBy] = useState('date_desc'); // date_desc | date_asc | carrier | name
+  // Duplicate detection modal state
+  const [duplicateModal, setDuplicateModal] = useState(null);
+  const [selectedDuplicates, setSelectedDuplicates] = useState(new Set());
+  const [expandedDuplicate, setExpandedDuplicate] = useState(null);
 
   const loadUploads = useCallback(async () => {
     try {
@@ -32,7 +36,7 @@ export default function Upload({ user }) {
 
   useEffect(() => { loadUploads(); }, [loadUploads]);
 
-  async function handleFile(file) {
+  async function handleFile(file, skipDuplicates = false, selectedDupes = []) {
     if (!file) return;
     setUploading(true);
     setError('');
@@ -40,9 +44,30 @@ export default function Upload({ user }) {
     try {
       const fd = new FormData();
       fd.append('file', file);
+      if (skipDuplicates) {
+        fd.append('skipDuplicates', 'true');
+        if (selectedDupes.length > 0) {
+          fd.append('selectedDuplicates', JSON.stringify(selectedDupes));
+        }
+      }
       const result = await apiUpload('/files/upload', fd);
+      
+      // Handle 409 duplicate warning
+      if (result.status === 409 && result.duplicateWarning) {
+        setDuplicateModal({
+          file,
+          duplicateCount: result.duplicateCount,
+          totalCount: result.totalCount,
+          duplicates: result.duplicates || []
+        });
+        setSelectedDuplicates(new Set()); // Start with none selected
+        setUploading(false);
+        return;
+      }
+      
       setUploadResult(result);
       loadUploads();
+      setDuplicateModal(null);
     } catch (e) {
       setError(e.message || 'Upload failed');
     } finally {
@@ -251,6 +276,124 @@ export default function Upload({ user }) {
           <div style={{ background: '#EAF3DE', border: '1px solid #C0DD97', borderRadius: 8, padding: '12px 16px', marginBottom: 12, fontSize: 13, color: '#3B6D11' }}>
             <div style={{ fontWeight: 700, marginBottom: 4 }}>✓ Upload successful — {uploadResult.filename}</div>
             <div>{uploadResult.rowCount} records imported · {fmt(uploadResult.commissionSum)} total · Carriers: {(uploadResult.carriers || []).join(', ')}</div>
+          </div>
+        )}
+
+        {/* Duplicate Detection Modal */}
+        {duplicateModal && (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+            <div style={{ background: 'var(--bg)', borderRadius: 8, maxWidth: 800, width: '90%', maxHeight: '80vh', display: 'flex', flexDirection: 'column' }}>
+              {/* Modal Header */}
+              <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
+                <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>⚠️ {duplicateModal.duplicateCount} duplicate records found</div>
+                <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>Found in {duplicateModal.totalCount} records uploaded</div>
+              </div>
+
+              {/* Summary Bar */}
+              <div style={{ padding: '12px 20px', background: 'var(--bg-muted)', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
+                <strong>Importing {duplicateModal.totalCount - duplicateModal.duplicateCount + selectedDuplicates.size} records</strong>
+                {' · '}
+                <span style={{ color: 'var(--text-muted)' }}>Skipping {duplicateModal.duplicateCount - selectedDuplicates.size} duplicates</span>
+              </div>
+
+              {/* Duplicates List */}
+              <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
+                {/* Select All Header */}
+                <div style={{ padding: '8px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10, background: 'var(--bg-muted)' }}>
+                  <input
+                    type="checkbox"
+                    checked={selectedDuplicates.size === duplicateModal.duplicates.length && duplicateModal.duplicates.length > 0}
+                    ref={el => {
+                      if (el) el.indeterminate = selectedDuplicates.size > 0 && selectedDuplicates.size < duplicateModal.duplicates.length;
+                    }}
+                    onChange={e => {
+                      if (e.target.checked) {
+                        setSelectedDuplicates(new Set(duplicateModal.duplicates.map((d, i) => i)));
+                      } else {
+                        setSelectedDuplicates(new Set());
+                      }
+                    }}
+                    style={{ cursor: 'pointer' }}
+                  />
+                  <div style={{ fontWeight: 600, fontSize: 13 }}>Select all duplicates</div>
+                </div>
+
+                {/* Duplicate Rows */}
+                {duplicateModal.duplicates.map((dup, idx) => {
+                  const isSelected = selectedDuplicates.has(idx);
+                  const isExpanded = expandedDuplicate === idx;
+                  return (
+                    <div key={idx} style={{ borderBottom: '1px solid var(--border)', background: isSelected ? '#E3F2FD' : 'transparent', transition: 'background 0.2s' }}>
+                      <div style={{ padding: '10px 20px', display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={e => {
+                            const newSet = new Set(selectedDuplicates);
+                            if (e.target.checked) {
+                              newSet.add(idx);
+                            } else {
+                              newSet.delete(idx);
+                            }
+                            setSelectedDuplicates(newSet);
+                          }}
+                          style={{ cursor: 'pointer' }}
+                        />
+                        <div style={{ flex: 1, fontSize: 13 }}>
+                          <div style={{ fontWeight: 600 }}>{dup.client}</div>
+                          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                            {dup.carrier} · {dup.date}
+                          </div>
+                        </div>
+                        <button
+                          onClick={() => setExpandedDuplicate(isExpanded ? null : idx)}
+                          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: 'var(--text-muted)' }}
+                        >
+                          {isExpanded ? '▼' : '▶'}
+                        </button>
+                      </div>
+                      {isExpanded && (
+                        <div style={{ padding: '10px 20px 15px', background: 'var(--bg-muted)', fontSize: 12, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+                          <div><strong>Agent:</strong> {dup.agent || 'N/A'}</div>
+                          <div><strong>Commission:</strong> {fmt(dup.amount || 0)}</div>
+                          <div><strong>Period:</strong> {dup.period || 'N/A'}</div>
+                          <div><strong>Type:</strong> {dup.type || 'N/A'}</div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Modal Footer */}
+              <div style={{ padding: '16px 20px', borderTop: '1px solid var(--border)', display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                <button
+                  onClick={() => {
+                    setDuplicateModal(null);
+                    setSelectedDuplicates(new Set());
+                    setExpandedDuplicate(null);
+                  }}
+                  style={{ padding: '8px 16px', borderRadius: 6, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', cursor: 'pointer', fontSize: 13 }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    const selectedDupes = Array.from(selectedDuplicates).map(idx => {
+                      const d = duplicateModal.duplicates[idx];
+                      return { client: d.client, carrier: d.carrier, date: d.date };
+                    });
+                    handleFile(duplicateModal.file, true, selectedDupes);
+                    setDuplicateModal(null);
+                    setSelectedDuplicates(new Set());
+                    setExpandedDuplicate(null);
+                  }}
+                  style={{ padding: '8px 16px', borderRadius: 6, background: 'var(--blue)', color: '#fff', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600 }}
+                >
+                  Import {duplicateModal.totalCount - duplicateModal.duplicateCount + selectedDuplicates.size} records
+                </button>
+              </div>
+            </div>
           </div>
         )}
 
