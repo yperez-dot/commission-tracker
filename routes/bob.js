@@ -288,7 +288,15 @@ router.post('/check-renewals', requireAuth, async (req, res) => {
       return `${n.split(' ').pop()}|${normCarrier(r.carrier)}`;
     }));
 
-    const bobClients = await pool.query(`SELECT * FROM book_of_business WHERE status = 'active' ${af}`);
+    // Only check clients enrolled 12+ months before the statement month
+    // E.g., for June 2026 (202606), only check clients enrolled before June 2025
+    const cutoffDate = `${targetNorm.substring(0, 4)}-${targetNorm.substring(4, 6)}-01`;
+    const bobClients = await pool.query(
+      `SELECT * FROM book_of_business 
+       WHERE status = 'active' 
+       AND (effective_date IS NULL OR effective_date = '' OR effective_date <= (DATE '${cutoffDate}' - INTERVAL '12 months'))
+       ${af}`
+    );
     let missingCount = 0, recoveredCount = 0;
 
     for (const client of bobClients.rows) {
