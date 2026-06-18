@@ -281,6 +281,13 @@ function isAetnaFile(filename) {
   return f.includes('aetna') || f.includes('producerstatement');
 }
 
+function isAetnaDirectCSVFilename(filename) {
+  const f = filename.toLowerCase().replace(/[\s()]/g, '_');
+  // Match: The_Health_Experts_Insurance_med_comm_YYYYMM.csv
+  return f.includes('health_experts_insurance_med_comm') || 
+         (f.includes('med_comm') && f.endsWith('.csv'));
+}
+
 function isHumanaFile(filename) {
   const f = filename.toLowerCase().replace(/\s+/g, '_');
   return (f.includes('commissiondata') || f.includes('yahoska_perez_med_comm') || f.includes('humana'))
@@ -1306,23 +1313,34 @@ function parseAetnaRows(wb, filename) {
  * Example: The_Health_Experts_Insurance_med_comm_202606.csv
  */
 function isAetnaDirectCSV(wb) {
-  if (!wb || !wb.Sheets || !wb.SheetNames || !wb.SheetNames.length) return false;
+  if (!wb || !wb.Sheets || !wb.SheetNames || !wb.SheetNames.length) {
+    console.log('[DEBUG] isAetnaDirectCSV - No workbook/sheets');
+    return false;
+  }
   
   const ws = wb.Sheets[wb.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
-  if (!rows.length) return false;
+  if (!rows.length) {
+    console.log('[DEBUG] isAetnaDirectCSV - No rows');
+    return false;
+  }
   
-  // Strip BOM (\ufeff) from all headers
-  const headers = Object.keys(rows[0]).map(h => h.replace(/^\ufeff/, '').toLowerCase().trim());
+  // Strip BOM (\ufeff) and other invisible characters from all headers
+  const rawHeaders = Object.keys(rows[0]);
+  console.log('[DEBUG] isAetnaDirectCSV - Raw headers (first 3):', rawHeaders.slice(0, 3).map(h => JSON.stringify(h)));
   
-  console.log('[DEBUG] isAetnaDirectCSV - Headers found:', headers);
+  const headers = rawHeaders.map(h => h.replace(/^[\ufeff\uFEFF]/, '').toLowerCase().trim());
+  console.log('[DEBUG] isAetnaDirectCSV - Cleaned headers:', headers);
   
-  // Must have all 4 key columns (check for partial matches to be flexible)
-  const requiredColumns = ['payment date', 'member id', 'payee amount', 'coverage period'];
-  const hasAllColumns = requiredColumns.every(col => 
-    headers.some(h => h.includes(col.replace(/ /g, '')))
-  );
+  // Must have at least 3 of these key columns
+  const keyColumns = ['paymentdate', 'memberid', 'payeeamount', 'coverageperiod', 'membername'];
+  const matchCount = keyColumns.filter(col => 
+    headers.some(h => h.replace(/[\s_-]/g, '') === col)
+  ).length;
   
+  console.log('[DEBUG] isAetnaDirectCSV - Matched', matchCount, 'of', keyColumns.length, 'key columns');
+  
+  const hasAllColumns = matchCount >= 3;
   console.log('[DEBUG] isAetnaDirectCSV - Detection result:', hasAllColumns);
   
   return hasAllColumns;
@@ -2749,9 +2767,11 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         }
       } else if (isAPLFile(req.file.originalname)) {
         records = parseAPLRows(wb);
-      } else if (isAetnaDirectCSV(wb)) {
+      } else if (isAetnaDirectCSVFilename(req.file.originalname) || isAetnaDirectCSV(wb)) {
+        console.log('[ROUTING] Matched Aetna Direct CSV parser for:', req.file.originalname);
         records = parseAetnaDirectCSV(wb, req.file.originalname);
       } else if (isAetnaFile(req.file.originalname)) {
+        console.log('[ROUTING] Matched generic Aetna parser for:', req.file.originalname);
         records = parseAetnaRows(wb, req.file.originalname);
       } else {
         const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
