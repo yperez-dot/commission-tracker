@@ -1332,40 +1332,64 @@ function parseAetnaDirectCSV(wb, filename) {
   
   try {
     const ws = wb.Sheets[wb.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: false }); // raw: false to handle strings properly
     
     for (const row of rows) {
-      // Skip summary rows (Payment Date starts with "Total")
+      // BUG FIX #5: Skip summary rows (Payment Date starts with "Total")
+      // Check all possible total row indicators
       const paymentDate = String(row['Payment Date'] || '').trim();
-      if (paymentDate.startsWith('Total')) continue;
-      
-      // Extract fields
       const memberName = String(row['Member Name'] || '').trim();
-      const memberId = String(row['Member ID'] || '').trim();
-      const payeeAmount = parseFloat(row['Payee Amount']) || 0;
-      const coveragePeriod = String(row['Coverage Period'] || '').trim(); // e.g., "2026-06-01"
-      const effectiveDateRaw = row['Effective Date'];
-      const writingAgentName = String(row['Writing Agent Name'] || '').trim();
-      const product = String(row['Product'] || '').trim(); // MAPD, PDP
-      const salesEvent = String(row['Sales Event'] || '').trim(); // Renewal, New
+      if (paymentDate.toLowerCase().startsWith('total') || 
+          memberName.toLowerCase().startsWith('total') ||
+          memberName.toLowerCase().includes('grand total')) {
+        continue;
+      }
+      
+      // BUG FIX #4: Client = Member Name (not Member ID)
+      const client = memberName;
+      
+      // BUG FIX #1: Payee Amount - handle both number and string currency formats
+      const payeeAmountRaw = row['Payee Amount'];
+      let payeeAmount = 0;
+      if (typeof payeeAmountRaw === 'number') {
+        payeeAmount = payeeAmountRaw;
+      } else if (typeof payeeAmountRaw === 'string') {
+        // Remove currency symbols and commas: "$1,234.56" → 1234.56
+        payeeAmount = parseFloat(payeeAmountRaw.replace(/[$,]/g, '')) || 0;
+      }
       
       // Skip if no client name or zero commission
-      if (!memberName || payeeAmount === 0) continue;
+      if (!client || payeeAmount === 0) continue;
       
-      // Convert Coverage Period to YYYYMM format (e.g., "2026-06-01" → "202606")
+      // BUG FIX #3: Period = Coverage Period date string "2026-06-01" → "202606"
+      const coveragePeriod = String(row['Coverage Period'] || '').trim();
       let period = '';
       if (coveragePeriod) {
-        const match = coveragePeriod.match(/^(\d{4})-(\d{2})/);
-        if (match) {
-          period = match[1] + match[2]; // "202606"
+        // Handle date string format: "2026-06-01" or "06/01/2026" or "6/1/2026"
+        const isoMatch = coveragePeriod.match(/^(\d{4})-(\d{2})/);
+        if (isoMatch) {
+          period = isoMatch[1] + isoMatch[2]; // "202606"
+        } else {
+          // Try MM/DD/YYYY format
+          const slashMatch = coveragePeriod.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+          if (slashMatch) {
+            period = slashMatch[3] + slashMatch[1].padStart(2, '0'); // "202606"
+          }
         }
       }
       
       // Format effective date
+      const effectiveDateRaw = row['Effective Date'];
       const effectiveDate = formatDate(effectiveDateRaw);
       
-      // Normalize agent name
+      // BUG FIX #2: Agent = Writing Agent Name (not Writing Agent NPN)
+      const writingAgentName = String(row['Writing Agent Name'] || '').trim();
       const agent = normalizeAgentName(writingAgentName) || 'The Health Experts Insurance';
+      
+      // Extract additional fields needed for classification
+      const memberId = String(row['Member ID'] || '').trim();
+      const product = String(row['Product'] || '').trim();
+      const salesEvent = String(row['Sales Event'] || '').trim();
       
       // Determine plan type from Product field
       let planType = 'Aetna MAPD';
@@ -1388,12 +1412,11 @@ function parseAetnaDirectCSV(wb, filename) {
         classification = 'Renewal';
       }
       
-      // Build record
       records.push({
         agent,
         carrier: 'Aetna',
         planType,
-        client: memberName,
+        client, // BUG FIX #4: Use client (Member Name), not memberId
         effectiveDate,
         premium: 0,
         commission: payeeAmount,
