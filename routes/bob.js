@@ -603,17 +603,23 @@ router.get('/policy-status', requireAuth, async (req, res) => {
 
 // ─── PUT policy-status ────────────────────────────────────────────────────────
 router.put('/policy-status', requireAuth, async (req, res) => {
+  console.log('[BOB-API] PUT /policy-status called');
+  console.log('[BOB-API] Request body:', req.body);
+  
   const pool = getPool();
   const dbClient = await pool.connect();
   
   try {
     const { client, carrier, agent, status, notes, termedDate } = req.body;
+    console.log('[BOB-API] Parsed fields:', { client, carrier, agent, status, notes, termedDate });
     
     // Validate status values
-    const validStatuses = ['active', 'termed', 'chase', 'pending'];
+    const validStatuses = ['active', 'termed', 'chase', 'pending', 'plan_change'];
     if (!validStatuses.includes(status)) {
+      console.log('[BOB-API] Invalid status:', status);
       return res.status(400).json({ error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` });
     }
+    console.log('[BOB-API] Status validation passed');
     
     const updated_by = req.user.name || req.user.email;
     
@@ -630,7 +636,8 @@ router.put('/policy-status', requireAuth, async (req, res) => {
     
     // 2. If status is 'termed', cascade to book_of_business and commission_records
     if (status === 'termed') {
-      await dbClient.query(`
+      console.log('[BOB-API] Cascading TERMED status to BOB...');
+      const bobResult = await dbClient.query(`
         UPDATE book_of_business
         SET status = 'termed',
             termed_date = $4,
@@ -639,23 +646,30 @@ router.put('/policy-status', requireAuth, async (req, res) => {
           AND LOWER(TRIM(carrier)) = LOWER(TRIM($2))
           AND LOWER(TRIM(agent_name)) = LOWER(TRIM($3))
       `, [client, carrier, agent, termedDate || null]);
+      console.log('[BOB-API] BOB rows updated:', bobResult.rowCount);
       
       // 3. Flag commission_records
-      await dbClient.query(`
+      console.log('[BOB-API] Flagging commission_records as termed...');
+      const recordsResult = await dbClient.query(`
         UPDATE commission_records
         SET is_termed = true
         WHERE LOWER(TRIM(client_full_name)) = LOWER(TRIM($1))
           AND LOWER(TRIM(carrier)) = LOWER(TRIM($2))
           AND LOWER(TRIM(agent_name)) = LOWER(TRIM($3))
       `, [client, carrier, agent]);
+      console.log('[BOB-API] Commission records updated:', recordsResult.rowCount);
     }
     
     // Commit transaction - all 3 updates succeeded
+    console.log('[BOB-API] Committing transaction...');
     await dbClient.query('COMMIT');
+    console.log('[BOB-API] Transaction committed successfully');
     res.json({ success: true });
   } catch (err) {
     // Roll back all changes if any update failed
+    console.error('[BOB-API] Error occurred, rolling back:', err);
     await dbClient.query('ROLLBACK');
+    console.log('[BOB-API] Transaction rolled back');
     res.status(500).json({ error: err.message });
   } finally {
     dbClient.release();

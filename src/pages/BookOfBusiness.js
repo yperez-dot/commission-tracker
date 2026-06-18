@@ -107,25 +107,36 @@ export default function BookOfBusiness({ user }) {
   }
 
   async function confirmTermed(client, date) {
+    console.log('[BOB-TERMED] confirmTermed called');
+    console.log('[BOB-TERMED] client:', client);
+    console.log('[BOB-TERMED] date:', date);
+    
     try {
+      const payload = {
+        client: client.client_full_name,
+        carrier: client.carrier,
+        agent: client.agent_name,
+        status: 'termed',
+        termedDate: date,
+        notes: null
+      };
+      console.log('[BOB-TERMED] API payload:', payload);
+      
       // Call the cascade endpoint (same as Missing Renewals)
-      await apiFetch('/bob/policy-status', {
+      console.log('[BOB-TERMED] Calling API...');
+      const response = await apiFetch('/bob/policy-status', {
         method: 'PUT',
-        body: JSON.stringify({
-          client: client.client_full_name,
-          carrier: client.carrier,
-          agent: client.agent_name,
-          status: 'termed',
-          termedDate: date,
-          notes: null
-        })
+        body: JSON.stringify(payload)
       });
+      console.log('[BOB-TERMED] API response:', response);
       
       // Close modal and refresh client list
+      console.log('[BOB-TERMED] Closing modal and reloading data...');
       setTermedDatePicker(null);
       await loadData(); // Re-fetch to get fresh termed_date and updated status
+      console.log('[BOB-TERMED] Success - data reloaded');
     } catch (e) {
-      console.error(e);
+      console.error('[BOB-TERMED] Error:', e);
       alert('Error marking as termed: ' + e.message);
     }
   }
@@ -592,7 +603,11 @@ export default function BookOfBusiness({ user }) {
                 Cancel
               </button>
               <button
-                onClick={() => confirmTermed(termedDatePicker.client, termedDatePicker.date)}
+                onClick={() => {
+                  console.log('[BOB-TERMED] Confirm button clicked');
+                  console.log('[BOB-TERMED] termedDatePicker:', termedDatePicker);
+                  confirmTermed(termedDatePicker.client, termedDatePicker.date);
+                }}
                 style={{
                   padding: '8px 16px',
                   fontSize: 13,
