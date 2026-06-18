@@ -1620,19 +1620,26 @@ async function parseDevotedPDF(filePath, filename) {
     
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
+      const lineLower = line.toLowerCase();
       
-      // Detect table header
-      if (line.toLowerCase().includes('mbi') || line.toLowerCase().includes('member')) {
-        console.log('[DEVOTED-PDF] Found table header at line', i, ':', line.substring(0, 80));
+      // Skip Summary table - look for Credits/Debits/Total keywords
+      if (!inTable && (lineLower.includes('credits') || lineLower.includes('debits'))) {
+        console.log('[DEVOTED-PDF] Skipping Summary section at line', i);
+        continue;
+      }
+      
+      // Detect Transactions table header - must contain Agent + MBI + Member
+      if (!inTable && lineLower.includes('agent') && lineLower.includes('mbi') && lineLower.includes('member')) {
+        console.log('[DEVOTED-PDF] Found Transactions table header at line', i, ':', line.substring(0, 80));
         inTable = true;
         continue;
       }
       
       if (!inTable) continue;
       
-      // Stop at summary/total lines
-      if (line.toLowerCase().includes('total') && line.includes('$')) {
-        console.log('[DEVOTED-PDF] Reached totals section at line', i);
+      // Stop at final total/summary lines (after transaction table)
+      if (lineLower.includes('total') && line.includes('$') && rowCount > 10) {
+        console.log('[DEVOTED-PDF] Reached end totals section at line', i);
         break;
       }
       
@@ -1640,24 +1647,41 @@ async function parseDevotedPDF(filePath, filename) {
       
       // Sample first 3 lines for debugging
       if (rowCount <= 3) {
-        console.log('[DEVOTED-PDF] Sample line', rowCount, ':', line.substring(0, 100));
+        console.log('[DEVOTED-PDF] Sample line', rowCount, ':', line.substring(0, 120));
       }
       
-      // Pattern: MBI(11) NAME $AMOUNT PERIOD TYPE
-      // Simpler format without date/plan/flag fields
-      const rowMatch = line.match(/^([A-Z0-9]{11})\s+(.+?)\s+(\$[\d,]+\.\d{2})\s+([A-Z][a-z]{2}\s+\d{2})\s+(.+?)$/i);
+      // Pattern: AGENT_NAME - NPN MBI(11) NAME DATE PLAN $AMOUNT PERIOD TYPE FLAG
+      // Example: Yahoska Perez - 16326554 5TE9EA2CR15 ESTELA IGLESIAS MORALES 01-01-25 H1290 $28.91 Mar 26 Renewal - Monthly No
+      const rowMatch = line.match(/^([A-Za-z\s]+?)\s*-\s*(\d{8})\s+([A-Z0-9]{11})\s+(.+?)\s+(\d{2}-\d{2}-\d{2})\s+(\S+)\s+(\$[\d,]+\.\d{2})\s+([A-Z][a-z]{2}\s+\d{2})\s+(.+?)\s+(Yes|No)$/i);
       
       if (rowMatch) {
         matchCount++;
-        const mbi = rowMatch[1].trim();
-        const memberName = rowMatch[2].trim();
-        const amountStr = rowMatch[3].replace(/[\$,]/g, '');
+        const agentName = rowMatch[1].trim();
+        const agentNPN = rowMatch[2];
+        const mbi = rowMatch[3].trim();
+        const memberName = rowMatch[4].trim();
+        const effectiveDateRaw = rowMatch[5]; // DD-MM-YY
+        const planCode = rowMatch[6];
+        const amountStr = rowMatch[7].replace(/[\$,]/g, '');
         const commission = parseFloat(amountStr);
-        const periodRaw = rowMatch[4]; // "Mar 26"
-        const typeRaw = rowMatch[5]; // "Renewal - Monthly"
+        const periodRaw = rowMatch[8]; // "Mar 26"
+        const typeRaw = rowMatch[9]; // "Renewal - Monthly"
+        const flag = rowMatch[10];
         
         if (matchCount <= 3) {
-          console.log('[DEVOTED-PDF] Matched row', matchCount, ':', { mbi, memberName, commission, periodRaw, typeRaw });
+          console.log('[DEVOTED-PDF] Matched row', matchCount, ':', { agentName, mbi, memberName, commission, periodRaw, typeRaw });
+        }
+        
+        // Parse effective date: "01-01-25" → "01/01/2025"
+        let effectiveDate = '';
+        const dateMatch = effectiveDateRaw.match(/^(\d{2})-(\d{2})-(\d{2})$/);
+        if (dateMatch) {
+          const mm = dateMatch[1];
+          const dd = dateMatch[2];
+          let yy = dateMatch[3];
+          const yyNum = parseInt(yy);
+          const yyyy = yyNum < 50 ? `20${yy}` : `19${yy}`;
+          effectiveDate = `${mm}/${dd}/${yyyy}`;
         }
         
         // Parse period: "Mar 26" → "202603"
@@ -1686,13 +1710,16 @@ async function parseDevotedPDF(filePath, filename) {
           classification = 'New Business';
         }
         
+        // Normalize agent name from row
+        const agent = normalizeAgentName(agentName) || 'Yahoska Perez';
+        
         if (commission !== 0 && memberName) {
           records.push({
-            agent: 'Yahoska Perez',
+            agent,
             carrier: 'Devoted',
             planType: 'Devoted Med Adv',
             client: memberName,
-            effectiveDate: '', // Not included in this PDF format
+            effectiveDate
             premium: 0,
             commission,
             classification,
