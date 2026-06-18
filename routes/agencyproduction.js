@@ -293,7 +293,13 @@ router.get('/', requireAuth, async (req, res) => {
       apu.uploaded_at as upload_date,
       apu.uploaded_by as uploaded_by_user
     FROM agency_production ap
-    LEFT JOIN agency_production_uploads apu ON ap.upload_batch = apu.upload_batch
+    LEFT JOIN LATERAL (
+      SELECT filename, uploaded_at, uploaded_by
+      FROM agency_production_uploads
+      WHERE upload_batch = ap.upload_batch
+      ORDER BY uploaded_at DESC
+      LIMIT 1
+    ) apu ON true
     WHERE 1=1`;
     const params = [];
 
