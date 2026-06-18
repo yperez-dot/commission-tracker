@@ -382,13 +382,40 @@ router.post('/build-from-statements', requireAuth, async (req, res) => {
         ? `AND carrier IN (SELECT DISTINCT carrier FROM commission_records WHERE ${agencyFilter(req, null)})`
         : '';
 
+    // Helper function to normalize name for dedup (removes middle initials/names)
+    // "Donald A Salmon" → "donald salmon"
+    // "SALMON, DONALD A" → "donald salmon"
+    const normalizeNameForDedup = (name) => {
+      if (!name) return '';
+      let normalized = name.toLowerCase().trim();
+      
+      // Handle "LAST, FIRST MIDDLE" format
+      if (normalized.includes(',')) {
+        const parts = normalized.split(',').map(p => p.trim());
+        const lastName = parts[0];
+        const firstPart = parts[1] || '';
+        const firstWords = firstPart.split(/\s+/);
+        const firstName = firstWords[0] || '';
+        return `${firstName} ${lastName}`.trim();
+      }
+      
+      // Handle "FIRST MIDDLE LAST" format - keep first and last word only
+      const words = normalized.split(/\s+/).filter(w => w.length > 0);
+      if (words.length >= 3) {
+        // Keep first and last word, skip middle
+        return `${words[0]} ${words[words.length - 1]}`;
+      }
+      return words.join(' ');
+    };
+
     // Get best record per client+carrier (most recent, with effective date preferred)
+    // Use SQL function to normalize names for deduplication
     const records = await pool.query(
-      `SELECT DISTINCT ON (LOWER(TRIM(client_full_name)), LOWER(carrier))
+      `SELECT DISTINCT ON (regexp_replace(regexp_replace(LOWER(TRIM(client_full_name)), ',.*', '', 'g'), '\\s+[A-Z]\\s+', ' ', 'g'), LOWER(carrier))
          client_full_name, carrier, agent_name, effective_date, commission, payment_period
        FROM commission_records
        WHERE client_full_name != '' AND client_full_name IS NOT NULL AND commission > 0 ${af}
-       ORDER BY LOWER(TRIM(client_full_name)), LOWER(carrier),
+       ORDER BY regexp_replace(regexp_replace(LOWER(TRIM(client_full_name)), ',.*', '', 'g'), '\\s+[A-Z]\\s+', ' ', 'g'), LOWER(carrier),
          CASE WHEN effective_date IS NOT NULL AND effective_date != '' THEN 0 ELSE 1 END,
          created_at DESC`
     );

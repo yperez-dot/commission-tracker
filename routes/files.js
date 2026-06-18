@@ -276,6 +276,12 @@ function isNHPFile(filename) {
     (f.includes('yahoska') && f.includes('katy') && f.includes('statement'));
 }
 
+function isMolinaACAFile(filename) {
+  const f = filename.toLowerCase().replace(/[\s()]/g, '_');
+  return f.includes('tailored_insurance_solutions') || 
+         (f.includes('molina') && f.includes('aca'));
+}
+
 function isAetnaFile(filename) {
   const f = filename.toLowerCase().replace(/[\s()]/g, '_');
   return f.includes('aetna') || f.includes('producerstatement');
@@ -1097,6 +1103,65 @@ function parseNHPRows(wb, uploadPeriod) {
       statementMonth: carrierRaw,
       raw: row,
     });
+  }
+  return records;
+}
+
+// ─── MOLINA ACA PARSER ────────────────────────────────────────────────────────
+function parseMolinaACARows(wb, filename) {
+  const records = [];
+  try {
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: false });
+    
+    console.log('[MOLINA-ACA] Parsing file:', filename, 'Rows:', rows.length);
+    
+    for (const row of rows) {
+      // Extract fields (adapt these based on actual Molina ACA format)
+      const client = String(row['Member Name'] || row['Subscriber Name'] || row['Client Name'] || '').trim();
+      const agent = String(row['Agent Name'] || row['Writing Agent'] || '').trim();
+      const policyNumber = String(row['Policy Number'] || row['Member ID'] || '').trim();
+      const effectiveDate = formatDate(row['Effective Date'] || row['Policy Effective']);
+      
+      // Commission is typically $27/record for Molina ACA
+      let commission = parseFloat(row['Commission'] || row['Amount'] || 0);
+      if (commission === 0) commission = 27; // Default to $27 if not provided
+      
+      // Period format: "3-2026" → "202603" or "March 2026" → "202603"
+      const periodRaw = String(row['Period'] || row['Statement Period'] || row['Commission Period'] || '').trim();
+      let period = '';
+      if (periodRaw) {
+        // Try "3-2026" format
+        const dashMatch = periodRaw.match(/^(\d{1,2})-(\d{4})$/);
+        if (dashMatch) {
+          period = dashMatch[2] + dashMatch[1].padStart(2, '0'); // "202603"
+        } else {
+          // Try "March 2026" or "03/2026" format
+          period = normalizePeriod(periodRaw);
+        }
+      }
+      
+      if (!client || commission === 0) continue;
+      
+      records.push({
+        agent: normalizeAgentName(agent) || 'The Health Experts Insurance',
+        carrier: 'Molina',
+        planType: 'Molina ACA',
+        client,
+        effectiveDate,
+        premium: 0,
+        commission,
+        classification: 'Agent Commission',
+        period,
+        policyNumber,
+        payee: 'Molina',
+        raw: row
+      });
+    }
+    
+    console.log('[MOLINA-ACA] Parsed', records.length, 'records, Total:', records.reduce((sum, r) => sum + r.commission, 0).toFixed(2));
+  } catch (err) {
+    console.error('[MOLINA-ACA] Parser error:', err.message);
   }
   return records;
 }
@@ -2657,23 +2722,25 @@ async function findDuplicates(pool, records) {
   const filtered = records.filter(r => r.client && r.carrier && r.effectiveDate);
   if (!filtered.length) return [];
 
+  // Match key: client + carrier + effective_date + payment_period
+  // This prevents same client/carrier/date in DIFFERENT periods from being flagged
   const conditions = filtered.map((r, i) =>
-    `(LOWER(client_full_name) = LOWER($${i*3+1}) AND LOWER(carrier) = LOWER($${i*3+2}) AND effective_date = $${i*3+3})`
+    `(LOWER(client_full_name) = LOWER($${i*4+1}) AND LOWER(carrier) = LOWER($${i*4+2}) AND effective_date = $${i*4+3} AND payment_period = $${i*4+4})`
   ).join(' OR ');
 
-  const params = filtered.flatMap(r => [r.client, r.carrier, r.effectiveDate]);
+  const params = filtered.flatMap(r => [r.client, r.carrier, r.effectiveDate, r.period || '']);
 
   const result = await pool.query(
-    `SELECT client_full_name, carrier, effective_date FROM commission_records WHERE ${conditions}`,
+    `SELECT client_full_name, carrier, effective_date, payment_period FROM commission_records WHERE ${conditions}`,
     params
   );
 
   const existingSet = new Set(result.rows.map(r =>
-    `${r.client_full_name.toLowerCase()}|${r.carrier.toLowerCase()}|${r.effective_date}`
+    `${r.client_full_name.toLowerCase()}|${r.carrier.toLowerCase()}|${r.effective_date}|${r.payment_period || ''}`
   ));
 
   return filtered.filter(r =>
-    existingSet.has(`${r.client.toLowerCase()}|${r.carrier.toLowerCase()}|${r.effectiveDate}`)
+    existingSet.has(`${r.client.toLowerCase()}|${r.carrier.toLowerCase()}|${r.effectiveDate}|${r.period || ''}`)
   ).map(r => ({
     client: r.client,
     carrier: r.carrier,
@@ -2790,6 +2857,8 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         records = parseUHCRows(wb);
       } else if (isBSIFile(req.file.originalname)) {
         records = parseBSIRows(wb, req.file.originalname);
+      } else if (isMolinaACAFile(req.file.originalname)) {
+        records = parseMolinaACARows(wb, req.file.originalname);
       } else if (isNHPFile(req.file.originalname)) {
         // Use upload date as period for all NHP records
         const now = new Date();

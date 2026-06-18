@@ -53,6 +53,7 @@ app.use('/api/files', require('./routes/files'));
 app.use('/api/records', require('./routes/records'));
 app.use('/api/bob', require('./routes/bob'));
 app.use('/api/payroll', require('./routes/payroll'));
+app.use('/api/agent-statements', require('./routes/agent_statements'));
 app.use('/api/sales-tracker', require('./routes/sales-tracker'));
 app.use('/api/medicarepro', require('./routes/medicarepro'));
 app.use('/api/agency-production', require('./routes/agencyproduction'));
