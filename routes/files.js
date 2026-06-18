@@ -1719,7 +1719,7 @@ async function parseDevotedPDF(filePath, filename) {
             carrier: 'Devoted',
             planType: 'Devoted Med Adv',
             client: memberName,
-            effectiveDate
+            effectiveDate,
             premium: 0,
             commission,
             classification,
