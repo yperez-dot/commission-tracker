@@ -1226,14 +1226,27 @@ function parseOscarIFPRows(wb, filename) {
     const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: false });
     
     console.log('[OSCAR-IFP] Parsing file:', filename, 'Rows:', rows.length);
+    console.log('[OSCAR-IFP] Sample headers:', Object.keys(rows[0] || {}).slice(0, 10));
+    
+    let skippedCount = 0;
+    let parsedCount = 0;
     
     for (const row of rows) {
-      const commission = parseFloat(row['Commission'] || row['Commission Amount'] || 0);
+      // Explicitly read Commission column by name
+      const commissionRaw = row['Commission'] || row['Commission Amount'] || '0';
+      const commission = parseFloat(commissionRaw);
       const blockReason = String(row['Block Reason'] || row['Block reason'] || '').trim();
+      
+      if (parsedCount < 3) {
+        console.log(`[OSCAR-IFP] Row ${parsedCount + 1} Commission: raw="${commissionRaw}" (${typeof commissionRaw}) → parsed=${commission} (${typeof commission})`);
+      }
       
       // Skip rows where Commission = 0 AND Block Reason is not null/empty
       if (commission === 0 && blockReason !== '') {
-        console.log('[OSCAR-IFP] Skipping blocked zero commission:', row);
+        skippedCount++;
+        if (skippedCount <= 2) {
+          console.log(`[OSCAR-IFP] Skipping blocked row: client="${row['Subscriber name'] || row['Member Name']}" commission=${commission} reason="${blockReason}"`);
+        }
         continue;
       }
       
@@ -1257,6 +1270,8 @@ function parseOscarIFPRows(wb, filename) {
       
       if (!client) continue;
       
+      parsedCount++;
+      
       records.push({
         agent: 'Yahoska Perez', // This is Yahoska's report only
         carrier: 'Oscar',
@@ -1274,7 +1289,11 @@ function parseOscarIFPRows(wb, filename) {
       });
     }
     
-    console.log('[OSCAR-IFP] Parsed', records.length, 'records, Total:', records.reduce((sum, r) => sum + r.commission, 0).toFixed(2));
+    const totalCommission = records.reduce((sum, r) => sum + r.commission, 0).toFixed(2);
+    console.log('[OSCAR-IFP] Parsed', records.length, 'records');
+    console.log('[OSCAR-IFP] Total commission:', totalCommission);
+    console.log('[OSCAR-IFP] Skipped', skippedCount, 'blocked rows');
+    console.log('[OSCAR-IFP] Commission values:', records.map(r => r.commission).join(', '));
   } catch (err) {
     console.error('[OSCAR-IFP] Parser error:', err.message);
   }
