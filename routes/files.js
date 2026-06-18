@@ -62,6 +62,24 @@ function isAcaAgencyPaysProducer(carrier) {
   return ACA_AGENCY_PAYS_PRODUCER.some(c => car.includes(c));
 }
 
+// ─── Client name validation (skip statement artifacts) ───────────────────────
+
+function isValidClientName(clientName) {
+  if (!clientName) return false;
+  const name = String(clientName).trim();
+  if (name === '') return false;
+  
+  // Skip statement artifacts (case-insensitive)
+  const lower = name.toLowerCase();
+  const artifacts = ['summary', 'deduction', 'total', 'balance', 'subtotal', 'grand total'];
+  
+  for (const artifact of artifacts) {
+    if (lower.includes(artifact)) return false;
+  }
+  
+  return true;
+}
+
 // ─── Plan type derivation ────────────────────────────────────────────────────
 
 function derivePlanType(carrier, rawPlanType, policyNumber, lob) {
@@ -704,7 +722,8 @@ function parseUHCRows(wb) {
     const rawPlanType = String(row['Plan Type'] || '').trim();
     const commAction = String(row['Commission Action'] || '').trim();
 
-    if (!client) continue;
+    // Skip invalid client names (empty or statement artifacts)
+    if (!isValidClientName(client)) continue;
 
     const isAgency = isAgencyName(writingAgentRaw);
     const agentName = isAgency ? 'The Health Experts Insurance' : normalizeAgentName(writingAgentRaw);
@@ -782,7 +801,7 @@ function parseUHCDirectRows(wb, filename) {
         commission = parseFloat(commissionRaw.replace(/[$,]/g, '')) || 0;
       }
       
-      if (!client || commission === 0) continue;
+      if (!isValidClientName(client) || commission === 0) continue;
       
       // FILTER: Include ONLY AARPMODMEDSUP + PartD
       // Skip MAPD/DSNP/CSNP (these come through BSI to avoid duplicates)
@@ -927,7 +946,7 @@ function parseHumanaRows(wb, filename, rawBuffer) {
       const blkBus     = get(blkBusIdx).trim().toUpperCase();
       const product    = get(productIdx).trim().toUpperCase();
 
-      if (!client || commission === 0) continue;
+      if (!isValidClientName(client) || commission === 0) continue;
 
       let period = '';
       if (monthPaid && monthMap[monthPaid] && commRunDt) {
@@ -1035,7 +1054,10 @@ function parseBSIRows(wb, filename) {
     const client = String(clientCol ? row[clientCol] : '').trim();
     const effectiveDate = formatDate(effDateCol ? row[effDateCol] : '');
     const commission = parseFloat(commissionCol ? row[commissionCol] : 0) || 0;
-    if (!client) continue;
+    
+    // Skip invalid client names (empty or statement artifacts)
+    if (!isValidClientName(client)) continue;
+    
     const carrier = normalizeBSICarrier(company);
     records.push({
       agent: agent || 'The Health Experts Insurance',
@@ -1163,7 +1185,8 @@ function parseNHPRows(wb, uploadPeriod) {
     const commType = String(row[commTypeIdx + shift] || '').trim();
     const commClass = String(row[commClassIdx + shift] || '').trim();
     
-    if (!client) continue;
+    // Skip invalid client names (empty or statement artifacts)
+    if (!isValidClientName(client)) continue;
 
     // Determine LOB
     let lob;
@@ -1360,7 +1383,7 @@ function parseMolinaACARows(wb, filename) {
         }
       }
       
-      if (!client || commission === 0) continue;
+      if (!isValidClientName(client) || commission === 0) continue;
       
       records.push({
         agent: normalizeAgentName(agent) || 'The Health Experts Insurance',
@@ -1437,9 +1460,9 @@ function parseOscarIFPRows(wb, filename) {
       const policyNumber = String(row['Policy Number'] || row['Member ID'] || row['Subscriber ID'] || '').trim();
       const effectiveDate = formatDate(row['Effective Date'] || row['Policy Effective']);
       
-      // Debug: check if client is empty (this would also skip the row)
-      if (!client) {
-        console.log('[OSCAR-IFP] Row skipped due to empty client field. Member Name:', JSON.stringify(row['Member Name']), 'Subscriber name:', JSON.stringify(row['Subscriber name']));
+      // Debug: check if client is invalid (empty or statement artifact)
+      if (!isValidClientName(client)) {
+        console.log('[OSCAR-IFP] Row skipped - invalid client name. Member Name:', JSON.stringify(row['Member Name']), 'Subscriber name:', JSON.stringify(row['Subscriber name']));
       }
       
       // Period conversion: "2025-12-01" → "202512" (YYYY-MM-DD to YYYYMM)
@@ -1456,7 +1479,8 @@ function parseOscarIFPRows(wb, filename) {
         }
       }
       
-      if (!client) continue;
+      // Skip invalid client names (empty or statement artifacts)
+      if (!isValidClientName(client)) continue;
       
       parsedCount++;
       
@@ -1512,7 +1536,7 @@ function parseDevotedRows(wb, filename) {
       const effectiveDateRaw = String(row['Effective'] || row['Effective Date'] || '').trim();
       const typeRaw = String(row['Type'] || row['Classification'] || '').trim();
       
-      if (!client || commission === 0) continue;
+      if (!isValidClientName(client) || commission === 0) continue;
       
       // Parse period: "Mar 26" → "202603"
       let period = 'Unknown';
@@ -1783,7 +1807,7 @@ function parseHealthSunRows(ws, filename) {
     const planName = String(row['Product Plan Name'] || '').trim();
     const productType = String(row['Product Type'] || '').trim();
 
-    if (!client || commission === 0) continue;
+    if (!isValidClientName(client) || commission === 0) continue;
 
     // Parse period from Compensation Month (2026-05-01 → 202605)
     const periodMatch = compensationMonth.match(/^(\d{4})-(\d{2})/);
@@ -1838,7 +1862,7 @@ function parseAPLRows(wb) {
     const transactionType = String(row['Transaction Type'] || '').trim();
     const commission = parseFloat(row['Amount']) || 0;
 
-    if (!client || commission === 0) continue;
+    if (!isValidClientName(client) || commission === 0) continue;
 
     const carrier = carrierRaw.replace(/[-–].*delegated.*/i, '').replace(/[-–].*direct.*/i, '').trim();
     const normalizedCarrier = carrier.toLowerCase().includes('humana') ? 'Humana'
@@ -2092,7 +2116,7 @@ function parseAetnaDirectCSV(wb, filename) {
       }
       
       // Skip if no client name or zero commission
-      if (!client || payeeAmount === 0) continue;
+      if (!isValidClientName(client) || payeeAmount === 0) continue;
       
       // FIX #2: Period = Coverage Period date string → "202606"
       let period = '';
@@ -2230,7 +2254,7 @@ function parseSolisRows(wb, filename) {
     const paymentType = String(row['Payment Type'] || row['PaymentType'] || '').toLowerCase().replace(/\s+/g, ' ').trim();
     const policyNumber = String(row['Plan Member ID'] || row['PlanMemberID'] || '').trim();
 
-    if (!client || commission === 0) continue;
+    if (!isValidClientName(client) || commission === 0) continue;
 
     // Determine if New Business vs Renewal by comparing enrollment date to commission date
     let isNewBusiness = false;
@@ -3243,7 +3267,7 @@ function parseYourFMORows(wb, filename) {
       const effectiveDate = dateMatches[1] || dateMatches[0] || '';
       const amounts = cell1.match(/\$([\d,]+\.\d{2})/g) || [];
       const commission = amounts.length ? parseFloat(amounts[0].replace(/[$,]/g,'')) : 0;
-      if (!client || commission === 0) continue;
+      if (!isValidClientName(client) || commission === 0) continue;
       const isHRA = /HRA|BONUS/i.test(cell0);
       const classification = isHRA ? 'HRA/Bonus'
         : commission < 0 ? 'Chargeback'
