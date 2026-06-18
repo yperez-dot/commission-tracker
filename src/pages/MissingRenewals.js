@@ -141,6 +141,7 @@ export default function MissingRenewals({ user }) {
   const [selectedClient, setSelectedClient] = useState(null);
   const [clientRecords, setClientRecords] = useState([]);
   const [clientLoading, setClientLoading] = useState(false);
+  const [ignoredRows, setIgnoredRows] = useState(new Set());
 
   useEffect(() => {
     apiFetch('/records/filters').then(d => {
@@ -255,6 +256,7 @@ export default function MissingRenewals({ user }) {
           agent: client.agent_name || '—',
           carrier: client.carrier,
           effectiveDate: client.effective_date,
+          lastPaidPeriod: client.last_commission_date,
           commission,
           isMissing: matchedRecs.length === 0,
           monthsMissing: client.months_missing || 0,
@@ -265,6 +267,10 @@ export default function MissingRenewals({ user }) {
 
       built.sort((a, b) => {
         if (a.isMissing !== b.isMissing) return a.isMissing ? -1 : 1;
+        if (a.isMissing && b.isMissing) {
+          // Within Missing: highest months missing first (most urgent)
+          if (a.monthsMissing !== b.monthsMissing) return b.monthsMissing - a.monthsMissing;
+        }
         return a.agent.localeCompare(b.agent) || a.client.localeCompare(b.client);
       });
 
@@ -343,11 +349,15 @@ export default function MissingRenewals({ user }) {
   const agents = [...new Set(rows.map(r => r.agent).filter(Boolean))].sort();
   const carriers = [...new Set(rows.map(r => r.carrier).filter(Boolean))].sort();
 
-  const filtered = rows.filter(r =>
-    (!showMissingOnly || r.isMissing) &&
-    (!filterAgent || r.agent === filterAgent) &&
-    (!filterCarrier || r.carrier === filterCarrier)
-  );
+  const filtered = rows.filter(r => {
+    const rowKey = `${r.client}|${r.carrier}|${r.agent}`;
+    return (
+      (!showMissingOnly || r.isMissing) &&
+      (!filterAgent || r.agent === filterAgent) &&
+      (!filterCarrier || r.carrier === filterCarrier) &&
+      !ignoredRows.has(rowKey)
+    );
+  });
 
   const filteredMissing = filtered.filter(r => r.isMissing).length;
   const filteredPaid = filtered.filter(r => !r.isMissing).length;
@@ -511,33 +521,49 @@ export default function MissingRenewals({ user }) {
                           )}
                         </td>
                         <td style={{ fontSize:12,color:'var(--text-muted)' }}>
-                          {!r.lastPaidPeriod && !r.isMissing
+                          {!r.lastPaidPeriod
                             ? <span className="badge badge-blue">New</span>
-                            : r.monthsMissing > 0
-                              ? <span style={{ color:'var(--red)',fontWeight:500 }}>{r.monthsMissing} mo</span>
-                              : '—'
+                            : <span style={{ color: r.monthsMissing > 0 ? 'var(--red)' : 'var(--text-muted)', fontWeight: r.monthsMissing > 0 ? 500 : 400 }}>
+                                {r.monthsMissing} mo
+                              </span>
                           }
                         </td>
-                        <td style={{ fontSize:11 }}>
+                        <td
+                          style={{ fontSize:11,position:'relative' }}
+                          onMouseEnter={(e) => {
+                            const btns = e.currentTarget.querySelector('.action-buttons');
+                            if (btns) btns.style.display = 'flex';
+                          }}
+                          onMouseLeave={(e) => {
+                            const btns = e.currentTarget.querySelector('.action-buttons');
+                            if (btns) btns.style.display = 'none';
+                          }}
+                        >
                           {r.isMissing && (!r.policyStatus || r.policyStatus === 'active') && (
-                            <div style={{ display:'flex',gap:4 }}>
+                            <div className="action-buttons" style={{ display:'none',gap:4 }}>
                               <button
                                 onClick={() => updatePolicyStatus(r, 'termed')}
                                 style={{ padding:'3px 8px',fontSize:10,background:'var(--red)',color:'#fff',border:'none',borderRadius:4,cursor:'pointer',fontWeight:500 }}
+                                title="Mark as terminated - removes from list"
                               >
-                                Termed
+                                🔴 Termed
                               </button>
                               <button
                                 onClick={() => updatePolicyStatus(r, 'chase')}
                                 style={{ padding:'3px 8px',fontSize:10,background:'#F59E0B',color:'#fff',border:'none',borderRadius:4,cursor:'pointer',fontWeight:500 }}
+                                title="Mark as chasing - adds orange badge"
                               >
-                                Chase
+                                🟠 Chase
                               </button>
                               <button
-                                onClick={() => updatePolicyStatus(r, 'pending')}
-                                style={{ padding:'3px 8px',fontSize:10,background:'var(--text-muted)',color:'#fff',border:'none',borderRadius:4,cursor:'pointer',fontWeight:500 }}
+                                onClick={() => {
+                                  const rowKey = `${r.client}|${r.carrier}|${r.agent}`;
+                                  setIgnoredRows(prev => new Set([...prev, rowKey]));
+                                }}
+                                style={{ padding:'3px 8px',fontSize:10,background:'#666',color:'#fff',border:'none',borderRadius:4,cursor:'pointer',fontWeight:500 }}
+                                title="Hide this month only (session-only)"
                               >
-                                Pending
+                                ⚫ Ignore
                               </button>
                             </div>
                           )}
