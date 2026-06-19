@@ -3797,6 +3797,44 @@ function parseGoldKidneyRows(wb, filename) {
 }
 
 // ─── Duplicate Detection ──────────────────────────────────────────────────────
+
+// Check for duplicates WITHIN the current upload batch (before DB check)
+function findInternalDuplicates(records) {
+  if (!records.length) return [];
+  
+  const seen = new Map(); // key -> first occurrence
+  const duplicates = [];
+  
+  for (const r of records) {
+    if (!r.client || !r.carrier || !r.effectiveDate) continue;
+    
+    // Match key: client + carrier + effective_date + payment_period + classification
+    const key = `${r.client.toLowerCase()}|${r.carrier.toLowerCase()}|${r.effectiveDate}|${r.period || ''}|${(r.classification || '').toLowerCase()}`;
+    
+    if (seen.has(key)) {
+      // This is a duplicate within the batch
+      const first = seen.get(key);
+      duplicates.push({
+        client: r.client,
+        carrier: r.carrier,
+        date: r.effectiveDate,
+        amount: r.commission,
+        agent: r.agent,
+        period: r.period,
+        type: r.classification,
+        firstAmount: first.commission,
+        isDuplicate: true
+      });
+    } else {
+      seen.set(key, r);
+    }
+  }
+  
+  console.log(`[INTERNAL-DUPS] Checked ${records.length} records, found ${duplicates.length} internal duplicates`);
+  return duplicates;
+}
+
+// Check for duplicates against EXISTING database records
 async function findDuplicates(pool, records) {
   if (!records.length) return [];
   const filtered = records.filter(r => r.client && r.carrier && r.effectiveDate);
@@ -4111,7 +4149,26 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
 
     if (!records.length) return res.status(400).json({ error: 'No records found in file' });
 
-    // Duplicate detection
+    // STEP 1: Check for internal duplicates (within this batch)
+    const internalDuplicates = findInternalDuplicates(records);
+    if (internalDuplicates.length > 0) {
+      console.warn(`[UPLOAD] ⚠️ WARNING: ${internalDuplicates.length} internal duplicates detected in file`);
+      console.warn('[UPLOAD] File may have duplicate rows or parser processed same section multiple times');
+      console.warn('[UPLOAD] Sample duplicates:', internalDuplicates.slice(0, 3).map(d => `${d.client} | ${d.carrier} | ${d.period}`));
+      
+      // Return error before any insertion
+      try { fs.unlinkSync(req.file.path); } catch(e) {}
+      return res.status(409).json({
+        duplicateWarning: true,
+        sourceType: 'internal', // Internal duplicates (within file)
+        duplicateCount: internalDuplicates.length,
+        totalCount: records.length,
+        duplicates: internalDuplicates.slice(0, 23),
+        message: `This file contains ${internalDuplicates.length} duplicate records internally. The same client+carrier+period appears multiple times. Please check the source file or parser logic.`
+      });
+    }
+
+    // STEP 2: Duplicate detection against database
     const skipDuplicates = req.body.skipDuplicates === 'true';
     const ignoreDuplicates = req.body.ignoreDuplicates === 'true';
 

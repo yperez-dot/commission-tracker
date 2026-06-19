@@ -62,6 +62,73 @@ app.use('/api/agency-production', require('./routes/agencyproduction'));
 app.use('/api/ghl', require('./routes/ghl'));
 app.use('/api/loa-statements', require('./routes/loa-statements'));
 app.use('/api/admin-fixes', require('./routes/admin-fixes'));
+
+// ─── TEMPORARY: Upload 374 Duplicate Cleanup ────────────────────────────────
+// Remove after running once
+const { getPool } = require('./db/database');
+const { requireAuth } = require('./routes/auth');
+function requireAdmin(req, res, next) {
+  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
+  next();
+}
+
+app.delete('/api/admin/cleanup-upload-374', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const pool = getPool();
+    console.log('[CLEANUP-374] Starting duplicate cleanup for upload 374...');
+    
+    // First, count duplicates
+    const countResult = await pool.query(`
+      WITH duplicates AS (
+        SELECT id, ROW_NUMBER() OVER (
+          PARTITION BY client_full_name, carrier, payment_period, classification
+          ORDER BY id
+        ) as rn
+        FROM commission_records
+        WHERE upload_id = 374
+      )
+      SELECT COUNT(*) as duplicate_count
+      FROM duplicates
+      WHERE rn > 1
+    `);
+    
+    const duplicateCount = parseInt(countResult.rows[0].duplicate_count);
+    console.log(`[CLEANUP-374] Found ${duplicateCount} duplicate records`);
+    
+    if (duplicateCount === 0) {
+      return res.json({ message: 'No duplicates found', deleted: 0 });
+    }
+    
+    // Delete duplicates (keep first occurrence)
+    const deleteResult = await pool.query(`
+      WITH duplicates AS (
+        SELECT id, ROW_NUMBER() OVER (
+          PARTITION BY client_full_name, carrier, payment_period, classification
+          ORDER BY id
+        ) as rn
+        FROM commission_records
+        WHERE upload_id = 374
+      )
+      DELETE FROM commission_records
+      WHERE id IN (
+        SELECT id FROM duplicates WHERE rn > 1
+      )
+    `);
+    
+    console.log(`[CLEANUP-374] Deleted ${deleteResult.rowCount} duplicate records`);
+    
+    res.json({ 
+      success: true,
+      deleted: deleteResult.rowCount,
+      message: `Cleaned up ${deleteResult.rowCount} duplicate records from upload 374`
+    });
+  } catch (error) {
+    console.error('[CLEANUP-374] Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+// ─────────────────────────────────────────────────────────────────────────────
+
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
 
