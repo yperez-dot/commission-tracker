@@ -212,7 +212,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
 router.get('/', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
-    const { batch, status, limit = 100, offset = 0 } = req.query;
+    const { batch, status, limit = 10000, offset = 0 } = req.query;
 
     let query = 'SELECT * FROM medicarepro_sales WHERE 1=1';
     const params = [];
