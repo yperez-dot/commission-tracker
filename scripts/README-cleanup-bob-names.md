@@ -12,7 +12,8 @@ This script:
 1. Finds all BOB clients where `last_commission_amount = 0`
 2. Searches commission_records for fuzzy name matches (same carrier + agent)
 3. Updates BOB `client_full_name` to match commission_records format
-4. Logs all changes with policy numbers for verification
+4. **Automatically recalculates `last_commission_amount` and `last_commission_date`** for updated clients
+5. Logs all changes with policy numbers for verification
 
 ## Usage
 
@@ -58,6 +59,13 @@ Checking: "Maria Garcia" (UnitedHealthcare, Katy Robles)
   ✗ No match found in commission_records
 
 ============================================================
+RECALCULATING COMMISSION AMOUNTS
+============================================================
+Updating last_commission_amount and last_commission_date...
+
+✓ Recalculated commission amounts for 32 clients
+
+============================================================
 SUMMARY
 ============================================================
 Total clients checked: 47
@@ -65,8 +73,8 @@ Matches found: 32
 No matches: 15
 Names updated: 32
 
-⚠️  DRY RUN MODE - No changes applied
-Run with --apply to update the database
+✅ Changes applied to database
+✅ Commission amounts recalculated for updated clients
 ```
 
 ## Safety Features
@@ -76,6 +84,7 @@ Run with --apply to update the database
 - **Only updates active clients** - Leaves termed/deceased clients untouched
 - **Only updates clients with $0 commission** - Prevents overwriting valid data
 - **Detailed logging** - Every change shows old/new name + policy number
+- **Automatic commission recalculation** - After name updates, automatically updates `last_commission_amount` and `last_commission_date` from commission_records
 
 ## When to Run
 

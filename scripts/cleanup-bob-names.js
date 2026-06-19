@@ -229,6 +229,40 @@ async function main() {
       }
     }
     
+    // Step 2: Recalculate last_commission_amount for updated clients
+    if (!DRY_RUN && changes.length > 0) {
+      console.log('\n' + '='.repeat(60));
+      console.log('RECALCULATING COMMISSION AMOUNTS');
+      console.log('='.repeat(60));
+      console.log('Updating last_commission_amount and last_commission_date...\n');
+      
+      const recalcResult = await pool.query(`
+        UPDATE book_of_business b
+        SET 
+          last_commission_amount = subq.max_commission,
+          last_commission_date = TO_DATE(subq.max_period, 'YYYYMM'),
+          updated_at = NOW()
+        FROM (
+          SELECT 
+            cr.client_full_name, 
+            cr.carrier,
+            cr.agent_name,
+            MAX(cr.commission) as max_commission,
+            MAX(cr.payment_period) as max_period
+          FROM commission_records cr
+          WHERE cr.commission > 0
+          GROUP BY cr.client_full_name, cr.carrier, cr.agent_name
+        ) subq
+        WHERE LOWER(TRIM(b.client_full_name)) = LOWER(TRIM(subq.client_full_name))
+          AND LOWER(TRIM(b.carrier)) = LOWER(TRIM(subq.carrier))
+          AND LOWER(TRIM(b.agent_name)) = LOWER(TRIM(subq.agent_name))
+          AND b.status = 'active'
+          AND b.id IN (${changes.map(c => c.id).join(', ')})
+      `);
+      
+      console.log(`✓ Recalculated commission amounts for ${recalcResult.rowCount} clients\n`);
+    }
+    
     console.log('\n' + '='.repeat(60));
     console.log('SUMMARY');
     console.log('='.repeat(60));
@@ -251,6 +285,7 @@ async function main() {
         console.log('Run with --apply to update the database');
       } else {
         console.log('\n✅ Changes applied to database');
+        console.log('✅ Commission amounts recalculated for updated clients');
       }
     }
     
