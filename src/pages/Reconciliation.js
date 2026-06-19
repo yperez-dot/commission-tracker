@@ -187,7 +187,7 @@ export default function Reconciliation({ user }) {
   const [commissions, setCommissions] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [tab, setTab] = useState('summary');
+  const [tab, setTab] = useState('unpaid');
   const [filterAgent, setFilterAgent] = useState('all');
   const [filterCarrier, setFilterCarrier] = useState('all');
   const [filterPeriod, setFilterPeriod] = useState('all');
