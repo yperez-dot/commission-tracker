@@ -3632,6 +3632,17 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         try { fs.unlinkSync(req.file.path); } catch(e) {}
         return res.status(400).json({ error: 'No records found in THE statement PDF.' });
       }
+    } else if (isNHPAgencyStatementPDF(req.file.originalname)) {
+      console.log('[UPLOAD] Using NHP Agency Statement PDF parser');
+      if (!pdfParse) {
+        try { fs.unlinkSync(req.file.path); } catch(e) {}
+        return res.status(500).json({ error: 'PDF parsing not available on server.' });
+      }
+      records = await parseNHPAgencyStatementPDF(req.file.path, req.file.originalname);
+      if (!records.length) {
+        try { fs.unlinkSync(req.file.path); } catch(e) {}
+        return res.status(400).json({ error: 'No records found in NHP Agency Statement PDF. Verify this is an NHP agency override statement.' });
+      }
     } else if (isBSIConsolidatedPDF(req.file.originalname)) {
       if (!pdfParse) {
         try { fs.unlinkSync(req.file.path); } catch(e) {}
@@ -3661,17 +3672,6 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       if (!records.length) {
         try { fs.unlinkSync(req.file.path); } catch(e) {}
         return res.status(400).json({ error: 'No records found in PDF. Verify this is a Mutual of Omaha commission statement.' });
-      }
-    } else if (isNHPAgencyStatementPDF(req.file.originalname)) {
-      console.log('[UPLOAD] Using NHP Agency Statement PDF parser');
-      if (!pdfParse) {
-        try { fs.unlinkSync(req.file.path); } catch(e) {}
-        return res.status(500).json({ error: 'PDF parsing not available on server.' });
-      }
-      records = await parseNHPAgencyStatementPDF(req.file.path, req.file.originalname);
-      if (!records.length) {
-        try { fs.unlinkSync(req.file.path); } catch(e) {}
-        return res.status(400).json({ error: 'No records found in NHP Agency Statement PDF. Verify this is an NHP agency override statement.' });
       }
     } else if (isHumanaPDF(req.file.originalname)) {
       if (!pdfParse) {
