@@ -1100,6 +1100,18 @@ function parseBSIRows(wb, filename) {
     // Skip invalid client names (empty or statement artifacts)
     if (!isValidClientName(client)) continue;
     
+    // FIX: Determine classification by commission amount (same as PDF parser)
+    let classification;
+    if (commission < 0) {
+      classification = 'Chargeback';
+    } else if (Math.abs(commission) >= 300) {
+      classification = 'New Business';
+    } else if (Math.abs(commission) >= 20) {
+      classification = 'Renewal';
+    } else {
+      classification = 'Agency Override';
+    }
+    
     const carrier = normalizeBSICarrier(company);
     records.push({
       agent: agent || 'The Health Experts Insurance',
@@ -1109,7 +1121,7 @@ function parseBSIRows(wb, filename) {
       effectiveDate,
       premium: 0,
       commission,
-      classification: commission < 0 ? 'Chargeback' : 'Agency Override',
+      classification,
       period: filePeriod,
       policyNumber,
       payee: 'BSI',
@@ -2551,9 +2563,29 @@ async function parseBSIPDF(filePath, filename) {
     const data = await pdfParse(dataBuffer);
     const text = data.text;
 
-    const periodMatch = text.match(/(JANUARY|FEBRUARY|MARCH|APRIL|MAY|JUNE|JULY|AUGUST|SEPTEMBER|OCTOBER|NOVEMBER|DECEMBER)\s+STATEMENT\s+(\d{4})/i);
+    // FIX: More flexible period extraction
+    const periodMatch = text.match(/(JANUARY|FEBRUARY|MARCH|APRIL|MAY|JUNE|JULY|AUGUST|SEPTEMBER|OCTOBER|NOVEMBER|DECEMBER)\s+STATEMENT\s+(\d{4})/i)
+      || text.match(/(JANUARY|FEBRUARY|MARCH|APRIL|MAY|JUNE|JULY|AUGUST|SEPTEMBER|OCTOBER|NOVEMBER|DECEMBER)\s+(\d{4})/i)
+      || text.match(/Statement Date[:\s]+(\d{1,2})\/(\d{1,2})\/(\d{4})/i)
+      || filename.match(/(\d{4})[-_](\d{2})/);  // Fallback to filename YYYY-MM
+    
     const monthMap = { JANUARY:'01', FEBRUARY:'02', MARCH:'03', APRIL:'04', MAY:'05', JUNE:'06', JULY:'07', AUGUST:'08', SEPTEMBER:'09', OCTOBER:'10', NOVEMBER:'11', DECEMBER:'12' };
-    const period = periodMatch ? `${periodMatch[2]}${monthMap[periodMatch[1].toUpperCase()]}` : 'Unknown';
+    
+    let period = 'Unknown';
+    if (periodMatch) {
+      if (periodMatch[3] && periodMatch[4]) {
+        // Statement Date: MM/DD/YYYY format
+        period = `${periodMatch[4]}${periodMatch[3].padStart(2, '0')}`;
+      } else if (monthMap[periodMatch[1]?.toUpperCase()]) {
+        // Month name + year
+        period = `${periodMatch[2]}${monthMap[periodMatch[1].toUpperCase()]}`;
+      } else if (periodMatch[1] && periodMatch[2]) {
+        // Filename YYYY-MM
+        period = periodMatch[1] + periodMatch[2];
+      }
+    }
+    
+    console.log('[BSI-PDF] Extracted period:', period, 'from:', periodMatch ? periodMatch[0] : 'no match');
 
     const sectionRegex = /Detailed Compensation Statement\s*\(([^)]+)\)/gi;
     const sections = [];
@@ -2649,6 +2681,21 @@ async function parseBSIPDF(filePath, filename) {
 
         const isChargeback = commission < 0;
         
+        // FIX: Determine classification by commission amount (Humana/Medicare commission tiers)
+        // New Business: $300+ (first year)
+        // Renewal: $20-$100 (ongoing)
+        // Agency Override: <$10 (small override)
+        let classification;
+        if (isChargeback) {
+          classification = 'Chargeback';
+        } else if (Math.abs(commission) >= 300) {
+          classification = 'New Business';
+        } else if (Math.abs(commission) >= 20) {
+          classification = 'Renewal';
+        } else {
+          classification = 'Agency Override';
+        }
+        
         const BSI_SPLIT_START_DATE = '2025-09-01';
         const isBsiEligible = effectiveDate && effectiveDate >= BSI_SPLIT_START_DATE;
         const splitApplies = shouldSplit(agent, carrier) && isBsiEligible;
@@ -2673,7 +2720,7 @@ async function parseBSIPDF(filePath, filename) {
           client,
           effectiveDate,
           commission: theiShare,
-          classification: isChargeback ? 'Chargeback' : 'Agency Override',
+          classification,
           period,
           policyNumber,
           payee: 'BSI',
