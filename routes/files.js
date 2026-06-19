@@ -8,6 +8,7 @@ const Anthropic = require('@anthropic-ai/sdk');
 const { getPool } = require('../db/database');
 const { requireAuth } = require('./auth');
 const { normalizeAgentName } = require('./normalize');
+const { detectPlanChanges } = require('./planChanges');
 let pdfParse;
 try { pdfParse = require('pdf-parse'); } catch(e) { console.log('pdf-parse not installed'); }
 
@@ -4206,6 +4207,12 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     }
 
     try { fs.unlinkSync(req.file.path); } catch (e) {}
+    
+    // Run plan change detection asynchronously (don't block response)
+    detectPlanChanges(pool, uploadId).catch(err => {
+      console.error('[UPLOAD] Plan change detection failed:', err.message);
+    });
+    
     res.json({ uploadId, filename: req.file.originalname, rowCount: records.length, commissionSum, carriers, preview: records.slice(0, 5) });
 
   } catch (err) {

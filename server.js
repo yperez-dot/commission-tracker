@@ -52,6 +52,8 @@ app.use('/api/auth', require('./routes/auth'));
 app.use('/api/files', require('./routes/files'));
 app.use('/api/records', require('./routes/records'));
 app.use('/api/bob', require('./routes/bob'));
+const { router: planChangesRouter } = require('./routes/planChanges');
+app.use('/api/plan-changes', planChangesRouter);
 app.use('/api/payroll', require('./routes/payroll'));
 app.use('/api/agent-statements', require('./routes/agent_statements'));
 app.use('/api/sales-tracker', require('./routes/sales-tracker'));
