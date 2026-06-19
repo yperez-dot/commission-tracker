@@ -94,21 +94,9 @@ function datesMatch(date1, date2) {
   }
 }
 
-// Check if two dates are within 3 months of each other
-function datesWithin3Months(date1, date2) {
-  if (!date1 || !date2) return false;
-  try {
-    const d1 = new Date(date1.split('T')[0]);
-    const d2 = new Date(date2.split('T')[0]);
-    const diffMs = Math.abs(d1.getTime() - d2.getTime());
-    const diffMonths = diffMs / (1000 * 60 * 60 * 24 * 30); // Approximate months
-    return diffMonths <= 3;
-  } catch {
-    return false;
-  }
-}
-
 // Find matching commission for a sale (including manual payments)
+// Period-agnostic: If commission exists for client + carrier, count as Paid
+// New Business records often have blank periods, so don't require period/date match
 function findMatch(sale, commissions, manualPayments = []) {
   // Check manual payments first
   const saleAgent = sale.agent_name || sale.agent;
@@ -122,33 +110,26 @@ function findMatch(sale, commissions, manualPayments = []) {
     return { ...manualMatch, isManual: true };
   }
   
-  // Use normName() for better client matching (same as Missing Renewals)
+  // Use normName() for fuzzy client matching (same as Missing Renewals)
   const saleClientNorm = normName(sale.client_name);
-  const agent = normalizeAgentName(sale.agent_name || sale.agent);
   const carrier = normalizeCarrier(sale.carrier);
   
   for (const comm of commissions) {
     const commClientNorm = normName(comm.client_full_name);
-    const commAgent = normalizeAgentName(comm.agent_name);
     const commCarrier = normalizeCarrier(comm.carrier);
     
     // Client name match using normName() (handles "LAST FIRST" vs "FIRST LAST")
     const clientMatch = saleClientNorm === commClientNorm;
     
-    // Agent name match
-    const agentMatch = agent === commAgent || 
-                       agent.includes(commAgent) || 
-                       commAgent.includes(agent);
-    
     // Carrier match
     const carrierMatch = carrier === commCarrier || carrier.includes(commCarrier) || commCarrier.includes(carrier);
     
-    // Date match - allow ±3 months from effective date (more lenient)
-    const dateMatch = datesWithin3Months(sale.effective_date, comm.effective_date);
-    
-    // Require: client + carrier + date within 3 months
-    // Agent match is bonus but not required (handles sub-agent sales)
-    if (clientMatch && carrierMatch && dateMatch) {
+    // PERIOD-AGNOSTIC: Only require client + carrier match
+    // Don't check date/period because:
+    // 1. New Business records often have blank periods
+    // 2. Commission processing can be delayed
+    // 3. If they got paid for this client+carrier combo, count it as Paid
+    if (clientMatch && carrierMatch) {
       return comm;
     }
   }
