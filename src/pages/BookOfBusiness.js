@@ -199,6 +199,67 @@ export default function BookOfBusiness({ user }) {
     }
   }
 
+  async function exportCSV() {
+    try {
+      // Build same params as loadClients to get ALL matching records
+      const params = new URLSearchParams();
+      if (filterCarrier) params.set('carrier', filterCarrier);
+      if (filterAgent) params.set('agent', filterAgent);
+      if (filterLOB) params.set('lob', filterLOB);
+      if (filterStatus) params.set('status', filterStatus);
+      
+      // Fetch ALL matching records
+      const allData = await apiFetch(`/bob?${params}`);
+      
+      // Apply search filter client-side if present
+      const filteredData = search.trim()
+        ? allData.filter(c =>
+            c.client_full_name?.toLowerCase().includes(search.toLowerCase()) ||
+            c.agent_name?.toLowerCase().includes(search.toLowerCase()) ||
+            c.carrier?.toLowerCase().includes(search.toLowerCase())
+          )
+        : allData;
+      
+      // Build CSV
+      const headers = ['Client name', 'Agent', 'Carrier', 'Effective date', 'Last commission date', 'Last commission amount', 'Status', 'LOB'];
+      const rows = filteredData.map(c => {
+        let status = 'Active';
+        if (c.status === 'termed') {
+          status = c.resolution || 'Termed';
+        } else if (c.resolution && c.resolution !== '') {
+          status = c.resolution;
+        }
+        
+        return [
+          c.client_full_name || '',
+          c.agent_name || '',
+          formatCarrier(c.carrier) || '',
+          formatDate(c.effective_date) || '',
+          formatDate(c.last_commission_date) || '',
+          c.last_commission_amount || '',
+          status,
+          c.lob || ''
+        ];
+      });
+      
+      const csv = [headers, ...rows]
+        .map(r => r.map(v => `"${String(v||'').replace(/"/g,'""')}"`).join(','))
+        .join('\n');
+      
+      const blob = new Blob([csv], { type: 'text/csv' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const today = new Date().toISOString().split('T')[0];
+      a.href = url;
+      a.download = `BOB_Export_${today}.csv`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      console.error('Export error:', e);
+      alert('Error exporting data. Please try again.');
+    }
+  }
+
   async function handleBOBUpload(e) {
     const file = e.target.files[0];
     if (!file || !uploadCarrier) return;
@@ -360,6 +421,7 @@ export default function BookOfBusiness({ user }) {
               {search && (
                 <button onClick={()=>setSearch('')} style={{background:'none',border:'none',cursor:'pointer',fontSize:12,color:'var(--text-muted)',padding:'0 4px'}}>✕ Clear</button>
               )}
+              <button className="btn" onClick={exportCSV} disabled={!sortedClients.length} style={{ fontSize: 12, marginLeft: 'auto' }}>↓ Export</button>
             </div>
 
             {selectedIds.length > 0 && (
