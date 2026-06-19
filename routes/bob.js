@@ -798,6 +798,34 @@ router.get('/coverage', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'period required' });
     }
 
+    // Carriers that report through NHP consolidator (not separate statements)
+    const NHP_CONSOLIDATED_CARRIERS = [
+      'avmed',
+      'cigna', // Sometimes direct, sometimes NHP - if NHP uploaded, don't warn
+      'oscar',
+      'oscar health',
+      'molina',
+      'elevance',
+      'elevance medicare',
+      'wellcare',
+      'simply',
+      'florida blue' // Sometimes consolidated through NHP
+    ];
+    
+    // Carriers that report through BSI consolidator
+    const BSI_CONSOLIDATED_CARRIERS = [
+      'mutual of omaha',
+      'united of omaha',
+      'fidelity life',
+      'fidelity & guaranty',
+      'f&g',
+      'american amicable',
+      'transamerica',
+      'ethos',
+      'american home life',
+      'national life group'
+    ];
+
     // Get all carriers in Book of Business
     const bobCarriers = await pool.query(
       `SELECT DISTINCT carrier FROM book_of_business WHERE carrier IS NOT NULL AND carrier != '' ORDER BY carrier`
@@ -811,14 +839,54 @@ router.get('/coverage', requireAuth, async (req, res) => {
 
     const covered = new Set(coveredCarriers.rows.map(r => r.carrier.toLowerCase().trim()));
 
+    // Check if NHP statement uploaded for this period
+    const nhpUploaded = await pool.query(
+      `SELECT COUNT(*) as count FROM commission_records 
+       WHERE payment_period = $1 
+       AND (payee = 'NHP' OR LOWER(carrier) LIKE '%nhp%')
+       LIMIT 1`,
+      [period]
+    );
+    const hasNHP = parseInt(nhpUploaded.rows[0]?.count || 0) > 0;
+    
+    // Check if BSI statement uploaded for this period
+    const bsiUploaded = await pool.query(
+      `SELECT COUNT(*) as count FROM commission_records 
+       WHERE payment_period = $1 
+       AND payee = 'BSI'
+       LIMIT 1`,
+      [period]
+    );
+    const hasBSI = parseInt(bsiUploaded.rows[0]?.count || 0) > 0;
+
     const missing = bobCarriers.rows
-      .filter(r => !covered.has(r.carrier.toLowerCase().trim()))
+      .filter(r => {
+        const carrierLower = r.carrier.toLowerCase().trim();
+        
+        // If carrier has direct statement, not missing
+        if (covered.has(carrierLower)) return false;
+        
+        // If carrier reports through NHP and NHP uploaded, not missing
+        if (hasNHP && NHP_CONSOLIDATED_CARRIERS.some(nhp => carrierLower.includes(nhp))) {
+          return false;
+        }
+        
+        // If carrier reports through BSI and BSI uploaded, not missing
+        if (hasBSI && BSI_CONSOLIDATED_CARRIERS.some(bsi => carrierLower.includes(bsi))) {
+          return false;
+        }
+        
+        // Otherwise, missing
+        return true;
+      })
       .map(r => r.carrier);
 
     res.json({
       period,
       covered: coveredCarriers.rows.map(r => r.carrier),
-      missingStatements: missing
+      missingStatements: missing,
+      hasNHP, // Include for debugging
+      hasBSI  // Include for debugging
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
