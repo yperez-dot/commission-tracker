@@ -454,6 +454,14 @@ function isMutualOmahaPDF(filename) {
   );
 }
 
+function isNHPAgencyStatementPDF(filename) {
+  const f = filename.toLowerCase().replace(/\s+/g, '_');
+  return f.endsWith('.pdf') && (
+    f.includes('agency-statement-the_health_experts_insurance') ||
+    f.includes('agency_statement_the_health_experts_insurance')
+  );
+}
+
 // ─── Date formatting ─────────────────────────────────────────────────────────
 
 function formatDate(value) {
@@ -3238,6 +3246,136 @@ async function parseMutualOmahaPDF(filePath, filename) {
   return records;
 }
 
+async function parseNHPAgencyStatementPDF(filePath, filename) {
+  const records = [];
+  if (!pdfParse) { console.error('pdf-parse not installed'); return records; }
+  
+  try {
+    const dataBuffer = fs.readFileSync(filePath);
+    const data = await pdfParse(dataBuffer);
+    const text = data.text;
+    const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+
+    // Derive batch from upload date
+    const now = new Date();
+    const batch = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+    // Helper: parse "May 1, 2026" → "202605" (YYYYMM)
+    const parseCommissionDateToPeriod = (dateStr) => {
+      try {
+        const d = new Date(dateStr);
+        if (isNaN(d)) return null;
+        return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`;
+      } catch (err) {
+        return null;
+      }
+    };
+
+    // Helper: Title Case
+    const toTitleCase = (str) =>
+      str.trim().toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+
+    let currentCarrier = null;
+    let currentLOB = null;
+    let currentAgent = null;
+    let currentNPN = null;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+
+      // Detect section header: "Oscar · ACA"
+      const sectionMatch = line.match(/^(\w+)\s*·\s*(ACA|Medicare|Life)$/i);
+      if (sectionMatch) {
+        currentCarrier = sectionMatch[1].trim();
+        currentLOB = sectionMatch[2].trim().toUpperCase();
+        // Map carrier name
+        if (currentCarrier.toLowerCase() === 'oscar') {
+          currentCarrier = 'Oscar Health';
+        }
+        console.log(`[NHP] Section: ${currentCarrier} · ${currentLOB}`);
+        continue;
+      }
+
+      // Detect agent header: "Eduardo Pernia · NPN 17676534"
+      const agentMatch = line.match(/^(.+?)\s*·\s*NPN\s+(\d+)$/i);
+      if (agentMatch) {
+        currentAgent = toTitleCase(agentMatch[1].trim());
+        currentNPN = agentMatch[2].trim();
+        console.log(`[NHP] Agent: ${currentAgent} (NPN ${currentNPN})`);
+        continue;
+      }
+
+      // Skip non-data lines
+      if (!currentCarrier || !currentAgent) continue;
+      if (line.startsWith('Policy') || line.startsWith('Commission Date') || line.startsWith('Name')) continue;
+      if (line.startsWith('Agent subtotal') || line.startsWith('Generated ') || line.startsWith('Agency Statement')) continue;
+
+      // Parse concatenated row: OSC75522291-01May 1, 2026Michelle DayFL2$7.00$7.00
+      // Format: POLICY + DATE + CLIENT + STATE + LIVES + $AMOUNT + $TOTAL
+      // Policy: OSC########-##
+      // Date: "May 1, 2026" or "Apr 1, 2026"
+      // Client: Name (may include spaces, hyphens)
+      // State: 2-letter
+      // Lives: digit(s)
+      // Commission: $#.##
+      // Total: $#.## (we'll use Commission column)
+      
+      const rowMatch = line.match(/^(OSC\d{8}-\d{2})([A-Za-z]{3}\s+\d{1,2},\s+\d{4})(.+?)([A-Z]{2})(\d+)\$([\d,]+\.\d{2})\$([\d,]+\.\d{2})$/);
+      
+      if (rowMatch) {
+        const policy = rowMatch[1].trim();
+        const commDate = rowMatch[2].trim();
+        const client = rowMatch[3].trim();
+        const state = rowMatch[4].trim();
+        const members = parseInt(rowMatch[5].trim());
+        const amount = parseFloat(rowMatch[6].replace(/,/g, ''));
+
+        const paymentPeriod = parseCommissionDateToPeriod(commDate);
+
+        if (!paymentPeriod) {
+          console.log(`[NHP] Skip - invalid date: ${commDate}`);
+          continue;
+        }
+
+        // Validate: Lives × $3.50 should equal commission (ACA rate)
+        const expectedAmount = members * 3.50;
+        if (Math.abs(amount - expectedAmount) > 0.01) {
+          console.log(`[NHP] Warning - amount mismatch: ${policy} (expected $${expectedAmount.toFixed(2)}, got $${amount.toFixed(2)})`);
+        }
+
+        console.log(`[NHP] Record: ${currentAgent} | ${client} | ${policy} | $${amount}`);
+
+        records.push({
+          policy_number: policy,
+          client_full_name: toTitleCase(client),
+          payment_period: paymentPeriod,
+          effective_date: null,  // Not available in statement
+          carrier: currentCarrier,
+          lob: currentLOB,
+          state: state,
+          members: members,
+          amount: amount,
+          agent_name: currentAgent,
+          writing_agent_npn: currentNPN,
+          commission_type: 'Renewal',  // All ACA records are recurring
+          record_type: 'Agency Override',
+          payee: 'NHP',
+          batch: batch,
+          source_file: filename,
+          upload_date: now.toISOString(),
+          raw: {}
+        });
+      }
+    }
+
+    console.log(`[NHP] Total records parsed: ${records.length}`);
+  } catch (err) {
+    console.error('parseNHPAgencyStatementPDF error:', err.message);
+  }
+  
+  return records;
+}
+
 function parseYourFMORows(wb, filename) {
   const records = [];
   try {
@@ -3522,6 +3660,17 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       if (!records.length) {
         try { fs.unlinkSync(req.file.path); } catch(e) {}
         return res.status(400).json({ error: 'No records found in PDF. Verify this is a Mutual of Omaha commission statement.' });
+      }
+    } else if (isNHPAgencyStatementPDF(req.file.originalname)) {
+      console.log('[UPLOAD] Using NHP Agency Statement PDF parser');
+      if (!pdfParse) {
+        try { fs.unlinkSync(req.file.path); } catch(e) {}
+        return res.status(500).json({ error: 'PDF parsing not available on server.' });
+      }
+      records = await parseNHPAgencyStatementPDF(req.file.path, req.file.originalname);
+      if (!records.length) {
+        try { fs.unlinkSync(req.file.path); } catch(e) {}
+        return res.status(400).json({ error: 'No records found in NHP Agency Statement PDF. Verify this is an NHP agency override statement.' });
       }
     } else if (isHumanaPDF(req.file.originalname)) {
       if (!pdfParse) {
