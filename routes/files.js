@@ -3638,6 +3638,163 @@ function parseYourFMOXLSXRows(wb) {
   return records;
 }
 
+// ─── Gold Kidney Parser ───────────────────────────────────────────────────────
+
+function isGoldKidneyFile(wb) {
+  if (!wb || !wb.SheetNames) return false;
+  
+  // Must have both 'Summary' and 'Detail' sheets
+  const hasRequiredSheets = wb.SheetNames.includes('Summary') && wb.SheetNames.includes('Detail');
+  if (!hasRequiredSheets) return false;
+  
+  // Check Detail sheet for required columns
+  const detailSheet = wb.Sheets['Detail'];
+  if (!detailSheet) return false;
+  
+  const data = XLSX.utils.sheet_to_json(detailSheet, { header: 1, defval: '', range: 0 });
+  if (data.length < 2) return false;
+  
+  const headers = data[0].map(h => String(h || '').trim());
+  const hasRepName = headers.some(h => h === 'Rep Name');
+  const hasMemberHIC = headers.some(h => h === 'Member HIC');
+  
+  return hasRepName && hasMemberHIC;
+}
+
+function parseGoldKidneyRows(wb, filename) {
+  const records = [];
+  
+  try {
+    const detailSheet = wb.Sheets['Detail'];
+    if (!detailSheet) {
+      console.error('[GOLD_KIDNEY] Detail sheet not found');
+      return records;
+    }
+    
+    const data = XLSX.utils.sheet_to_json(detailSheet, { header: 1, defval: '' });
+    if (data.length < 2) {
+      console.error('[GOLD_KIDNEY] No data rows found');
+      return records;
+    }
+    
+    const headers = data[0].map(h => String(h || '').trim());
+    const colIdx = {};
+    
+    // Map column indices
+    headers.forEach((h, i) => {
+      if (h === 'Rep Name') colIdx.repName = i;
+      if (h === 'NPN') colIdx.npn = i;
+      if (h === 'Member First Name') colIdx.memberFirst = i;
+      if (h === 'Member Last Name') colIdx.memberLast = i;
+      if (h === 'Member ID') colIdx.memberId = i;
+      if (h === 'Member HIC') colIdx.memberHIC = i;
+      if (h === 'Effective Date') colIdx.effectiveDate = i;
+      if (h === 'Payment') colIdx.payment = i;
+      if (h === 'Plan Group Name') colIdx.planGroup = i;
+      if (h === 'Member Year') colIdx.memberYear = i;
+      if (h === 'Level') colIdx.level = i;
+    });
+    
+    // Extract period from filename: JANUARY_2026 → 202601
+    let period = '';
+    const monthMap = {
+      JANUARY: '01', FEBRUARY: '02', MARCH: '03', APRIL: '04',
+      MAY: '05', JUNE: '06', JULY: '07', AUGUST: '08',
+      SEPTEMBER: '09', OCTOBER: '10', NOVEMBER: '11', DECEMBER: '12'
+    };
+    
+    const fnUpper = String(filename || '').toUpperCase();
+    for (const [monthName, monthNum] of Object.entries(monthMap)) {
+      const match = fnUpper.match(new RegExp(`${monthName}[_\\s]*(\\d{4})`));
+      if (match) {
+        period = match[1] + monthNum;
+        break;
+      }
+    }
+    
+    // Fallback: Use upload date
+    if (!period) {
+      const now = new Date();
+      period = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+    }
+    
+    console.log('[GOLD_KIDNEY] Extracted period:', period);
+    console.log('[GOLD_KIDNEY] Column indices:', colIdx);
+    console.log('[GOLD_KIDNEY] Processing', data.length - 1, 'data rows');
+    
+    // Process data rows
+    for (let i = 1; i < data.length; i++) {
+      const row = data[i];
+      
+      const repName = String(row[colIdx.repName] || '').trim();
+      const npn = String(row[colIdx.npn] || '').trim();
+      const memberFirst = String(row[colIdx.memberFirst] || '').trim();
+      const memberLast = String(row[colIdx.memberLast] || '').trim();
+      const memberId = String(row[colIdx.memberId] || '').trim();
+      const memberHIC = String(row[colIdx.memberHIC] || '').trim();
+      const effectiveDateRaw = row[colIdx.effectiveDate];
+      const payment = parseFloat(row[colIdx.payment]) || 0;
+      const planGroup = String(row[colIdx.planGroup] || '').trim();
+      const memberYear = row[colIdx.memberYear];
+      const level = String(row[colIdx.level] || '').trim();
+      
+      // Skip empty rows
+      if (!memberFirst || !memberLast || payment === 0) continue;
+      
+      // Combine first + last name, title case
+      const clientFullName = `${memberFirst} ${memberLast}`
+        .split(' ')
+        .map(word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+        .join(' ');
+      
+      const effectiveDate = formatDate(effectiveDateRaw);
+      
+      // Classification logic based on Member Year
+      let classification;
+      if (payment < 0) {
+        classification = 'Chargeback';
+      } else if (memberYear === 1 || memberYear === '1') {
+        classification = 'New Business';
+      } else if (memberYear > 1 || (typeof memberYear === 'string' && parseInt(memberYear) > 1)) {
+        classification = 'Renewal';
+      } else {
+        classification = 'Agent Commission';
+      }
+      
+      const agent = normalizeAgentName(repName) || 'The Health Experts Insurance';
+      
+      records.push({
+        agent,
+        carrier: 'Gold Kidney',
+        planType: planGroup || 'Gold Kidney Med Adv',
+        client: clientFullName,
+        effectiveDate,
+        premium: 0,
+        commission: payment,
+        classification,
+        period,
+        policyNumber: memberId,
+        payee: 'Gold Kidney',
+        lob: 'MA',
+        raw: {
+          npn,
+          memberHIC,
+          memberYear,
+          level
+        }
+      });
+    }
+    
+    console.log('[GOLD_KIDNEY] Parsed', records.length, 'records');
+    console.log('[GOLD_KIDNEY] Total commission:', records.reduce((sum, r) => sum + r.commission, 0).toFixed(2));
+    
+  } catch (err) {
+    console.error('[GOLD_KIDNEY] Parser error:', err.message);
+  }
+  
+  return records;
+}
+
 // ─── Duplicate Detection ──────────────────────────────────────────────────────
 async function findDuplicates(pool, records) {
   if (!records.length) return [];
@@ -3824,6 +3981,10 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         console.log('[UPLOAD] ✓ Oscar IFP detection MATCHED!');
         console.log('[UPLOAD] Using Oscar IFP parser');
         records = parseOscarIFPRows(wb, req.file.originalname);
+      } else if ((console.log('[UPLOAD] Testing Gold Kidney...'), isGoldKidneyFile(wb))) {
+        console.log('[UPLOAD] ✓ Gold Kidney detection MATCHED!');
+        console.log('[UPLOAD] Using Gold Kidney parser');
+        records = parseGoldKidneyRows(wb, req.file.originalname);
       } else if (isMolinaACAFile(req.file.originalname)) {
         records = parseMolinaACARows(wb, req.file.originalname);
       } else if (isNHPFile(req.file.originalname)) {
