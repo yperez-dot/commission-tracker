@@ -133,7 +133,7 @@ function agencyFilter(req, alias) {
 router.get('/', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
-    const { carrier, agent, status, missing, lob } = req.query;
+    const { carrier, carriers, agent, agents, status, missing, lob, lobs } = req.query;
     let where = ['1=1'];
     let params = [];
     let idx = 1;
@@ -142,8 +142,20 @@ router.get('/', requireAuth, async (req, res) => {
       const af = agencyFilter(req, null);
       if (af) { where.push(af); }
     }
-    if (carrier) { where.push(`b.carrier = $${idx++}`); params.push(carrier); }
-    if (agent) { where.push(`b.agent_name = $${idx++}`); params.push(agent); }
+    // Support both single and multiple carriers
+    if (carriers) { 
+      const list = carriers.split(',').map(c=>c.trim()).filter(Boolean); 
+      if (list.length) { where.push(`b.carrier = ANY($${idx++})`); params.push(list); } 
+    } else if (carrier) { 
+      where.push(`b.carrier = $${idx++}`); params.push(carrier); 
+    }
+    // Support both single and multiple agents
+    if (agents) { 
+      const list = agents.split(',').map(a=>a.trim()).filter(Boolean); 
+      if (list.length) { where.push(`b.agent_name = ANY($${idx++})`); params.push(list); } 
+    } else if (agent) { 
+      where.push(`b.agent_name = $${idx++}`); params.push(agent); 
+    }
     if (status === 'never_paid') {
       where.push(`(b.last_commission_amount = 0 OR b.last_commission_date IS NULL)`);
     } else if (status) {
@@ -151,11 +163,19 @@ router.get('/', requireAuth, async (req, res) => {
       params.push(status);
     }
     if (missing === 'true') { where.push(`b.months_missing > 0 AND b.status = 'active'`); }
-    if (lob) { where.push(`($${idx} = 'all' OR LOWER(cr.lob) = LOWER($${idx}))`); params.push(lob); idx++; }
+    
+    // Support both single and multiple LOBs
+    const hasLobFilter = lobs || lob;
+    if (lobs) {
+      const list = lobs.split(',').map(l=>l.trim()).filter(Boolean);
+      if (list.length) { where.push(`LOWER(cr.lob) = ANY($${idx++}::text[])`); params.push(list.map(l=>l.toLowerCase())); }
+    } else if (lob) {
+      where.push(`($${idx} = 'all' OR LOWER(cr.lob) = LOWER($${idx}))`); params.push(lob); idx++;
+    }
     
     // If LOB filter is present, join with commission_records to get LOB
     let query;
-    if (lob) {
+    if (hasLobFilter) {
       query = `
         SELECT DISTINCT ON (b.id) b.*
         FROM book_of_business b

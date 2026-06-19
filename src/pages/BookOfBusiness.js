@@ -10,15 +10,78 @@ function fmt(n) {
 const CARRIERS = ['UnitedHealthcare','Humana','Aetna','Devoted','Cigna','Florida Blue','Oscar Health','Molina','WellCare','Sunshine Health','Gold Kidney','NHP','BSI','Solis','Integrity'];
 const STATUSES = ['','Termed','Deceased','Plan changed','Duplicate','Resolved'];
 
+function MultiSelect({ label, options, selected, onChange }) {
+  const [open, setOpen] = useState(false);
+  const allSelected = selected.length === 0;
+
+  function toggle(val) {
+    if (selected.includes(val)) onChange(selected.filter(v => v !== val));
+    else onChange([...selected, val]);
+  }
+
+  function clear() { onChange([]); setOpen(false); }
+
+  const displayLabel = allSelected ? `All ${label}` : `${selected.length} ${label}`;
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <button onClick={() => setOpen(o => !o)} style={{
+        display: 'flex', alignItems: 'center', gap: 6,
+        padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border)',
+        background: selected.length > 0 ? 'var(--accent)' : 'var(--bg)',
+        color: selected.length > 0 ? 'var(--sidebar-bg)' : 'var(--text)',
+        fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap', fontWeight: selected.length > 0 ? 500 : 400
+      }}>
+        {displayLabel} <span style={{ fontSize: 10 }}>▾</span>
+      </button>
+      {open && (
+        <>
+          <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 99 }} />
+          <div style={{
+            position: 'absolute', top: '100%', left: 0, marginTop: 4,
+            background: 'var(--bg)', border: '0.5px solid var(--border)', borderRadius: 8,
+            boxShadow: '0 4px 20px rgba(0,0,0,0.12)', zIndex: 100,
+            minWidth: 200, maxWidth: 280, maxHeight: 320, overflowY: 'auto', padding: 6
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 8px 8px', borderBottom: '0.5px solid var(--border)', marginBottom: 4 }}>
+              <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{label}</span>
+              {selected.length > 0 && <button onClick={clear} style={{ fontSize: 11, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 500 }}>Clear</button>}
+            </div>
+            {options.map(opt => {
+              const isSel = selected.includes(opt);
+              return (
+                <button key={opt} onClick={() => toggle(opt)} style={{
+                  display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+                  padding: '6px 8px', background: isSel ? 'var(--accent-light)' : 'none',
+                  border: 'none', borderRadius: 4, cursor: 'pointer', textAlign: 'left', fontSize: 12,
+                  color: isSel ? 'var(--accent-dark)' : 'var(--text)', fontWeight: isSel ? 500 : 400
+                }}>
+                  <span style={{
+                    width: 14, height: 14, borderRadius: 3, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    border: isSel ? 'none' : '1.5px solid var(--border)', background: isSel ? 'var(--accent)' : 'transparent'
+                  }}>
+                    {isSel && <span style={{ color: 'var(--sidebar-bg)', fontSize: 9 }}>✓</span>}
+                  </span>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{opt}</span>
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export default function BookOfBusiness({ user }) {
   const [summary, setSummary] = useState(null);
   const [clients, setClients] = useState([]);
   const [allClients, setAllClients] = useState([]); // Full unfiltered list for tab counts
   const [periods, setPeriods] = useState([]);
   const [tab, setTab] = useState('all');
-  const [filterCarrier, setFilterCarrier] = useState('');
-  const [filterAgent, setFilterAgent] = useState('');
-  const [filterLOB, setFilterLOB] = useState('');
+  const [filterCarrier, setFilterCarrier] = useState([]);
+  const [filterAgent, setFilterAgent] = useState([]);
+  const [filterLOB, setFilterLOB] = useState([]);
   const [filterStatus, setFilterStatus] = useState('active');
   const [search, setSearch] = useState('');
   const [agents, setAgents] = useState([]);
@@ -60,9 +123,12 @@ export default function BookOfBusiness({ user }) {
       
       // Load filtered list for display
       const params = new URLSearchParams();
-      if (filterCarrier) params.set('carrier', filterCarrier);
-      if (filterAgent) params.set('agent', filterAgent);
-      if (filterLOB) params.set('lob', filterLOB);
+      if (filterCarrier.length === 1) params.set('carrier', filterCarrier[0]);
+      if (filterCarrier.length > 1) params.set('carriers', filterCarrier.join(','));
+      if (filterAgent.length === 1) params.set('agent', filterAgent[0]);
+      if (filterAgent.length > 1) params.set('agents', filterAgent.join(','));
+      if (filterLOB.length === 1) params.set('lob', filterLOB[0]);
+      if (filterLOB.length > 1) params.set('lobs', filterLOB.join(','));
       if (filterStatus) params.set('status', filterStatus);
       const data = await apiFetch(`/bob?${params}`);
       setClients(data);
@@ -203,9 +269,12 @@ export default function BookOfBusiness({ user }) {
     try {
       // Build same params as loadClients to get ALL matching records
       const params = new URLSearchParams();
-      if (filterCarrier) params.set('carrier', filterCarrier);
-      if (filterAgent) params.set('agent', filterAgent);
-      if (filterLOB) params.set('lob', filterLOB);
+      if (filterCarrier.length === 1) params.set('carrier', filterCarrier[0]);
+      if (filterCarrier.length > 1) params.set('carriers', filterCarrier.join(','));
+      if (filterAgent.length === 1) params.set('agent', filterAgent[0]);
+      if (filterAgent.length > 1) params.set('agents', filterAgent.join(','));
+      if (filterLOB.length === 1) params.set('lob', filterLOB[0]);
+      if (filterLOB.length > 1) params.set('lobs', filterLOB.join(','));
       if (filterStatus) params.set('status', filterStatus);
       
       // Fetch ALL matching records
@@ -403,18 +472,24 @@ export default function BookOfBusiness({ user }) {
                   maxWidth:360,
                 }}
               />
-              <select className="filter-select" value={filterCarrier} onChange={e=>setFilterCarrier(e.target.value)}>
-                <option value="">All carriers</option>
-                {(summary?.byCarrier||[]).sort((a,b)=>a.carrier.localeCompare(b.carrier)).map(c=><option key={c.carrier} value={c.carrier}>{formatCarrier(c.carrier)}</option>)}
-              </select>
-              <select className="filter-select" value={filterAgent} onChange={e=>setFilterAgent(e.target.value)}>
-                <option value="">All agents</option>
-                {agents.map(a=><option key={a} value={a}>{a}</option>)}
-              </select>
-              <select className="filter-select" value={filterLOB} onChange={e=>setFilterLOB(e.target.value)}>
-                <option value="">All LOB</option>
-                {lobs.map(l=><option key={l} value={l}>{l}</option>)}
-              </select>
+              <MultiSelect 
+                label="Carriers" 
+                options={(summary?.byCarrier||[]).sort((a,b)=>a.carrier.localeCompare(b.carrier)).map(c=>c.carrier)} 
+                selected={filterCarrier} 
+                onChange={setFilterCarrier} 
+              />
+              <MultiSelect 
+                label="Agents" 
+                options={agents} 
+                selected={filterAgent} 
+                onChange={setFilterAgent} 
+              />
+              <MultiSelect 
+                label="LOB" 
+                options={lobs} 
+                selected={filterLOB} 
+                onChange={setFilterLOB} 
+              />
               <select className="filter-select" value={filterStatus} onChange={e=>setFilterStatus(e.target.value)}>
                 <option value="">All statuses</option>
                 <option value="active">Active</option>
@@ -529,7 +604,7 @@ export default function BookOfBusiness({ user }) {
                 </thead>
                 <tbody>
                   {(summary?.byCarrier||[]).map((c,i) => (
-                    <tr key={i} onClick={()=>{ setFilterCarrier(c.carrier); setFilterStatus('active'); setTab('all'); }} style={{cursor:'pointer'}}>
+                    <tr key={i} onClick={()=>{ setFilterCarrier([c.carrier]); setFilterStatus('active'); setTab('all'); }} style={{cursor:'pointer'}}>
                       <td style={{fontWeight:500,color:'var(--text)'}}>{formatCarrier(c.carrier)}</td>
                       <td style={{fontWeight:500,color:'var(--text)'}}>{c.count}</td>
                       <td>{(summary?.bySource||[]).find(s=>s.source==='bob_export')
