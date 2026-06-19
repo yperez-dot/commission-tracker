@@ -94,6 +94,51 @@ function datesMatch(date1, date2) {
   }
 }
 
+// Calculate months since enrollment
+function monthsSinceEnrollment(effectiveDate, paymentPeriod) {
+  if (!effectiveDate || !paymentPeriod) return 0;
+  
+  try {
+    const effDate = new Date(effectiveDate.split('T')[0]);
+    const effYear = effDate.getFullYear();
+    const effMonth = effDate.getMonth() + 1; // 1-12
+    
+    const periodStr = String(paymentPeriod).trim();
+    let payYear, payMonth;
+    
+    // Handle YYYYMM format
+    if (periodStr.match(/^\d{6}$/)) {
+      payYear = parseInt(periodStr.slice(0, 4));
+      payMonth = parseInt(periodStr.slice(4, 6));
+    } else {
+      // Fallback: use current date
+      const now = new Date();
+      payYear = now.getFullYear();
+      payMonth = now.getMonth() + 1;
+    }
+    
+    // Calculate months difference
+    const months = (payYear - effYear) * 12 + (payMonth - effMonth);
+    
+    return Math.max(0, months); // Don't go negative
+  } catch {
+    return 0;
+  }
+}
+
+// Calculate expected commission based on declining schedule
+// Medicare Advantage: $347 initial, declines $28.92/month, floors at $28.92 renewal
+function expectedCommission(months) {
+  const initial = 347;
+  const decline = 28.92;
+  const floor = 28.92; // renewal rate
+  
+  if (months === 0) return initial; // Month 0 = enrollment month
+  
+  const calculated = initial - (months * decline);
+  return Math.max(calculated, floor);
+}
+
 // Find matching commission for a sale (including manual payments)
 // Period-agnostic: If commission exists for client + carrier, count as Paid
 // New Business records often have blank periods, so don't require period/date match
@@ -203,10 +248,24 @@ export default function Reconciliation({ user }) {
   }
   
   // Match sales to commissions
-  const matches = filteredSales.map(sale => ({
-    sale,
-    commission: findMatch(sale, commissions, manualPayments)
-  }));
+  const matches = filteredSales.map(sale => {
+    const commission = findMatch(sale, commissions, manualPayments);
+    
+    // Calculate expected commission based on months since enrollment
+    // Use commission period if available, otherwise use current date
+    const period = commission?.payment_period || new Date().toISOString().slice(0, 7).replace('-', '');
+    const months = monthsSinceEnrollment(sale.effective_date, period);
+    const expected = expectedCommission(months);
+    
+    return {
+      sale,
+      commission,
+      expectedCommission: expected,
+      monthsSinceEnrollment: months,
+      actualCommission: commission ? parseFloat(commission.commission || 0) : 0,
+      difference: commission ? (parseFloat(commission.commission || 0) - expected) : -expected
+    };
+  });
 
   const paid = matches.filter(m => m.commission);
   const unpaid = matches.filter(m => !m.commission);
@@ -365,7 +424,7 @@ export default function Reconciliation({ user }) {
     }
     
     // Build CSV
-    const headers = ['Agent', 'Client', 'Carrier', 'Policy Type', 'Effective Date', 'Status', 'Paid', 'Commission Amount'];
+    const headers = ['Agent', 'Client', 'Carrier', 'Policy Type', 'Effective Date', 'Status', 'Months Since Enrollment', 'Expected Commission', 'Actual Commission', 'Difference', 'Paid'];
     const rows = dataToExport.map(m => {
       const agentName = m.sale.agent_name || m.sale.agent || '—';
       const clientName = m.sale.client_name || '—';
@@ -373,8 +432,11 @@ export default function Reconciliation({ user }) {
       const policyType = m.sale.policy_type || '—';
       const effectiveDate = m.sale.effective_date ? formatDate(m.sale.effective_date) : '—';
       const status = m.sale.status || '—';
+      const monthsSince = m.monthsSinceEnrollment || 0;
+      const expected = m.expectedCommission ? m.expectedCommission.toFixed(2) : '0.00';
+      const actual = m.actualCommission ? m.actualCommission.toFixed(2) : '0.00';
+      const diff = m.difference ? m.difference.toFixed(2) : '0.00';
       const paid = m.commission ? 'Yes' : 'No';
-      const amount = m.commission ? (m.commission.commission_amount || '0') : '—';
       
       return [
         agentName,
@@ -383,8 +445,11 @@ export default function Reconciliation({ user }) {
         policyType,
         effectiveDate,
         status,
-        paid,
-        amount
+        monthsSince,
+        expected,
+        actual,
+        diff,
+        paid
       ].map(val => `"${String(val).replace(/"/g, '""')}"`).join(',');
     });
     
@@ -618,7 +683,9 @@ export default function Reconciliation({ user }) {
                           <th onClick={() => handleSort('effective_date')} style={{cursor:'pointer', userSelect:'none'}}>
                             Effective Date{sortIndicator('effective_date')}
                           </th>
-                          <th>Commission</th>
+                          <th style={{textAlign:'right'}}>Expected</th>
+                          <th style={{textAlign:'right'}}>Actual</th>
+                          <th style={{textAlign:'right'}}>Difference</th>
                           <th>Payment Period</th>
                         </tr>
                       </thead>
@@ -631,7 +698,11 @@ export default function Reconciliation({ user }) {
                             <td style={{fontSize:12, color:'var(--text-muted)'}}>
                               {formatDate(m.sale.effective_date)}
                             </td>
-                            <td style={{fontWeight:600, color:'var(--green)'}}>
+                            <td style={{textAlign:'right', fontSize:12, color:'var(--text-muted)'}}>
+                              {fmt(m.expectedCommission)}
+                              <div style={{fontSize:10, marginTop:2}}>Month {m.monthsSinceEnrollment}</div>
+                            </td>
+                            <td style={{textAlign:'right', fontWeight:600, color: m.actualCommission >= m.expectedCommission ? 'var(--green)' : 'var(--red)'}}>
                               {m.commission.isManual ? (
                                 <span>
                                   Manual
@@ -640,7 +711,17 @@ export default function Reconciliation({ user }) {
                                   </span>
                                 </span>
                               ) : (
-                                fmt(m.commission.commission)
+                                fmt(m.actualCommission)
+                              )}
+                            </td>
+                            <td style={{
+                              textAlign:'right', 
+                              fontWeight:500,
+                              color: m.difference >= 0 ? 'var(--green)' : 'var(--red)'
+                            }}>
+                              {m.difference >= 0 ? '+' : ''}{fmt(Math.abs(m.difference))}
+                              {m.difference < -1 && (
+                                <div style={{fontSize:10, marginTop:2}}>⚠️ Short payment</div>
                               )}
                             </td>
                             <td style={{fontSize:12}}>
