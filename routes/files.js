@@ -973,6 +973,9 @@ function parseHumanaRows(wb, filename, rawBuffer) {
       return records;
     }
 
+    // Track section headers for classification (similar to NHP agent tracking)
+    let currentSection = '';
+
     for (let i = 1; i < allRows.length; i++) {
       const vals = allRows[i];
       const get = (idx) => (idx >= 0 && idx < vals.length ? vals[idx] : '') || '';
@@ -987,6 +990,21 @@ function parseHumanaRows(wb, filename, rawBuffer) {
       const commRunDt  = get(commRunIdx).trim();
       const blkBus     = get(blkBusIdx).trim().toUpperCase();
       const product    = get(productIdx).trim().toUpperCase();
+
+      // Check if this row is a section header
+      const firstCol = vals[0] ? String(vals[0]).trim().toUpperCase() : '';
+      if (firstCol === 'NEW BUSINESS') {
+        currentSection = 'New Business';
+        continue;
+      }
+      if (firstCol === 'RENEWAL' || firstCol === 'RENEWALS') {
+        currentSection = 'Renewal';
+        continue;
+      }
+      if (firstCol === 'CHARGEBACK' || firstCol === 'CHARGEBACKS') {
+        currentSection = 'Chargeback';
+        continue;
+      }
 
       if (!isValidClientName(client) || commission === 0) continue;
 
@@ -1005,10 +1023,19 @@ function parseHumanaRows(wb, filename, rawBuffer) {
       if (blkBus === 'IN' || product === 'DENTAL') planType = 'Humana Dental';
       else if (product === 'PDP' || policyNum.toLowerCase().includes('_pdp')) planType = 'Humana PDP';
 
-      const classification = commission < 0 ? 'Chargeback'
-        : fyr === 'F' ? 'New Business'
-        : fyr === 'R' ? 'Renewal'
-        : 'Agent Commission';
+      // Classification priority: section header > fyr column > default
+      let classification;
+      if (currentSection) {
+        classification = currentSection;
+      } else if (commission < 0) {
+        classification = 'Chargeback';
+      } else if (fyr === 'F') {
+        classification = 'New Business';
+      } else if (fyr === 'R') {
+        classification = 'Renewal';
+      } else {
+        classification = 'Agent Commission';
+      }
 
       records.push({
         agent: normalizeAgentName(agentRaw) || 'The Health Experts Insurance',

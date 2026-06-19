@@ -132,7 +132,11 @@ export default function AllData({ user, initialFilters = {} }) {
       if (hideTermed) {
         filteredRecords = filteredRecords.filter(r => !r.is_termed);
       }
-      setRecords(filteredRecords);
+      // Deduplicate by ID before setting state (fixes 2x display bug)
+      const uniqueRecords = filteredRecords.filter((record, index, self) =>
+        index === self.findIndex(r => r.id === record.id)
+      );
+      setRecords(uniqueRecords);
       setTotal(data.total || 0);
       setSelected(new Set());
     } catch (e) { console.error(e); }
