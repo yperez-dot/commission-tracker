@@ -268,13 +268,13 @@ export default function AgencyProductionRecon() {
   };
 
   const displayData = 
-    tab === 'missing' ? filtered.missing :
-    tab === 'planchange' ? filtered.planchange :
-    tab === 'plandenied' ? filtered.plandenied :
-    tab === 'chase' ? filtered.chase :
-    tab === 'cancelled' ? filtered.cancelled :
-    tab === 'paid' ? filtered.paid :
-    [...filtered.missing, ...filtered.planchange, ...filtered.plandenied, ...filtered.chase, ...filtered.cancelled, ...filtered.paid];
+    tab === 'missing' ? (filtered.missing || []) :
+    tab === 'planchange' ? (filtered.planchange || []) :
+    tab === 'plandenied' ? (filtered.plandenied || []) :
+    tab === 'chase' ? (filtered.chase || []) :
+    tab === 'cancelled' ? (filtered.cancelled || []) :
+    tab === 'paid' ? (filtered.paid || []) :
+    [...(filtered.missing || []), ...(filtered.planchange || []), ...(filtered.plandenied || []), ...(filtered.chase || []), ...(filtered.cancelled || []), ...(filtered.paid || [])];
 
   const agents = [...new Set(production.map(p => p.agent_name).filter(Boolean))].sort();
   // Get unique carriers and format them consistently
@@ -293,19 +293,19 @@ export default function AgencyProductionRecon() {
     let filename = '';
     
     if (tab === 'missing') {
-      dataToExport = filtered.missing;
+      dataToExport = filtered.missing || [];
       filename = `agency-overrides-missing-${new Date().toISOString().split('T')[0]}.csv`;
     } else if (tab === 'planchange') {
-      dataToExport = filtered.planchange;
+      dataToExport = filtered.planchange || [];
       filename = `agency-overrides-planchange-${new Date().toISOString().split('T')[0]}.csv`;
     } else if (tab === 'cancelled') {
-      dataToExport = filtered.cancelled;
+      dataToExport = filtered.cancelled || [];
       filename = `agency-overrides-cancelled-${new Date().toISOString().split('T')[0]}.csv`;
     } else if (tab === 'paid') {
-      dataToExport = filtered.paid;
+      dataToExport = filtered.paid || [];
       filename = `agency-overrides-paid-${new Date().toISOString().split('T')[0]}.csv`;
     } else {
-      dataToExport = [...filtered.missing, ...filtered.planchange, ...filtered.cancelled, ...filtered.paid];
+      dataToExport = [...(filtered.missing || []), ...(filtered.planchange || []), ...(filtered.cancelled || []), ...(filtered.paid || [])];
       filename = `agency-overrides-all-${new Date().toISOString().split('T')[0]}.csv`;
     }
     
@@ -622,25 +622,25 @@ export default function AgencyProductionRecon() {
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
             <div style={{ borderBottom: '1px solid var(--border)', padding: '0 20px', display: 'flex', gap: 2 }}>
               <button style={tabStyle('missing')} onClick={() => setTab('missing')}>
-                Missing ({filtered.missing.length})
+                Missing ({(filtered.missing || []).length})
               </button>
               <button style={tabStyle('planchange')} onClick={() => setTab('planchange')}>
-                Plan Change ({filtered.planchange.length})
+                Plan Change ({(filtered.planchange || []).length})
               </button>
               <button style={tabStyle('plandenied')} onClick={() => setTab('plandenied')}>
-                Plan Denied ({filtered.plandenied.length})
+                Plan Denied ({(filtered.plandenied || []).length})
               </button>
               <button style={tabStyle('chase')} onClick={() => setTab('chase')}>
-                Chase ({filtered.chase.length})
+                Chase ({(filtered.chase || []).length})
               </button>
               <button style={tabStyle('cancelled')} onClick={() => setTab('cancelled')}>
-                Cancelled ({filtered.cancelled.length})
+                Cancelled ({(filtered.cancelled || []).length})
               </button>
               <button style={tabStyle('paid')} onClick={() => setTab('paid')}>
-                Paid ({filtered.paid.length})
+                Paid ({(filtered.paid || []).length})
               </button>
               <button style={tabStyle('all')} onClick={() => setTab('all')}>
-                All ({filtered.missing.length + filtered.planchange.length + filtered.plandenied.length + filtered.chase.length + filtered.cancelled.length + filtered.paid.length})
+                All ({(filtered.missing || []).length + (filtered.planchange || []).length + (filtered.plandenied || []).length + (filtered.chase || []).length + (filtered.cancelled || []).length + (filtered.paid || []).length})
               </button>
             </div>
 

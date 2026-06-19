@@ -213,12 +213,241 @@ This document should be updated whenever:
 
 ---
 
+## 🛡️ DEFENSIVE CODING RULES (Frontend)
+
+**Established:** June 19, 2026  
+**Status:** MANDATORY - Apply to ALL new code
+
+### Why These Rules Exist
+
+**Today's crash:**
+- ❌ AgencyProductionRecon.js line 631: `filtered.plandenied.length`
+- ❌ `filtered.plandenied` was undefined → entire app crashed
+- ❌ Would have been prevented by null-check: `(filtered.plandenied || []).length`
+
+**One undefined property crashed the entire OliComm frontend.**
+
+---
+
+### 🚨 Rule 1: Always Null-Check Arrays
+
+**❌ NEVER:**
+```javascript
+someArray.length
+someArray.map(...)
+someArray.filter(...)
+someArray.reduce(...)
+[...someArray, ...otherArray]
+```
+
+**✅ ALWAYS:**
+```javascript
+(someArray || []).length
+(someArray || []).map(...)
+(someArray || []).filter(...)
+(someArray || []).reduce(..., initialValue)
+[...(someArray || []), ...(otherArray || [])]
+```
+
+**Why:** If API returns `undefined` instead of `[]`, the app crashes.
+
+---
+
+### 🚨 Rule 2: Always Null-Check API Responses
+
+**❌ NEVER:**
+```javascript
+const data = await apiFetch('/endpoint');
+setRecords(data.records);
+const count = data.records.length;
+```
+
+**✅ ALWAYS:**
+```javascript
+const data = await apiFetch('/endpoint');
+setRecords(data?.records || []);
+const count = (data?.records || []).length;
+```
+
+**Why:** API errors or missing fields can return `undefined` instead of expected structure.
+
+---
+
+### 🚨 Rule 3: Add Try-Catch to Data Loading
+
+**❌ NEVER:**
+```javascript
+const loadData = async () => {
+  const data = await apiFetch('/endpoint');
+  setRecords(data.records);
+};
+```
+
+**✅ ALWAYS:**
+```javascript
+const loadData = async () => {
+  try {
+    const data = await apiFetch('/endpoint');
+    setRecords(data?.records || []);
+  } catch (err) {
+    console.error('Failed to load data:', err);
+    setRecords([]); // Fallback to empty array
+    showToast('Failed to load data', 'error');
+  }
+};
+```
+
+**Why:** Network errors or API failures shouldn't crash the entire page.
+
+---
+
+### 🚨 Rule 4: Test Every Page After Deploy
+
+**Before marking deploy as complete, manually verify:**
+
+✅ Missing Renewals loads  
+✅ BOB loads  
+✅ All Data loads  
+✅ Override Recon loads  
+✅ Agency Production Recon loads  
+✅ Payroll loads  
+✅ Reports loads  
+
+**Quick test:** Click each page, verify no console errors, verify data displays.
+
+**Time cost:** 2 minutes  
+**Crash prevention:** Priceless
+
+---
+
+### 🚨 Rule 5: Never Push Friday Evening
+
+**❌ NO deploys after 5pm Friday**
+
+**Why:** No one available to fix crashes over the weekend 😄
+
+**Exception:** Critical hotfixes (with immediate testing)
+
+---
+
+### ✅ Pre-Commit Checklist (Frontend)
+
+Before committing frontend changes:
+
+```bash
+# 1. Build check
+npm run build
+
+# 2. Manual test
+# Open each affected page in browser
+# Verify no console errors
+# Verify data loads correctly
+
+# 3. Check for naked array accesses
+grep -r "\.length\|.map(\|.filter(" src/pages/YourFile.js
+# Review each match - is it null-safe?
+
+# 4. Commit only if all checks pass
+git add .
+git commit -m "Your message"
+git push
+```
+
+---
+
+### 📋 Common Patterns to Fix
+
+#### Pattern 1: Tab Counts
+```javascript
+// ❌ BAD:
+<button>Missing ({filtered.missing.length})</button>
+
+// ✅ GOOD:
+<button>Missing ({(filtered.missing || []).length})</button>
+```
+
+#### Pattern 2: Spread Operators
+```javascript
+// ❌ BAD:
+const combined = [...array1, ...array2];
+
+// ✅ GOOD:
+const combined = [...(array1 || []), ...(array2 || [])];
+```
+
+#### Pattern 3: Export Data
+```javascript
+// ❌ BAD:
+const dataToExport = filtered.missing;
+
+// ✅ GOOD:
+const dataToExport = filtered.missing || [];
+```
+
+#### Pattern 4: Conditional Display
+```javascript
+// ❌ BAD:
+const displayData = tab === 'missing' ? filtered.missing : filtered.paid;
+
+// ✅ GOOD:
+const displayData = tab === 'missing' ? (filtered.missing || []) : (filtered.paid || []);
+```
+
+---
+
+### 🔍 How to Find Unsafe Code
+
+**Search for naked array operations:**
+```bash
+# Find potential unsafe array accesses
+grep -n "\.length" src/pages/*.js | grep -v "|| \[\]"
+grep -n "\.map(" src/pages/*.js | grep -v "|| \[\]"
+grep -n "\.filter(" src/pages/*.js | grep -v "|| \[\]"
+```
+
+**Review each match and add null-checks where needed.**
+
+---
+
+### 📊 Impact
+
+**Before defensive coding:**
+- 1 undefined property → entire app crashes
+- User sees blank screen
+- No error recovery
+
+**After defensive coding:**
+- 1 undefined property → empty array
+- User sees "No data" instead of crash
+- App continues working
+
+---
+
+### 🎯 Apply These Rules To:
+
+- ✅ All new page components
+- ✅ All API response handling
+- ✅ All array operations
+- ✅ All data transformations
+- ✅ All export functions
+- ✅ All filter/map/reduce chains
+
+**No exceptions.**
+
+---
+
 ## 📚 Related Documents
 
 - `PRE_PUSH_CHECKLIST.md` - Syntax check workflow
 - `routes/files.js` - Parser implementations
-- `memory/2026-06-18.md` - Today's parser incidents
+- `src/pages/AgencyProductionRecon.js` - Today's crash (fixed)
+- `memory/2026-06-18.md` - Parser incidents
+- `memory/2026-06-19.md` - Frontend defensive coding
 
 ---
 
-**Remember:** Plan first. Code second. Test before push. ✅
+**Remember:**  
+**Backend:** Plan first. Code second. Test before push.  
+**Frontend:** Null-check everything. Test every page. Never trust API responses. ✅
+
+**Last updated:** June 19, 2026
