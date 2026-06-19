@@ -39,6 +39,17 @@ function normalizeName(name) {
   return name.toLowerCase().trim().replace(/\s+/g, ' ');
 }
 
+// Normalize name to match database normalized_name logic (same as Missing Renewals / Our Sales)
+// Splits by space, sorts parts alphabetically, rejoins with space
+function normName(name) {
+  if (!name) return '';
+  const s = String(name).toLowerCase().trim()
+    .replace(/[,\.;:]/g, '');  // Strip punctuation
+  // Split by space, filter empty, sort alphabetically, rejoin
+  const parts = s.split(/\s+/).filter(Boolean).sort();
+  return parts.join(' ');
+}
+
 function normalizeCarrier(carrier) {
   if (!carrier) return '';
   const c = carrier.toLowerCase().trim();
@@ -126,67 +137,32 @@ function parseEffectiveDate(dateStr) {
   }
 }
 
-// Match agency production to override commissions with improved fuzzy matching
+// Match agency production to override commissions using normName() fuzzy matching
+// Same logic as "Our Sales" and "Missing Renewals" for consistency
 function findOverrideMatch(production, overrides) {
-  const prodClientParsed = parseClientName(production.client_name);
+  const prodClientNorm = normName(production.client_name);
   const prodCarrier = normalizeCarrier(production.carrier);
-  const prodDate = parseEffectiveDate(production.effective_date);
-  const prodPolicy = (production.policy_number || '').toLowerCase().trim();
   
-  let bestMatch = null;
-  let bestScore = 0;
-  
+  // Try exact match first (client + carrier)
   for (const override of overrides) {
-    const overrideClientParsed = parseClientName(override.client_full_name);
+    const overrideClientNorm = normName(override.client_full_name);
     const overrideCarrier = normalizeCarrier(override.carrier);
-    const overrideDate = parseEffectiveDate(override.effective_date);
-    const overridePolicy = (override.policy_number || '').toLowerCase().trim();
     
-    let score = 0;
+    // Client name match using normName() (handles "LAST FIRST" vs "FIRST LAST")
+    const clientMatch = prodClientNorm === overrideClientNorm;
     
-    // 1. Carrier match (required, +30 points)
+    // Carrier match
     const carrierMatch = prodCarrier === overrideCarrier || 
                         prodCarrier.includes(overrideCarrier) || 
                         overrideCarrier.includes(prodCarrier);
-    if (!carrierMatch) continue; // Skip if carrier doesn't match
-    score += 30;
     
-    // 2. Last name match (fuzzy, +40 points max)
-    if (prodClientParsed.last && overrideClientParsed.last) {
-      const lastSimilarity = stringSimilarity(prodClientParsed.last, overrideClientParsed.last);
-      if (lastSimilarity > 0.7) {
-        score += lastSimilarity * 40;
-      } else {
-        continue; // Last name too different, skip
-      }
-    } else {
-      continue; // No last name, skip
-    }
-    
-    // 3. First name match (fuzzy, +30 points max)
-    if (prodClientParsed.first && overrideClientParsed.first) {
-      const firstSimilarity = stringSimilarity(prodClientParsed.first, overrideClientParsed.first);
-      score += firstSimilarity * 30;
-    }
-    
-    // 4. Effective date match (same month/year, +20 points)
-    if (prodDate && overrideDate && prodDate === overrideDate) {
-      score += 20;
-    }
-    
-    // 5. Policy number match (exact, +50 points - strong signal!)
-    if (prodPolicy && overridePolicy && prodPolicy === overridePolicy) {
-      score += 50;
-    }
-    
-    // Track best match
-    if (score > bestScore && score >= 70) { // Require minimum 70 points
-      bestScore = score;
-      bestMatch = override;
+    // Match if client + carrier match (period-agnostic, like Our Sales)
+    if (clientMatch && carrierMatch) {
+      return override;
     }
   }
   
-  return bestMatch;
+  return null;
 }
 
 export default function AgencyProductionRecon() {
