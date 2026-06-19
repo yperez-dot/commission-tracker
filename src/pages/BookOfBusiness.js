@@ -421,7 +421,7 @@ export default function BookOfBusiness({ user }) {
                 <option value="termed">Termed</option>
                 <option value="never_paid">Never paid</option>
               </select>
-              <span style={{fontSize:12,color:'var(--text-muted)'}}
+              <span style={{fontSize:12,color:'var(--text-muted)'}}>
                 {search.trim() ? `${filteredClients.length} of ${clients.length}` : `${clients.length}`} clients
               </span>
               {search && (
