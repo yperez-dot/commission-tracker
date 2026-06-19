@@ -599,25 +599,25 @@ export default function Reconciliation({ user }) {
           </div>
         ) : (
           <div>
-            {/* KPI Cards */}
+            {/* KPI Cards - Show filtered totals */}
             <div className="kpi-grid" style={{marginBottom:14}}>
               <div className="kpi-card">
-                <div className="kpi-label">Total Sales</div>
-                <div className="kpi-value">{sales.length}</div>
+                <div className="kpi-label">Filtered Results</div>
+                <div className="kpi-value">{filteredPaid.length + filteredUnpaid.length}</div>
               </div>
               <div className="kpi-card">
                 <div className="kpi-label">✅ Paid</div>
-                <div className="kpi-value green">{paid.length}</div>
-                <div className="kpi-sub">{((paid.length / sales.length) * 100).toFixed(1)}%</div>
+                <div className="kpi-value green">{filteredPaid.length}</div>
+                <div className="kpi-sub">{filteredPaid.length + filteredUnpaid.length > 0 ? ((filteredPaid.length / (filteredPaid.length + filteredUnpaid.length)) * 100).toFixed(1) : '0.0'}%</div>
               </div>
               <div className="kpi-card">
                 <div className="kpi-label">⏳ Unpaid</div>
-                <div className="kpi-value red">{unpaid.length}</div>
-                <div className="kpi-sub">{((unpaid.length / sales.length) * 100).toFixed(1)}%</div>
+                <div className="kpi-value red">{filteredUnpaid.length}</div>
+                <div className="kpi-sub">{filteredPaid.length + filteredUnpaid.length > 0 ? ((filteredUnpaid.length / (filteredPaid.length + filteredUnpaid.length)) * 100).toFixed(1) : '0.0'}%</div>
               </div>
               <div className="kpi-card">
-                <div className="kpi-label">Commission Records</div>
-                <div className="kpi-value blue">{commissions.length}</div>
+                <div className="kpi-label">Total in Database</div>
+                <div className="kpi-value blue">{sales.length}</div>
               </div>
             </div>
 
@@ -640,12 +640,15 @@ export default function Reconciliation({ user }) {
                 <div className="card-title">Reconciliation Summary</div>
                 <div style={{marginBottom:20}}>
                   <div style={{fontSize:14, marginBottom:12}}>
-                    Out of <strong>{sales.length} total sales</strong> in your MedicarePro upload:
+                    Out of <strong>{filteredPaid.length + filteredUnpaid.length} filtered sales</strong>:
                   </div>
                   <ul style={{fontSize:14, lineHeight:1.8, paddingLeft:20}}>
-                    <li><strong style={{color:'var(--green)'}}>{paid.length} sales ({((paid.length / sales.length) * 100).toFixed(1)}%)</strong> have matching commission records in OliComm</li>
-                    <li><strong style={{color:'var(--red)'}}>{unpaid.length} sales ({((unpaid.length / sales.length) * 100).toFixed(1)}%)</strong> are missing commission records</li>
+                    <li><strong style={{color:'var(--green)'}}>{filteredPaid.length} sales ({filteredPaid.length + filteredUnpaid.length > 0 ? ((filteredPaid.length / (filteredPaid.length + filteredUnpaid.length)) * 100).toFixed(1) : '0.0'}%)</strong> have matching commission records in OliComm</li>
+                    <li><strong style={{color:'var(--red)'}}>{filteredUnpaid.length} sales ({filteredPaid.length + filteredUnpaid.length > 0 ? ((filteredUnpaid.length / (filteredPaid.length + filteredUnpaid.length)) * 100).toFixed(1) : '0.0'}%)</strong> are missing commission records</li>
                   </ul>
+                  <div style={{fontSize:13, color:'var(--text-muted)', marginTop:12}}>
+                    (Total in database: {sales.length} sales)
+                  </div>
                 </div>
                 
                 <div className="card-title" style={{marginTop:24}}>What this means</div>
