@@ -3540,25 +3540,26 @@ async function findDuplicates(pool, records) {
   const filtered = records.filter(r => r.client && r.carrier && r.effectiveDate);
   if (!filtered.length) return [];
 
-  // Match key: client + carrier + effective_date + payment_period
-  // This prevents same client/carrier/date in DIFFERENT periods from being flagged
+  // Match key: client + carrier + effective_date + payment_period + classification
+  // This prevents false duplicates when same client/carrier/date appears with different period or classification
+  // Example: 706381 MAPD ($28.92) vs THEI override ($4.59) - same client/date but different period/classification
   const conditions = filtered.map((r, i) =>
-    `(LOWER(client_full_name) = LOWER($${i*4+1}) AND LOWER(carrier) = LOWER($${i*4+2}) AND effective_date = $${i*4+3} AND payment_period = $${i*4+4})`
+    `(LOWER(client_full_name) = LOWER($${i*5+1}) AND LOWER(carrier) = LOWER($${i*5+2}) AND effective_date = $${i*5+3} AND payment_period = $${i*5+4} AND LOWER(classification) = LOWER($${i*5+5}))`
   ).join(' OR ');
 
-  const params = filtered.flatMap(r => [r.client, r.carrier, r.effectiveDate, r.period || '']);
+  const params = filtered.flatMap(r => [r.client, r.carrier, r.effectiveDate, r.period || '', r.classification || '']);
 
   const result = await pool.query(
-    `SELECT client_full_name, carrier, effective_date, payment_period FROM commission_records WHERE ${conditions}`,
+    `SELECT client_full_name, carrier, effective_date, payment_period, classification FROM commission_records WHERE ${conditions}`,
     params
   );
 
   const existingSet = new Set(result.rows.map(r =>
-    `${r.client_full_name.toLowerCase()}|${r.carrier.toLowerCase()}|${r.effective_date}|${r.payment_period || ''}`
+    `${r.client_full_name.toLowerCase()}|${r.carrier.toLowerCase()}|${r.effective_date}|${r.payment_period || ''}|${(r.classification || '').toLowerCase()}`
   ));
 
   return filtered.filter(r =>
-    existingSet.has(`${r.client.toLowerCase()}|${r.carrier.toLowerCase()}|${r.effectiveDate}|${r.period || ''}`)
+    existingSet.has(`${r.client.toLowerCase()}|${r.carrier.toLowerCase()}|${r.effectiveDate}|${r.period || ''}|${(r.classification || '').toLowerCase()}`)
   ).map(r => ({
     client: r.client,
     carrier: r.carrier,
