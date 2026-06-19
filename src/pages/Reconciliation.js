@@ -349,13 +349,13 @@ export default function Reconciliation({ user }) {
     let filename = '';
     
     if (tab === 'paid') {
-      dataToExport = sortedPaid;
+      dataToExport = filteredPaid;
       filename = `reconciliation-paid-${new Date().toISOString().split('T')[0]}.csv`;
     } else if (tab === 'unpaid') {
-      dataToExport = sortedUnpaid;
+      dataToExport = filteredUnpaid;
       filename = `reconciliation-unpaid-${new Date().toISOString().split('T')[0]}.csv`;
     } else {
-      dataToExport = [...sortedPaid, ...sortedUnpaid];
+      dataToExport = [...filteredPaid, ...filteredUnpaid];
       filename = `reconciliation-all-${new Date().toISOString().split('T')[0]}.csv`;
     }
     
