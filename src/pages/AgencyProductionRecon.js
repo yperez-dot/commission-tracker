@@ -3,10 +3,30 @@ import { apiFetch } from '../api';
 import { formatCarrier } from '../utils/formatCarrier';
 import { formatDate as formatDateUtil } from '../utils/dateFormat';
 
-// Version: 2026-06-04-19:03 - HealthSun consolidation fix
+// Version: 2026-06-19-18:08 - Added formatPeriodLabel + null checks
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Convert YYYYMM period to "Mon YYYY" display format
+function formatPeriodLabel(period) {
+  if (!period || period === 'Unknown') return '—';
+  const periodStr = String(period).trim();
+  
+  // Handle YYYYMM format (202603 → Mar 2026)
+  if (periodStr.match(/^\d{6}$/)) {
+    const year = periodStr.slice(0, 4);
+    const month = periodStr.slice(4, 6);
+    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const monthIndex = parseInt(month) - 1;
+    if (monthIndex >= 0 && monthIndex < 12) {
+      return `${months[monthIndex]} ${year}`;
+    }
+  }
+  
+  // Fallback: return as-is
+  return periodStr;
 }
 
 // Use standardized MM-DD-YYYY format
@@ -674,7 +694,9 @@ export default function AgencyProductionRecon() {
                               href="#"
                               onClick={(e) => {
                                 e.preventDefault();
-                                setSelectedProduction(m.production);
+                                if (m && m.production) {
+                                  setSelectedProduction(m.production);
+                                }
                               }}
                               style={{
                                 color: 'var(--blue)',
