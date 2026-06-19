@@ -173,6 +173,7 @@ export default function AgencyProductionRecon() {
   const [tab, setTab] = useState('missing'); // Default to Missing tab
   const [filterCarrier, setFilterCarrier] = useState('all');
   const [filterAgent, setFilterAgent] = useState('all');
+  const [filterEffDate, setFilterEffDate] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedOverride, setSelectedOverride] = useState(null);
   const [selectedProduction, setSelectedProduction] = useState(null);
@@ -244,6 +245,10 @@ export default function AgencyProductionRecon() {
       filtered = filtered.filter(m => normalizeCarrier(m.production.carrier) === normalizeCarrier(filterCarrier));
     }
     
+    if (filterEffDate !== 'all') {
+      filtered = filtered.filter(m => (m.production.effective_date || '') === filterEffDate);
+    }
+    
     if (searchTerm.trim()) {
       const search = searchTerm.toLowerCase();
       filtered = filtered.filter(m => 
@@ -283,6 +288,9 @@ export default function AgencyProductionRecon() {
     })
     .filter((v, i, arr) => arr.indexOf(v) === i) // Remove duplicates after formatting
     .sort();
+  
+  // Get unique effective dates
+  const effectiveDates = [...new Set(production.map(p => p.effective_date).filter(Boolean))].sort((a, b) => b.localeCompare(a)); // Sort descending (newest first)
 
   function exportToCSV() {
     let dataToExport = [];
@@ -594,6 +602,13 @@ export default function AgencyProductionRecon() {
                 <select className="filter-select" value={filterCarrier} onChange={e => setFilterCarrier(e.target.value)}>
                   <option value="all">All carriers</option>
                   {carriers.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+              <div>
+                <div className="form-label">Effective Date</div>
+                <select className="filter-select" value={filterEffDate} onChange={e => setFilterEffDate(e.target.value)}>
+                  <option value="all">All dates</option>
+                  {effectiveDates.map(d => <option key={d} value={d}>{d}</option>)}
                 </select>
               </div>
             </div>
