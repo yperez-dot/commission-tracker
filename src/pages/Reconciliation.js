@@ -6,6 +6,70 @@ function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+// Multi-select dropdown component
+function MultiSelect({ label, options, selected, onChange }) {
+  const [open, setOpen] = useState(false);
+  const allSelected = selected.length === 0;
+
+  function toggle(val) {
+    if (selected.includes(val)) onChange(selected.filter(v => v !== val));
+    else onChange([...selected, val]);
+  }
+
+  function clear() { onChange([]); setOpen(false); }
+
+  const displayLabel = allSelected ? `All ${label}` : `${selected.length} ${label}`;
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <button onClick={() => setOpen(o => !o)} style={{
+        display: 'flex', alignItems: 'center', gap: 6,
+        padding: '6px 10px', borderRadius: 6, border: '1px solid var(--border)',
+        background: selected.length > 0 ? 'var(--accent)' : 'var(--bg)',
+        color: selected.length > 0 ? 'var(--sidebar-bg)' : 'var(--text)',
+        fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap', fontWeight: selected.length > 0 ? 500 : 400
+      }}>
+        {displayLabel} <span style={{ fontSize: 10 }}>▾</span>
+      </button>
+      {open && (
+        <>
+          <div onClick={() => setOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 99 }} />
+          <div style={{
+            position: 'absolute', top: '100%', left: 0, marginTop: 4,
+            background: 'var(--bg)', border: '0.5px solid var(--border)', borderRadius: 8,
+            boxShadow: '0 4px 20px rgba(0,0,0,0.12)', zIndex: 100,
+            minWidth: 200, maxWidth: 280, maxHeight: 320, overflowY: 'auto', padding: 6
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 8px 8px', borderBottom: '0.5px solid var(--border)', marginBottom: 4 }}>
+              <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{label}</span>
+              {selected.length > 0 && <button onClick={clear} style={{ fontSize: 11, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 500 }}>Clear</button>}
+            </div>
+            {options.map(opt => {
+              const isSel = selected.includes(opt);
+              return (
+                <button key={opt} onClick={() => toggle(opt)} style={{
+                  display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+                  padding: '6px 8px', background: isSel ? 'var(--accent-light)' : 'none',
+                  border: 'none', borderRadius: 4, cursor: 'pointer', textAlign: 'left', fontSize: 12,
+                  color: isSel ? 'var(--accent-dark)' : 'var(--text)', fontWeight: isSel ? 500 : 400
+                }}>
+                  <span style={{
+                    width: 14, height: 14, borderRadius: 3, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    border: isSel ? 'none' : '1.5px solid var(--border)', background: isSel ? 'var(--accent)' : 'transparent'
+                  }}>
+                    {isSel && <span style={{ color: 'var(--sidebar-bg)', fontSize: 9 }}>✓</span>}
+                  </span>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{opt}</span>
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 // Use standardized MM-DD-YYYY format
 function formatDate(dateStr) {
   return formatDateUtil(dateStr);
@@ -599,66 +663,87 @@ export default function Reconciliation({ user }) {
           </div>
         ) : (
           <div>
-            {/* KPI Cards - Show filtered totals */}
-            <div className="kpi-grid" style={{marginBottom:14}}>
-              <div className="kpi-card">
-                <div className="kpi-label">Filtered Results</div>
-                <div className="kpi-value">{filteredPaid.length + filteredUnpaid.length}</div>
-              </div>
-              <div className="kpi-card">
-                <div className="kpi-label">✅ Paid</div>
-                <div className="kpi-value green">{filteredPaid.length}</div>
-                <div className="kpi-sub">{filteredPaid.length + filteredUnpaid.length > 0 ? ((filteredPaid.length / (filteredPaid.length + filteredUnpaid.length)) * 100).toFixed(1) : '0.0'}%</div>
-              </div>
+            {/* KPI Cards - Show only Paid and Unpaid */}
+            <div className="kpi-grid" style={{marginBottom:14, gridTemplateColumns:'repeat(2, 1fr)'}}>
               <div className="kpi-card">
                 <div className="kpi-label">⏳ Unpaid</div>
                 <div className="kpi-value red">{filteredUnpaid.length}</div>
                 <div className="kpi-sub">{filteredPaid.length + filteredUnpaid.length > 0 ? ((filteredUnpaid.length / (filteredPaid.length + filteredUnpaid.length)) * 100).toFixed(1) : '0.0'}%</div>
               </div>
               <div className="kpi-card">
-                <div className="kpi-label">Total in Database</div>
-                <div className="kpi-value blue">{sales.length}</div>
+                <div className="kpi-label">✅ Paid</div>
+                <div className="kpi-value green">{filteredPaid.length}</div>
+                <div className="kpi-sub">{filteredPaid.length + filteredUnpaid.length > 0 ? ((filteredPaid.length / (filteredPaid.length + filteredUnpaid.length)) * 100).toFixed(1) : '0.0'}%</div>
               </div>
             </div>
 
             {/* Tabs */}
             <div style={{display:'flex', gap:8, marginBottom:12, borderBottom:'1px solid var(--border)', overflowX:'auto'}}>
-              <button style={tabStyle('summary')} onClick={() => setTab('summary')}>
-                Summary
+              <button style={tabStyle('unpaid')} onClick={() => setTab('unpaid')}>
+                ⏳ Unpaid ({filteredUnpaid.length})
               </button>
               <button style={tabStyle('paid')} onClick={() => setTab('paid')}>
                 ✅ Paid ({filteredPaid.length})
               </button>
-              <button style={tabStyle('unpaid')} onClick={() => setTab('unpaid')}>
-                ⏳ Unpaid ({filteredUnpaid.length})
-              </button>
             </div>
 
-            {/* Summary Tab */}
-            {tab === 'summary' && (
-              <div className="card">
-                <div className="card-title">Reconciliation Summary</div>
-                <div style={{marginBottom:20}}>
-                  <div style={{fontSize:14, marginBottom:12}}>
-                    Out of <strong>{filteredPaid.length + filteredUnpaid.length} filtered sales</strong>:
+            {/* Unpaid Tab */}
+            {tab === 'unpaid' && (
+              <div className="card" style={{padding:0}}>
+                {filteredUnpaid.length === 0 ? (
+                  <div className="empty-state">
+                    <div className="empty-title">No unpaid sales match your filters</div>
                   </div>
-                  <ul style={{fontSize:14, lineHeight:1.8, paddingLeft:20}}>
-                    <li><strong style={{color:'var(--green)'}}>{filteredPaid.length} sales ({filteredPaid.length + filteredUnpaid.length > 0 ? ((filteredPaid.length / (filteredPaid.length + filteredUnpaid.length)) * 100).toFixed(1) : '0.0'}%)</strong> have matching commission records in OliComm</li>
-                    <li><strong style={{color:'var(--red)'}}>{filteredUnpaid.length} sales ({filteredPaid.length + filteredUnpaid.length > 0 ? ((filteredUnpaid.length / (filteredPaid.length + filteredUnpaid.length)) * 100).toFixed(1) : '0.0'}%)</strong> are missing commission records</li>
-                  </ul>
-                  <div style={{fontSize:13, color:'var(--text-muted)', marginTop:12}}>
-                    (Total in database: {sales.length} sales)
+                ) : (
+                  <div className="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th onClick={() => handleSort('client')} style={{cursor:'pointer', userSelect:'none'}}>
+                            Client{sortIndicator('client')}
+                          </th>
+                          <th onClick={() => handleSort('agent')} style={{cursor:'pointer', userSelect:'none'}}>
+                            Agent{sortIndicator('agent')}
+                          </th>
+                          <th onClick={() => handleSort('carrier')} style={{cursor:'pointer', userSelect:'none'}}>
+                            Carrier{sortIndicator('carrier')}
+                          </th>
+                          <th onClick={() => handleSort('effective_date')} style={{cursor:'pointer', userSelect:'none'}}>
+                            Effective Date{sortIndicator('effective_date')}
+                          </th>
+                          <th>Status</th>
+                          <th style={{textAlign:'center'}}>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredUnpaid.map((m, i) => (
+                          <tr key={i}>
+                            <td style={{fontWeight:500}}>{m.sale.client_name}</td>
+                            <td>{m.sale.agent_name || m.sale.agent || '—'}</td>
+                            <td style={{fontSize:12}}>{m.sale.carrier}</td>
+                            <td style={{fontSize:12, color:'var(--text-muted)'}}>
+                              {formatDate(m.sale.effective_date)}
+                            </td>
+                            <td>
+                              <span className="badge badge-amber">
+                                {m.sale.status || 'Unpaid'}
+                              </span>
+                            </td>
+                            <td style={{textAlign:'center'}}>
+                              <button 
+                                className="btn btn-sm btn-primary"
+                                onClick={() => handleMarkPaid(m.sale)}
+                                style={{fontSize:11, padding:'4px 10px'}}
+                              >
+                                💰 Mark Paid
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
                   </div>
-                </div>
-                
-                <div className="card-title" style={{marginTop:24}}>What this means</div>
-                <div style={{fontSize:14, lineHeight:1.7}}>
-                  <p><strong>✅ Paid sales</strong> have been matched to commission records using client name, agent, carrier, and effective date.</p>
-                  <p><strong>⏳ Unpaid sales</strong> either haven't been paid yet, or the commission statement hasn't been uploaded to OliComm.</p>
-                  <p style={{marginTop:16, padding:12, background:'var(--blue-light)', borderRadius:6, color:'var(--blue-dark)'}}>
-                    💡 <strong>Tip:</strong> After uploading new commission statements, click "🔄 Refresh" to update the reconciliation.
-                  </p>
-                </div>
+                )}
               </div>
             )}
 
