@@ -579,7 +579,8 @@ if (effDate && checkDate) {
       (!filterLOB || r.lob === filterLOB) &&
       (!filterClient || r.client.toLowerCase().includes(filterClient.toLowerCase())) &&
       !ignoredRows.has(rowKey) &&
-      !grayedRows.has(rowKey) // Hide grayed rows (pending termed)
+      !grayedRows.has(rowKey) && // Hide grayed rows (pending termed)
+      r.policyStatus !== 'plan_change' // Hide plan_change clients (same as termed)
     );
   });
 
@@ -852,7 +853,7 @@ if (effDate && checkDate) {
                           }
                         </td>
                         <td style={{ fontSize:11 }}>
-                          {r.isMissing && (!r.policyStatus || r.policyStatus === 'active' || r.policyStatus === 'chase' || r.policyStatus === 'plan_change') && (
+                          {r.isMissing && (!r.policyStatus || r.policyStatus === 'active' || r.policyStatus === 'chase') && (
                             <select
                               onChange={async (e) => {
                                 const action = e.target.value;
