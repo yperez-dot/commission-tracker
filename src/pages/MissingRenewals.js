@@ -175,7 +175,6 @@ export default function MissingRenewals({ user }) {
   const [selectedClient, setSelectedClient] = useState(null);
   const [clientRecords, setClientRecords] = useState([]);
   const [clientLoading, setClientLoading] = useState(false);
-  const [ignoredRows, setIgnoredRows] = useState(new Set());
   const [coverageWarning, setCoverageWarning] = useState(null);
   const [showCoverageWarning, setShowCoverageWarning] = useState(true);
   const [grayedRows, setGrayedRows] = useState(new Set());
@@ -578,9 +577,9 @@ if (effDate && checkDate) {
       (!filterCarrier || r.carrier === filterCarrier) &&
       (!filterLOB || r.lob === filterLOB) &&
       (!filterClient || r.client.toLowerCase().includes(filterClient.toLowerCase())) &&
-      !ignoredRows.has(rowKey) &&
       !grayedRows.has(rowKey) && // Hide grayed rows (pending termed)
-      r.policyStatus !== 'plan_change' // Hide plan_change clients (same as termed)
+      r.policyStatus !== 'plan_change' && // Hide plan_change clients (same as termed)
+      r.policyStatus !== 'ignore' // Hide ignored clients (permanent)
     );
   });
 
@@ -870,9 +869,8 @@ if (effDate && checkDate) {
                                   // Chase saves immediately (no undo needed)
                                   await updatePolicyStatus(r, 'chase');
                                 } else if (action === 'ignore') {
-                                  // Ignore is session-only (no undo needed)
-                                  setIgnoredRows(prev => new Set([...prev, rowKey]));
-                                  showToast('⚫ Ignored for this session', 'success');
+                                  // Ignore saves to database (permanent)
+                                  await updatePolicyStatus(r, 'ignore');
                                 } else if (action === 'clear') {
                                   await updatePolicyStatus(r, 'active');
                                 } else if (action === 'plan_change') {

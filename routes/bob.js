@@ -706,7 +706,7 @@ router.put('/policy-status', requireAuth, async (req, res) => {
     console.log('[BOB-API] Parsed fields:', { client, carrier, agent, status, notes, termedDate });
     
     // Validate status values
-    const validStatuses = ['active', 'termed', 'chase', 'pending', 'plan_change'];
+    const validStatuses = ['active', 'termed', 'chase', 'pending', 'plan_change', 'ignore'];
     if (!validStatuses.includes(status)) {
       console.log('[BOB-API] Invalid status:', status);
       return res.status(400).json({ error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` });
