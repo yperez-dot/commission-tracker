@@ -88,9 +88,22 @@ function derivePlanType(carrier, rawPlanType, policyNumber, lob) {
   const lb = String(lob || '').toLowerCase().trim();
 
   if (carrier === 'UnitedHealthcare') {
-    if (['mapd','dsnp','csnp'].includes(pt)) return 'UnitedHealthcare Med Adv';
-    if (pt.includes('medsup') || pt.includes('modmedsup')) return 'UnitedHealthcare Med Supp';
-    if (pt.includes('partd') || pt === 'partd') return 'UnitedHealthcare PDP';
+    // DEBUG: Log UHC plan type detection
+    if (pt.includes('partd') || pt.includes('pdp')) {
+      console.log('[UHC-PLAN-TYPE] PartD detected:', { rawPlanType, pt });
+    }
+    if (pt.includes('medsup') || pt.includes('modmedsup') || pt.includes('supplement')) {
+      console.log('[UHC-PLAN-TYPE] Med Supp detected:', { rawPlanType, pt });
+    }
+    
+    // Check PDP/PartD first (before MAPD)
+    if (pt.includes('partd') || pt.includes('part d') || pt.includes('pdp')) return 'UnitedHealthcare PDP';
+    // Check Med Supp (includes AARPMODMEDSUP)
+    if (pt.includes('medsup') || pt.includes('modmedsup') || pt.includes('supplement')) return 'UnitedHealthcare Med Supp';
+    // Check MA variants
+    if (['mapd','dsnp','csnp'].includes(pt) || pt.includes('med adv') || pt.includes('advantage')) return 'UnitedHealthcare Med Adv';
+    // Default fallback
+    console.log('[UHC-PLAN-TYPE] Defaulting to Med Adv for:', { rawPlanType, pt });
     return 'UnitedHealthcare Med Adv';
   }
 
@@ -741,6 +754,27 @@ function parseUHCRows(wb) {
       : commActionLower === 'renewal' ? 'Renewal'
       : commActionLower.includes('chargeback') ? 'Chargeback'
       : 'Agent Commission';
+
+    // DEBUG: Log PartD and Med Supp records
+    if (planType.includes('PDP') || planType.includes('PartD') || rawPlanType.toLowerCase().includes('partd')) {
+      console.log('[UHC-PARTD] Found PartD record:', {
+        client,
+        rawPlanType,
+        planType,
+        commission,
+        period,
+        policyNumber
+      });
+    }
+    if (planType.includes('Supp') || rawPlanType.toLowerCase().includes('medsup') || rawPlanType.toLowerCase().includes('supplement')) {
+      console.log('[UHC-MEDSUP] Found Med Supp record:', {
+        client,
+        rawPlanType,
+        planType,
+        commission,
+        period
+      });
+    }
 
     records.push({
       agent: agentName,
@@ -3814,9 +3848,10 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
 
         let lob = null;
         const planTypeLc = String(r.planType || r.plan_type || '').toLowerCase();
-        if (/med adv|mapd|advantage/.test(planTypeLc)) lob = 'MA';
-        else if (/pdp/.test(planTypeLc)) lob = 'PDP';
-        else if (/medsupp|medigap|supplement/.test(planTypeLc)) lob = 'MedSupp';
+        // FIX: Check PDP and MedSupp BEFORE generic MA check
+        if (/pdp|partd|part d/.test(planTypeLc)) lob = 'PDP';
+        else if (/med ?supp|medigap|supplement/.test(planTypeLc)) lob = 'MedSupp';
+        else if (/med adv|mapd|advantage/.test(planTypeLc)) lob = 'MA';
         else if (/aca|marketplace/.test(planTypeLc) || isAcaCarrier) lob = 'ACA';
         else if (/dental/.test(planTypeLc)) lob = 'Dental';
         else if (/vision/.test(planTypeLc)) lob = 'Vision';
