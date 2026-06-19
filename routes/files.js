@@ -666,60 +666,36 @@ function parseUHCSummary(wb) {
  * FIXED: Parse UHC Commission Transactions sheet
  * KEY FIX: Handle both string and number commission values (same issue as summary parser)
  */
-function parseUHCRows(wb) {
+function parseUHCRows(wb, filename) {
   const records = [];
   
-  console.log('🔍 [DEBUG] parseUHCRows called');
+  console.log('🔍 [DEBUG] parseUHCRows called with filename:', filename);
   
-  const summaryData = parseUHCSummary(wb);
-  console.log('🔍 [DEBUG] Summary data:', JSON.stringify(summaryData, null, 2));
-  
-  if (summaryData) {
-    const agentName = summaryData.agentName && !isAgencyName(summaryData.agentName)
-      ? normalizeAgentName(summaryData.agentName)
-      : 'Katy Robles';
+  // Extract period from filename (KR_UHC_STATEMENT_FEBRUARY_2026.xlsx → 202602)
+  let statementPeriod = null;
+  if (filename) {
+    const monthMap = {
+      january: '01', february: '02', march: '03', april: '04',
+      may: '05', june: '06', july: '07', august: '08',
+      september: '09', october: '10', november: '11', december: '12'
+    };
     
-    if (summaryData.commissionEarned > 0) {
-      const commissionRecord = {
-        agent: agentName,
-        carrier: 'UnitedHealthcare',
-        planType: 'Monthly Summary',
-        client: summaryData.paymentReceived > 0 ? 'Commission Earned & Paid' : 'Commission Earned (Applied to Balance)',
-        effectiveDate: '',
-        premium: 0,
-        commission: summaryData.commissionEarned,
-        paymentReceived: summaryData.paymentReceived,
-        classification: 'Commission',
-        period: '',
-        policyNumber: 'SUMMARY',
-        isSummary: true,
-        hasUnpaidBalance: summaryData.hasBalance,
-        raw: { summaryData }
-      };
-      console.log('🔍 [DEBUG] Creating commission record:', commissionRecord);
-      records.push(commissionRecord);
-    }
-    
-    if (summaryData.chargebacks < 0) {
-      const chargebackRecord = {
-        agent: agentName,
-        carrier: 'UnitedHealthcare',
-        planType: 'Monthly Summary',
-        client: 'Chargebacks',
-        effectiveDate: '',
-        premium: 0,
-        commission: summaryData.chargebacks,
-        paymentReceived: 0,
-        classification: 'Chargeback',
-        period: '',
-        policyNumber: 'SUMMARY',
-        isSummary: true,
-        raw: { summaryData }
-      };
-      console.log('🔍 [DEBUG] Creating chargeback record:', chargebackRecord);
-      records.push(chargebackRecord);
+    const fnLower = filename.toLowerCase();
+    for (const [month, num] of Object.entries(monthMap)) {
+      if (fnLower.includes(month)) {
+        const yearMatch = filename.match(/(20\d{2})/);
+        if (yearMatch) {
+          statementPeriod = yearMatch[1] + num;
+          console.log(`[UHC] Extracted statement period from filename: ${statementPeriod}`);
+          break;
+        }
+      }
     }
   }
+  
+  // SKIP SUMMARY RECORDS - these create fake BOB clients
+  // Summary data is useful for validation but should NOT be imported as commission records
+  console.log('[UHC] Skipping summary record creation (prevents fake BOB clients)');
   
   const sheetName = wb.SheetNames.find(s => s.toLowerCase().includes('commission trans')) || wb.SheetNames[0];
   const ws = wb.Sheets[sheetName];
@@ -740,12 +716,29 @@ function parseUHCRows(wb) {
     
     const policyNumber = String(row['Policy Number'] || '').trim();
     const effectiveDate = formatDate(row['Original Effective Date']);
-    const period = String(row['Payment Period'] || '').trim();
+    let period = String(row['Payment Period'] || '').trim();
     const rawPlanType = String(row['Plan Type'] || '').trim();
     const commAction = String(row['Commission Action'] || '').trim();
 
     // Skip invalid client names (empty or statement artifacts)
     if (!isValidClientName(client)) continue;
+    
+    // SKIP SUMMARY ROWS - these create fake BOB clients like "Commission Earned & Paid"
+    const clientLower = client.toLowerCase();
+    if (clientLower.includes('commission earned') ||
+        clientLower.includes('chargebacks') ||
+        clientLower.includes('applied to balance') ||
+        clientLower.includes('total commission') ||
+        clientLower.includes('payment received')) {
+      console.log(`[UHC] Skipping summary row: ${client}`);
+      continue;
+    }
+    
+    // Assign statement period to blank-period records (New Business & Chargebacks often lack periods)
+    if (!period && statementPeriod) {
+      period = statementPeriod;
+      console.log(`[UHC] Assigned statement period ${statementPeriod} to ${client} (${commAction})`);
+    }
 
     const isAgency = isAgencyName(writingAgentRaw);
     const agentName = isAgency ? 'The Health Experts Insurance' : normalizeAgentName(writingAgentRaw);
@@ -4009,7 +4002,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         records = parseUHCDirectRows(wb, req.file.originalname);
       } else if (isUHCFile(req.file.originalname)) {
         console.log('[UPLOAD] Using UHC parser');
-        records = parseUHCRows(wb);
+        records = parseUHCRows(wb, req.file.originalname);
       } else if (isBSIFile(req.file.originalname)) {
         console.log('[UPLOAD] Using BSI parser');
         records = parseBSIRows(wb, req.file.originalname);

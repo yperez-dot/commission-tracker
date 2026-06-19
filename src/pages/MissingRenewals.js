@@ -167,7 +167,7 @@ export default function MissingRenewals({ user }) {
   const [selectedPeriod, setSelectedPeriod] = useState('');
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
-  const [showMissingOnly, setShowMissingOnly] = useState(false);
+  const [showMissingOnly, setShowMissingOnly] = useState(true);
   const [filterAgent, setFilterAgent] = useState('');
   const [filterCarrier, setFilterCarrier] = useState('');
   const [filterLOB, setFilterLOB] = useState('');
