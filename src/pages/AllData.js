@@ -139,7 +139,10 @@ export default function AllData({ user, initialFilters = {} }) {
     finally { setLoading(false); }
   }, [selAgents, selCarriers, selPeriods, selTypes, selPayees, selLOB, search, sortCol, sortDir, hideTermed, user.agency]);
 
-  useEffect(() => { setPage(0); loadRecords(0); }, [loadRecords]);
+  useEffect(() => { 
+    setPage(0); 
+    loadRecords(0); 
+  }, [selAgents, selCarriers, selPeriods, selTypes, selPayees, selLOB, search, sortCol, sortDir, hideTermed, user.agency]);  // loadRecords intentionally omitted to prevent double-trigger
 
   function handlePage(dir) {
     const next = page + dir;
