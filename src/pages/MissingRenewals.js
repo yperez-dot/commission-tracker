@@ -179,6 +179,8 @@ export default function MissingRenewals({ user }) {
   const [showCoverageWarning, setShowCoverageWarning] = useState(true);
   const [grayedRows, setGrayedRows] = useState(new Set());
   const [termedDatePicker, setTermedDatePicker] = useState(null); // { rowKey, date }
+  const [sortCol, setSortCol] = useState('isMissing'); // Default: sort by missing status
+  const [sortDir, setSortDir] = useState('desc'); // Missing first
 
   // Toast notification helper
   function showToast(message, type = 'success') {
@@ -574,7 +576,7 @@ if (effDate && checkDate) {
 
   function exportReport() {
     const headers = ['Agent','Carrier','Payment Period','Client','Effective Date','Commission','Status','Months Missing'];
-    const data = filtered.map(r => [
+    const data = sorted.map(r => [
       r.agent, r.carrier, formatPeriodLabel(selectedPeriod) || selectedPeriod,
       r.client, r.effectiveDate,
       r.isMissing ? '$0.00' : fmt(r.commission),
@@ -607,6 +609,64 @@ if (effDate && checkDate) {
       r.policyStatus !== 'plan_change' && // Hide plan_change clients (same as termed)
       r.policyStatus !== 'ignore' // Hide ignored clients (permanent)
     );
+  });
+
+  // Sort filtered results
+  function handleSort(col) {
+    if (sortCol === col) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortCol(col);
+      setSortDir('asc');
+    }
+  }
+
+  const sorted = [...filtered].sort((a, b) => {
+    let aVal, bVal;
+    
+    switch(sortCol) {
+      case 'agent':
+        aVal = (a.agent || '').toLowerCase();
+        bVal = (b.agent || '').toLowerCase();
+        break;
+      case 'carrier':
+        aVal = (a.carrier || '').toLowerCase();
+        bVal = (b.carrier || '').toLowerCase();
+        break;
+      case 'client':
+        aVal = (a.client || '').toLowerCase();
+        bVal = (b.client || '').toLowerCase();
+        break;
+      case 'effectiveDate':
+        aVal = a.effectiveDate || '';
+        bVal = b.effectiveDate || '';
+        break;
+      case 'lastPaidPeriod':
+        aVal = a.lastPaidPeriod || '';
+        bVal = b.lastPaidPeriod || '';
+        break;
+      case 'commission':
+        aVal = a.commission || 0;
+        bVal = b.commission || 0;
+        break;
+      case 'isMissing':
+        aVal = a.isMissing ? 1 : 0;
+        bVal = b.isMissing ? 1 : 0;
+        break;
+      case 'monthsMissing':
+        aVal = a.monthsMissing || 0;
+        bVal = b.monthsMissing || 0;
+        break;
+      default:
+        return 0;
+    }
+    
+    if (typeof aVal === 'number' && typeof bVal === 'number') {
+      return sortDir === 'asc' ? aVal - bVal : bVal - aVal;
+    }
+    
+    const cmp = String(aVal).localeCompare(String(bVal));
+    return sortDir === 'asc' ? cmp : -cmp;
   });
 
   const filteredMissing = filtered.filter(r => r.isMissing).length;
@@ -797,19 +857,35 @@ if (effDate && checkDate) {
                     <tr>
                       <th style={{ width:8 }}></th>
                       <th>#</th>
-                      <th>Agent</th>
-                      <th>Carrier</th>
-                      <th>Client</th>
-                      <th>Effective date</th>
-                      <th>Last Paid</th>
-                      <th>Commission</th>
-                      <th>Status</th>
-                      <th>Months missing</th>
+                      <th onClick={() => handleSort('agent')} style={{ cursor:'pointer', userSelect:'none' }}>
+                        Agent {sortCol === 'agent' ? (sortDir === 'asc' ? '↑' : '↓') : <span style={{opacity:0.3}}>↕</span>}
+                      </th>
+                      <th onClick={() => handleSort('carrier')} style={{ cursor:'pointer', userSelect:'none' }}>
+                        Carrier {sortCol === 'carrier' ? (sortDir === 'asc' ? '↑' : '↓') : <span style={{opacity:0.3}}>↕</span>}
+                      </th>
+                      <th onClick={() => handleSort('client')} style={{ cursor:'pointer', userSelect:'none' }}>
+                        Client {sortCol === 'client' ? (sortDir === 'asc' ? '↑' : '↓') : <span style={{opacity:0.3}}>↕</span>}
+                      </th>
+                      <th onClick={() => handleSort('effectiveDate')} style={{ cursor:'pointer', userSelect:'none' }}>
+                        Effective date {sortCol === 'effectiveDate' ? (sortDir === 'asc' ? '↑' : '↓') : <span style={{opacity:0.3}}>↕</span>}
+                      </th>
+                      <th onClick={() => handleSort('lastPaidPeriod')} style={{ cursor:'pointer', userSelect:'none' }}>
+                        Last Paid {sortCol === 'lastPaidPeriod' ? (sortDir === 'asc' ? '↑' : '↓') : <span style={{opacity:0.3}}>↕</span>}
+                      </th>
+                      <th onClick={() => handleSort('commission')} style={{ cursor:'pointer', userSelect:'none' }}>
+                        Commission {sortCol === 'commission' ? (sortDir === 'asc' ? '↑' : '↓') : <span style={{opacity:0.3}}>↕</span>}
+                      </th>
+                      <th onClick={() => handleSort('isMissing')} style={{ cursor:'pointer', userSelect:'none' }}>
+                        Status {sortCol === 'isMissing' ? (sortDir === 'asc' ? '↑' : '↓') : <span style={{opacity:0.3}}>↕</span>}
+                      </th>
+                      <th onClick={() => handleSort('monthsMissing')} style={{ cursor:'pointer', userSelect:'none' }}>
+                        Months missing {sortCol === 'monthsMissing' ? (sortDir === 'asc' ? '↑' : '↓') : <span style={{opacity:0.3}}>↕</span>}
+                      </th>
                       <th style={{ width:140 }}>Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filtered.map((r, i) => {
+                    {sorted.map((r, i) => {
                       const rowKey = `${r.client}|${r.carrier}|${r.agent}`;
                       const showingDatePicker = termedDatePicker && termedDatePicker.rowKey === rowKey;
                       return (<>
