@@ -443,31 +443,11 @@ if (effDate && checkDate) {
 
         const commission = matchedRecs.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0);
 
-        // Determine if missing: Check if last paid period >= check period
-        // If client was paid AFTER the check period, they're not missing
-        let isMissing = matchedRecs.length === 0;
-        if (isMissing && client.last_commission_date) {
-          // Convert last_commission_date (MM/DD/YYYY or YYYY-MM-DD) to YYYYMM
-          const lastDateStr = String(client.last_commission_date).trim();
-          let lastPeriodNorm = null;
-          
-          const m1 = lastDateStr.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-          if (m1) {
-            // MM/DD/YYYY format
-            lastPeriodNorm = m1[3] + m1[1].padStart(2, '0');
-          } else {
-            const m2 = lastDateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
-            if (m2) {
-              // YYYY-MM-DD format
-              lastPeriodNorm = m2[1] + m2[2];
-            }
-          }
-          
-          // If last paid period >= check period, NOT missing
-          if (lastPeriodNorm && targetNorm && lastPeriodNorm >= targetNorm) {
-            isMissing = false;
-          }
-        }
+        // Determine if missing:
+        // TRUE if: No records for this period AND last paid < check period
+        // FALSE if: Has records for this period OR last paid >= check period
+        const lastPeriodNorm = normPeriod(client.last_commission_date);
+        const isMissing = matchedRecs.length === 0 && (!lastPeriodNorm || lastPeriodNorm < targetNorm);
 
         built.push({
           client: client.client_full_name,
