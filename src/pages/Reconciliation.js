@@ -17,6 +17,17 @@ function normalizeName(name) {
   return name.toLowerCase().trim().replace(/\s+/g, ' ');
 }
 
+// Normalize name to match database normalized_name logic (same as Missing Renewals)
+// Splits by space, sorts parts alphabetically, rejoins with space
+function normName(name) {
+  if (!name) return '';
+  const s = String(name).toLowerCase().trim()
+    .replace(/[,\.;:]/g, '');  // Strip punctuation
+  // Split by space, filter empty, sort alphabetically, rejoin
+  const parts = s.split(/\s+/).filter(Boolean).sort();
+  return parts.join(' ');
+}
+
 // Normalize agent names (handle test data and variations)
 function normalizeAgentName(name) {
   if (!name) return '';
@@ -83,12 +94,26 @@ function datesMatch(date1, date2) {
   }
 }
 
+// Check if two dates are within 3 months of each other
+function datesWithin3Months(date1, date2) {
+  if (!date1 || !date2) return false;
+  try {
+    const d1 = new Date(date1.split('T')[0]);
+    const d2 = new Date(date2.split('T')[0]);
+    const diffMs = Math.abs(d1.getTime() - d2.getTime());
+    const diffMonths = diffMs / (1000 * 60 * 60 * 24 * 30); // Approximate months
+    return diffMonths <= 3;
+  } catch {
+    return false;
+  }
+}
+
 // Find matching commission for a sale (including manual payments)
 function findMatch(sale, commissions, manualPayments = []) {
   // Check manual payments first
   const saleAgent = sale.agent_name || sale.agent;
   const manualMatch = manualPayments.find(mp => 
-    normalizeName(mp.client_name) === normalizeName(sale.client_name) && 
+    normName(mp.client_name) === normName(sale.client_name) && 
     normalizeAgentName(mp.agent) === normalizeAgentName(saleAgent) && 
     mp.effective_date === sale.effective_date
   );
@@ -97,23 +122,20 @@ function findMatch(sale, commissions, manualPayments = []) {
     return { ...manualMatch, isManual: true };
   }
   
-  const saleClientParsed = parseClientName(sale.client_name);
-  const agent = normalizeAgentName(sale.agent_name || sale.agent);  // Use agent_name first, normalize variations
+  // Use normName() for better client matching (same as Missing Renewals)
+  const saleClientNorm = normName(sale.client_name);
+  const agent = normalizeAgentName(sale.agent_name || sale.agent);
   const carrier = normalizeCarrier(sale.carrier);
   
   for (const comm of commissions) {
-    const commClientParsed = parseClientName(comm.client_full_name);
+    const commClientNorm = normName(comm.client_full_name);
     const commAgent = normalizeAgentName(comm.agent_name);
     const commCarrier = normalizeCarrier(comm.carrier);
     
-    // Client name match (smart matching - handles "LAST, FIRST" and "First Last" formats)
-    const firstMatch = saleClientParsed.first && commClientParsed.first && 
-                       saleClientParsed.first === commClientParsed.first;
-    const lastMatch = saleClientParsed.last && commClientParsed.last && 
-                      saleClientParsed.last === commClientParsed.last;
-    const clientMatch = firstMatch && lastMatch;
+    // Client name match using normName() (handles "LAST FIRST" vs "FIRST LAST")
+    const clientMatch = saleClientNorm === commClientNorm;
     
-    // Agent name match (both normalized to canonical names)
+    // Agent name match
     const agentMatch = agent === commAgent || 
                        agent.includes(commAgent) || 
                        commAgent.includes(agent);
@@ -121,11 +143,12 @@ function findMatch(sale, commissions, manualPayments = []) {
     // Carrier match
     const carrierMatch = carrier === commCarrier || carrier.includes(commCarrier) || commCarrier.includes(carrier);
     
-    // Date match (bonus)
-    const dateMatch = datesMatch(sale.effective_date, comm.effective_date);
+    // Date match - allow ±3 months from effective date (more lenient)
+    const dateMatch = datesWithin3Months(sale.effective_date, comm.effective_date);
     
-    // Require: client + agent + carrier
-    if (clientMatch && agentMatch && carrierMatch) {
+    // Require: client + carrier + date within 3 months
+    // Agent match is bonus but not required (handles sub-agent sales)
+    if (clientMatch && carrierMatch && dateMatch) {
       return comm;
     }
   }
@@ -141,6 +164,7 @@ export default function Reconciliation({ user }) {
   const [tab, setTab] = useState('summary');
   const [filterAgent, setFilterAgent] = useState('all');
   const [filterCarrier, setFilterCarrier] = useState('all');
+  const [filterPeriod, setFilterPeriod] = useState('all');
   const [manualPayments, setManualPayments] = useState([]);
   const [sortColumn, setSortColumn] = useState('client');
   const [sortDirection, setSortDirection] = useState('asc');
@@ -218,6 +242,49 @@ export default function Reconciliation({ user }) {
   if (filterCarrier !== 'all') {
     filteredPaid = filteredPaid.filter(m => normalizeCarrier(m.sale.carrier) === normalizeCarrier(filterCarrier));
     filteredUnpaid = filteredUnpaid.filter(m => normalizeCarrier(m.sale.carrier) === normalizeCarrier(filterCarrier));
+  }
+
+  // Filter by period (effective date month)
+  if (filterPeriod !== 'all') {
+    const filterPeriodMonth = (effDate) => {
+      if (!effDate) return false;
+      try {
+        // Convert effective_date (YYYY-MM-DD or MM-DD-YYYY) to YYYYMM
+        const dateStr = String(effDate).trim();
+        let year, month;
+        
+        // Try YYYY-MM-DD format first
+        const match1 = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})/);
+        if (match1) {
+          year = match1[1];
+          month = match1[2];
+          return year + month === filterPeriod;
+        }
+        
+        // Try MM-DD-YYYY format
+        const match2 = dateStr.match(/^(\d{2})-(\d{2})-(\d{4})/);
+        if (match2) {
+          month = match2[1];
+          year = match2[3];
+          return year + month === filterPeriod;
+        }
+        
+        // Try MM/DD/YYYY format
+        const match3 = dateStr.match(/^(\d{2})\/(\d{2})\/(\d{4})/);
+        if (match3) {
+          month = match3[1];
+          year = match3[3];
+          return year + month === filterPeriod;
+        }
+        
+        return false;
+      } catch {
+        return false;
+      }
+    };
+    
+    filteredPaid = filteredPaid.filter(m => filterPeriodMonth(m.sale.effective_date));
+    filteredUnpaid = filteredUnpaid.filter(m => filterPeriodMonth(m.sale.effective_date));
   }
 
   // Apply search term
@@ -429,6 +496,18 @@ export default function Reconciliation({ user }) {
                 <select className="filter-select" value={filterCarrier} onChange={e => setFilterCarrier(e.target.value)}>
                   <option value="all">All carriers</option>
                   {carriers.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+              <div>
+                <div className="form-label">Enrollment Period</div>
+                <select className="filter-select" value={filterPeriod} onChange={e => setFilterPeriod(e.target.value)}>
+                  <option value="all">All periods</option>
+                  <option value="202601">Jan 2026</option>
+                  <option value="202602">Feb 2026</option>
+                  <option value="202603">Mar 2026</option>
+                  <option value="202604">Apr 2026</option>
+                  <option value="202605">May 2026</option>
+                  <option value="202606">Jun 2026</option>
                 </select>
               </div>
             </div>
