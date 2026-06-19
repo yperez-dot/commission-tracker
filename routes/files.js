@@ -4149,23 +4149,35 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
 
     if (!records.length) return res.status(400).json({ error: 'No records found in file' });
 
-    // STEP 1: Check for internal duplicates (within this batch)
+    // STEP 1: Auto-deduplicate internal duplicates (within this batch)
     const internalDuplicates = findInternalDuplicates(records);
+    let deduplicationNote = null;
+    
     if (internalDuplicates.length > 0) {
-      console.warn(`[UPLOAD] ⚠️ WARNING: ${internalDuplicates.length} internal duplicates detected in file`);
-      console.warn('[UPLOAD] File may have duplicate rows or parser processed same section multiple times');
-      console.warn('[UPLOAD] Sample duplicates:', internalDuplicates.slice(0, 3).map(d => `${d.client} | ${d.carrier} | ${d.period}`));
+      console.warn(`[UPLOAD] ⚠️ ${internalDuplicates.length} internal duplicates detected - auto-deduplicating`);
+      console.warn('[UPLOAD] Keeping first occurrence of each duplicate');
+      console.warn('[UPLOAD] Sample duplicates removed:', internalDuplicates.slice(0, 3).map(d => `${d.client} | ${d.carrier} | ${d.period}`));
       
-      // Return error before any insertion
-      try { fs.unlinkSync(req.file.path); } catch(e) {}
-      return res.status(409).json({
-        duplicateWarning: true,
-        sourceType: 'internal', // Internal duplicates (within file)
-        duplicateCount: internalDuplicates.length,
-        totalCount: records.length,
-        duplicates: internalDuplicates.slice(0, 23),
-        message: `This file contains ${internalDuplicates.length} duplicate records internally. The same client+carrier+period appears multiple times. Please check the source file or parser logic.`
+      // Deduplicate: keep only first occurrence of each unique key
+      const seen = new Set();
+      const originalCount = records.length;
+      
+      records = records.filter(r => {
+        if (!r.client || !r.carrier || !r.effectiveDate) return true; // Keep records with missing data
+        
+        const key = `${r.client.toLowerCase()}|${r.carrier.toLowerCase()}|${r.effectiveDate}|${r.period || ''}|${(r.classification || '').toLowerCase()}`;
+        
+        if (seen.has(key)) {
+          return false; // Skip duplicate
+        }
+        
+        seen.add(key);
+        return true; // Keep first occurrence
       });
+      
+      const removedCount = originalCount - records.length;
+      deduplicationNote = `Auto-removed ${removedCount} internal duplicate(s). Imported ${records.length} unique records.`;
+      console.log(`[UPLOAD] ✓ Deduplicated: ${originalCount} → ${records.length} records (removed ${removedCount})`);
     }
 
     // STEP 2: Duplicate detection against database
@@ -4270,7 +4282,21 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       console.error('[UPLOAD] Plan change detection failed:', err.message);
     });
     
-    res.json({ uploadId, filename: req.file.originalname, rowCount: records.length, commissionSum, carriers, preview: records.slice(0, 5) });
+    const response = { 
+      uploadId, 
+      filename: req.file.originalname, 
+      rowCount: records.length, 
+      commissionSum, 
+      carriers, 
+      preview: records.slice(0, 5) 
+    };
+    
+    // Include deduplication note if applicable
+    if (deduplicationNote) {
+      response.deduplicationNote = deduplicationNote;
+    }
+    
+    res.json(response);
 
   } catch (err) {
     console.error('Upload error:', err);
