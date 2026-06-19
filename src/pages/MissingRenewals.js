@@ -598,7 +598,7 @@ if (effDate && checkDate) {
                 <div style={{ fontWeight:500,fontSize:15 }}>{selectedClient.client}</div>
                 <div style={{ fontSize:12,color:'var(--text-muted)',marginTop:2 }}>
                   {selectedClient.carrier} · {selectedClient.agent} · Effective {selectedClient.effectiveDate}
-                  {selectedClient.isMissing && <span style={{ marginLeft:8,background:'#F5EAE4',color:'#7A3D1F',borderRadius:4,padding:'1px 6px',fontSize:11,fontWeight:500 }}>Missing</span>}
+                  {selectedClient.isMissing && <span style={{ marginLeft:8,background:'#FFF4D6',color:'#856404',borderRadius:4,padding:'1px 6px',fontSize:11,fontWeight:500 }}>Missing</span>}
                 </div>
               </div>
               <button onClick={() => setSelectedClient(null)} style={{ background:'none',border:'none',fontSize:20,cursor:'pointer',color:'var(--text-muted)' }}>✕</button>
@@ -788,12 +788,12 @@ if (effDate && checkDate) {
                       const showingDatePicker = termedDatePicker && termedDatePicker.rowKey === rowKey;
                       return (<>
                       <tr key={i} style={{ 
-                        background: r.isMissing ? '#FFF8F5' : 'transparent',
+                        background: r.isMissing ? '#FFF9E6' : 'transparent',
                         opacity: grayedRows.has(rowKey) ? 0.4 : 1,
                         transition: 'opacity 0.3s ease'
                       }}>
                         <td style={{ padding:'4px 6px' }}>
-                          {r.isMissing && <span style={{ display:'block',width:3,height:'100%',background:'var(--red)',borderRadius:2 }}></span>}
+                          {r.isMissing && <span style={{ display:'block',width:3,height:'100%',background:'var(--amber)',borderRadius:2 }}></span>}
                         </td>
                         <td style={{ color:'var(--text-muted)',fontSize:11 }}>{i+1}</td>
                         <td style={{ fontWeight:400 }}>{r.agent}</td>
@@ -839,7 +839,7 @@ if (effDate && checkDate) {
                           )}
                           {(!r.policyStatus || r.policyStatus === 'active') && (
                             r.isMissing
-                              ? <span className="badge badge-red" data-status-key={rowKey}>Missing</span>
+                              ? <span className="badge badge-amber" data-status-key={rowKey}>Missing</span>
                               : <span className="badge badge-green" data-status-key={rowKey}>Paid</span>
                           )}
                         </td>
