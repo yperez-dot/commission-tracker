@@ -73,6 +73,11 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         const agentLast = (row['Agent Last'] || '').trim();
         agentName = `${agentFirst} ${agentLast}`.trim().substring(0, 100);
         
+        // Normalize test agent names to production names
+        if (agentName === 'Yahoska Test') {
+          agentName = 'Yahoska Perez';
+        }
+        
         // Debug log EVERY row to see what's happening
         console.log(`Row ${inserted + 1}: agentFirst="${agentFirst}" agentLast="${agentLast}" => agentName="${agentName}"`);
         
