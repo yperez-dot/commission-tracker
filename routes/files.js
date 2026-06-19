@@ -3346,29 +3346,25 @@ async function parseNHPAgencyStatementPDF(filePath, filename) {
         console.log(`[NHP] Record: ${currentAgent} | ${client} | ${policy} | $${amount}`);
 
         records.push({
-          policy_number: policy,
-          client_full_name: toTitleCase(client),
-          payment_period: paymentPeriod,
-          effective_date: null,  // Not available in statement
+          agent: currentAgent,
           carrier: currentCarrier,
-          lob: currentLOB,
-          state: state,
-          members: members,
-          amount: amount,
-          agent_name: currentAgent,
-          writing_agent_npn: currentNPN,
-          commission_type: 'Renewal',  // All ACA records are recurring
-          record_type: 'Agency Override',
+          planType: `${currentCarrier} ${currentLOB}`,
+          client: toTitleCase(client),
+          effectiveDate: null,  // Not available in statement
+          premium: 0,
+          commission: amount,
+          classification: 'Agency Override',
+          period: paymentPeriod,
+          policyNumber: policy,
           payee: 'NHP',
-          batch: batch,
-          source_file: filename,
-          upload_date: now.toISOString(),
           raw: {}
         });
       }
     }
 
+    const totalCommission = records.reduce((sum, r) => sum + (r.commission || 0), 0);
     console.log(`[NHP] Total records parsed: ${records.length}`);
+    console.log(`[NHP] Returning ${records.length} records, total: $${totalCommission.toFixed(2)}`);
   } catch (err) {
     console.error('parseNHPAgencyStatementPDF error:', err.message);
   }
