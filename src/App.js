@@ -117,7 +117,7 @@ export default function App() {
       id: 'reconciliation',
       label: 'Reconciliation',
       children: [
-        { id: 'direct-recon', label: 'Direct Agent Recon' },
+        { id: 'direct-recon', label: 'Our Sales' },
         { id: 'agency-production-recon', label: 'Agency Override Recon' },
       ]
     }] : []),
