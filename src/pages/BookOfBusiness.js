@@ -415,7 +415,13 @@ export default function BookOfBusiness({ user }) {
                 <option value="">All LOB</option>
                 {lobs.map(l=><option key={l} value={l}>{l}</option>)}
               </select>
-              <span style={{fontSize:12,color:'var(--text-muted)'}}>
+              <select className="filter-select" value={filterStatus} onChange={e=>setFilterStatus(e.target.value)}>
+                <option value="">All statuses</option>
+                <option value="active">Active</option>
+                <option value="termed">Termed</option>
+                <option value="never_paid">Never paid</option>
+              </select>
+              <span style={{fontSize:12,color:'var(--text-muted)'}}
                 {search.trim() ? `${filteredClients.length} of ${clients.length}` : `${clients.length}`} clients
               </span>
               {search && (

@@ -144,7 +144,12 @@ router.get('/', requireAuth, async (req, res) => {
     }
     if (carrier) { where.push(`b.carrier = $${idx++}`); params.push(carrier); }
     if (agent) { where.push(`b.agent_name = $${idx++}`); params.push(agent); }
-    if (status) { where.push(`b.status = $${idx++}`); params.push(status); }
+    if (status === 'never_paid') {
+      where.push(`(b.last_commission_amount = 0 OR b.last_commission_date IS NULL)`);
+    } else if (status) {
+      where.push(`b.status = $${idx++}`);
+      params.push(status);
+    }
     if (missing === 'true') { where.push(`b.months_missing > 0 AND b.status = 'active'`); }
     if (lob) { where.push(`($${idx} = 'all' OR LOWER(cr.lob) = LOWER($${idx}))`); params.push(lob); idx++; }
     
