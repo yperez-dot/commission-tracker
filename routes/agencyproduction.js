@@ -82,10 +82,38 @@ function extractMemberIdentifiers(row, carrier) {
 
 // Phase 2: Filter policies - KEEP only Active + Future Active (confirmed enrollments that earn overrides)
 // DROP everything else: Cancelled, Inactive, Terminated, Denied, Withdrawn, In Progress, Submitted, Pending
+//
+// CRITICAL PRINCIPLE: "Application completed" ≠ "policy active"
+// When a carrier has BOTH application-status AND enrollment/consumer-status columns:
+//   - Application status = paperwork processing (Completed, Submitted, Issued)
+//   - Enrollment status = actual member on the books (Active, Enrolled, Effective)
+//   - ALWAYS use enrollment status for override filtering
+//   - Example: UHC MA has 382 App_Status=COMPLETED but only 287 Consumer_Status=ACTIVE
+//     The 95 difference = completed apps that never activated (no override earned)
+//
+// Check Aetna, Humana, all carriers for similar splits (Issued_Status vs Enroll_Status, etc.)
 function isActivePolicy(row, carrier) {
   let statusValue = '';
   
   switch(carrier) {
+    case 'UnitedHealthcare':
+      // CRITICAL: Use Consumer_Status (true enrollment), NOT App_Status (application processing)
+      // App_Status=COMPLETED includes 95 policies that never became active:
+      //   - 33 NEVER ACTIVE (app finished, never enrolled)
+      //   - 18 DER - VOLUNTARY (disenrolled)
+      //   - ~44 NA/blank (not active)
+      // Consumer_Status=ACTIVE (287) reflects actual enrollment = actual override payment
+      // Med Supp uses POLICY_STATUS instead
+      statusValue = (row.Consumer_Status || row.POLICY_STATUS || '').trim();
+      break;
+    case 'HealthSpring':
+      // HealthSpring uses Status (not POLICY_STATUS)
+      statusValue = (row.Status || '').trim();
+      break;
+    case 'Freedom':
+      // Freedom uses POLICY_STATUS or APP_STATUS
+      statusValue = (row.POLICY_STATUS || row.APP_STATUS || '').trim();
+      break;
     case 'Aetna':
       // Aetna has three status columns to check
       const enrollStatus = (row.Enroll_Status || '').trim().toUpperCase();
@@ -121,13 +149,19 @@ function isActivePolicy(row, carrier) {
   const status = statusValue.toUpperCase().trim();
   
   // WHITELIST approach - exact match on known KEEP statuses (safer than substring)
+  // CRITICAL PRINCIPLE: Prefer enrollment/consumer status over application status
+  // "Application completed" ≠ "policy active" - only active members earn overrides
   const keepStatuses = [
-    'ACTIVE',
+    'ACTIVE',        // UHC MA Consumer_Status, Humana, most carriers
     'ACTIVE POLICY',
     'FUTURE ACTIVE',
     'FUTURE ACTIVE POLICY',
-    'ACCEPTED',  // UHC Med Supp
-    'COMPLETED'  // UHC MA
+    'ACCEPTED',      // UHC Med Supp
+    'ENROLLED',      // HealthSpring, Devoted (actual enrollment, not just app submitted)
+    'APPROVED',      // Devoted
+    'CMS ACCEPTED',  // Freedom (note: different from just ACCEPTED)
+    'NEW_EFFECTIVE', // Freedom (FINAL_STATUS for fresh active policy)
+    'COMPLETED'      // UHC MA App_Status - DO NOT USE, kept for legacy only
   ];
   
   for (const keepStatus of keepStatuses) {
