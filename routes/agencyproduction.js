@@ -74,9 +74,11 @@ function extractMemberIdentifiers(row, carrier) {
   return { mbi, carrier_member_id, policy_number_production };
 }
 
-// Phase 2: Filter out inactive policies (Cancelled, Inactive, etc.)
+// Phase 2: Filter policies - KEEP only Active + Future Active (confirmed enrollments that earn overrides)
+// DROP everything else: Cancelled, Inactive, Terminated, Denied, Withdrawn, In Progress, Submitted, Pending
 function isActivePolicy(row, carrier) {
   let statusValue = '';
+  
   switch(carrier) {
     case 'Aetna':
       // Aetna has three status columns to check
@@ -84,15 +86,17 @@ function isActivePolicy(row, carrier) {
       const exitStatus = (row.Exit_Status || '').trim().toUpperCase();
       const termStatus = (row.Term_Status || '').trim().toUpperCase();
       
-      // Drop if Enroll_Status is Cancel
+      // Drop if any status contains Cancel/Voluntary
       if (enrollStatus.includes('CANCEL')) return false;
-      
-      // Also check Exit_Status and Term_Status for Voluntary/Cancel
       if (exitStatus.includes('VOLUNTARY') || exitStatus.includes('CANCEL')) return false;
       if (termStatus.includes('VOLUNTARY') || termStatus.includes('CANCEL')) return false;
       
-      // If none of those triggered, consider it active
-      return true;
+      // For Aetna, only keep if Enroll_Status is Active or Future Active
+      if (enrollStatus.includes('ACTIVE') || enrollStatus.includes('FUTURE')) return true;
+      
+      // Otherwise drop (pending, in progress, etc.)
+      return false;
+      
     case 'Humana':
       statusValue = (row.Status || '').trim();
       break;
@@ -106,16 +110,28 @@ function isActivePolicy(row, carrier) {
       statusValue = (row.Status || row.App_Status || row.Consumer_Status || row.POLICY_STATUS || '').trim();
   }
   
-  if (!statusValue) return true; // No status = include (manual review)
+  if (!statusValue) return false; // No status = drop (manual review needed)
   
   const status = statusValue.toUpperCase();
-  const inactiveStatuses = ['CANCELLED', 'CANCELED', 'INACTIVE', 'TERMINATED', 'TERMED', 'PENDING CANCEL', 'DECLINED', 'REJECTED'];
   
-  for (const inactive of inactiveStatuses) {
-    if (status.includes(inactive)) return false;
+  // DROP: Check for explicit inactive statuses FIRST (before checking for 'ACTIVE' substring)
+  const dropStatuses = [
+    'CANCEL', 'INACTIVE', 'TERMINATED', 'TERMED', 
+    'DENIED', 'WITHDRAWN', 'IN PROGRESS', 'SUBMITTED', 
+    'PENDING', 'REJECTED', 'DECLINED'
+  ];
+  
+  for (const dropStatus of dropStatuses) {
+    if (status.includes(dropStatus)) return false;
   }
   
-  return true; // Active or unknown = include
+  // KEEP: Only Active and Future Active (confirmed enrollments that earn overrides)
+  // Check for 'ACTIVE' but NOT 'INACTIVE' (already filtered above)
+  if (status.includes('ACTIVE')) return true;
+  if (status.includes('FUTURE')) return true; // Future Active already passed the checks above
+  
+  // DROP: Everything else not explicitly active
+  return false;
 }
 
 // Helper: Convert Excel serial date to ISO date string
