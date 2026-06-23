@@ -12,6 +12,93 @@ const upload = multer({
   }
 });
 
+// Phase 2: Validate MBI format (11 chars: #A[#A]AA#A[#A]##)
+// CMS MBI format - positions 3 and 9 can be digit OR letter
+function validateMBI(value) {
+  if (!value) return null;
+  const cleaned = String(value).trim().toUpperCase();
+  if (cleaned.length !== 11) return null;
+  // Pattern: 1=digit, 2=letter, 3=alphanumeric, 4=digit, 5-6=letters, 7=digit, 8=letter, 9=alphanumeric, 10-11=digits
+  // Example: 1EG4TE5MK73
+  const mbiPattern = /^[1-9][A-Z][0-9A-Z][0-9][A-Z]{2}[0-9][A-Z][0-9A-Z][0-9]{2}$/;
+  if (!mbiPattern.test(cleaned)) return null;
+  return cleaned;
+}
+
+// Phase 2: Extract MBI and carrier_member_id per carrier schema
+function extractMemberIdentifiers(row, carrier) {
+  let mbi = null;
+  let carrier_member_id = null;
+  let policy_number_production = null;
+  
+  switch(carrier) {
+    case 'Anthem':
+      mbi = validateMBI(row.Beneficiary_Claim_Number);
+      carrier_member_id = row.HCID ? String(row.HCID).trim() : null;
+      break;
+    case 'Humana':
+      mbi = validateMBI(row.MEDICARE_IDENTIFIER);
+      carrier_member_id = row.UMID ? String(row.UMID).trim() : null;
+      break;
+    case 'UnitedHealthcare':
+      if (row['Policy Number'] && row['HICN/MBI']) {
+        // UHC Med Supp - SPECIAL: Policy Number is the statement key
+        mbi = validateMBI(row['HICN/MBI']);
+        policy_number_production = row['Policy Number'] ? String(row['Policy Number']).trim() : null;
+      } else if (row.HIC) {
+        // UHC MA
+        mbi = validateMBI(row.HIC);
+      }
+      break;
+    case 'Devoted':
+      mbi = validateMBI(row.MBI);
+      carrier_member_id = row.MemberRecordLocator ? String(row.MemberRecordLocator).trim() : null;
+      break;
+    case 'HealthSpring':
+      mbi = validateMBI(row.Medicare_Number);
+      carrier_member_id = row.Member_ID ? String(row.Member_ID).trim() : null;
+      break;
+    case 'Freedom':
+      mbi = validateMBI(row['HIC#'] || row.HIC);
+      carrier_member_id = (row.POLICY_NUMBER || row.CONTRACT) ? String(row.POLICY_NUMBER || row.CONTRACT).trim() : null;
+      break;
+    default:
+      const possibleMBI = row.MBI || row.HICN || row['HICN/MBI'] || row.HIC || row['HIC#'] || row.Medicare_Number || row.MEDICARE_IDENTIFIER;
+      mbi = validateMBI(possibleMBI);
+  }
+  
+  return { mbi, carrier_member_id, policy_number_production };
+}
+
+// Phase 2: Filter out inactive policies (Cancelled, Inactive, etc.)
+function isActivePolicy(row, carrier) {
+  let statusValue = '';
+  switch(carrier) {
+    case 'Humana':
+      statusValue = (row.Status || '').trim();
+      break;
+    case 'Anthem':
+      statusValue = (row.App_Status || '').trim();
+      break;
+    case 'HealthSpring':
+      statusValue = (row.POLICY_STATUS || '').trim();
+      break;
+    default:
+      statusValue = (row.Status || row.App_Status || row.Consumer_Status || row.POLICY_STATUS || '').trim();
+  }
+  
+  if (!statusValue) return true; // No status = include (manual review)
+  
+  const status = statusValue.toUpperCase();
+  const inactiveStatuses = ['CANCELLED', 'CANCELED', 'INACTIVE', 'TERMINATED', 'TERMED', 'PENDING CANCEL', 'DECLINED', 'REJECTED'];
+  
+  for (const inactive of inactiveStatuses) {
+    if (status.includes(inactive)) return false;
+  }
+  
+  return true; // Active or unknown = include
+}
+
 // Helper: Convert Excel serial date to ISO date string
 function excelDateToISO(excelDate) {
   if (!excelDate) return null;
@@ -197,6 +284,16 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         skipped++;
         continue;
       }
+      
+      // Phase 2: Extract MBI and carrier-specific member IDs
+      const identifiers = extractMemberIdentifiers(row, carrier);
+      
+      // Phase 2: Filter out inactive policies (don't create false "Override Missing" rows)
+      if (!isActivePolicy(row, carrier)) {
+        console.log(`Skipping inactive policy: ${clientName} (${statusValue})`);
+        skipped++;
+        continue;
+      }
 
       // Check for duplicate (same agent + client + effective_date in same batch)
       const existingQuery = `
@@ -226,8 +323,8 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
           `INSERT INTO agency_production 
            (agent_name, client_name, carrier, plan_name, policy_number, effective_date, 
             transaction_date, status, policy_type, enrollment_type, state, county, 
-            upload_batch, uploaded_at, raw_data)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+            upload_batch, uploaded_at, raw_data, mbi, carrier_member_id, policy_number_production)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
           [
             agentName,
             clientName,
@@ -243,7 +340,10 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
             county,
             uploadMonth,
             uploadDate,
-            JSON.stringify(row)
+            JSON.stringify(row),
+            identifiers.mbi,                      // Phase 2: Medicare Beneficiary Identifier
+            identifiers.carrier_member_id,        // Phase 2: Carrier-specific member ID
+            identifiers.policy_number_production  // Phase 2: Policy# (UHC Med Supp only)
           ]
         );
         inserted++;
