@@ -135,10 +135,10 @@ function isActivePolicy(row, carrier) {
       statusValue = (row.Status || '').trim();
       break;
     case 'Anthem':
-      statusValue = (row.App_Status || '').trim();
+      statusValue = (row.Consumer_Status || row.App_Status || '').trim();
       break;
-    case 'HealthSpring':
-      statusValue = (row.POLICY_STATUS || '').trim();
+    case 'Devoted':
+      statusValue = (row.Status || '').trim();
       break;
     default:
       statusValue = (row.Status || row.App_Status || row.Consumer_Status || row.POLICY_STATUS || '').trim();
@@ -152,16 +152,15 @@ function isActivePolicy(row, carrier) {
   // CRITICAL PRINCIPLE: Prefer enrollment/consumer status over application status
   // "Application completed" ≠ "policy active" - only active members earn overrides
   const keepStatuses = [
-    'ACTIVE',        // UHC MA Consumer_Status, Humana, most carriers
-    'ACTIVE POLICY',
-    'FUTURE ACTIVE',
-    'FUTURE ACTIVE POLICY',
-    'ACCEPTED',      // UHC Med Supp
-    'ENROLLED',      // HealthSpring, Devoted (actual enrollment, not just app submitted)
-    'APPROVED',      // Devoted
-    'CMS ACCEPTED',  // Freedom (note: different from just ACCEPTED)
-    'NEW_EFFECTIVE', // Freedom (FINAL_STATUS for fresh active policy)
-    'COMPLETED'      // UHC MA App_Status - DO NOT USE, kept for legacy only
+    'ACTIVE',         // UHC Consumer_Status, Humana, most carriers (actual active member)
+    'ACTIVE POLICY',  // Humana
+    'FUTURE ACTIVE',  // Aetna, Humana (confirmed enrollment, future start date - earns override)
+    'FUTURE ACTIVE POLICY', // Humana
+    'ACCEPTED',       // UHC Med Supp (policy accepted and active)
+    'ENROLLED',       // HealthSpring, Devoted (actual enrollment, not just app submitted)
+    'APPROVED',       // Devoted (approved for enrollment)
+    'CMS ACCEPTED',   // Freedom (CMS accepted the enrollment - active)
+    'NEW_EFFECTIVE'   // Freedom FINAL_STATUS (fresh active policy)
   ];
   
   for (const keepStatus of keepStatuses) {
@@ -172,11 +171,16 @@ function isActivePolicy(row, carrier) {
   const dropStatuses = [
     'CANCEL', 'CANCELLED', 'CANCELED', 'CANCELLED APPLICATION',
     'INACTIVE', 'INACTIVE POLICY',
+    'NEVER ACTIVE',  // UHC Consumer_Status - completed app but never activated
+    'DER',           // UHC Consumer_Status - disenrolled (DER - VOLUNTARY, etc.)
+    'NA',            // UHC Consumer_Status - Not Active
     'TERMINATED', 'TERMED',
     'DENIED', 'WITHDRAWN',
     'IN PROGRESS', 'IN PROGRESS APPLICATION',
     'SUBMITTED', 'PENDING',
-    'REJECTED', 'DECLINED'
+    'REJECTED', 'DECLINED',
+    'DISENROLL', 'DISENROLLED',  // Devoted
+    'COMPLETED'      // APPLICATION status (not enrollment) - app finished ≠ member active
   ];
   
   for (const dropStatus of dropStatuses) {
