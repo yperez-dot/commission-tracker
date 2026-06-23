@@ -32,6 +32,10 @@ function extractMemberIdentifiers(row, carrier) {
   let policy_number_production = null;
   
   switch(carrier) {
+    case 'Aetna':
+      mbi = validateMBI(row.MEDICARE_NUMBER);
+      carrier_member_id = row.Affinitypolicyid ? String(row.Affinitypolicyid).trim() : null;
+      break;
     case 'Anthem':
       mbi = validateMBI(row.Beneficiary_Claim_Number);
       carrier_member_id = row.HCID ? String(row.HCID).trim() : null;
@@ -74,6 +78,21 @@ function extractMemberIdentifiers(row, carrier) {
 function isActivePolicy(row, carrier) {
   let statusValue = '';
   switch(carrier) {
+    case 'Aetna':
+      // Aetna has three status columns to check
+      const enrollStatus = (row.Enroll_Status || '').trim().toUpperCase();
+      const exitStatus = (row.Exit_Status || '').trim().toUpperCase();
+      const termStatus = (row.Term_Status || '').trim().toUpperCase();
+      
+      // Drop if Enroll_Status is Cancel
+      if (enrollStatus.includes('CANCEL')) return false;
+      
+      // Also check Exit_Status and Term_Status for Voluntary/Cancel
+      if (exitStatus.includes('VOLUNTARY') || exitStatus.includes('CANCEL')) return false;
+      if (termStatus.includes('VOLUNTARY') || termStatus.includes('CANCEL')) return false;
+      
+      // If none of those triggered, consider it active
+      return true;
     case 'Humana':
       statusValue = (row.Status || '').trim();
       break;
