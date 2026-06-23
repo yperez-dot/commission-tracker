@@ -67,8 +67,14 @@ function extractMemberIdentifiers(row, carrier) {
       carrier_member_id = (row.POLICY_NUMBER || row.CONTRACT) ? String(row.POLICY_NUMBER || row.CONTRACT).trim() : null;
       break;
     default:
-      const possibleMBI = row.MBI || row.HICN || row['HICN/MBI'] || row.HIC || row['HIC#'] || row.Medicare_Number || row.MEDICARE_IDENTIFIER;
+      // Unmapped carrier - try common column names but warn if none found
+      const possibleMBI = row.MBI || row.HICN || row['HICN/MBI'] || row.HIC || row['HIC#'] || row.Medicare_Number || row.MEDICARE_IDENTIFIER || row.Beneficiary_Claim_Number;
       mbi = validateMBI(possibleMBI);
+      
+      // Flag for review if no MBI column found
+      if (!possibleMBI && carrier) {
+        console.warn(`⚠️  Unmapped carrier "${carrier}" - no MBI column found. Add explicit mapping to extractMemberIdentifiers().`);
+      }
   }
   
   return { mbi, carrier_member_id, policy_number_production };
@@ -112,25 +118,39 @@ function isActivePolicy(row, carrier) {
   
   if (!statusValue) return false; // No status = drop (manual review needed)
   
-  const status = statusValue.toUpperCase();
+  const status = statusValue.toUpperCase().trim();
   
-  // DROP: Check for explicit inactive statuses FIRST (before checking for 'ACTIVE' substring)
+  // WHITELIST approach - exact match on known KEEP statuses (safer than substring)
+  const keepStatuses = [
+    'ACTIVE',
+    'ACTIVE POLICY',
+    'FUTURE ACTIVE',
+    'FUTURE ACTIVE POLICY',
+    'ACCEPTED',  // UHC Med Supp
+    'COMPLETED'  // UHC MA
+  ];
+  
+  for (const keepStatus of keepStatuses) {
+    if (status === keepStatus) return true;
+  }
+  
+  // BLACKLIST as fallback - drop known inactive statuses
   const dropStatuses = [
-    'CANCEL', 'INACTIVE', 'TERMINATED', 'TERMED', 
-    'DENIED', 'WITHDRAWN', 'IN PROGRESS', 'SUBMITTED', 
-    'PENDING', 'REJECTED', 'DECLINED'
+    'CANCEL', 'CANCELLED', 'CANCELED', 'CANCELLED APPLICATION',
+    'INACTIVE', 'INACTIVE POLICY',
+    'TERMINATED', 'TERMED',
+    'DENIED', 'WITHDRAWN',
+    'IN PROGRESS', 'IN PROGRESS APPLICATION',
+    'SUBMITTED', 'PENDING',
+    'REJECTED', 'DECLINED'
   ];
   
   for (const dropStatus of dropStatuses) {
     if (status.includes(dropStatus)) return false;
   }
   
-  // KEEP: Only Active and Future Active (confirmed enrollments that earn overrides)
-  // Check for 'ACTIVE' but NOT 'INACTIVE' (already filtered above)
-  if (status.includes('ACTIVE')) return true;
-  if (status.includes('FUTURE')) return true; // Future Active already passed the checks above
-  
-  // DROP: Everything else not explicitly active
+  // Unknown status - log warning and drop (conservative)
+  console.warn(`⚠️  Unknown status "${statusValue}" for ${carrier} - defaulting to DROP. Add to whitelist if valid.`);
   return false;
 }
 
