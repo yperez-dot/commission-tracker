@@ -80,33 +80,50 @@ export default function AgencyProductionUpload() {
 
         const uploadUrl = `${API_URL}/api/agency-production/upload`;
         
-        const response = await fetch(uploadUrl, {
-          method: 'POST',
-          body: formData,
-          headers: {
-            'Authorization': `Bearer ${getToken()}`
-          }
-        });
-
-        const text = await response.text();
+        // Large files (e.g., Aetna 2.8MB) can take 30-60 seconds to parse
+        // Set 5-minute timeout to handle big production files
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 minutes
         
-        if (!response.ok) {
-          let errorMsg = 'Upload failed';
-          try {
-            const errorData = JSON.parse(text);
-            errorMsg = errorData.error || errorData.message || text;
-          } catch (e) {
-            errorMsg = text || 'Upload failed';
+        try {
+          const response = await fetch(uploadUrl, {
+            method: 'POST',
+            body: formData,
+            headers: {
+              'Authorization': `Bearer ${getToken()}`
+            },
+            signal: controller.signal
+          });
+          
+          clearTimeout(timeoutId);
+          
+          const text = await response.text();
+          
+          if (!response.ok) {
+            let errorMsg = 'Upload failed';
+            try {
+              const errorData = JSON.parse(text);
+              errorMsg = errorData.error || errorData.message || text;
+            } catch (e) {
+              errorMsg = text || 'Upload failed';
+            }
+            results.push({ file: file.name, success: false, message: errorMsg });
+          } else {
+            let result = {};
+            try {
+              result = JSON.parse(text);
+            } catch (e) {
+              result = { message: text };
+            }
+            results.push({ file: file.name, success: true, message: result.message || 'Upload successful!' });
           }
-          results.push({ file: file.name, success: false, message: errorMsg });
-        } else {
-          let result = {};
-          try {
-            result = JSON.parse(text);
-          } catch (e) {
-            result = { message: text };
+        } catch (err) {
+          clearTimeout(timeoutId);
+          if (err.name === 'AbortError') {
+            results.push({ file: file.name, success: false, message: 'Upload timed out after 5 minutes. File may be too large or server is slow.' });
+          } else {
+            results.push({ file: file.name, success: false, message: err.message });
           }
-          results.push({ file: file.name, success: true, message: result.message || 'Upload successful!' });
         }
       } catch (err) {
         results.push({ file: file.name, success: false, message: err.message });

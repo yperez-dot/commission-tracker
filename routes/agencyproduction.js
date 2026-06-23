@@ -8,7 +8,7 @@ const { requireAuth } = require('./auth');
 const upload = multer({ 
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 10 * 1024 * 1024 // 10 MB limit
+    fileSize: 50 * 1024 * 1024 // 50 MB limit (handles large production files like Aetna 2.8MB)
   }
 });
 
@@ -365,7 +365,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       const county = (row.COUNTY || row.County || row.App_County || '').substring(0, 100);
 
       // Parse effective date (handles Excel serial dates)
-      const effectiveDateValue = row.EFF_DT || row['Effective Date'] || row.Effective_Date || row.StartDate;
+      const effectiveDateValue = row.EFF_DTE || row.EFF_DT || row['Effective Date'] || row.Effective_Date || row.StartDate || row.EffectiveDate;
       const effectiveDate = excelDateToISO(effectiveDateValue);
 
       // Parse transaction date (handles Excel serial dates)

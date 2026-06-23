@@ -10,8 +10,8 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'x-agency-override']
 }));
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
 const { initSchema } = require('./db/database');
 initSchema().then(() => {
@@ -137,8 +137,13 @@ app.use((err, req, res, next) => {
   res.status(500).json({ error: 'Server error', message: err.message });
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`\n🚀 Health Experts Commission Tracker API`);
   console.log(`   Running on port ${PORT}`);
   console.log(`   Environment: ${process.env.NODE_ENV || 'development'}\n`);
 });
+
+// Set timeout to 5 minutes for large file uploads (Aetna 2.8MB takes ~30 seconds)
+server.timeout = 300000; // 5 minutes
+server.keepAliveTimeout = 300000;
+server.headersTimeout = 310000; // Slightly higher than keepAliveTimeout
