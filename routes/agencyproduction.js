@@ -12,15 +12,15 @@ const upload = multer({
   }
 });
 
-// Phase 2: Validate MBI format (11 chars: #A[#A]AA#A[#A]##)
-// CMS MBI format - positions 3 and 9 can be digit OR letter
+// Phase 2: Validate MBI format (11 chars: #A[#A]#[AA][#A]##)
+// Real MBI format from production data - positions 3, 6, and 9 can be digit OR letter
 function validateMBI(value) {
   if (!value) return null;
   const cleaned = String(value).trim().toUpperCase();
   if (cleaned.length !== 11) return null;
-  // Pattern: 1=digit, 2=letter, 3=alphanumeric, 4=digit, 5-6=letters, 7=digit, 8=letter, 9=alphanumeric, 10-11=digits
-  // Example: 1EG4TE5MK73
-  const mbiPattern = /^[1-9][A-Z][0-9A-Z][0-9][A-Z]{2}[0-9][A-Z][0-9A-Z][0-9]{2}$/;
+  // Pattern: 1=digit, 2=letter, 3=alphanum, 4=digit, 5=letter, 6=alphanum, 7=digit, 8=letter, 9=alphanum, 10-11=digits
+  // Tested against real production MBIs: 1YJ9E76GC17, 8C73N39QN86, 2D15P42UY89, etc.
+  const mbiPattern = /^[1-9][A-Z][0-9A-Z][0-9][A-Z][0-9A-Z][0-9][A-Z][0-9A-Z][0-9]{2}$/;
   if (!mbiPattern.test(cleaned)) return null;
   return cleaned;
 }
