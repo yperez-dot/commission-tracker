@@ -260,7 +260,7 @@ function findOverrideMatch(production, overrides) {
       });
     }
     
-    // Client name match using normName() (handles "LAST FIRST" vs "FIRST LAST")
+    // Primary: Exact name match using normName()
     const clientMatch = prodClientNorm === overrideClientNorm;
     
     // Carrier match
@@ -268,9 +268,40 @@ function findOverrideMatch(production, overrides) {
                         prodCarrier.includes(overrideCarrier) || 
                         overrideCarrier.includes(prodCarrier);
     
-    // Match if client + carrier match (period-agnostic)
+    // Fallback: Check for parser name-bleed (surname stuck to policy number)
+    // Example: policy "929779560RODRIGUEZ" where RODRIGUEZ is the surname
+    // Extract letters from end of override policy number
+    let policyBleedSurname = null;
+    if (override.policy_number) {
+      const bleedMatch = override.policy_number.match(/([A-Z]{4,})$/);
+      if (bleedMatch) {
+        policyBleedSurname = bleedMatch[1].toLowerCase();
+      }
+    }
+    
+    // Check if production last name matches the policy bleed
+    const prodWords = prodClientNorm.toLowerCase().split(' ');
+    const prodSurname = prodWords.find(w => w.length > 3 && !['junior', 'senior'].includes(w)) || prodWords[prodWords.length - 1];
+    
+    const bleedMatch = policyBleedSurname && prodSurname && 
+                       (prodSurname === policyBleedSurname || 
+                        prodSurname.includes(policyBleedSurname) ||
+                        policyBleedSurname.includes(prodSurname));
+    
+    // Match if:
+    // 1. Exact name + carrier (primary)
+    // 2. Policy bleed surname + carrier (fallback for parser bug)
     if (clientMatch && carrierMatch) {
-      matches.push(override);  // Collect ALL matches, don't return early
+      matches.push(override);  // Primary match
+    } else if (bleedMatch && carrierMatch) {
+      if (isGuido) {
+        console.log('[MATCH DEBUG] Fallback match (policy bleed)!', {
+          policyBleedSurname,
+          prodSurname,
+          overridePolicy: override.policy_number
+        });
+      }
+      matches.push(override);  // Fallback match via policy bleed
     }
   }
   
