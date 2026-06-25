@@ -273,29 +273,47 @@ function findOverrideMatch(production, overrides) {
     // Extract letters from end of override policy number
     let policyBleedSurname = null;
     if (override.policy_number) {
-      const bleedMatch = override.policy_number.match(/([A-Z]{4,})$/);
+      const bleedMatch = override.policy_number.match(/([A-Z]{4,})$/i);  // Case insensitive
       if (bleedMatch) {
         policyBleedSurname = bleedMatch[1].toLowerCase();
       }
     }
     
-    // Check if production last name matches the policy bleed
+    // Extract surname from production name
+    // For "Guido Rodriguez Jr" → surname is "Rodriguez" (second-to-last if suffix present)
     const prodWords = prodClientNorm.toLowerCase().split(' ');
-    const prodSurname = prodWords.find(w => w.length > 3 && !['junior', 'senior'].includes(w)) || prodWords[prodWords.length - 1];
+    const lastWord = prodWords[prodWords.length - 1];
+    const suffixes = ['jr', 'sr', 'ii', 'iii', 'iv', 'v', 'junior', 'senior'];
+    const hasSuffix = suffixes.includes(lastWord);
+    const prodSurname = hasSuffix && prodWords.length > 1 
+                        ? prodWords[prodWords.length - 2]  // Second-to-last (surname before suffix)
+                        : lastWord;  // Last word is surname
     
-    const bleedMatch = policyBleedSurname && prodSurname && 
-                       (prodSurname === policyBleedSurname || 
-                        prodSurname.includes(policyBleedSurname) ||
-                        policyBleedSurname.includes(prodSurname));
+    const bleedMatchResult = policyBleedSurname && prodSurname && 
+                             (prodSurname === policyBleedSurname || 
+                              prodSurname.includes(policyBleedSurname) ||
+                              policyBleedSurname.includes(prodSurname));
+    
+    // DEBUG: Log for Guido when checking bleed
+    if (isGuido && policyBleedSurname) {
+      console.log('[MATCH DEBUG] Policy bleed check:', {
+        overridePolicy: override.policy_number,
+        policyBleedSurname,
+        prodWords,
+        prodSurname,
+        hasSuffix,
+        bleedMatchResult
+      });
+    }
     
     // Match if:
     // 1. Exact name + carrier (primary)
     // 2. Policy bleed surname + carrier (fallback for parser bug)
     if (clientMatch && carrierMatch) {
       matches.push(override);  // Primary match
-    } else if (bleedMatch && carrierMatch) {
+    } else if (bleedMatchResult && carrierMatch) {
       if (isGuido) {
-        console.log('[MATCH DEBUG] Fallback match (policy bleed)!', {
+        console.log('[MATCH DEBUG] ✅ Fallback match (policy bleed)!', {
           policyBleedSurname,
           prodSurname,
           overridePolicy: override.policy_number
