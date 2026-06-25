@@ -331,11 +331,40 @@ export default function AgencyProductionRecon() {
 
       // Load override commission statements
       const overrideData = await apiFetch('/records?limit=5000');
+      const allRecords = overrideData.records || [];
       
-      // Filter to only override statements (by classification)
-      const overrideStatements = (overrideData.records || []).filter(r => {
+      console.log(`[OVERRIDE FILTER] Total commission records loaded: ${allRecords.length}`);
+      
+      // Filter to override statements:
+      // 1. Records with "override" in classification (explicit agency overrides)
+      // 2. Records from BSI/NHP payee (all BSI payments to THEI are overrides)
+      // BUG FIX: Sandra Fertil's $75 payments were classified as "Renewal" by BSI parser
+      //          because parser uses amount-based classification ($75 >= $20 → Renewal)
+      //          but BSI pays THEI overrides at various amounts (not just <$20)
+      const overrideStatements = allRecords.filter(r => {
         const classification = r.classification?.toLowerCase() || '';
-        return classification.includes('agency override') || classification.includes('override');
+        const payee = r.payee?.toLowerCase() || '';
+        const source = r.source?.toLowerCase() || '';
+        
+        // Include if:
+        // - Classification contains "override" (explicit)
+        // - OR payee is BSI/NHP (all BSI/NHP payments are overrides)
+        return classification.includes('override') || 
+               payee.includes('bsi') || 
+               payee.includes('nhp') ||
+               source.includes('bsi') ||
+               source.includes('nhp');
+      });
+      
+      console.log(`[OVERRIDE FILTER] After filtering to overrides: ${overrideStatements.length}`);
+      console.log(`[OVERRIDE FILTER] Breakdown by classification:`);
+      const classificationCounts = {};
+      overrideStatements.forEach(r => {
+        const cls = r.classification || 'Unknown';
+        classificationCounts[cls] = (classificationCounts[cls] || 0) + 1;
+      });
+      Object.entries(classificationCounts).forEach(([cls, count]) => {
+        console.log(`  ${cls}: ${count}`);
       });
       
       setOverrides(overrideStatements);
