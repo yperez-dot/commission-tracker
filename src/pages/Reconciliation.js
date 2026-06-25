@@ -229,9 +229,9 @@ function expectedCommission(months) {
   return Math.max(calculated, floor);
 }
 
-// Find matching commission for a sale (including manual payments)
+// Find ALL matching commissions for a sale and return net amount
 // Period-agnostic: If commission exists for client + carrier, count as Paid
-// New Business records often have blank periods, so don't require period/date match
+// Returns object with all matches and net commission (e.g., +$318.09 New Business -$347 Chargeback = -$28.91 net)
 function findMatch(sale, commissions, manualPayments = []) {
   // Check manual payments first
   const saleAgent = sale.agent_name || sale.agent;
@@ -248,10 +248,12 @@ function findMatch(sale, commissions, manualPayments = []) {
   // Use normName() for fuzzy client matching (same as Missing Renewals)
   const saleClientNorm = normName(sale.client_name);
   const carrier = normalizeCarrier(sale.carrier);
+  const salePolicy = (sale.policy_number || '').trim().toLowerCase();
   
   for (const comm of commissions) {
     const commClientNorm = normName(comm.client_full_name);
     const commCarrier = normalizeCarrier(comm.carrier);
+    const commPolicy = (comm.policy_number || '').trim().toLowerCase();
     
     // Client name match using normName() (handles "LAST FIRST" vs "FIRST LAST")
     const clientMatch = saleClientNorm === commClientNorm;
@@ -259,12 +261,16 @@ function findMatch(sale, commissions, manualPayments = []) {
     // Carrier match
     const carrierMatch = carrier === commCarrier || carrier.includes(commCarrier) || commCarrier.includes(carrier);
     
+    // Policy number match (fallback for name mismatches)
+    const policyMatch = salePolicy && commPolicy && salePolicy === commPolicy;
+    
     // PERIOD-AGNOSTIC: Only require client + carrier match
+    // OR policy + carrier match (fallback for name normalization issues)
     // Don't check date/period because:
     // 1. New Business records often have blank periods
     // 2. Commission processing can be delayed
     // 3. If they got paid for this client+carrier combo, count it as Paid
-    if (clientMatch && carrierMatch) {
+    if ((clientMatch && carrierMatch) || (policyMatch && carrierMatch)) {
       return comm;
     }
   }
@@ -313,11 +319,16 @@ export default function Reconciliation({ user }) {
       
       setSales(uniqueSales);
       
-      // Fetch commissions from OliComm (optimized: limit=100 instead of 5000)
+      // Fetch commissions from OliComm (ALL records - need complete dataset for matching)
       console.log('Loading commission records...');
-      const commData = await apiFetch('/records?limit=100');
+      const commData = await apiFetch('/records?limit=50000');  // Increased from 100 to 50000
       console.log('Commission response:', commData);
-      setCommissions((commData.records || []).filter(r => parseFloat(r.commission) > 0));
+      
+      // Include ALL records (even chargebacks with negative amounts)
+      // Need full picture to net: Karl Brown has +$318.09 New Business AND -$347 chargeback
+      const allCommissions = commData.records || [];
+      console.log(`✅ Loaded ${allCommissions.length} commission records (including chargebacks)`);
+      setCommissions(allCommissions);
       
       // Fetch manual payments (optional - may not exist yet)
       try {
