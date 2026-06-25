@@ -3843,17 +3843,27 @@ async function findDuplicates(pool, records) {
   const params = filtered.flatMap(r => [r.client, r.carrier, r.effectiveDate, r.period || '', r.classification || '']);
 
   const result = await pool.query(
-    `SELECT client_full_name, carrier, effective_date, payment_period, classification FROM commission_records WHERE ${conditions}`,
+    `SELECT client_full_name, carrier, effective_date, payment_period, classification, is_manually_edited 
+     FROM commission_records 
+     WHERE ${conditions}`,
     params
   );
 
   const existingSet = new Set(result.rows.map(r =>
     `${r.client_full_name.toLowerCase()}|${r.carrier.toLowerCase()}|${r.effective_date}|${r.payment_period || ''}|${(r.classification || '').toLowerCase()}`
   ));
+  
+  // Track manually edited records separately (should never be overwritten)
+  const manuallyEditedSet = new Set(
+    result.rows
+      .filter(r => r.is_manually_edited)
+      .map(r => `${r.client_full_name.toLowerCase()}|${r.carrier.toLowerCase()}|${r.effective_date}|${r.payment_period || ''}|${(r.classification || '').toLowerCase()}`)
+  );
 
-  return filtered.filter(r =>
-    existingSet.has(`${r.client.toLowerCase()}|${r.carrier.toLowerCase()}|${r.effectiveDate}|${r.period || ''}|${(r.classification || '').toLowerCase()}`)
-  ).map(r => ({
+  return filtered.filter(r => {
+    const key = `${r.client.toLowerCase()}|${r.carrier.toLowerCase()}|${r.effectiveDate}|${r.period || ''}|${(r.classification || '').toLowerCase()}`;
+    return existingSet.has(key) && !manuallyEditedSet.has(key); // Exclude manually edited from duplicates
+  }).map(r => ({
     client: r.client,
     carrier: r.carrier,
     date: r.effectiveDate,

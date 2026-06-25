@@ -28,14 +28,31 @@ function normPeriod(p) {
 }
 
 // Normalize a name to match database normalized_name logic
-// Splits by space, sorts parts alphabetically, rejoins with space
 function normName(name) {
   if (!name) return '';
-  const s = String(name).toLowerCase().trim()
-    .replace(/[,\.;:]/g, '');  // Strip punctuation (comma, period, semicolon, colon)
-  // Split by space, filter empty, sort alphabetically, rejoin
-  const parts = s.split(/\s+/).filter(Boolean).sort();
-  return parts.join(' ');
+  const s = String(name).trim();
+  
+  // Helper: Convert to Title Case
+  function toTitleCase(str) {
+    return str.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+  }
+  
+  // Handle comma-separated "LAST, FIRST" format
+  // Everything before the comma is the full surname (handles compound surnames)
+  if (s.includes(',')) {
+    let [last, first] = s.split(',').map(p => p.trim());
+    
+    // Strip common suffixes from surname
+    last = last.replace(/\b(JR|SR|III|II|IV|V)\.?$/i, '').trim();
+    
+    // Return "FIRST LAST" in Title Case
+    const normalized = `${first} ${last}`.replace(/\s+/g, ' ').trim();
+    return toTitleCase(normalized);
+  }
+  
+  // For non-comma format, just normalize spaces and title case
+  const normalized = s.replace(/\s+/g, ' ').trim();
+  return toTitleCase(normalized);
 }
 
 // Generate name variants to handle Humana's LASTNAME FIRSTNAME format
