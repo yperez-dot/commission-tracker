@@ -332,14 +332,26 @@ export default function AgencyProductionRecon() {
   const productionDeduped = [];
   const seen = new Map();  // Store best record for each key
   
+  // DEBUG: Track duplicates for analysis
+  const duplicateLog = [];
+  
   production.forEach(prod => {
     // Dedup key: ONLY client + carrier (no policy, no date)
-    const key = [
-      normName(prod.client_name || ''),
-      normalizeCarrier(prod.carrier || '')
-    ].join('|').toLowerCase();
+    const normalizedClient = normName(prod.client_name || '');
+    const normalizedCarrier = normalizeCarrier(prod.carrier || '');
+    const key = [normalizedClient, normalizedCarrier].join('|').toLowerCase();
     
     const existing = seen.get(key);
+    
+    // DEBUG: Log when we find a duplicate
+    if (existing) {
+      duplicateLog.push({
+        key,
+        original: { name: existing.client_name, carrier: existing.carrier },
+        duplicate: { name: prod.client_name, carrier: prod.carrier }
+      });
+    }
+    
     if (!existing) {
       // First occurrence - keep it
       seen.set(key, prod);
@@ -368,6 +380,17 @@ export default function AgencyProductionRecon() {
   const dupesRemoved = production.length - productionDeduped.length;
   if (production.length > 100 && dupesRemoved < (production.length * 0.05)) {
     console.warn(`[DEDUP] Warning: Only removed ${dupesRemoved} of ${production.length} (${(dupesRemoved/production.length*100).toFixed(1)}%) - dedup key may be too strict`);
+    // Show first 10 duplicates that WERE caught
+    if (duplicateLog.length > 0) {
+      console.log(`[DEDUP] Sample duplicates found (first 10):`, duplicateLog.slice(0, 10));
+    }
+    // Sample some records to see what keys are being generated
+    const sampleKeys = production.slice(0, 20).map(p => ({
+      raw: { name: p.client_name, carrier: p.carrier },
+      normalized: { name: normName(p.client_name || ''), carrier: normalizeCarrier(p.carrier || '') },
+      key: [normName(p.client_name || ''), normalizeCarrier(p.carrier || '')].join('|').toLowerCase()
+    }));
+    console.log(`[DEDUP] Sample normalized keys (first 20):`, sampleKeys);
   }
   
   // Match deduplicated production to overrides
