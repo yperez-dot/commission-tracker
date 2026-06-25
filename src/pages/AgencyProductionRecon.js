@@ -865,10 +865,11 @@ export default function AgencyProductionRecon() {
                           <td>
                             {(() => {
                               const status = m.production.status?.toLowerCase() || '';
-                              let displayStatus = 'Paid';
-                              let bgColor = '#D4EDDA';
-                              let textColor = '#155724';
+                              let displayStatus;
+                              let bgColor;
+                              let textColor;
                               
+                              // Check production status flags first (plan change, denied, etc.)
                               if (status.includes('cancel') || status.includes('terminated')) {
                                 displayStatus = 'Cancelled';
                                 bgColor = '#F8D7DA';
@@ -885,12 +886,18 @@ export default function AgencyProductionRecon() {
                                 displayStatus = 'Chase';
                                 bgColor = '#D1ECF1';
                                 textColor = '#0C5460';
-                              } else if (status.includes('missing') || status.includes('pending') || status.includes('not found')) {
-                                displayStatus = 'Missing';
-                                bgColor = '#F8F9FA';
-                                textColor = '#6C757D';
-                              } else if (status.includes('paid') || status.includes('complete') || status.includes('active') || status.includes('progress')) {
-                                displayStatus = 'Paid';
+                              } else {
+                                // FIXED: Check actual override payment (override_net > 0), not production.status
+                                // This fixes the "Paid badge in Missing tab" bug
+                                if (m.override && m.override.override_net > 0) {
+                                  displayStatus = 'Paid';
+                                  bgColor = '#D4EDDA';
+                                  textColor = '#155724';
+                                } else {
+                                  displayStatus = 'Missing';
+                                  bgColor = '#F8F9FA';
+                                  textColor = '#6C757D';
+                                }
                               }
                               
                               return (
