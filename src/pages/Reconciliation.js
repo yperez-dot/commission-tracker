@@ -122,6 +122,15 @@ function normalizeAgentName(name) {
   return normalized;
 }
 
+// Resolve client status (Fix #6c: BOB status overrides CSV status)
+function resolveStatus(sale) {
+  // Priority: BOB status > Termed flag > CSV status
+  if (sale.bob_status === 'deceased' || sale.deceased_date) return 'Deceased';
+  if (sale.is_termed) return 'Termed';
+  if (sale.bob_status) return sale.bob_status;
+  return sale.status || 'Active';
+}
+
 // Extract first and last name from various formats
 function parseClientName(name) {
   if (!name) return { first: '', last: '', full: '' };
@@ -286,7 +295,23 @@ export default function Reconciliation({ user }) {
       // Fetch sales from MedicarePro upload endpoint
       const salesData = await apiFetch('/medicarepro');
       console.log('MedicarePro API response:', salesData);
-      setSales(salesData.sales || []);
+      
+      // Deduplicate sales by client + policy + date (Fix #6b)
+      const rawSales = salesData.sales || [];
+      const uniqueSales = Array.from(
+        new Map(
+          rawSales.map(sale => [
+            `${sale.client_name}|${sale.policy_number}|${sale.effective_date}`,
+            sale
+          ])
+        ).values()
+      );
+      
+      if (rawSales.length !== uniqueSales.length) {
+        console.log(`✅ Sales deduplication: ${rawSales.length} → ${uniqueSales.length} (removed ${rawSales.length - uniqueSales.length} duplicates)`);
+      }
+      
+      setSales(uniqueSales);
       
       // Fetch commissions from OliComm (optimized: limit=100 instead of 5000)
       console.log('Loading commission records...');
@@ -512,7 +537,7 @@ export default function Reconciliation({ user }) {
       const carrier = m.sale.carrier || '—';
       const policyType = m.sale.policy_type || '—';
       const effectiveDate = m.sale.effective_date ? formatDate(m.sale.effective_date) : '—';
-      const status = m.sale.status || '—';
+      const status = resolveStatus(m.sale);
       const monthsSince = m.monthsSinceEnrollment || 0;
       const expected = m.expectedCommission ? m.expectedCommission.toFixed(2) : '0.00';
       const actual = m.actualCommission ? m.actualCommission.toFixed(2) : '0.00';
@@ -742,18 +767,20 @@ export default function Reconciliation({ user }) {
                               {formatDate(m.sale.effective_date)}
                             </td>
                             <td>
-                              <span className="badge badge-amber">
-                                {m.sale.status || 'Unpaid'}
+                              <span className={`badge ${resolveStatus(m.sale) === 'Deceased' || resolveStatus(m.sale) === 'Termed' ? 'badge-red' : 'badge-amber'}`}>
+                                {resolveStatus(m.sale)}
                               </span>
                             </td>
                             <td style={{textAlign:'center'}}>
-                              <button 
-                                className="btn btn-sm btn-primary"
-                                onClick={() => handleMarkPaid(m.sale)}
-                                style={{fontSize:11, padding:'4px 10px'}}
-                              >
-                                💰 Mark Paid
-                              </button>
+                              {resolveStatus(m.sale) !== 'Deceased' && resolveStatus(m.sale) !== 'Termed' && (
+                                <button 
+                                  className="btn btn-sm btn-primary"
+                                  onClick={() => handleMarkPaid(m.sale)}
+                                  style={{fontSize:11, padding:'4px 10px'}}
+                                >
+                                  💰 Mark Paid
+                                </button>
+                              )}
                             </td>
                           </tr>
                         ))}
@@ -885,18 +912,20 @@ export default function Reconciliation({ user }) {
                               {formatDate(m.sale.effective_date)}
                             </td>
                             <td>
-                              <span className="badge badge-amber">
-                                {m.sale.status || 'Unpaid'}
+                              <span className={`badge ${resolveStatus(m.sale) === 'Deceased' || resolveStatus(m.sale) === 'Termed' ? 'badge-red' : 'badge-amber'}`}>
+                                {resolveStatus(m.sale)}
                               </span>
                             </td>
                             <td style={{textAlign:'center'}}>
-                              <button 
-                                className="btn btn-sm btn-primary"
-                                onClick={() => handleMarkPaid(m.sale)}
-                                style={{fontSize:11, padding:'4px 10px'}}
-                              >
-                                💰 Mark Paid
-                              </button>
+                              {resolveStatus(m.sale) !== 'Deceased' && resolveStatus(m.sale) !== 'Termed' && (
+                                <button 
+                                  className="btn btn-sm btn-primary"
+                                  onClick={() => handleMarkPaid(m.sale)}
+                                  style={{fontSize:11, padding:'4px 10px'}}
+                                >
+                                  💰 Mark Paid
+                                </button>
+                              )}
                             </td>
                           </tr>
                         ))}
