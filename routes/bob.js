@@ -308,8 +308,10 @@ router.post('/check-renewals', requireAuth, async (req, res) => {
     }
 
     const targetNorm = normalizePeriod(period);
+    // Include ALL commission records (including chargebacks with negative amounts)
+    // Netting logic needs complete picture: e.g., David Mosley Jr +$70 -$70 = $0 net (not owed)
     const allRecords = await pool.query(
-      `SELECT LOWER(TRIM(client_full_name)) as client_key, carrier, agent_name, commission, payment_period FROM commission_records WHERE commission > 0 ${af}`
+      `SELECT LOWER(TRIM(client_full_name)) as client_key, carrier, agent_name, commission, payment_period FROM commission_records WHERE 1=1 ${af}`
     );
     const matchingRecords = allRecords.rows.filter(r => {
       const norm = normalizePeriod(r.payment_period);

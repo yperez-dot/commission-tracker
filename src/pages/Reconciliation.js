@@ -231,7 +231,7 @@ function expectedCommission(months) {
 
 // Find ALL matching commissions for a sale and return net amount
 // Period-agnostic: If commission exists for client + carrier, count as Paid
-// Returns object with all matches and net commission (e.g., +$318.09 New Business -$347 Chargeback = -$28.91 net)
+// Returns object with all matches and net commission (e.g., Karl Brown: 6 records = +$352.47 net)
 function findMatch(sale, commissions, manualPayments = []) {
   // Check manual payments first
   const saleAgent = sale.agent_name || sale.agent;
@@ -249,6 +249,9 @@ function findMatch(sale, commissions, manualPayments = []) {
   const saleClientNorm = normName(sale.client_name);
   const carrier = normalizeCarrier(sale.carrier);
   const salePolicy = (sale.policy_number || '').trim().toLowerCase();
+  
+  // Collect ALL matching commission records (not just first)
+  const matches = [];
   
   for (const comm of commissions) {
     const commClientNorm = normName(comm.client_full_name);
@@ -271,11 +274,42 @@ function findMatch(sale, commissions, manualPayments = []) {
     // 2. Commission processing can be delayed
     // 3. If they got paid for this client+carrier combo, count it as Paid
     if ((clientMatch && carrierMatch) || (policyMatch && carrierMatch)) {
-      return comm;
+      matches.push(comm);  // Collect ALL matches, don't return early
     }
   }
   
-  return null;
+  if (matches.length === 0) {
+    return null;  // No matches found
+  }
+  
+  // Calculate net commission (sum of all matching records)
+  // Example: Karl Brown (UHC 933986247) has 6 records:
+  //   Sale: +$318.09, +$347.00, -$347.00
+  //   Override: +$75.00, -$75.00, +$34.38
+  //   Net: +$352.47 (not -$28.91 from partial data)
+  const netCommission = matches.reduce((sum, m) => sum + parseFloat(m.commission || 0), 0);
+  const hasChargeback = matches.some(m => parseFloat(m.commission || 0) < 0);
+  
+  // Determine classification based on net
+  let classification;
+  if (netCommission > 0) {
+    classification = hasChargeback ? 'Paid (net positive)' : 'Paid';
+  } else if (netCommission === 0) {
+    classification = 'Paid & reversed (net $0)';
+  } else {
+    classification = 'Chargeback expected';
+  }
+  
+  // Return first match as primary (for display compatibility)
+  // but include full matches array + net for detailed views
+  return {
+    ...matches[0],  // Spread first match for backward compatibility
+    allMatches: matches,
+    matchCount: matches.length,
+    netCommission,
+    hasChargeback,
+    classification
+  };
 }
 
 export default function Reconciliation({ user }) {
