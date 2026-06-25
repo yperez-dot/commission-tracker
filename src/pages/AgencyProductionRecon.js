@@ -323,16 +323,22 @@ export default function AgencyProductionRecon() {
   }
 
   // DEDUPLICATION: Remove duplicate production records before matching
-  // Deduplicate by: client_name + carrier + effective_date
+  // Deduplicate by: client_name + carrier + policy_number (or effective_date if policy blank)
   // Example: John Rivera appears 3×, Lilia Rivera 2× (duplicates in agency_production table)
+  // FIX: Use policy_number (more reliable than effective_date which can be blank/vary)
   const productionDeduped = [];
   const seen = new Set();
   
   production.forEach(prod => {
+    // Primary key: client + carrier + policy
+    // Fallback if no policy: client + carrier + effective_date
+    const policy = (prod.policy_number || '').trim().toLowerCase();
+    const effDate = (prod.effective_date || '').toString().trim().toLowerCase();
+    
     const key = [
       normName(prod.client_name || ''),
       normalizeCarrier(prod.carrier || ''),
-      (prod.effective_date || '')
+      policy || effDate  // Use policy if available, else effective date
     ].join('|').toLowerCase();
     
     if (!seen.has(key)) {
@@ -342,6 +348,12 @@ export default function AgencyProductionRecon() {
   });
   
   console.log(`[DEDUP] Production records: ${production.length} → ${productionDeduped.length} (removed ${production.length - productionDeduped.length} duplicates)`);
+  
+  // Debug: log if dedup seems too low
+  const dupesRemoved = production.length - productionDeduped.length;
+  if (production.length > 100 && dupesRemoved < (production.length * 0.05)) {
+    console.warn(`[DEDUP] Warning: Only removed ${dupesRemoved} of ${production.length} (${(dupesRemoved/production.length*100).toFixed(1)}%) - dedup key may be too strict`);
+  }
   
   // Match deduplicated production to overrides
   const matches = productionDeduped.map(prod => ({
