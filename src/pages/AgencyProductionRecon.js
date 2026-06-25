@@ -225,12 +225,40 @@ function findOverrideMatch(production, overrides) {
   const prodClientNorm = normName(production.client_name);
   const prodCarrier = normalizeCarrier(production.carrier);
   
+  // DEBUG: Log for Guido Rodriguez Jr specifically
+  const isGuido = production.client_name?.toLowerCase().includes('guido');
+  if (isGuido) {
+    console.log('[MATCH DEBUG] Production record:', {
+      raw: production.client_name,
+      normalized: prodClientNorm,
+      carrier: prodCarrier,
+      policy: production.policy_number
+    });
+  }
+  
   // Collect ALL matching overrides (not just first)
   const matches = [];
   
   for (const override of overrides) {
     const overrideClientNorm = normName(override.client_full_name);
     const overrideCarrier = normalizeCarrier(override.carrier);
+    
+    // DEBUG: Log Guido's commission records
+    if (isGuido && override.client_full_name?.toLowerCase().includes('guido')) {
+      console.log('[MATCH DEBUG] Override record:', {
+        raw: override.client_full_name,
+        normalized: overrideClientNorm,
+        carrier: overrideCarrier,
+        commission: override.commission,
+        policy: override.policy_number
+      });
+      console.log('[MATCH DEBUG] Comparison:', {
+        clientMatch: prodClientNorm === overrideClientNorm,
+        carrierMatch: prodCarrier === overrideCarrier,
+        prodNorm: prodClientNorm,
+        overrideNorm: overrideClientNorm
+      });
+    }
     
     // Client name match using normName() (handles "LAST FIRST" vs "FIRST LAST")
     const clientMatch = prodClientNorm === overrideClientNorm;
