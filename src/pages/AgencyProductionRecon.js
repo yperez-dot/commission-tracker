@@ -104,31 +104,14 @@ function normalizeName(name) {
 }
 
 // Normalize name to match database normalized_name logic (same as Missing Renewals / Our Sales)
+// Splits by space, sorts parts alphabetically, rejoins with space
 function normName(name) {
   if (!name) return '';
-  const s = String(name).trim();
-  
-  // Helper: Convert to Title Case
-  function toTitleCase(str) {
-    return str.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
-  }
-  
-  // Handle comma-separated "LAST, FIRST" format
-  // Everything before the comma is the full surname (handles compound surnames)
-  if (s.includes(',')) {
-    let [last, first] = s.split(',').map(p => p.trim());
-    
-    // Strip common suffixes from surname
-    last = last.replace(/\b(JR|SR|III|II|IV|V)\.?$/i, '').trim();
-    
-    // Return "FIRST LAST" in Title Case
-    const normalized = `${first} ${last}`.replace(/\s+/g, ' ').trim();
-    return toTitleCase(normalized);
-  }
-  
-  // For non-comma format, just normalize spaces and title case
-  const normalized = s.replace(/\s+/g, ' ').trim();
-  return toTitleCase(normalized);
+  const s = String(name).toLowerCase().trim()
+    .replace(/[,\.;:]/g, '');  // Strip punctuation
+  // Split by space, filter empty, sort alphabetically, rejoin
+  const parts = s.split(/\s+/).filter(Boolean).sort();
+  return parts.join(' ');
 }
 
 function normalizeCarrier(carrier) {
@@ -219,15 +202,12 @@ function parseEffectiveDate(dateStr) {
 }
 
 // Match agency production to override commissions using normName() fuzzy matching
-// TYPE-AWARE NETTING: Collect ALL matching overrides and calculate override_net
-// Same fix as Sales Reconciliation (Fix B)
+// Same logic as "Our Sales" and "Missing Renewals" for consistency
 function findOverrideMatch(production, overrides) {
   const prodClientNorm = normName(production.client_name);
   const prodCarrier = normalizeCarrier(production.carrier);
   
-  // Collect ALL matching overrides (not just first)
-  const matches = [];
-  
+  // Try exact match first (client + carrier)
   for (const override of overrides) {
     const overrideClientNorm = normName(override.client_full_name);
     const overrideCarrier = normalizeCarrier(override.carrier);
@@ -240,44 +220,13 @@ function findOverrideMatch(production, overrides) {
                         prodCarrier.includes(overrideCarrier) || 
                         overrideCarrier.includes(prodCarrier);
     
-    // Match if client + carrier match (period-agnostic)
+    // Match if client + carrier match (period-agnostic, like Our Sales)
     if (clientMatch && carrierMatch) {
-      matches.push(override);  // Collect ALL matches, don't return early
+      return override;
     }
   }
   
-  if (matches.length === 0) {
-    return null;  // No matches found
-  }
-  
-  // Calculate override_net (sum of all matching override records)
-  // Example: David Mosley Jr (UHC 135614656): +$70 -$70 = $0 net
-  // Example: Maritza Trivino Pin: +75 -75 +75 -75 +6.25 +3.13 +28.13 = $37.51 net
-  const override_net = matches.reduce((sum, m) => sum + parseFloat(m.commission || 0), 0);
-  const hasChargeback = matches.some(m => parseFloat(m.commission || 0) < 0);
-  
-  // Determine classification based on override_net
-  let classification;
-  if (override_net > 0) {
-    classification = hasChargeback ? 'Override Paid (net +)' : 'Override Paid';
-  } else if (override_net === 0 && matches.length > 0) {
-    classification = 'Override Paid & reversed (net $0)';
-  } else if (override_net < 0) {
-    classification = 'Override Chargeback expected';
-  } else {
-    classification = 'No Override';
-  }
-  
-  // Return first match as primary (for display compatibility)
-  // but include TYPE-AWARE nets and full matches array
-  return {
-    ...matches[0],  // Spread first match for backward compatibility
-    allMatches: matches,
-    matchCount: matches.length,
-    override_net,       // Net of all override records (KEY for verdict)
-    hasChargeback,
-    classification
-  };
+  return null;
 }
 
 export default function AgencyProductionRecon() {
@@ -322,52 +271,21 @@ export default function AgencyProductionRecon() {
     }
   }
 
-  // DEDUPLICATION: Remove duplicate production records before matching
-  // Deduplicate by: client_name + carrier + effective_date
-  // Example: John Rivera appears 3×, Lilia Rivera 2× (duplicates in agency_production table)
-  const productionDeduped = [];
-  const seen = new Set();
-  
-  production.forEach(prod => {
-    const key = [
-      normName(prod.client_name || ''),
-      normalizeCarrier(prod.carrier || ''),
-      (prod.effective_date || '')
-    ].join('|').toLowerCase();
-    
-    if (!seen.has(key)) {
-      seen.add(key);
-      productionDeduped.push(prod);
-    }
-  });
-  
-  console.log(`[DEDUP] Production records: ${production.length} → ${productionDeduped.length} (removed ${production.length - productionDeduped.length} duplicates)`);
-  
-  // Match deduplicated production to overrides
-  const matches = productionDeduped.map(prod => ({
+  // Match production to overrides
+  const matches = production.map(prod => ({
     production: prod,
     override: findOverrideMatch(prod, overrides)
   }));
 
-  // TYPE-AWARE CATEGORIZATION: Use override_net to determine paid vs missing
-  // A row is only "paid" if override_net > 0
-  // Net $0 or negative → NOT paid (goes to missing or special status)
+  // Categorize by status
   const getCategory = (m) => {
-    // Check status flags first (plan change, denied, etc.)
+    if (m.override) return 'paid';
     const status = m.production.status?.toLowerCase() || '';
     if (status.includes('plan denied') || status.includes('plan_denied') || status.includes('denied')) return 'plandenied';
     if (status.includes('plan change') || status.includes('plan_change')) return 'planchange';
     if (status.includes('cancel') || status.includes('terminated')) return 'cancelled';
     if (status.includes('chase') || status.includes('chasing')) return 'chase';
-    
-    // TYPE-AWARE VERDICT: Check override_net, not just existence
-    if (m.override && m.override.override_net > 0) {
-      return 'paid';  // Only paid if override_net > 0
-    }
-    
-    // If override_net = 0 or < 0, it's NOT paid
-    // David Mosley Jr: +$70 -$70 = $0 net → missing (not paid)
-    return 'missing';
+    return 'missing'; // No override = missing
   };
 
   const categorized = {
@@ -475,8 +393,8 @@ export default function AgencyProductionRecon() {
       const plan = m.production.plan_name || '—';
       const effectiveDate = m.production.effective_date ? formatDate(m.production.effective_date) : '—';
       const status = m.production.status || '—';
-      const paid = m.override && m.override.override_net > 0 ? 'Yes' : 'No';
-      const amount = m.override ? (m.override.override_net || '0') : '—';
+      const paid = m.override ? 'Yes' : 'No';
+      const amount = m.override ? (m.override.commission || m.override.commission_amount || '0') : '—';
       
       return [
         agentName,
@@ -909,9 +827,8 @@ export default function AgencyProductionRecon() {
                           </td>
                           <td style={{ textAlign: 'center' }}>
                             {m.override ? (
-                              <span style={{ color: m.override.override_net > 0 ? 'var(--green)' : 'var(--amber)', fontWeight: 600 }}>
-                                {m.override.override_net > 0 ? '✅' : '⚠️'} {fmt(m.override.override_net || 0)}
-                                {m.override.matchCount > 1 && <span style={{ fontSize: '0.85em', marginLeft: 4 }}>({m.override.matchCount} records)</span>}
+                              <span style={{ color: 'var(--green)', fontWeight: 600 }}>
+                                ✅ {fmt(m.override.commission || m.override.commission_amount || 0)}
                               </span>
                             ) : (
                               <span style={{ color: 'var(--red)', fontWeight: 600 }}>❌ Missing</span>

@@ -82,31 +82,14 @@ function normalizeName(name) {
 }
 
 // Normalize name to match database normalized_name logic (same as Missing Renewals)
+// Splits by space, sorts parts alphabetically, rejoins with space
 function normName(name) {
   if (!name) return '';
-  const s = String(name).trim();
-  
-  // Helper: Convert to Title Case
-  function toTitleCase(str) {
-    return str.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
-  }
-  
-  // Handle comma-separated "LAST, FIRST" format
-  // Everything before the comma is the full surname (handles compound surnames)
-  if (s.includes(',')) {
-    let [last, first] = s.split(',').map(p => p.trim());
-    
-    // Strip common suffixes from surname
-    last = last.replace(/\b(JR|SR|III|II|IV|V)\.?$/i, '').trim();
-    
-    // Return "FIRST LAST" in Title Case
-    const normalized = `${first} ${last}`.replace(/\s+/g, ' ').trim();
-    return toTitleCase(normalized);
-  }
-  
-  // For non-comma format, just normalize spaces and title case
-  const normalized = s.replace(/\s+/g, ' ').trim();
-  return toTitleCase(normalized);
+  const s = String(name).toLowerCase().trim()
+    .replace(/[,\.;:]/g, '');  // Strip punctuation
+  // Split by space, filter empty, sort alphabetically, rejoin
+  const parts = s.split(/\s+/).filter(Boolean).sort();
+  return parts.join(' ');
 }
 
 // Normalize agent names (handle test data and variations)
@@ -120,15 +103,6 @@ function normalizeAgentName(name) {
   }
   
   return normalized;
-}
-
-// Resolve client status (Fix #6c: BOB status overrides CSV status)
-function resolveStatus(sale) {
-  // Priority: BOB status > Termed flag > CSV status
-  if (sale.bob_status === 'deceased' || sale.deceased_date) return 'Deceased';
-  if (sale.is_termed) return 'Termed';
-  if (sale.bob_status) return sale.bob_status;
-  return sale.status || 'Active';
 }
 
 // Extract first and last name from various formats
@@ -229,9 +203,9 @@ function expectedCommission(months) {
   return Math.max(calculated, floor);
 }
 
-// Find ALL matching commissions for a sale and return net amount
+// Find matching commission for a sale (including manual payments)
 // Period-agnostic: If commission exists for client + carrier, count as Paid
-// Returns object with all matches and net commission (e.g., Karl Brown: 6 records = +$352.47 net)
+// New Business records often have blank periods, so don't require period/date match
 function findMatch(sale, commissions, manualPayments = []) {
   // Check manual payments first
   const saleAgent = sale.agent_name || sale.agent;
@@ -248,15 +222,10 @@ function findMatch(sale, commissions, manualPayments = []) {
   // Use normName() for fuzzy client matching (same as Missing Renewals)
   const saleClientNorm = normName(sale.client_name);
   const carrier = normalizeCarrier(sale.carrier);
-  const salePolicy = (sale.policy_number || '').trim().toLowerCase();
-  
-  // Collect ALL matching commission records (not just first)
-  const matches = [];
   
   for (const comm of commissions) {
     const commClientNorm = normName(comm.client_full_name);
     const commCarrier = normalizeCarrier(comm.carrier);
-    const commPolicy = (comm.policy_number || '').trim().toLowerCase();
     
     // Client name match using normName() (handles "LAST FIRST" vs "FIRST LAST")
     const clientMatch = saleClientNorm === commClientNorm;
@@ -264,83 +233,17 @@ function findMatch(sale, commissions, manualPayments = []) {
     // Carrier match
     const carrierMatch = carrier === commCarrier || carrier.includes(commCarrier) || commCarrier.includes(carrier);
     
-    // Policy number match (fallback for name mismatches)
-    const policyMatch = salePolicy && commPolicy && salePolicy === commPolicy;
-    
     // PERIOD-AGNOSTIC: Only require client + carrier match
-    // OR policy + carrier match (fallback for name normalization issues)
     // Don't check date/period because:
     // 1. New Business records often have blank periods
     // 2. Commission processing can be delayed
     // 3. If they got paid for this client+carrier combo, count it as Paid
-    if ((clientMatch && carrierMatch) || (policyMatch && carrierMatch)) {
-      matches.push(comm);  // Collect ALL matches, don't return early
+    if (clientMatch && carrierMatch) {
+      return comm;
     }
   }
   
-  if (matches.length === 0) {
-    return null;  // No matches found
-  }
-  
-  // TYPE-AWARE NETTING: Separate override and sale-side money streams
-  // Example: Karl Brown (UHC 933986247) has 6 records:
-  //   Override side: +$75.00 -$75.00 +$34.38 = +$34.38 override_net
-  //   Sale side: +$318.09 +$347.00 -$347.00 = +$318.09 sale_net
-  // Override Recon verdict must key on override_net ONLY (not combined total)
-  // A paid sale must NOT mask a missing override
-  
-  const overrideMatches = [];
-  const saleMatches = [];
-  
-  matches.forEach(m => {
-    const cls = (m.classification || '').toLowerCase();
-    // Override side: Agency Override, Override, or any line with "override" in classification
-    if (cls.includes('override') || cls.includes('agency override')) {
-      overrideMatches.push(m);
-    } else {
-      // Sale side: New Business, Agent Commission, Renewal, or unclassified
-      saleMatches.push(m);
-    }
-  });
-  
-  const override_net = overrideMatches.reduce((sum, m) => sum + parseFloat(m.commission || 0), 0);
-  const sale_net = saleMatches.reduce((sum, m) => sum + parseFloat(m.commission || 0), 0);
-  const combined_net = override_net + sale_net;
-  
-  const hasChargeback = matches.some(m => parseFloat(m.commission || 0) < 0);
-  
-  // Determine classification based on override_net (for Override Recon)
-  // Sale Recon can use sale_net separately
-  let classification;
-  if (override_net > 0) {
-    classification = hasChargeback ? 'Override Paid (net +)' : 'Override Paid';
-  } else if (override_net === 0 && overrideMatches.length > 0) {
-    classification = 'Override Paid & reversed (net $0)';
-  } else if (override_net < 0) {
-    classification = 'Override Chargeback expected';
-  } else if (sale_net > 0) {
-    // No override records, but sale was paid
-    classification = hasChargeback ? 'Sale Paid (net +)' : 'Sale Paid';
-  } else if (sale_net === 0 && saleMatches.length > 0) {
-    classification = 'Sale Paid & reversed (net $0)';
-  } else {
-    classification = 'Chargeback expected';
-  }
-  
-  // Return first match as primary (for display compatibility)
-  // but include TYPE-AWARE nets and full matches array
-  return {
-    ...matches[0],  // Spread first match for backward compatibility
-    allMatches: matches,
-    matchCount: matches.length,
-    overrideMatches,
-    saleMatches,
-    override_net,       // Override side only (for Override Recon verdict)
-    sale_net,           // Sale side only (for Sales Recon verdict)
-    combined_net,       // Total (for display/reporting)
-    hasChargeback,
-    classification
-  };
+  return null;
 }
 
 export default function Reconciliation({ user }) {
@@ -366,34 +269,13 @@ export default function Reconciliation({ user }) {
       // Fetch sales from MedicarePro upload endpoint
       const salesData = await apiFetch('/medicarepro');
       console.log('MedicarePro API response:', salesData);
+      setSales(salesData.sales || []);
       
-      // Deduplicate sales by client + policy + date (Fix #6b)
-      const rawSales = salesData.sales || [];
-      const uniqueSales = Array.from(
-        new Map(
-          rawSales.map(sale => [
-            `${sale.client_name}|${sale.policy_number}|${sale.effective_date}`,
-            sale
-          ])
-        ).values()
-      );
-      
-      if (rawSales.length !== uniqueSales.length) {
-        console.log(`✅ Sales deduplication: ${rawSales.length} → ${uniqueSales.length} (removed ${rawSales.length - uniqueSales.length} duplicates)`);
-      }
-      
-      setSales(uniqueSales);
-      
-      // Fetch commissions from OliComm (ALL records - need complete dataset for matching)
+      // Fetch commissions from OliComm (optimized: limit=100 instead of 5000)
       console.log('Loading commission records...');
-      const commData = await apiFetch('/records?limit=50000');  // Increased from 100 to 50000
+      const commData = await apiFetch('/records?limit=100');
       console.log('Commission response:', commData);
-      
-      // Include ALL records (even chargebacks with negative amounts)
-      // Need full picture to net: Karl Brown has +$318.09 New Business AND -$347 chargeback
-      const allCommissions = commData.records || [];
-      console.log(`✅ Loaded ${allCommissions.length} commission records (including chargebacks)`);
-      setCommissions(allCommissions);
+      setCommissions((commData.records || []).filter(r => parseFloat(r.commission) > 0));
       
       // Fetch manual payments (optional - may not exist yet)
       try {
@@ -613,7 +495,7 @@ export default function Reconciliation({ user }) {
       const carrier = m.sale.carrier || '—';
       const policyType = m.sale.policy_type || '—';
       const effectiveDate = m.sale.effective_date ? formatDate(m.sale.effective_date) : '—';
-      const status = resolveStatus(m.sale);
+      const status = m.sale.status || '—';
       const monthsSince = m.monthsSinceEnrollment || 0;
       const expected = m.expectedCommission ? m.expectedCommission.toFixed(2) : '0.00';
       const actual = m.actualCommission ? m.actualCommission.toFixed(2) : '0.00';
@@ -843,20 +725,18 @@ export default function Reconciliation({ user }) {
                               {formatDate(m.sale.effective_date)}
                             </td>
                             <td>
-                              <span className={`badge ${resolveStatus(m.sale) === 'Deceased' || resolveStatus(m.sale) === 'Termed' ? 'badge-red' : 'badge-amber'}`}>
-                                {resolveStatus(m.sale)}
+                              <span className="badge badge-amber">
+                                {m.sale.status || 'Unpaid'}
                               </span>
                             </td>
                             <td style={{textAlign:'center'}}>
-                              {resolveStatus(m.sale) !== 'Deceased' && resolveStatus(m.sale) !== 'Termed' && (
-                                <button 
-                                  className="btn btn-sm btn-primary"
-                                  onClick={() => handleMarkPaid(m.sale)}
-                                  style={{fontSize:11, padding:'4px 10px'}}
-                                >
-                                  💰 Mark Paid
-                                </button>
-                              )}
+                              <button 
+                                className="btn btn-sm btn-primary"
+                                onClick={() => handleMarkPaid(m.sale)}
+                                style={{fontSize:11, padding:'4px 10px'}}
+                              >
+                                💰 Mark Paid
+                              </button>
                             </td>
                           </tr>
                         ))}
@@ -988,20 +868,18 @@ export default function Reconciliation({ user }) {
                               {formatDate(m.sale.effective_date)}
                             </td>
                             <td>
-                              <span className={`badge ${resolveStatus(m.sale) === 'Deceased' || resolveStatus(m.sale) === 'Termed' ? 'badge-red' : 'badge-amber'}`}>
-                                {resolveStatus(m.sale)}
+                              <span className="badge badge-amber">
+                                {m.sale.status || 'Unpaid'}
                               </span>
                             </td>
                             <td style={{textAlign:'center'}}>
-                              {resolveStatus(m.sale) !== 'Deceased' && resolveStatus(m.sale) !== 'Termed' && (
-                                <button 
-                                  className="btn btn-sm btn-primary"
-                                  onClick={() => handleMarkPaid(m.sale)}
-                                  style={{fontSize:11, padding:'4px 10px'}}
-                                >
-                                  💰 Mark Paid
-                                </button>
-                              )}
+                              <button 
+                                className="btn btn-sm btn-primary"
+                                onClick={() => handleMarkPaid(m.sale)}
+                                style={{fontSize:11, padding:'4px 10px'}}
+                              >
+                                💰 Mark Paid
+                              </button>
                             </td>
                           </tr>
                         ))}

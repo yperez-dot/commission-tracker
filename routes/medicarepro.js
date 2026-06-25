@@ -219,21 +219,7 @@ router.get('/', requireAuth, async (req, res) => {
     const pool = getPool();
     const { batch, status, limit = 10000, offset = 0 } = req.query;
 
-    // Fix #6c: JOIN with BOB to get termed/deceased status
-    let query = `
-      SELECT 
-        ms.*,
-        bob.status as bob_status,
-        bob.is_termed,
-        bob.deceased_date,
-        bob.resolution
-      FROM medicarepro_sales ms
-      LEFT JOIN book_of_business bob ON (
-        LOWER(TRIM(ms.client_name)) = LOWER(TRIM(bob.client_full_name)) AND
-        LOWER(TRIM(ms.carrier)) = LOWER(TRIM(bob.carrier))
-      )
-      WHERE 1=1
-    `;
+    let query = 'SELECT * FROM medicarepro_sales WHERE 1=1';
     const params = [];
 
     if (batch) {
@@ -251,15 +237,7 @@ router.get('/', requireAuth, async (req, res) => {
 
     const result = await pool.query(query, params);
 
-    let countQuery = `
-      SELECT COUNT(*) as count 
-      FROM medicarepro_sales ms
-      LEFT JOIN book_of_business bob ON (
-        LOWER(TRIM(ms.client_name)) = LOWER(TRIM(bob.client_full_name)) AND
-        LOWER(TRIM(ms.carrier)) = LOWER(TRIM(bob.carrier))
-      )
-      WHERE 1=1
-    `;
+    let countQuery = 'SELECT COUNT(*) as count FROM medicarepro_sales WHERE 1=1';
     const countParams = [];
     if (batch) {
       countQuery += ` AND upload_batch = $${countParams.length + 1}`;

@@ -308,10 +308,8 @@ router.post('/check-renewals', requireAuth, async (req, res) => {
     }
 
     const targetNorm = normalizePeriod(period);
-    // Include ALL commission records (including chargebacks with negative amounts)
-    // Netting logic needs complete picture: e.g., David Mosley Jr +$70 -$70 = $0 net (not owed)
     const allRecords = await pool.query(
-      `SELECT LOWER(TRIM(client_full_name)) as client_key, carrier, agent_name, commission, payment_period FROM commission_records WHERE 1=1 ${af}`
+      `SELECT LOWER(TRIM(client_full_name)) as client_key, carrier, agent_name, commission, payment_period FROM commission_records WHERE commission > 0 ${af}`
     );
     const matchingRecords = allRecords.rows.filter(r => {
       const norm = normalizePeriod(r.payment_period);
@@ -320,29 +318,12 @@ router.post('/check-renewals', requireAuth, async (req, res) => {
 
     function normName(name) {
       if (!name) return '';
-      const s = String(name).trim();
-      
-      // Helper: Convert to Title Case
-      function toTitleCase(str) {
-        return str.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
-      }
-      
-      // Handle comma-separated "LAST, FIRST" format
-      // Everything before the comma is the full surname (handles compound surnames)
+      const s = String(name).toLowerCase().trim();
       if (s.includes(',')) {
-        let [last, first] = s.split(',').map(p => p.trim());
-        
-        // Strip common suffixes from surname
-        last = last.replace(/\b(JR|SR|III|II|IV|V)\.?$/i, '').trim();
-        
-        // Return "FIRST LAST" in Title Case
-        const normalized = `${first} ${last}`.replace(/\s+/g, ' ').trim();
-        return toTitleCase(normalized);
+        const [last, first] = s.split(',').map(p => p.trim());
+        return `${first} ${last}`.replace(/\s+/g, ' ').trim();
       }
-      
-      // For non-comma format, just normalize spaces and title case
-      const normalized = s.replace(/\s+/g, ' ').trim();
-      return toTitleCase(normalized);
+      return s.replace(/\s+/g, ' ').trim();
     }
     function normCarrier(c) {
       const s = String(c || '').toLowerCase();
@@ -352,31 +333,14 @@ router.post('/check-renewals', requireAuth, async (req, res) => {
       if (s.includes('devoted')) return 'devoted health';
       return s;
     }
-    
-    // Extract surname from name (handles compound surnames)
-    function extractSurname(name) {
-      if (!name) return '';
-      const s = String(name).trim();
-      
-      // If comma-separated, everything before comma is surname
-      if (s.includes(',')) {
-        let surname = s.split(',')[0].trim();
-        // Strip suffixes
-        surname = surname.replace(/\b(JR|SR|III|II|IV|V)\.?$/i, '').trim();
-        return surname.toLowerCase();
-      }
-      
-      // Fallback: take last word
-      return s.split(/\s+/).pop().toLowerCase();
-    }
 
     // CRITICAL: Match on client_name|carrier ONLY - do NOT include effective_date
     // Effective dates vary across different statement sources (BSI, NHP, direct carrier)
     // and would cause false "missing" flags for the same client
     const paidSet = new Set(matchingRecords.map(r => `${normName(r.client_key)}|${normCarrier(r.carrier)}`));
     const paidLastNameSet = new Set(matchingRecords.map(r => {
-      const surname = extractSurname(r.client_key);
-      return `${surname}|${normCarrier(r.carrier)}`;
+      const n = normName(r.client_key);
+      return `${n.split(' ').pop()}|${normCarrier(r.carrier)}`;
     }));
 
     const bobClients = await pool.query(`SELECT * FROM book_of_business WHERE status = 'active' ${af}`);
@@ -386,8 +350,7 @@ router.post('/check-renewals', requireAuth, async (req, res) => {
       const normN = normName(client.client_full_name);
       const normC = normCarrier(client.carrier);
       const key = `${normN}|${normC}`;
-      const surname = extractSurname(client.client_full_name);
-      const lastKey = `${surname}|${normC}`;
+      const lastKey = `${normN.split(' ').pop()}|${normC}`;
       const wasMissing = client.months_missing > 0;
       const isPaid = paidSet.has(key) || paidLastNameSet.has(lastKey);
       if (!isPaid) {
