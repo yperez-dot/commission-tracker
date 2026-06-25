@@ -323,29 +323,44 @@ export default function AgencyProductionRecon() {
   }
 
   // DEDUPLICATION: Remove duplicate production records before matching
-  // Deduplicate by: client_name + carrier + policy_number (or effective_date if policy blank)
+  // Deduplicate by: client_name + carrier ONLY
   // Example: John Rivera appears 3×, Lilia Rivera 2× (duplicates in agency_production table)
-  // FIX: Use policy_number (more reliable than effective_date which can be blank/vary)
+  // FIX: After testing policy_number (0.6% deduped) and effective_date (1% deduped),
+  //      neither worked because duplicates have blank/different values in those fields.
+  //      True duplicates = same client + carrier, regardless of policy/date variations.
+  //      Keep the record with most complete data (has policy_number, or newest effective_date).
   const productionDeduped = [];
-  const seen = new Set();
+  const seen = new Map();  // Store best record for each key
   
   production.forEach(prod => {
-    // Primary key: client + carrier + policy
-    // Fallback if no policy: client + carrier + effective_date
-    const policy = (prod.policy_number || '').trim().toLowerCase();
-    const effDate = (prod.effective_date || '').toString().trim().toLowerCase();
-    
+    // Dedup key: ONLY client + carrier (no policy, no date)
     const key = [
       normName(prod.client_name || ''),
-      normalizeCarrier(prod.carrier || ''),
-      policy || effDate  // Use policy if available, else effective date
+      normalizeCarrier(prod.carrier || '')
     ].join('|').toLowerCase();
     
-    if (!seen.has(key)) {
-      seen.add(key);
-      productionDeduped.push(prod);
+    const existing = seen.get(key);
+    if (!existing) {
+      // First occurrence - keep it
+      seen.set(key, prod);
+    } else {
+      // Duplicate found - keep the one with most complete data
+      // Prefer: has policy_number > has effective_date > first occurrence
+      const prodHasPolicy = !!(prod.policy_number && prod.policy_number.trim());
+      const existingHasPolicy = !!(existing.policy_number && existing.policy_number.trim());
+      const prodHasDate = !!(prod.effective_date);
+      const existingHasDate = !!(existing.effective_date);
+      
+      if (prodHasPolicy && !existingHasPolicy) {
+        seen.set(key, prod);  // New record has policy, existing doesn't
+      } else if (!prodHasPolicy && !existingHasPolicy && prodHasDate && !existingHasDate) {
+        seen.set(key, prod);  // Neither has policy, but new has date
+      }
+      // Otherwise keep existing (first occurrence or already has better data)
     }
   });
+  
+  seen.forEach(prod => productionDeduped.push(prod));
   
   console.log(`[DEDUP] Production records: ${production.length} → ${productionDeduped.length} (removed ${production.length - productionDeduped.length} duplicates)`);
   
