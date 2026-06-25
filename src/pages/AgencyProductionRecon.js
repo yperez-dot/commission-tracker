@@ -303,7 +303,31 @@ export default function AgencyProductionRecon() {
     try {
       // Load agency production (Hector's reports)
       const prodData = await apiFetch('/agency-production?limit=5000');
-      setProduction(prodData.production || []);
+      
+      // FIX: Filter to LATEST upload batch only (prevents cross-batch duplicates)
+      // John Rivera 3× was caused by same person in 3 different upload batches
+      const allProduction = prodData.production || [];
+      
+      if (allProduction.length > 0) {
+        // Find the latest batch
+        const latestBatch = allProduction.reduce((max, p) => {
+          const batch = p.upload_batch || '';
+          return batch > max ? batch : max;
+        }, '');
+        
+        console.log(`[BATCH FILTER] Total production records: ${allProduction.length}`);
+        console.log(`[BATCH FILTER] Latest batch: ${latestBatch}`);
+        
+        // Filter to only latest batch
+        const latestOnly = allProduction.filter(p => p.upload_batch === latestBatch);
+        
+        console.log(`[BATCH FILTER] After filtering to latest batch: ${latestOnly.length}`);
+        console.log(`[BATCH FILTER] Removed ${allProduction.length - latestOnly.length} records from older batches`);
+        
+        setProduction(latestOnly);
+      } else {
+        setProduction([]);
+      }
 
       // Load override commission statements
       const overrideData = await apiFetch('/records?limit=5000');
