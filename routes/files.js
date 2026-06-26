@@ -4286,9 +4286,14 @@ router.get('/uploads', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
     const agency = getAgency(req);
+    const category = req.query.category; // Filter by category if provided
     let query, params = [];
-    if (req.user.role === 'agent') {
-      query = `SELECT u.*, usr.name as uploaded_by_name FROM uploads u LEFT JOIN users usr ON u.uploaded_by = usr.id WHERE u.uploaded_by = $1 ORDER BY u.uploaded_at DESC`;
+    
+    if (category === 'bsi_statement') {
+      // BSI Statements only
+      query = `SELECT u.*, usr.name as uploaded_by_name FROM uploads u LEFT JOIN users usr ON u.uploaded_by = usr.id WHERE u.category = 'bsi_statement' ORDER BY u.uploaded_at DESC`;
+    } else if (req.user.role === 'agent') {
+      query = `SELECT u.*, usr.name as uploaded_by_name FROM uploads u LEFT JOIN users usr ON u.uploaded_by = usr.id WHERE u.uploaded_by = $1 AND (u.category IS NULL OR u.category = 'commission_statement') ORDER BY u.uploaded_at DESC`;
       params = [req.user.id];
     } else if (agency) {
       const isBSI = agency.toLowerCase().includes('broker society');
@@ -4296,10 +4301,10 @@ router.get('/uploads', requireAuth, async (req, res) => {
       const carrierClause = isBSI
         ? `carrier = ANY($1)`
         : `carrier != ALL($1)`;
-      query = `SELECT DISTINCT u.*, usr.name as uploaded_by_name FROM uploads u LEFT JOIN users usr ON u.uploaded_by = usr.id WHERE u.id IN (SELECT DISTINCT upload_id FROM commission_records WHERE ${carrierClause}) ORDER BY u.uploaded_at DESC`;
+      query = `SELECT DISTINCT u.*, usr.name as uploaded_by_name FROM uploads u LEFT JOIN users usr ON u.uploaded_by = usr.id WHERE u.id IN (SELECT DISTINCT upload_id FROM commission_records WHERE ${carrierClause}) AND (u.category IS NULL OR u.category = 'commission_statement') ORDER BY u.uploaded_at DESC`;
       params = [bsiCarriers];
     } else {
-      query = `SELECT u.*, usr.name as uploaded_by_name FROM uploads u LEFT JOIN users usr ON u.uploaded_by = usr.id ORDER BY u.uploaded_at DESC`;
+      query = `SELECT u.*, usr.name as uploaded_by_name FROM uploads u LEFT JOIN users usr ON u.uploaded_by = usr.id WHERE (u.category IS NULL OR u.category = 'commission_statement') ORDER BY u.uploaded_at DESC`;
     }
     const result = await pool.query(query, params);
     res.json(result.rows);
@@ -4469,3 +4474,42 @@ router.post('/fix-aetna-classifications', requireAuth, async (req, res) => {
 });
 
 module.exports = router;
+
+// BSI Statements Upload - separate from commission statements
+router.post('/upload-bsi-statement', requireAuth, upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+  
+  try {
+    const pool = getPool();
+    const fs = require('fs');
+    
+    // Check for duplicate filename
+    const existing = await pool.query('SELECT id FROM uploads WHERE original_name = $1 AND category = $2', 
+      [req.file.originalname, 'bsi_statement']);
+    if (existing.rows.length > 0) {
+      try { fs.unlinkSync(req.file.path); } catch (e) {}
+      return res.status(409).json({ error: `"${req.file.originalname}" has already been uploaded as a BSI statement.` });
+    }
+    
+    // Store file metadata in uploads table
+    const uploadResult = await pool.query(
+      `INSERT INTO uploads (filename, original_name, carrier, row_count, commission_sum, uploaded_by, category) 
+       VALUES ($1, $2, $3, $4, $5, $6, $7) 
+       RETURNING id`,
+      [req.file.filename, req.file.originalname, 'BSI', 0, 0, req.user.id, 'bsi_statement']
+    );
+    
+    // For now, just store the file reference - parsing can be added later
+    res.json({
+      success: true,
+      message: 'BSI statement uploaded successfully',
+      filename: req.file.originalname,
+      uploadId: uploadResult.rows[0].id
+    });
+    
+  } catch (err) {
+    console.error('BSI upload error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+

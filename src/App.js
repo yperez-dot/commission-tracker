@@ -14,6 +14,7 @@ import AdminUsers from './pages/AdminUsers';
 import MedicareProUpload from './pages/MedicareProUpload';
 import AgencyProductionUpload from './pages/AgencyProductionUpload';
 import AgencyProductionRecon from './pages/AgencyProductionRecon';
+import BSIStatementsUpload from './pages/BSIStatementsUpload';
 import './App.css';
 
 export default function App() {
@@ -108,6 +109,7 @@ export default function App() {
         { id: 'upload', label: 'Commission Statements' },
         { id: 'medicarepro-upload', label: 'MedicarePro Sales' },
         { id: 'agency-production-upload', label: 'Agency Production' },
+        { id: 'bsi-statements-upload', label: 'BSI Statements' },
       ]
     },
     { id: 'alldata', label: 'All Data' },
@@ -139,6 +141,7 @@ export default function App() {
     upload: <Upload key={agencyView} user={effectiveUser} />,
     'medicarepro-upload': <MedicareProUpload key={agencyView} user={effectiveUser} />,
     'agency-production-upload': <AgencyProductionUpload key={agencyView} user={effectiveUser} />,
+    'bsi-statements-upload': <BSIStatementsUpload key={agencyView} user={effectiveUser} />,
     'agency-production-recon': <AgencyProductionRecon key={agencyView} user={effectiveUser} />,
     alldata: <AllData key={agencyView} user={effectiveUser} initialFilters={pageParams} />,
     bob: <BookOfBusiness key={agencyView} user={effectiveUser} />,
