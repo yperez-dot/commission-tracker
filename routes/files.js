@@ -2648,6 +2648,16 @@ async function parseBSIPDF(filePath, filename) {
 
       const parsedRows = [];
 
+      // DEBUG: Log all UHC lines containing 929779560 or RODRIGUEZ
+      if (carrier === 'UnitedHealthcare') {
+        console.log(`[BSI UHC-SECTION] Processing ${lines.length} lines`);
+        lines.forEach((line, idx) => {
+          if (line.includes('929779560') || line.toUpperCase().includes('RODRIGUEZ')) {
+            console.log(`[BSI UHC-LINE ${idx}] "${line}"`);
+          }
+        });
+      }
+      
       const consumedIndices = new Set();
       for (let i = 0; i < lines.length - 2; i++) {
         const lineA = lines[i];
@@ -2657,15 +2667,6 @@ async function parseBSIPDF(filePath, filename) {
         if (!/^[A-Z][A-Z\s,'\.\-]+$/.test(lineA)) continue;
         const dm = lineC.match(dataLinePattern);
         if (!dm) continue;
-        
-        // DEBUG: Log raw line for policy 929779560 to see actual bleed format
-        if (lineC.includes('929779560')) {
-          console.log(`[BSI RAW-LINE] Full raw line: "${lineC}"`);
-          console.log(`[BSI RAW-LINE] dm[1] (policy): "${dm[1]}"`);
-          console.log(`[BSI RAW-LINE] dm[2] (client): "${dm[2]}"`);
-          console.log(`[BSI RAW-LINE] dm[3] (date): "${dm[3]}"`);
-          console.log(`[BSI RAW-LINE] dm[4] (amount): "${dm[4]}"`);
-        }
         
         parsedRows.push({
           agentRaw: lineA,
