@@ -2851,7 +2851,13 @@ async function parseTHEStatementPDF(filePath, filename) {
 
         // Fallback: policy is leading alphanumeric block up to first comma or space+uppercase
         // Works for Aetna: "NG102212364200SOTOMAYOR F,JAYNE"
-        const plainMatch = rest.match(/^([A-Z0-9]{6,20})(.+)$/);
+        
+        // PREPROCESSING: Fix name-bleed for policies with trailing surname letters
+        // Example: "929779560RODRIGUEZ JR, GUIDO A." → "929779560 RODRIGUEZ JR, GUIDO A."
+        // Pattern: digits followed immediately by uppercase letters (surname)
+        let preprocessedRest = rest.replace(/(\d{6,15})([A-Z][A-Z\s,]+)/g, '$1 $2');
+        
+        const plainMatch = preprocessedRest.match(/^([A-Z0-9]{6,20})(.+)$/);
         if (plainMatch) {
           const policyPart = plainMatch[1];
           const clientPart = plainMatch[2].trim();
