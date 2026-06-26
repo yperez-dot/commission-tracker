@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-require('../db/database')
+const { getPool } = require('../db/database');
 
 /**
  * Manual Edit Commission Record with Audit Trail
@@ -17,6 +17,7 @@ require('../db/database')
  * }
  */
 router.put('/commission/:id/edit', async (req, res) => {
+  const pool = getPool();
   const { id } = req.params;
   const { commission, theiShare, bsiShare, classification, editedBy, notes } = req.body;
 
@@ -166,6 +167,7 @@ router.put('/commission/:id/edit', async (req, res) => {
  * GET /api/commission/:id/audit
  */
 router.get('/commission/:id/audit', async (req, res) => {
+  const pool = getPool();
   const { id } = req.params;
 
   try {
@@ -207,6 +209,7 @@ router.get('/commission/:id/audit', async (req, res) => {
  * }
  */
 router.post('/commission/:id/revert', async (req, res) => {
+  const pool = getPool();
   const { id } = req.params;
   const { editedBy, notes } = req.body;
 
