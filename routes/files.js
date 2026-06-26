@@ -2657,6 +2657,16 @@ async function parseBSIPDF(filePath, filename) {
         if (!/^[A-Z][A-Z\s,'\.\-]+$/.test(lineA)) continue;
         const dm = lineC.match(dataLinePattern);
         if (!dm) continue;
+        
+        // DEBUG: Log raw line for policy 929779560 to see actual bleed format
+        if (lineC.includes('929779560')) {
+          console.log(`[BSI RAW-LINE] Full raw line: "${lineC}"`);
+          console.log(`[BSI RAW-LINE] dm[1] (policy): "${dm[1]}"`);
+          console.log(`[BSI RAW-LINE] dm[2] (client): "${dm[2]}"`);
+          console.log(`[BSI RAW-LINE] dm[3] (date): "${dm[3]}"`);
+          console.log(`[BSI RAW-LINE] dm[4] (amount): "${dm[4]}"`);
+        }
+        
         parsedRows.push({
           agentRaw: lineA,
           policyNumber: dm[1],
