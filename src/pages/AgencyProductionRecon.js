@@ -274,10 +274,15 @@ export default function AgencyProductionRecon() {
       // Load override commission statements
       const overrideData = await apiFetch('/records?limit=5000');
       
-      // Filter to only override statements (by classification)
+      // Filter to only override statements (by classification OR payee)
+      // Includes BSI/NHP records regardless of classification to catch all override payments
       const overrideStatements = (overrideData.records || []).filter(r => {
         const classification = r.classification?.toLowerCase() || '';
-        return classification.includes('agency override') || classification.includes('override');
+        const payee = r.payee?.toUpperCase() || '';
+        return classification.includes('agency override') || 
+               classification.includes('override') ||
+               payee === 'BSI' || 
+               payee === 'NHP';
       });
       
       setOverrides(overrideStatements);
