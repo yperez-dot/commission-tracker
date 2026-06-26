@@ -321,12 +321,9 @@ export default function AgencyProductionRecon() {
   const getCategory = (m) => {
     if (m.override) return 'paid';
     const status = m.production.status?.toLowerCase() || '';
-    // Exclude inactive/withdrawn enrollments from Missing
-    if (status.includes('withdrawn') || status.includes('cancelled') || status.includes('canceled') || 
-        status.includes('inactive') || status.includes('denied')) {
-      return 'excluded';
-    }
+    if (status.includes('plan denied') || status.includes('plan_denied') || status.includes('denied')) return 'plandenied';
     if (status.includes('plan change') || status.includes('plan_change')) return 'planchange';
+    if (status.includes('cancel') || status.includes('terminated')) return 'cancelled';
     if (status.includes('chase') || status.includes('chasing')) return 'chase';
     return 'missing'; // No override = missing
   };
@@ -337,7 +334,6 @@ export default function AgencyProductionRecon() {
     plandenied: matches.filter(m => getCategory(m) === 'plandenied'),
     chase: matches.filter(m => getCategory(m) === 'chase'),
     cancelled: matches.filter(m => getCategory(m) === 'cancelled'),
-    excluded: matches.filter(m => getCategory(m) === 'excluded'),
     paid: matches.filter(m => getCategory(m) === 'paid')
   };
 
@@ -376,7 +372,6 @@ export default function AgencyProductionRecon() {
     missing: applyFilters(categorized.missing),
     planchange: applyFilters(categorized.planchange),
     cancelled: applyFilters(categorized.cancelled),
-    excluded: applyFilters(categorized.excluded),
     paid: applyFilters(categorized.paid)
   };
 
@@ -386,9 +381,8 @@ export default function AgencyProductionRecon() {
     tab === 'plandenied' ? (filtered.plandenied || []) :
     tab === 'chase' ? (filtered.chase || []) :
     tab === 'cancelled' ? (filtered.cancelled || []) :
-    tab === 'excluded' ? (filtered.excluded || []) :
     tab === 'paid' ? (filtered.paid || []) :
-    [...(filtered.missing || []), ...(filtered.planchange || []), ...(filtered.plandenied || []), ...(filtered.chase || []), ...(filtered.cancelled || []), ...(filtered.excluded || []), ...(filtered.paid || [])];
+    [...(filtered.missing || []), ...(filtered.planchange || []), ...(filtered.plandenied || []), ...(filtered.chase || []), ...(filtered.cancelled || []), ...(filtered.paid || [])];
 
   const agents = [...new Set(production.map(p => p.agent_name).filter(Boolean))].sort();
   // Get unique carriers and format them consistently
@@ -418,14 +412,11 @@ export default function AgencyProductionRecon() {
     } else if (tab === 'cancelled') {
       dataToExport = filtered.cancelled || [];
       filename = `agency-overrides-cancelled-${new Date().toISOString().split('T')[0]}.csv`;
-    } else if (tab === 'excluded') {
-      dataToExport = filtered.excluded || [];
-      filename = `agency-overrides-excluded-${new Date().toISOString().split('T')[0]}.csv`;
     } else if (tab === 'paid') {
       dataToExport = filtered.paid || [];
       filename = `agency-overrides-paid-${new Date().toISOString().split('T')[0]}.csv`;
     } else {
-      dataToExport = [...(filtered.missing || []), ...(filtered.planchange || []), ...(filtered.cancelled || []), ...(filtered.excluded || []), ...(filtered.paid || [])];
+      dataToExport = [...(filtered.missing || []), ...(filtered.planchange || []), ...(filtered.cancelled || []), ...(filtered.paid || [])];
       filename = `agency-overrides-all-${new Date().toISOString().split('T')[0]}.csv`;
     }
     
@@ -769,14 +760,11 @@ export default function AgencyProductionRecon() {
               <button style={tabStyle('cancelled')} onClick={() => setTab('cancelled')}>
                 Cancelled ({(filtered.cancelled || []).length})
               </button>
-              <button style={tabStyle('excluded')} onClick={() => setTab('excluded')}>
-                🚫 Excluded ({(filtered.excluded || []).length})
-              </button>
               <button style={tabStyle('paid')} onClick={() => setTab('paid')}>
                 Paid ({(filtered.paid || []).length})
               </button>
               <button style={tabStyle('all')} onClick={() => setTab('all')}>
-                All ({(filtered.missing || []).length + (filtered.planchange || []).length + (filtered.plandenied || []).length + (filtered.chase || []).length + (filtered.cancelled || []).length + (filtered.excluded || []).length + (filtered.paid || []).length})
+                All ({(filtered.missing || []).length + (filtered.planchange || []).length + (filtered.plandenied || []).length + (filtered.chase || []).length + (filtered.cancelled || []).length + (filtered.paid || []).length})
               </button>
             </div>
 
