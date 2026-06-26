@@ -2631,8 +2631,9 @@ async function parseBSIPDF(filePath, filename) {
       const carrierPattern = /^(UNITED\s+HEA?L?T?H?\s+CARE|HUMANA|AETNA|DEVOTED)\s*$/i;
       const policyAlternatives = [
         '[A-Z0-9]{6,15}_[A-Z]{2,5}',
-        '[A-Z]{2,3}\\d{8,15}',
-        '\\d{9,15}',
+        '[A-Z]{2,3}\\d{8,15}[A-Z]{0,20}',  // MBI format + optional trailing letters
+        '\\d{6,15}[A-Z]{4,20}',           // Numeric policy + trailing surname (name bleed)
+        '\\d{9,15}',                      // Digits only (no bleed)
         '[A-Z]\\d{6,12}',
         '[A-Z]\\d{8,12}',
       ];
