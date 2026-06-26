@@ -2807,6 +2807,15 @@ async function parseTHEStatementPDF(filePath, filename) {
       if (!policyMatch) return null;
       const policyPart = policyMatch[1];
       const clientPart = beforeDate.slice(policyPart.length).trim();
+      
+      // DEBUG: Log when policy 929779560 is extracted
+      if (policyPart.includes('929779560')) {
+        console.log('[THE STATEMENT parseUHCDataLine] Raw line:', line);
+        console.log('[THE STATEMENT parseUHCDataLine] Policy extracted:', policyPart);
+        console.log('[THE STATEMENT parseUHCDataLine] Client extracted:', clientPart);
+        console.log('[THE STATEMENT parseUHCDataLine] Date:', dateStr);
+      }
+      
       return { policy: policyPart, client: clientPart, date: dateStr };
     };
 
@@ -2864,6 +2873,16 @@ async function parseTHEStatementPDF(filePath, filename) {
     while (i < lines.length) {
       const line = lines[i];
 
+      // DEBUG: Log ALL lines containing policy 929779560
+      if (line.includes('929779560')) {
+        console.log('[THE STATEMENT ALL LINES] Line', i, ':', line);
+        console.log('[THE STATEMENT ALL LINES] Previous line (i-1):', i > 0 ? lines[i-1] : 'N/A');
+        console.log('[THE STATEMENT ALL LINES] Next line (i+1):', i+1 < lines.length ? lines[i+1] : 'N/A');
+        console.log('[THE STATEMENT ALL LINES] Next line (i+2):', i+2 < lines.length ? lines[i+2] : 'N/A');
+        console.log('[THE STATEMENT ALL LINES] Next line (i+3):', i+3 < lines.length ? lines[i+3] : 'N/A');
+        console.log('[THE STATEMENT ALL LINES] Current carrier:', currentCarrier);
+      }
+
       // Section headers
       if (line.includes('Detailed Compensation Statement (UHC)')) { currentCarrier = 'UnitedHealthcare'; i++; continue; }
       if (line.includes('Detailed Compensation Statement (HUMANA)') || line.includes('Detailed Compensation Statement(HUMANA)')) { currentCarrier = 'Humana'; i++; continue; }
@@ -2893,6 +2912,17 @@ async function parseTHEStatementPDF(filePath, filename) {
 
         if (carrierKey && amountMatch && parsed && agentValid) {
           const commission = parseFloat(amountLine.replace(/[$,]/g, '')) || 0;
+          
+          // DEBUG: Log when policy 929779560 is added to records (UHC 4-line pattern)
+          if (parsed.policy.includes('929779560')) {
+            console.log('[THE STATEMENT UHC 4-LINE] Agent line:', agentLine);
+            console.log('[THE STATEMENT UHC 4-LINE] Carrier line:', carrierLine);
+            console.log('[THE STATEMENT UHC 4-LINE] Data line:', dataLine);
+            console.log('[THE STATEMENT UHC 4-LINE] Amount line:', amountLine);
+            console.log('[THE STATEMENT UHC 4-LINE] Parsed policy:', parsed.policy);
+            console.log('[THE STATEMENT UHC 4-LINE] Parsed client:', parsed.client);
+          }
+          
           records.push({
             agent: normalizeAgent(agentLine),
             carrier: carrierMap[carrierKey],
@@ -2916,6 +2946,14 @@ async function parseTHEStatementPDF(filePath, filename) {
       if (currentCarrier === 'Humana' || currentCarrier === 'Aetna' || currentCarrier === 'UnitedHealthcare') {
         const parsed = parseSingleLine(line);
         if (parsed) {
+          // DEBUG: Log when policy 929779560 is added via single-line pattern
+          if (parsed.policy && parsed.policy.includes('929779560')) {
+            console.log('[THE STATEMENT SINGLE-LINE] Raw line:', line);
+            console.log('[THE STATEMENT SINGLE-LINE] Parsed policy:', parsed.policy);
+            console.log('[THE STATEMENT SINGLE-LINE] Parsed client:', parsed.client);
+            console.log('[THE STATEMENT SINGLE-LINE] Parsed agent:', parsed.agent);
+          }
+          
           records.push({
             agent: normalizeAgent(parsed.agent),
             carrier: parsed.carrier,
