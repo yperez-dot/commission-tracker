@@ -2695,6 +2695,7 @@ async function parseBSIPDF(filePath, filename) {
         if (agentRaw.length < 3 || clientRaw.length < 3) continue;
 
         // FIX #2: Name-bleed split
+        console.log(`[BSI TRACE] Processing policy: "${policyNumber}", client: "${clientRaw}", hasUnderscore: ${policyNumber.includes('_')}`);
         if (!policyNumber.includes('_')) {
           const bleedMatch = policyNumber.match(/^([0-9A-Z]+?)([A-Z]{4,})$/);
           if (bleedMatch) {
