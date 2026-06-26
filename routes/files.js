@@ -2799,21 +2799,12 @@ async function parseBSIPDF(filePath, filename) {
 }
 
 async function parseTHEStatementPDF(filePath, filename) {
-  console.log('[THE-STATEMENT ENTRY] Parser called for:', filename);
   const records = [];
   if (!pdfParse) { console.error('pdf-parse not installed'); return records; }
   try {
     const dataBuffer = fs.readFileSync(filePath);
     const data = await pdfParse(dataBuffer);
     const lines = data.text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-    
-    // DEBUG: Simple line count and sample search
-    console.log(`[THE-STATEMENT DEBUG] Total lines: ${lines.length}`);
-    for (let i = 0; i < lines.length; i++) {
-      if (lines[i].includes('929779560')) {
-        console.log(`[THE-STATEMENT RAW] Line ${i}: "${lines[i]}"`);
-      }
-    }
 
     const carrierMap = {
       'UNITED HEALTH CARE': 'UnitedHealthcare',
