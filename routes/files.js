@@ -1677,6 +1677,7 @@ function parseDevotedRows(wb, filename) {
 
 // ─── DEVOTED HEALTH PDF PARSER ────────────────────────────────────────────────
 async function parseDevotedPDF(filePath, filename) {
+  console.log('[DEVOTED ENTRY] Parser called for:', filename);
   const records = [];
   if (!pdfParse) { 
     console.error('[DEVOTED-PDF] pdf-parse not installed'); 
@@ -2505,6 +2506,7 @@ function parseRows(rows, mapping, filename) {
 }
 
 async function parseHumanaPDF(filePath, filename) {
+  console.log('[HUMANA ENTRY] Parser called for:', filename);
   const records = [];
   try {
     const dataBuffer = fs.readFileSync(filePath);
@@ -2797,6 +2799,7 @@ async function parseBSIPDF(filePath, filename) {
 }
 
 async function parseTHEStatementPDF(filePath, filename) {
+  console.log('[THE-STATEMENT ENTRY] Parser called for:', filename);
   const records = [];
   if (!pdfParse) { console.error('pdf-parse not installed'); return records; }
   try {
@@ -3042,6 +3045,18 @@ function isBSIConsolidatedPDF(filename) {
          f.includes('medicare_statement_-the-');
 }
 
+/**
+ * Pre-process BSI consolidated text to split name-bleed patterns.
+ * Converts: "906422581RODRIGUEZ, GUILLERMO" → "906422581 RODRIGUEZ, GUILLERMO"
+ * Handles multi-word surnames: "997701035SEGURA RODRIGUEZ, HELEN" → "997701035 SEGURA RODRIGUEZ, HELEN"
+ */
+function preprocessBSIConsolidatedNameBleed(text) {
+  return text.replace(
+    /(\d{6,15})([A-Z][\sA-Z]+?)(?=,)/g,
+    '$1 $2'
+  );
+}
+
 async function parseBSIConsolidatedPDF(filePath, filename) {
   console.log('[BSI-CONSOLIDATED ENTRY] Parser called for:', filename);
   const records = [];
@@ -3049,15 +3064,10 @@ async function parseBSIConsolidatedPDF(filePath, filename) {
   try {
     const dataBuffer = fs.readFileSync(filePath);
     const data = await pdfParse(dataBuffer);
-    const lines = data.text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
     
-    // DEBUG: Log all lines containing 929779560 or RODRIGUEZ
-    console.log(`[BSI-CONSOLIDATED DEBUG] Processing ${lines.length} total lines`);
-    const targetLines = lines.filter(l => l.includes('929779560') || l.toUpperCase().includes('RODRIGUEZ'));
-    console.log(`[BSI-CONSOLIDATED DEBUG] Found ${targetLines.length} lines matching 929779560/RODRIGUEZ`);
-    targetLines.forEach((line, idx) => {
-      console.log(`[BSI-CONSOLIDATED LINE ${idx}] "${line}"`);
-    });
+    // PRE-PROCESS: Split name-bleed patterns BEFORE parsing
+    const cleanedText = preprocessBSIConsolidatedNameBleed(data.text);
+    const lines = cleanedText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
     const now = new Date();
     const uploadPeriod = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -3286,6 +3296,7 @@ async function parseBSIConsolidatedPDF(filePath, filename) {
 }
 
 async function parseMutualOmahaPDF(filePath, filename) {
+  console.log('[MUTUAL-OMAHA ENTRY] Parser called for:', filename);
   const records = [];
   if (!pdfParse) { console.error('pdf-parse not installed'); return records; }
   try {
@@ -3389,6 +3400,7 @@ async function parseMutualOmahaPDF(filePath, filename) {
 }
 
 async function parseNHPAgencyStatementPDF(filePath, filename) {
+  console.log('[NHP ENTRY] Parser called for:', filename);
   const records = [];
   if (!pdfParse) { console.error('pdf-parse not installed'); return records; }
   
