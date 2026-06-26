@@ -2684,14 +2684,28 @@ async function parseBSIPDF(filePath, filename) {
 
       for (const t of parsedRows) {
         const agentRaw = t.agentRaw.trim().replace(/\s+/g, ' ');
-        const policyNumber = t.policyNumber;
-        const clientRaw = t.clientRaw.trim().replace(/\s+/g, ' ');
+        let policyNumber = t.policyNumber;
+        let clientRaw = t.clientRaw.trim().replace(/\s+/g, ' ');
         const effectiveDate = t.effectiveDate;
         const amountStr = t.amountStr;
         const commission = parseFloat(amountStr.replace(/[$,]/g, '')) || 0;
 
         if (!agentRaw || !clientRaw) continue;
         if (agentRaw.length < 3 || clientRaw.length < 3) continue;
+
+        // FIX #2: Name-bleed split
+        if (!policyNumber.includes('_')) {
+          const bleedMatch = policyNumber.match(/^([0-9A-Z]+?)([A-Z]{4,})$/);
+          if (bleedMatch) {
+            const cleanPolicy = bleedMatch[1];
+            const bleedSurname = bleedMatch[2];
+            if (!clientRaw.toUpperCase().includes(bleedSurname)) {
+              console.log(`[BSI NAME-BLEED] Split "${policyNumber}" → policy "${cleanPolicy}" + restored "${bleedSurname}" to client "${clientRaw}"`);
+              policyNumber = cleanPolicy;
+              clientRaw = bleedSurname + ' ' + clientRaw;
+            }
+          }
+        }
 
         const agent = normalizeAgentName(agentRaw);
         const client = clientRaw
