@@ -282,62 +282,31 @@ function findMatch(sale, commissions, manualPayments = []) {
     return null;  // No matches found
   }
   
-  // TYPE-AWARE NETTING: Separate override and sale-side money streams
+  // Calculate net commission (sum of all matching records)
   // Example: Karl Brown (UHC 933986247) has 6 records:
-  //   Override side: +$75.00 -$75.00 +$34.38 = +$34.38 override_net
-  //   Sale side: +$318.09 +$347.00 -$347.00 = +$318.09 sale_net
-  // Override Recon verdict must key on override_net ONLY (not combined total)
-  // A paid sale must NOT mask a missing override
-  
-  const overrideMatches = [];
-  const saleMatches = [];
-  
-  matches.forEach(m => {
-    const cls = (m.classification || '').toLowerCase();
-    // Override side: Agency Override, Override, or any line with "override" in classification
-    if (cls.includes('override') || cls.includes('agency override')) {
-      overrideMatches.push(m);
-    } else {
-      // Sale side: New Business, Agent Commission, Renewal, or unclassified
-      saleMatches.push(m);
-    }
-  });
-  
-  const override_net = overrideMatches.reduce((sum, m) => sum + parseFloat(m.commission || 0), 0);
-  const sale_net = saleMatches.reduce((sum, m) => sum + parseFloat(m.commission || 0), 0);
-  const combined_net = override_net + sale_net;
-  
+  //   Sale: +$318.09, +$347.00, -$347.00
+  //   Override: +$75.00, -$75.00, +$34.38
+  //   Net: +$352.47 (not -$28.91 from partial data)
+  const netCommission = matches.reduce((sum, m) => sum + parseFloat(m.commission || 0), 0);
   const hasChargeback = matches.some(m => parseFloat(m.commission || 0) < 0);
   
-  // Determine classification based on override_net (for Override Recon)
-  // Sale Recon can use sale_net separately
+  // Determine classification based on net
   let classification;
-  if (override_net > 0) {
-    classification = hasChargeback ? 'Override Paid (net +)' : 'Override Paid';
-  } else if (override_net === 0 && overrideMatches.length > 0) {
-    classification = 'Override Paid & reversed (net $0)';
-  } else if (override_net < 0) {
-    classification = 'Override Chargeback expected';
-  } else if (sale_net > 0) {
-    // No override records, but sale was paid
-    classification = hasChargeback ? 'Sale Paid (net +)' : 'Sale Paid';
-  } else if (sale_net === 0 && saleMatches.length > 0) {
-    classification = 'Sale Paid & reversed (net $0)';
+  if (netCommission > 0) {
+    classification = hasChargeback ? 'Paid (net positive)' : 'Paid';
+  } else if (netCommission === 0) {
+    classification = 'Paid & reversed (net $0)';
   } else {
     classification = 'Chargeback expected';
   }
   
   // Return first match as primary (for display compatibility)
-  // but include TYPE-AWARE nets and full matches array
+  // but include full matches array + net for detailed views
   return {
     ...matches[0],  // Spread first match for backward compatibility
     allMatches: matches,
     matchCount: matches.length,
-    overrideMatches,
-    saleMatches,
-    override_net,       // Override side only (for Override Recon verdict)
-    sale_net,           // Sale side only (for Sales Recon verdict)
-    combined_net,       // Total (for display/reporting)
+    netCommission,
     hasChargeback,
     classification
   };

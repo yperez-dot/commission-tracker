@@ -219,48 +219,17 @@ function parseEffectiveDate(dateStr) {
 }
 
 // Match agency production to override commissions using normName() fuzzy matching
-// TYPE-AWARE NETTING: Collect ALL matching overrides and calculate override_net
-// Same fix as Sales Reconciliation (Fix B)
+// Same logic as "Our Sales" and "Missing Renewals" for consistency
 function findOverrideMatch(production, overrides) {
   const prodClientNorm = normName(production.client_name);
   const prodCarrier = normalizeCarrier(production.carrier);
   
-  // DEBUG: Log for Guido Rodriguez Jr specifically
-  const isGuido = production.client_name?.toLowerCase().includes('guido');
-  if (isGuido) {
-    console.log('[MATCH DEBUG] Production record:', {
-      raw: production.client_name,
-      normalized: prodClientNorm,
-      carrier: prodCarrier,
-      policy: production.policy_number
-    });
-  }
-  
-  // Collect ALL matching overrides (not just first)
-  const matches = [];
-  
+  // Try exact match first (client + carrier)
   for (const override of overrides) {
     const overrideClientNorm = normName(override.client_full_name);
     const overrideCarrier = normalizeCarrier(override.carrier);
     
-    // DEBUG: Log Guido's commission records
-    if (isGuido && override.client_full_name?.toLowerCase().includes('guido')) {
-      console.log('[MATCH DEBUG] Override record:', {
-        raw: override.client_full_name,
-        normalized: overrideClientNorm,
-        carrier: overrideCarrier,
-        commission: override.commission,
-        policy: override.policy_number
-      });
-      console.log('[MATCH DEBUG] Comparison:', {
-        clientMatch: prodClientNorm === overrideClientNorm,
-        carrierMatch: prodCarrier === overrideCarrier,
-        prodNorm: prodClientNorm,
-        overrideNorm: overrideClientNorm
-      });
-    }
-    
-    // Primary: Exact name match using normName()
+    // Client name match using normName() (handles "LAST FIRST" vs "FIRST LAST")
     const clientMatch = prodClientNorm === overrideClientNorm;
     
     // Carrier match
@@ -268,93 +237,13 @@ function findOverrideMatch(production, overrides) {
                         prodCarrier.includes(overrideCarrier) || 
                         overrideCarrier.includes(prodCarrier);
     
-    // Fallback: Check for parser name-bleed (surname stuck to policy number)
-    // Example: policy "929779560RODRIGUEZ" where RODRIGUEZ is the surname
-    // Extract letters from end of override policy number
-    let policyBleedSurname = null;
-    if (override.policy_number) {
-      const bleedMatch = override.policy_number.match(/([A-Z]{4,})$/i);  // Case insensitive
-      if (bleedMatch) {
-        policyBleedSurname = bleedMatch[1].toLowerCase();
-      }
-    }
-    
-    // Extract surname from production name
-    // For "Guido Rodriguez Jr" → surname is "Rodriguez" (second-to-last if suffix present)
-    const prodWords = prodClientNorm.toLowerCase().split(' ');
-    const lastWord = prodWords[prodWords.length - 1];
-    const suffixes = ['jr', 'sr', 'ii', 'iii', 'iv', 'v', 'junior', 'senior'];
-    const hasSuffix = suffixes.includes(lastWord);
-    const prodSurname = hasSuffix && prodWords.length > 1 
-                        ? prodWords[prodWords.length - 2]  // Second-to-last (surname before suffix)
-                        : lastWord;  // Last word is surname
-    
-    const bleedMatchResult = policyBleedSurname && prodSurname && 
-                             (prodSurname === policyBleedSurname || 
-                              prodSurname.includes(policyBleedSurname) ||
-                              policyBleedSurname.includes(prodSurname));
-    
-    // DEBUG: Log for Guido when checking bleed
-    if (isGuido && policyBleedSurname) {
-      console.log('[MATCH DEBUG] Policy bleed check:', {
-        overridePolicy: override.policy_number,
-        policyBleedSurname,
-        prodWords,
-        prodSurname,
-        hasSuffix,
-        bleedMatchResult
-      });
-    }
-    
-    // Match if:
-    // 1. Exact name + carrier (primary)
-    // 2. Policy bleed surname + carrier (fallback for parser bug)
+    // Match if client + carrier match (period-agnostic, like Our Sales)
     if (clientMatch && carrierMatch) {
-      matches.push(override);  // Primary match
-    } else if (bleedMatchResult && carrierMatch) {
-      if (isGuido) {
-        console.log('[MATCH DEBUG] ✅ Fallback match (policy bleed)!', {
-          policyBleedSurname,
-          prodSurname,
-          overridePolicy: override.policy_number
-        });
-      }
-      matches.push(override);  // Fallback match via policy bleed
+      return override;
     }
   }
   
-  if (matches.length === 0) {
-    return null;  // No matches found
-  }
-  
-  // Calculate override_net (sum of all matching override records)
-  // Example: David Mosley Jr (UHC 135614656): +$70 -$70 = $0 net
-  // Example: Maritza Trivino Pin: +75 -75 +75 -75 +6.25 +3.13 +28.13 = $37.51 net
-  const override_net = matches.reduce((sum, m) => sum + parseFloat(m.commission || 0), 0);
-  const hasChargeback = matches.some(m => parseFloat(m.commission || 0) < 0);
-  
-  // Determine classification based on override_net
-  let classification;
-  if (override_net > 0) {
-    classification = hasChargeback ? 'Override Paid (net +)' : 'Override Paid';
-  } else if (override_net === 0 && matches.length > 0) {
-    classification = 'Override Paid & reversed (net $0)';
-  } else if (override_net < 0) {
-    classification = 'Override Chargeback expected';
-  } else {
-    classification = 'No Override';
-  }
-  
-  // Return first match as primary (for display compatibility)
-  // but include TYPE-AWARE nets and full matches array
-  return {
-    ...matches[0],  // Spread first match for backward compatibility
-    allMatches: matches,
-    matchCount: matches.length,
-    override_net,       // Net of all override records (KEY for verdict)
-    hasChargeback,
-    classification
-  };
+  return null;
 }
 
 export default function AgencyProductionRecon() {
@@ -380,68 +269,15 @@ export default function AgencyProductionRecon() {
     try {
       // Load agency production (Hector's reports)
       const prodData = await apiFetch('/agency-production?limit=5000');
-      
-      // FIX: Filter to LATEST upload batch only (prevents cross-batch duplicates)
-      // John Rivera 3× was caused by same person in 3 different upload batches
-      const allProduction = prodData.production || [];
-      
-      if (allProduction.length > 0) {
-        // Find the latest batch
-        const latestBatch = allProduction.reduce((max, p) => {
-          const batch = p.upload_batch || '';
-          return batch > max ? batch : max;
-        }, '');
-        
-        console.log(`[BATCH FILTER] Total production records: ${allProduction.length}`);
-        console.log(`[BATCH FILTER] Latest batch: ${latestBatch}`);
-        
-        // Filter to only latest batch
-        const latestOnly = allProduction.filter(p => p.upload_batch === latestBatch);
-        
-        console.log(`[BATCH FILTER] After filtering to latest batch: ${latestOnly.length}`);
-        console.log(`[BATCH FILTER] Removed ${allProduction.length - latestOnly.length} records from older batches`);
-        
-        setProduction(latestOnly);
-      } else {
-        setProduction([]);
-      }
+      setProduction(prodData.production || []);
 
       // Load override commission statements
       const overrideData = await apiFetch('/records?limit=5000');
-      const allRecords = overrideData.records || [];
       
-      console.log(`[OVERRIDE FILTER] Total commission records loaded: ${allRecords.length}`);
-      
-      // Filter to override statements:
-      // 1. Records with "override" in classification (explicit agency overrides)
-      // 2. Records from BSI/NHP payee (all BSI payments to THEI are overrides)
-      // BUG FIX: Sandra Fertil's $75 payments were classified as "Renewal" by BSI parser
-      //          because parser uses amount-based classification ($75 >= $20 → Renewal)
-      //          but BSI pays THEI overrides at various amounts (not just <$20)
-      const overrideStatements = allRecords.filter(r => {
+      // Filter to only override statements (by classification)
+      const overrideStatements = (overrideData.records || []).filter(r => {
         const classification = r.classification?.toLowerCase() || '';
-        const payee = r.payee?.toLowerCase() || '';
-        const source = r.source?.toLowerCase() || '';
-        
-        // Include if:
-        // - Classification contains "override" (explicit)
-        // - OR payee is BSI/NHP (all BSI/NHP payments are overrides)
-        return classification.includes('override') || 
-               payee.includes('bsi') || 
-               payee.includes('nhp') ||
-               source.includes('bsi') ||
-               source.includes('nhp');
-      });
-      
-      console.log(`[OVERRIDE FILTER] After filtering to overrides: ${overrideStatements.length}`);
-      console.log(`[OVERRIDE FILTER] Breakdown by classification:`);
-      const classificationCounts = {};
-      overrideStatements.forEach(r => {
-        const cls = r.classification || 'Unknown';
-        classificationCounts[cls] = (classificationCounts[cls] || 0) + 1;
-      });
-      Object.entries(classificationCounts).forEach(([cls, count]) => {
-        console.log(`  ${cls}: ${count}`);
+        return classification.includes('agency override') || classification.includes('override');
       });
       
       setOverrides(overrideStatements);
@@ -452,102 +288,21 @@ export default function AgencyProductionRecon() {
     }
   }
 
-  // DEDUPLICATION: Remove duplicate production records before matching
-  // Deduplicate by: client_name + carrier ONLY
-  // Example: John Rivera appears 3×, Lilia Rivera 2× (duplicates in agency_production table)
-  // FIX: After testing policy_number (0.6% deduped) and effective_date (1% deduped),
-  //      neither worked because duplicates have blank/different values in those fields.
-  //      True duplicates = same client + carrier, regardless of policy/date variations.
-  //      Keep the record with most complete data (has policy_number, or newest effective_date).
-  const productionDeduped = [];
-  const seen = new Map();  // Store best record for each key
-  
-  // DEBUG: Track duplicates for analysis
-  const duplicateLog = [];
-  
-  production.forEach(prod => {
-    // Dedup key: ONLY client + carrier (no policy, no date)
-    const normalizedClient = normName(prod.client_name || '');
-    const normalizedCarrier = normalizeCarrier(prod.carrier || '');
-    const key = [normalizedClient, normalizedCarrier].join('|').toLowerCase();
-    
-    const existing = seen.get(key);
-    
-    // DEBUG: Log when we find a duplicate
-    if (existing) {
-      duplicateLog.push({
-        key,
-        original: { name: existing.client_name, carrier: existing.carrier },
-        duplicate: { name: prod.client_name, carrier: prod.carrier }
-      });
-    }
-    
-    if (!existing) {
-      // First occurrence - keep it
-      seen.set(key, prod);
-    } else {
-      // Duplicate found - keep the one with most complete data
-      // Prefer: has policy_number > has effective_date > first occurrence
-      const prodHasPolicy = !!(prod.policy_number && prod.policy_number.trim());
-      const existingHasPolicy = !!(existing.policy_number && existing.policy_number.trim());
-      const prodHasDate = !!(prod.effective_date);
-      const existingHasDate = !!(existing.effective_date);
-      
-      if (prodHasPolicy && !existingHasPolicy) {
-        seen.set(key, prod);  // New record has policy, existing doesn't
-      } else if (!prodHasPolicy && !existingHasPolicy && prodHasDate && !existingHasDate) {
-        seen.set(key, prod);  // Neither has policy, but new has date
-      }
-      // Otherwise keep existing (first occurrence or already has better data)
-    }
-  });
-  
-  seen.forEach(prod => productionDeduped.push(prod));
-  
-  console.log(`[DEDUP] Production records: ${production.length} → ${productionDeduped.length} (removed ${production.length - productionDeduped.length} duplicates)`);
-  
-  // Debug: log if dedup seems too low
-  const dupesRemoved = production.length - productionDeduped.length;
-  if (production.length > 100 && dupesRemoved < (production.length * 0.05)) {
-    console.warn(`[DEDUP] Warning: Only removed ${dupesRemoved} of ${production.length} (${(dupesRemoved/production.length*100).toFixed(1)}%) - dedup key may be too strict`);
-    // Show first 10 duplicates that WERE caught
-    if (duplicateLog.length > 0) {
-      console.log(`[DEDUP] Sample duplicates found (first 10):`, duplicateLog.slice(0, 10));
-    }
-    // Sample some records to see what keys are being generated
-    const sampleKeys = production.slice(0, 20).map(p => ({
-      raw: { name: p.client_name, carrier: p.carrier },
-      normalized: { name: normName(p.client_name || ''), carrier: normalizeCarrier(p.carrier || '') },
-      key: [normName(p.client_name || ''), normalizeCarrier(p.carrier || '')].join('|').toLowerCase()
-    }));
-    console.log(`[DEDUP] Sample normalized keys (first 20):`, sampleKeys);
-  }
-  
-  // Match deduplicated production to overrides
-  const matches = productionDeduped.map(prod => ({
+  // Match production to overrides
+  const matches = production.map(prod => ({
     production: prod,
     override: findOverrideMatch(prod, overrides)
   }));
 
-  // TYPE-AWARE CATEGORIZATION: Use override_net to determine paid vs missing
-  // A row is only "paid" if override_net > 0
-  // Net $0 or negative → NOT paid (goes to missing or special status)
+  // Categorize by status
   const getCategory = (m) => {
-    // Check status flags first (plan change, denied, etc.)
+    if (m.override) return 'paid';
     const status = m.production.status?.toLowerCase() || '';
     if (status.includes('plan denied') || status.includes('plan_denied') || status.includes('denied')) return 'plandenied';
     if (status.includes('plan change') || status.includes('plan_change')) return 'planchange';
     if (status.includes('cancel') || status.includes('terminated')) return 'cancelled';
     if (status.includes('chase') || status.includes('chasing')) return 'chase';
-    
-    // TYPE-AWARE VERDICT: Check override_net, not just existence
-    if (m.override && m.override.override_net > 0) {
-      return 'paid';  // Only paid if override_net > 0
-    }
-    
-    // If override_net = 0 or < 0, it's NOT paid
-    // David Mosley Jr: +$70 -$70 = $0 net → missing (not paid)
-    return 'missing';
+    return 'missing'; // No override = missing
   };
 
   const categorized = {
@@ -655,8 +410,8 @@ export default function AgencyProductionRecon() {
       const plan = m.production.plan_name || '—';
       const effectiveDate = m.production.effective_date ? formatDate(m.production.effective_date) : '—';
       const status = m.production.status || '—';
-      const paid = m.override && m.override.override_net > 0 ? 'Yes' : 'No';
-      const amount = m.override ? (m.override.override_net || '0') : '—';
+      const paid = m.override ? 'Yes' : 'No';
+      const amount = m.override ? (m.override.commission || m.override.commission_amount || '0') : '—';
       
       return [
         agentName,
@@ -1045,11 +800,10 @@ export default function AgencyProductionRecon() {
                           <td>
                             {(() => {
                               const status = m.production.status?.toLowerCase() || '';
-                              let displayStatus;
-                              let bgColor;
-                              let textColor;
+                              let displayStatus = 'Paid';
+                              let bgColor = '#D4EDDA';
+                              let textColor = '#155724';
                               
-                              // Check production status flags first (plan change, denied, etc.)
                               if (status.includes('cancel') || status.includes('terminated')) {
                                 displayStatus = 'Cancelled';
                                 bgColor = '#F8D7DA';
@@ -1066,18 +820,12 @@ export default function AgencyProductionRecon() {
                                 displayStatus = 'Chase';
                                 bgColor = '#D1ECF1';
                                 textColor = '#0C5460';
-                              } else {
-                                // FIXED: Check actual override payment (override_net > 0), not production.status
-                                // This fixes the "Paid badge in Missing tab" bug
-                                if (m.override && m.override.override_net > 0) {
-                                  displayStatus = 'Paid';
-                                  bgColor = '#D4EDDA';
-                                  textColor = '#155724';
-                                } else {
-                                  displayStatus = 'Missing';
-                                  bgColor = '#F8F9FA';
-                                  textColor = '#6C757D';
-                                }
+                              } else if (status.includes('missing') || status.includes('pending') || status.includes('not found')) {
+                                displayStatus = 'Missing';
+                                bgColor = '#F8F9FA';
+                                textColor = '#6C757D';
+                              } else if (status.includes('paid') || status.includes('complete') || status.includes('active') || status.includes('progress')) {
+                                displayStatus = 'Paid';
                               }
                               
                               return (
@@ -1096,9 +844,8 @@ export default function AgencyProductionRecon() {
                           </td>
                           <td style={{ textAlign: 'center' }}>
                             {m.override ? (
-                              <span style={{ color: m.override.override_net > 0 ? 'var(--green)' : 'var(--amber)', fontWeight: 600 }}>
-                                {m.override.override_net > 0 ? '✅' : '⚠️'} {fmt(m.override.override_net || 0)}
-                                {m.override.matchCount > 1 && <span style={{ fontSize: '0.85em', marginLeft: 4 }}>({m.override.matchCount} records)</span>}
+                              <span style={{ color: 'var(--green)', fontWeight: 600 }}>
+                                ✅ {fmt(m.override.commission || m.override.commission_amount || 0)}
                               </span>
                             ) : (
                               <span style={{ color: 'var(--red)', fontWeight: 600 }}>❌ Missing</span>

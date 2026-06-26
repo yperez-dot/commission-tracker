@@ -1,7 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getPool } = require('../db/database');
-const pool = getPool();
+const pool = require('../db');
 
 /**
  * Manual Edit Commission Record with Audit Trail
