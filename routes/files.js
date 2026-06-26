@@ -2578,6 +2578,7 @@ async function parseHumanaPDF(filePath, filename) {
 }
 
 async function parseBSIPDF(filePath, filename) {
+  console.log('[BSI PARSER ENTRY] parseBSIPDF called for:', filename);
   const records = [];
   try {
     const dataBuffer = fs.readFileSync(filePath);
@@ -3042,12 +3043,21 @@ function isBSIConsolidatedPDF(filename) {
 }
 
 async function parseBSIConsolidatedPDF(filePath, filename) {
+  console.log('[BSI-CONSOLIDATED ENTRY] Parser called for:', filename);
   const records = [];
   if (!pdfParse) { console.error('pdf-parse not installed'); return records; }
   try {
     const dataBuffer = fs.readFileSync(filePath);
     const data = await pdfParse(dataBuffer);
     const lines = data.text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    
+    // DEBUG: Log all lines containing 929779560 or RODRIGUEZ
+    console.log(`[BSI-CONSOLIDATED DEBUG] Processing ${lines.length} total lines`);
+    const targetLines = lines.filter(l => l.includes('929779560') || l.toUpperCase().includes('RODRIGUEZ'));
+    console.log(`[BSI-CONSOLIDATED DEBUG] Found ${targetLines.length} lines matching 929779560/RODRIGUEZ`);
+    targetLines.forEach((line, idx) => {
+      console.log(`[BSI-CONSOLIDATED LINE ${idx}] "${line}"`);
+    });
 
     const now = new Date();
     const uploadPeriod = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
