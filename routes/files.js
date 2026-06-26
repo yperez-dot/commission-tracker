@@ -1677,7 +1677,6 @@ function parseDevotedRows(wb, filename) {
 
 // ─── DEVOTED HEALTH PDF PARSER ────────────────────────────────────────────────
 async function parseDevotedPDF(filePath, filename) {
-  console.log('[DEVOTED ENTRY] Parser called for:', filename);
   const records = [];
   if (!pdfParse) { 
     console.error('[DEVOTED-PDF] pdf-parse not installed'); 
@@ -2506,7 +2505,6 @@ function parseRows(rows, mapping, filename) {
 }
 
 async function parseHumanaPDF(filePath, filename) {
-  console.log('[HUMANA ENTRY] Parser called for:', filename);
   const records = [];
   try {
     const dataBuffer = fs.readFileSync(filePath);
@@ -2580,7 +2578,6 @@ async function parseHumanaPDF(filePath, filename) {
 }
 
 async function parseBSIPDF(filePath, filename) {
-  console.log('[BSI PARSER ENTRY] parseBSIPDF called for:', filename);
   const records = [];
   try {
     const dataBuffer = fs.readFileSync(filePath);
@@ -2634,9 +2631,8 @@ async function parseBSIPDF(filePath, filename) {
       const carrierPattern = /^(UNITED\s+HEA?L?T?H?\s+CARE|HUMANA|AETNA|DEVOTED)\s*$/i;
       const policyAlternatives = [
         '[A-Z0-9]{6,15}_[A-Z]{2,5}',
-        '[A-Z]{2,3}\\d{8,15}[A-Z]{0,20}',  // MBI format + optional trailing letters
-        '\\d{6,15}[A-Z]{4,20}',           // Numeric policy + trailing surname (name bleed)
-        '\\d{9,15}',                      // Digits only (no bleed)
+        '[A-Z]{2,3}\\d{8,15}',
+        '\\d{9,15}',
         '[A-Z]\\d{6,12}',
         '[A-Z]\\d{8,12}',
       ];
@@ -2651,16 +2647,6 @@ async function parseBSIPDF(filePath, filename) {
 
       const parsedRows = [];
 
-      // DEBUG: Log all UHC lines containing 929779560 or RODRIGUEZ
-      if (carrier === 'UnitedHealthcare') {
-        console.log(`[BSI UHC-SECTION] Processing ${lines.length} lines`);
-        lines.forEach((line, idx) => {
-          if (line.includes('929779560') || line.toUpperCase().includes('RODRIGUEZ')) {
-            console.log(`[BSI UHC-LINE ${idx}] "${line}"`);
-          }
-        });
-      }
-      
       const consumedIndices = new Set();
       for (let i = 0; i < lines.length - 2; i++) {
         const lineA = lines[i];
@@ -2670,7 +2656,6 @@ async function parseBSIPDF(filePath, filename) {
         if (!/^[A-Z][A-Z\s,'\.\-]+$/.test(lineA)) continue;
         const dm = lineC.match(dataLinePattern);
         if (!dm) continue;
-        
         parsedRows.push({
           agentRaw: lineA,
           policyNumber: dm[1],
@@ -2699,32 +2684,14 @@ async function parseBSIPDF(filePath, filename) {
 
       for (const t of parsedRows) {
         const agentRaw = t.agentRaw.trim().replace(/\s+/g, ' ');
-        let policyNumber = t.policyNumber;
-        let clientRaw = t.clientRaw.trim().replace(/\s+/g, ' ');
+        const policyNumber = t.policyNumber;
+        const clientRaw = t.clientRaw.trim().replace(/\s+/g, ' ');
         const effectiveDate = t.effectiveDate;
         const amountStr = t.amountStr;
         const commission = parseFloat(amountStr.replace(/[$,]/g, '')) || 0;
 
         if (!agentRaw || !clientRaw) continue;
         if (agentRaw.length < 3 || clientRaw.length < 3) continue;
-
-        // FIX #2: Name-bleed split
-        console.log(`[BSI TRACE] Processing policy: "${policyNumber}", client: "${clientRaw}", hasUnderscore: ${policyNumber.includes('_')}`);
-        if (!policyNumber.includes('_')) {
-          const bleedMatch = policyNumber.match(/^([0-9A-Z]+?)([A-Z]{4,})$/);
-          if (bleedMatch) {
-            const cleanPolicy = bleedMatch[1];
-            const bleedSurname = bleedMatch[2];
-            console.log(`[BSI DEBUG] Policy: "${policyNumber}", Clean: "${cleanPolicy}", Bleed: "${bleedSurname}", Client: "${clientRaw}", ClientUpper: "${clientRaw.toUpperCase()}", Includes: ${clientRaw.toUpperCase().includes(bleedSurname)}`);
-            if (!clientRaw.toUpperCase().includes(bleedSurname)) {
-              console.log(`[BSI NAME-BLEED] Split "${policyNumber}" → policy "${cleanPolicy}" + restored "${bleedSurname}" to client "${clientRaw}"`);
-              policyNumber = cleanPolicy;
-              clientRaw = bleedSurname + ' ' + clientRaw;
-            } else {
-              console.log(`[BSI SKIP-SPLIT] Client already has surname - Policy: "${policyNumber}", Client: "${clientRaw}"`);
-            }
-          }
-        }
 
         const agent = normalizeAgentName(agentRaw);
         const client = clientRaw
@@ -3044,29 +3011,13 @@ function isBSIConsolidatedPDF(filename) {
          f.includes('medicare_statement_-the-');
 }
 
-/**
- * Pre-process BSI consolidated text to split name-bleed patterns.
- * Converts: "906422581RODRIGUEZ, GUILLERMO" → "906422581 RODRIGUEZ, GUILLERMO"
- * Handles multi-word surnames: "997701035SEGURA RODRIGUEZ, HELEN" → "997701035 SEGURA RODRIGUEZ, HELEN"
- */
-function preprocessBSIConsolidatedNameBleed(text) {
-  return text.replace(
-    /(\d{6,15})([A-Z][\sA-Z]+?)(?=,)/g,
-    '$1 $2'
-  );
-}
-
 async function parseBSIConsolidatedPDF(filePath, filename) {
-  console.log('[BSI-CONSOLIDATED ENTRY] Parser called for:', filename);
   const records = [];
   if (!pdfParse) { console.error('pdf-parse not installed'); return records; }
   try {
     const dataBuffer = fs.readFileSync(filePath);
     const data = await pdfParse(dataBuffer);
-    
-    // PRE-PROCESS: Split name-bleed patterns BEFORE parsing
-    const cleanedText = preprocessBSIConsolidatedNameBleed(data.text);
-    const lines = cleanedText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    const lines = data.text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
     const now = new Date();
     const uploadPeriod = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
@@ -3295,7 +3246,6 @@ async function parseBSIConsolidatedPDF(filePath, filename) {
 }
 
 async function parseMutualOmahaPDF(filePath, filename) {
-  console.log('[MUTUAL-OMAHA ENTRY] Parser called for:', filename);
   const records = [];
   if (!pdfParse) { console.error('pdf-parse not installed'); return records; }
   try {
@@ -3399,7 +3349,6 @@ async function parseMutualOmahaPDF(filePath, filename) {
 }
 
 async function parseNHPAgencyStatementPDF(filePath, filename) {
-  console.log('[NHP ENTRY] Parser called for:', filename);
   const records = [];
   if (!pdfParse) { console.error('pdf-parse not installed'); return records; }
   
