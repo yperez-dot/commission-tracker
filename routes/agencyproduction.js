@@ -259,8 +259,8 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     
     // Check if we have required columns
     const firstRow = rows[0];
-    const hasAgent = firstRow.AGENT || firstRow['Agent Name'] || firstRow.Agent_Name || firstRow.Agent_First_Name || firstRow.AgentName || firstRow.Current_Agent_Name || firstRow.agent || firstRow['agent name'];
-    const hasMember = firstRow.MEMBER || firstRow['Member Name'] || firstRow.Member_First_Name || firstRow.Member_Last_Name || firstRow['First Name'] || firstRow['Last Name'] || firstRow.Beneficiary_First_Name || firstRow.Beneficiary_Last_Name || firstRow.FIRST || firstRow.LAST || firstRow.FullName || firstRow['Full Name'] || firstRow.Application_Application_Name || firstRow.member || firstRow['member name'];
+    const hasAgent = firstRow.AGENT || firstRow['Agent Name'] || firstRow.Agent_Name || firstRow.Agent_First_Name || firstRow.AgentName || firstRow.Current_Agent_Name || firstRow.Writing_Agent_Name || firstRow.agent || firstRow['agent name'];
+    const hasMember = firstRow.MEMBER || firstRow['Member Name'] || firstRow.Member_First_Name || firstRow.Member_Last_Name || firstRow['First Name'] || firstRow['Last Name'] || firstRow.First_Name || firstRow.Last_Name || firstRow.Beneficiary_First_Name || firstRow.Beneficiary_Last_Name || firstRow.FIRST || firstRow.LAST || firstRow.FullName || firstRow['Full Name'] || firstRow.Application_Application_Name || firstRow.member || firstRow['member name'];
     
     if (!hasAgent && !hasMember) {
       return res.status(400).json({ 
