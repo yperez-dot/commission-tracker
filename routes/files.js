@@ -3099,6 +3099,14 @@ async function parseBSIConsolidatedPDF(filePath, filename) {
     while (i < lines.length) {
       const line = lines[i];
 
+      // DEBUG: Log ALL lines containing policy 929779560
+      if (line.includes('929779560')) {
+        console.log('[BSI ALL LINES] Line', i, ':', line);
+        console.log('[BSI ALL LINES] Previous line (i-1):', i > 0 ? lines[i-1] : 'N/A');
+        console.log('[BSI ALL LINES] Next line (i+1):', i+1 < lines.length ? lines[i+1] : 'N/A');
+        console.log('[BSI ALL LINES] Next line (i+2):', i+2 < lines.length ? lines[i+2] : 'N/A');
+      }
+
       if (skipLines.has(line) || skipPatterns.some(p => p.test(line))) {
         i++; continue;
       }
@@ -3164,6 +3172,15 @@ async function parseBSIConsolidatedPDF(filePath, filename) {
               const dateParts = dateStr.split('/');
               const period = dateParts.length === 3 ? dateParts[2] + dateParts[0].padStart(2, '0') : uploadPeriod;
               const commission = parseFloat(amountStr.replace(/[$,]/g, '')) || 0;
+              
+              // DEBUG: Log when policy 929779560 is parsed
+              if (pm[1].includes('929779560')) {
+                console.log('[BSI PATTERN 1 MATCHED] Policy:', pm[1]);
+                console.log('[BSI PATTERN 1 MATCHED] Client part:', pm[2].trim());
+                console.log('[BSI PATTERN 1 MATCHED] Agent:', agentLine);
+                console.log('[BSI PATTERN 1 MATCHED] Carrier:', carrierMap[carrierKey]);
+              }
+              
               records.push({
                 agent: normalizeAgent(agentLine), carrier: carrierMap[carrierKey],
                 planType: derivePlanType(carrierMap[carrierKey], 'MAPD', pm[1], ''),
@@ -3185,13 +3202,30 @@ async function parseBSIConsolidatedPDF(filePath, filename) {
         if (amountOnly) {
           const combined = line + amountOnly[1];
           const rec = tryParseLine(combined);
-          if (rec) { records.push(rec); i += 2; continue; }
+          if (rec) {
+            // DEBUG: Log when policy 929779560 is parsed
+            if (rec.policyNumber && rec.policyNumber.includes('929779560')) {
+              console.log('[BSI PATTERN 2 MATCHED] Policy:', rec.policyNumber);
+              console.log('[BSI PATTERN 2 MATCHED] Client:', rec.client);
+              console.log('[BSI PATTERN 2 MATCHED] Combined line:', combined);
+            }
+            records.push(rec); i += 2; continue;
+          }
         }
       }
 
       // Pattern 3: Single complete line (date + amount with space)
       const rec = tryParseLine(line);
-      if (rec) { records.push(rec); i++; continue; }
+      if (rec) {
+        // DEBUG: Log when policy 929779560 is parsed
+        if (rec.policyNumber && rec.policyNumber.includes('929779560')) {
+          console.log('[BSI PATTERN 3 MATCHED] Policy:', rec.policyNumber);
+          console.log('[BSI PATTERN 3 MATCHED] Client:', rec.client);
+          console.log('[BSI PATTERN 3 MATCHED] Agent:', rec.agent);
+          console.log('[BSI PATTERN 3 MATCHED] Full record:', rec);
+        }
+        records.push(rec); i++; continue;
+      }
 
       i++;
     }
