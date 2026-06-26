@@ -4302,8 +4302,11 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     res.json(response);
 
   } catch (err) {
-    console.error('Upload error:', err);
-    res.status(500).json({ error: err.message });
+    console.error('[UPLOAD ERROR] ===== EXCEPTION CAUGHT =====');
+    console.error('[UPLOAD ERROR] Message:', err.message);
+    console.error('[UPLOAD ERROR] Stack:', err.stack);
+    console.error('[UPLOAD ERROR] Full error:', err);
+    res.status(500).json({ error: err.message, stack: err.stack });
   }
 });
 
