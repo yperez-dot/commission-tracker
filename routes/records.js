@@ -88,7 +88,7 @@ router.get('/', requireAuth, async (req, res) => {
         COALESCE(cr.plan_type, '') as plan_type,
         cr.client_full_name, cr.effective_date, cr.premium, cr.commission,
         cr.classification, cr.payment_period, cr.policy_number, cr.created_at,
-        cr.upload_id, cr.payee, COALESCE(cr.mga, '') as mga,
+        cr.upload_id, cr.payee, cr.source, COALESCE(cr.mga, '') as mga,
         cr.raw_data, u.original_name as upload_name,
         cr.lob, cr.gross_commission, cr.thei_share, cr.bsi_share,
         cr.producer_payable, cr.sub_agent_override,
