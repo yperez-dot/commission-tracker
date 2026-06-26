@@ -139,8 +139,9 @@ function normName(name) {
     return toTitleCase(normalized);
   }
   
-  // For non-comma format, just normalize spaces and title case
-  const normalized = s.replace(/\s+/g, ' ').trim();
+  // For non-comma format, strip trailing middle initials and normalize
+  let normalized = s.replace(/\s+/g, ' ').trim();
+  normalized = normalized.replace(/(\s+[A-Z]\.?)+$/i, '').trim();
   return toTitleCase(normalized);
 }
 
