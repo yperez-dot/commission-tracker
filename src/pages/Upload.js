@@ -305,7 +305,7 @@ export default function Upload({ user }) {
                   <>
                     <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 4, color: 'var(--blue)' }}>ℹ️ These records already exist in OliComm</div>
                     <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                      {duplicateModal.duplicateCount} of {duplicateModal.totalCount} records match existing entries by client + carrier + effective date. This may be a reconciliation copy — you can import anyway or cancel.
+                      {duplicateModal.duplicateCount} of {duplicateModal.totalCount} records match existing entries by policy + client + date + amount. This may be a reconciliation copy — you can import anyway or cancel.
                     </div>
                   </>
                 ) : (
