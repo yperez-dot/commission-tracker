@@ -3142,6 +3142,13 @@ async function parseBSIConsolidatedPDF(filePath, filename) {
         const agentLine = lines[i];
         const carrierLine = lines[i + 1];
         const dataLine = lines[i + 2];
+        
+        // DEBUG: Log raw line for policy 929779560
+        if (dataLine.includes('929779560')) {
+          console.log('[BSI DEBUG 929779560] RAW DATA LINE:', dataLine);
+          console.log('[BSI DEBUG 929779560] Agent line:', agentLine);
+          console.log('[BSI DEBUG 929779560] Carrier line:', carrierLine);
+        }
         const carrierKey = Object.keys(carrierMap).find(k => carrierLine.toUpperCase() === k.toUpperCase());
         const agentValid = agentLine.length > 2 && !/\d/.test(agentLine) &&
           !skipPatterns.some(p => p.test(agentLine)) && !skipLines.has(agentLine);
