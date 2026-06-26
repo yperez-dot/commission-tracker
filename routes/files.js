@@ -3841,36 +3841,36 @@ function findInternalDuplicates(records) {
 // Check for duplicates against EXISTING database records
 async function findDuplicates(pool, records) {
   if (!records.length) return [];
-  const filtered = records.filter(r => r.client && r.carrier && r.effectiveDate);
+  const filtered = records.filter(r => r.client && r.effectiveDate && r.policyNumber);
   if (!filtered.length) return [];
 
-  // Match key: client + carrier + effective_date + payment_period + classification
-  // This prevents false duplicates when same client/carrier/date appears with different period or classification
-  // Example: 706381 MAPD ($28.92) vs THEI override ($4.59) - same client/date but different period/classification
+  // Match key: policy_number + client_name + effective_date + commission_amount
+  // This catches re-uploads of the same statement regardless of filename
+  // If all four match, it's definitely the same transaction
   const conditions = filtered.map((r, i) =>
-    `(LOWER(client_full_name) = LOWER($${i*5+1}) AND LOWER(carrier) = LOWER($${i*5+2}) AND effective_date = $${i*5+3} AND payment_period = $${i*5+4} AND LOWER(classification) = LOWER($${i*5+5}))`
+    `(policy_number = $${i*4+1} AND LOWER(client_full_name) = LOWER($${i*4+2}) AND effective_date = $${i*4+3} AND commission = $${i*4+4})`
   ).join(' OR ');
 
-  const params = filtered.flatMap(r => [r.client, r.carrier, r.effectiveDate, r.period || '', r.classification || '']);
+  const params = filtered.flatMap(r => [r.policyNumber, r.client, r.effectiveDate, r.commission]);
 
   const result = await pool.query(
-    `SELECT client_full_name, carrier, effective_date, payment_period, classification FROM commission_records WHERE ${conditions}`,
+    `SELECT policy_number, client_full_name, effective_date, commission FROM commission_records WHERE ${conditions}`,
     params
   );
 
   const existingSet = new Set(result.rows.map(r =>
-    `${r.client_full_name.toLowerCase()}|${r.carrier.toLowerCase()}|${r.effective_date}|${r.payment_period || ''}|${(r.classification || '').toLowerCase()}`
+    `${r.policy_number}|${r.client_full_name.toLowerCase()}|${r.effective_date}|${r.commission}`
   ));
 
   return filtered.filter(r =>
-    existingSet.has(`${r.client.toLowerCase()}|${r.carrier.toLowerCase()}|${r.effectiveDate}|${r.period || ''}|${(r.classification || '').toLowerCase()}`)
+    existingSet.has(`${r.policyNumber}|${r.client.toLowerCase()}|${r.effectiveDate}|${r.commission}`)
   ).map(r => ({
     client: r.client,
     carrier: r.carrier,
     date: r.effectiveDate,
     amount: r.commission,
     agent: r.agent,
-    period: r.period,
+    policy: r.policyNumber,
     type: r.classification
   }));
 }
@@ -4153,39 +4153,10 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
 
     if (!records.length) return res.status(400).json({ error: 'No records found in file' });
 
-    // STEP 1: Auto-deduplicate internal duplicates (within this batch)
-    const internalDuplicates = findInternalDuplicates(records);
-    let deduplicationNote = null;
-    
-    if (internalDuplicates.length > 0) {
-      console.warn(`[UPLOAD] ⚠️ ${internalDuplicates.length} internal duplicates detected - auto-deduplicating`);
-      console.warn('[UPLOAD] Keeping first occurrence of each duplicate');
-      console.warn('[UPLOAD] Sample duplicates removed:', internalDuplicates.slice(0, 3).map(d => `${d.client} | ${d.carrier} | ${d.period}`));
-      
-      // Deduplicate: keep only first occurrence of each unique key
-      const seen = new Set();
-      const originalCount = records.length;
-      
-      records = records.filter(r => {
-        if (!r.client || !r.carrier || !r.effectiveDate) return true; // Keep records with missing data
-        
-        // Include commission amount in key to preserve pay/chargeback pairs (same client but different amounts)
-        const key = `${r.client.toLowerCase()}|${r.carrier.toLowerCase()}|${r.effectiveDate}|${r.period || ''}|${(r.classification || '').toLowerCase()}|${r.commission}`;
-        
-        if (seen.has(key)) {
-          return false; // Skip duplicate
-        }
-        
-        seen.add(key);
-        return true; // Keep first occurrence
-      });
-      
-      const removedCount = originalCount - records.length;
-      deduplicationNote = `Auto-removed ${removedCount} internal duplicate(s). Imported ${records.length} unique records.`;
-      console.log(`[UPLOAD] ✓ Deduplicated: ${originalCount} → ${records.length} records (removed ${removedCount})`);
-    }
+    // Internal deduplication removed - every record in commission statements is a real payment/chargeback
+    // Only duplicate protection: filename check (above) + database check (below) with 4-field key
 
-    // STEP 2: Duplicate detection against database
+    // Duplicate detection against database (policy + client + date + amount)
     const skipDuplicates = req.body.skipDuplicates === 'true';
     const ignoreDuplicates = req.body.ignoreDuplicates === 'true';
 
@@ -4295,11 +4266,6 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       carriers, 
       preview: records.slice(0, 5) 
     };
-    
-    // Include deduplication note if applicable
-    if (deduplicationNote) {
-      response.deduplicationNote = deduplicationNote;
-    }
     
     res.json(response);
 
