@@ -2807,15 +2807,6 @@ async function parseTHEStatementPDF(filePath, filename) {
       if (!policyMatch) return null;
       const policyPart = policyMatch[1];
       const clientPart = beforeDate.slice(policyPart.length).trim();
-      
-      // DEBUG: Log when policy 929779560 is extracted
-      if (policyPart.includes('929779560')) {
-        console.log('[THE STATEMENT parseUHCDataLine] Raw line:', line);
-        console.log('[THE STATEMENT parseUHCDataLine] Policy extracted:', policyPart);
-        console.log('[THE STATEMENT parseUHCDataLine] Client extracted:', clientPart);
-        console.log('[THE STATEMENT parseUHCDataLine] Date:', dateStr);
-      }
-      
       return { policy: policyPart, client: clientPart, date: dateStr };
     };
 
@@ -2879,16 +2870,6 @@ async function parseTHEStatementPDF(filePath, filename) {
     while (i < lines.length) {
       const line = lines[i];
 
-      // DEBUG: Log ALL lines containing policy 929779560
-      if (line.includes('929779560')) {
-        console.log('[THE STATEMENT ALL LINES] Line', i, ':', line);
-        console.log('[THE STATEMENT ALL LINES] Previous line (i-1):', i > 0 ? lines[i-1] : 'N/A');
-        console.log('[THE STATEMENT ALL LINES] Next line (i+1):', i+1 < lines.length ? lines[i+1] : 'N/A');
-        console.log('[THE STATEMENT ALL LINES] Next line (i+2):', i+2 < lines.length ? lines[i+2] : 'N/A');
-        console.log('[THE STATEMENT ALL LINES] Next line (i+3):', i+3 < lines.length ? lines[i+3] : 'N/A');
-        console.log('[THE STATEMENT ALL LINES] Current carrier:', currentCarrier);
-      }
-
       // Section headers
       if (line.includes('Detailed Compensation Statement (UHC)')) { currentCarrier = 'UnitedHealthcare'; i++; continue; }
       if (line.includes('Detailed Compensation Statement (HUMANA)') || line.includes('Detailed Compensation Statement(HUMANA)')) { currentCarrier = 'Humana'; i++; continue; }
@@ -2918,17 +2899,6 @@ async function parseTHEStatementPDF(filePath, filename) {
 
         if (carrierKey && amountMatch && parsed && agentValid) {
           const commission = parseFloat(amountLine.replace(/[$,]/g, '')) || 0;
-          
-          // DEBUG: Log when policy 929779560 is added to records (UHC 4-line pattern)
-          if (parsed.policy.includes('929779560')) {
-            console.log('[THE STATEMENT UHC 4-LINE] Agent line:', agentLine);
-            console.log('[THE STATEMENT UHC 4-LINE] Carrier line:', carrierLine);
-            console.log('[THE STATEMENT UHC 4-LINE] Data line:', dataLine);
-            console.log('[THE STATEMENT UHC 4-LINE] Amount line:', amountLine);
-            console.log('[THE STATEMENT UHC 4-LINE] Parsed policy:', parsed.policy);
-            console.log('[THE STATEMENT UHC 4-LINE] Parsed client:', parsed.client);
-          }
-          
           records.push({
             agent: normalizeAgent(agentLine),
             carrier: carrierMap[carrierKey],
@@ -2952,14 +2922,6 @@ async function parseTHEStatementPDF(filePath, filename) {
       if (currentCarrier === 'Humana' || currentCarrier === 'Aetna' || currentCarrier === 'UnitedHealthcare') {
         const parsed = parseSingleLine(line);
         if (parsed) {
-          // DEBUG: Log when policy 929779560 is added via single-line pattern
-          if (parsed.policy && parsed.policy.includes('929779560')) {
-            console.log('[THE STATEMENT SINGLE-LINE] Raw line:', line);
-            console.log('[THE STATEMENT SINGLE-LINE] Parsed policy:', parsed.policy);
-            console.log('[THE STATEMENT SINGLE-LINE] Parsed client:', parsed.client);
-            console.log('[THE STATEMENT SINGLE-LINE] Parsed agent:', parsed.agent);
-          }
-          
           records.push({
             agent: normalizeAgent(parsed.agent),
             carrier: parsed.carrier,
@@ -3143,14 +3105,6 @@ async function parseBSIConsolidatedPDF(filePath, filename) {
     while (i < lines.length) {
       const line = lines[i];
 
-      // DEBUG: Log ALL lines containing policy 929779560
-      if (line.includes('929779560')) {
-        console.log('[BSI ALL LINES] Line', i, ':', line);
-        console.log('[BSI ALL LINES] Previous line (i-1):', i > 0 ? lines[i-1] : 'N/A');
-        console.log('[BSI ALL LINES] Next line (i+1):', i+1 < lines.length ? lines[i+1] : 'N/A');
-        console.log('[BSI ALL LINES] Next line (i+2):', i+2 < lines.length ? lines[i+2] : 'N/A');
-      }
-
       if (skipLines.has(line) || skipPatterns.some(p => p.test(line))) {
         i++; continue;
       }
@@ -3194,13 +3148,6 @@ async function parseBSIConsolidatedPDF(filePath, filename) {
         const agentLine = lines[i];
         const carrierLine = lines[i + 1];
         const dataLine = lines[i + 2];
-        
-        // DEBUG: Log raw line for policy 929779560
-        if (dataLine.includes('929779560')) {
-          console.log('[BSI DEBUG 929779560] RAW DATA LINE:', dataLine);
-          console.log('[BSI DEBUG 929779560] Agent line:', agentLine);
-          console.log('[BSI DEBUG 929779560] Carrier line:', carrierLine);
-        }
         const carrierKey = Object.keys(carrierMap).find(k => carrierLine.toUpperCase() === k.toUpperCase());
         const agentValid = agentLine.length > 2 && !/\d/.test(agentLine) &&
           !skipPatterns.some(p => p.test(agentLine)) && !skipLines.has(agentLine);
@@ -3216,15 +3163,6 @@ async function parseBSIConsolidatedPDF(filePath, filename) {
               const dateParts = dateStr.split('/');
               const period = dateParts.length === 3 ? dateParts[2] + dateParts[0].padStart(2, '0') : uploadPeriod;
               const commission = parseFloat(amountStr.replace(/[$,]/g, '')) || 0;
-              
-              // DEBUG: Log when policy 929779560 is parsed
-              if (pm[1].includes('929779560')) {
-                console.log('[BSI PATTERN 1 MATCHED] Policy:', pm[1]);
-                console.log('[BSI PATTERN 1 MATCHED] Client part:', pm[2].trim());
-                console.log('[BSI PATTERN 1 MATCHED] Agent:', agentLine);
-                console.log('[BSI PATTERN 1 MATCHED] Carrier:', carrierMap[carrierKey]);
-              }
-              
               records.push({
                 agent: normalizeAgent(agentLine), carrier: carrierMap[carrierKey],
                 planType: derivePlanType(carrierMap[carrierKey], 'MAPD', pm[1], ''),
@@ -3247,12 +3185,6 @@ async function parseBSIConsolidatedPDF(filePath, filename) {
           const combined = line + amountOnly[1];
           const rec = tryParseLine(combined);
           if (rec) {
-            // DEBUG: Log when policy 929779560 is parsed
-            if (rec.policyNumber && rec.policyNumber.includes('929779560')) {
-              console.log('[BSI PATTERN 2 MATCHED] Policy:', rec.policyNumber);
-              console.log('[BSI PATTERN 2 MATCHED] Client:', rec.client);
-              console.log('[BSI PATTERN 2 MATCHED] Combined line:', combined);
-            }
             records.push(rec); i += 2; continue;
           }
         }
@@ -3261,13 +3193,6 @@ async function parseBSIConsolidatedPDF(filePath, filename) {
       // Pattern 3: Single complete line (date + amount with space)
       const rec = tryParseLine(line);
       if (rec) {
-        // DEBUG: Log when policy 929779560 is parsed
-        if (rec.policyNumber && rec.policyNumber.includes('929779560')) {
-          console.log('[BSI PATTERN 3 MATCHED] Policy:', rec.policyNumber);
-          console.log('[BSI PATTERN 3 MATCHED] Client:', rec.client);
-          console.log('[BSI PATTERN 3 MATCHED] Agent:', rec.agent);
-          console.log('[BSI PATTERN 3 MATCHED] Full record:', rec);
-        }
         records.push(rec); i++; continue;
       }
 
@@ -3886,8 +3811,9 @@ function findInternalDuplicates(records) {
   for (const r of records) {
     if (!r.client || !r.carrier || !r.effectiveDate) continue;
     
-    // Match key: client + carrier + effective_date + payment_period + classification
-    const key = `${r.client.toLowerCase()}|${r.carrier.toLowerCase()}|${r.effectiveDate}|${r.period || ''}|${(r.classification || '').toLowerCase()}`;
+    // Match key: client + carrier + effective_date + payment_period + classification + commission
+    // Include commission to preserve pay/chargeback pairs (same client but different amounts)
+    const key = `${r.client.toLowerCase()}|${r.carrier.toLowerCase()}|${r.effectiveDate}|${r.period || ''}|${(r.classification || '').toLowerCase()}|${r.commission}`;
     
     if (seen.has(key)) {
       // This is a duplicate within the batch
@@ -4243,7 +4169,8 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       records = records.filter(r => {
         if (!r.client || !r.carrier || !r.effectiveDate) return true; // Keep records with missing data
         
-        const key = `${r.client.toLowerCase()}|${r.carrier.toLowerCase()}|${r.effectiveDate}|${r.period || ''}|${(r.classification || '').toLowerCase()}`;
+        // Include commission amount in key to preserve pay/chargeback pairs (same client but different amounts)
+        const key = `${r.client.toLowerCase()}|${r.carrier.toLowerCase()}|${r.effectiveDate}|${r.period || ''}|${(r.classification || '').toLowerCase()}|${r.commission}`;
         
         if (seen.has(key)) {
           return false; // Skip duplicate
