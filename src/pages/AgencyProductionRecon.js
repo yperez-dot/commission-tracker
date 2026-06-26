@@ -118,11 +118,24 @@ function normName(name) {
   if (s.includes(',')) {
     let [last, first] = s.split(',').map(p => p.trim());
     
-    // Strip common suffixes from surname
-    last = last.replace(/\b(JR|SR|III|II|IV|V)\.?$/i, '').trim();
+    // Extract and save suffix from surname
+    let suffix = '';
+    const suffixMatch = last.match(/\b(JR|SR|III|II|IV|V)\.?$/i);
+    if (suffixMatch) {
+      suffix = suffixMatch[1].toUpperCase().replace(/\./g, ''); // "JR", "SR", etc.
+      last = last.replace(/\b(JR|SR|III|II|IV|V)\.?$/i, '').trim();
+    }
     
-    // Return "FIRST LAST" in Title Case
-    const normalized = `${first} ${last}`.replace(/\s+/g, ' ').trim();
+    // Strip middle initials from first name (handles single or multiple initials)
+    // Removes trailing single-letter words with optional periods: "A.", "B", etc.
+    first = first.replace(/(\s+[A-Z]\.?)+$/i, '').trim();
+    
+    // Reassemble: "FIRST LAST SUFFIX" in Title Case
+    let normalized = `${first} ${last}`;
+    if (suffix) {
+      normalized += ` ${suffix}`;
+    }
+    normalized = normalized.replace(/\s+/g, ' ').trim();
     return toTitleCase(normalized);
   }
   
