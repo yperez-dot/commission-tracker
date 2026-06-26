@@ -224,6 +224,17 @@ function findOverrideMatch(production, overrides) {
   const prodClientNorm = normName(production.client_name);
   const prodCarrier = normalizeCarrier(production.carrier);
   
+  // Debug logging for Guido Rodriguez
+  const isGuido = production.client_name?.toLowerCase().includes('guido') && production.client_name?.toLowerCase().includes('rodriguez');
+  if (isGuido) {
+    console.log('[MATCH DEBUG - GUIDO] Production record:');
+    console.log('  Raw name:', production.client_name);
+    console.log('  Normalized:', prodClientNorm);
+    console.log('  Raw carrier:', production.carrier);
+    console.log('  Normalized carrier:', prodCarrier);
+    console.log('  Checking against', overrides.length, 'override records...');
+  }
+  
   // Try exact match first (client + carrier)
   for (const override of overrides) {
     const overrideClientNorm = normName(override.client_full_name);
@@ -237,10 +248,32 @@ function findOverrideMatch(production, overrides) {
                         prodCarrier.includes(overrideCarrier) || 
                         overrideCarrier.includes(prodCarrier);
     
+    // Debug for Guido
+    if (isGuido && (clientMatch || override.client_full_name?.toLowerCase().includes('rodriguez'))) {
+      console.log('[MATCH DEBUG - GUIDO] Checking override:');
+      console.log('  Raw name:', override.client_full_name);
+      console.log('  Normalized:', overrideClientNorm);
+      console.log('  Raw carrier:', override.carrier);
+      console.log('  Normalized carrier:', overrideCarrier);
+      console.log('  Policy:', override.policy_number);
+      console.log('  Payee:', override.payee);
+      console.log('  Source:', override.source);
+      console.log('  Client match?', clientMatch);
+      console.log('  Carrier match?', carrierMatch);
+      console.log('  ---');
+    }
+    
     // Match if client + carrier match (period-agnostic, like Our Sales)
     if (clientMatch && carrierMatch) {
+      if (isGuido) {
+        console.log('[MATCH DEBUG - GUIDO] ✅ MATCH FOUND!');
+      }
       return override;
     }
+  }
+  
+  if (isGuido) {
+    console.log('[MATCH DEBUG - GUIDO] ❌ NO MATCH FOUND');
   }
   
   return null;
