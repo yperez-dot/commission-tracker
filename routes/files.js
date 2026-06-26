@@ -2700,10 +2700,13 @@ async function parseBSIPDF(filePath, filename) {
           if (bleedMatch) {
             const cleanPolicy = bleedMatch[1];
             const bleedSurname = bleedMatch[2];
+            console.log(`[BSI DEBUG] Policy: "${policyNumber}", Clean: "${cleanPolicy}", Bleed: "${bleedSurname}", Client: "${clientRaw}", ClientUpper: "${clientRaw.toUpperCase()}", Includes: ${clientRaw.toUpperCase().includes(bleedSurname)}`);
             if (!clientRaw.toUpperCase().includes(bleedSurname)) {
               console.log(`[BSI NAME-BLEED] Split "${policyNumber}" → policy "${cleanPolicy}" + restored "${bleedSurname}" to client "${clientRaw}"`);
               policyNumber = cleanPolicy;
               clientRaw = bleedSurname + ' ' + clientRaw;
+            } else {
+              console.log(`[BSI SKIP-SPLIT] Client already has surname - Policy: "${policyNumber}", Client: "${clientRaw}"`);
             }
           }
         }
