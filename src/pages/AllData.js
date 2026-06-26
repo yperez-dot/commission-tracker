@@ -211,7 +211,8 @@ export default function AllData({ user, initialFilters = {} }) {
       if (selPayees.length === 1) params.set('payee', selPayees[0]);
       if (search.trim()) params.set('search', search.trim());
       
-      // Fetch ALL records (no limit)
+      // Fetch ALL records (set high limit to override default 100)
+      params.set('limit', '50000');
       const data = await apiFetch(`/records?${params}`);
       const allRecords = data.records || [];
       
@@ -408,7 +409,7 @@ export default function AllData({ user, initialFilters = {} }) {
           )}
           <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 4 }}>{total.toLocaleString()} records</span>
           <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
-            <button className="btn" onClick={exportCSV} disabled={!records.length} style={{ fontSize: 12 }}>↓ Export</button>
+            <button className="btn" onClick={exportCSV} disabled={!records.length} style={{ fontSize: 12 }}>↓ Export All</button>
             {user.role === 'admin' && selected.size > 0 && (
               <button onClick={() => setConfirmDelete('selected')} className="btn btn-danger" style={{ fontSize: 12 }}>
                 Delete {selected.size} selected
