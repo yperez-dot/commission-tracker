@@ -98,35 +98,6 @@ function formatDate(dateStr) {
   return formatDateUtil(dateStr);
 }
 
-// Calculate Levenshtein distance (edit distance) for fuzzy name matching
-function levenshtein(a, b) {
-  if (!a || !b) return Math.max(a?.length || 0, b?.length || 0);
-  
-  const matrix = [];
-  for (let i = 0; i <= b.length; i++) {
-    matrix[i] = [i];
-  }
-  for (let j = 0; j <= a.length; j++) {
-    matrix[0][j] = j;
-  }
-  
-  for (let i = 1; i <= b.length; i++) {
-    for (let j = 1; j <= a.length; j++) {
-      if (b.charAt(i - 1) === a.charAt(j - 1)) {
-        matrix[i][j] = matrix[i - 1][j - 1];
-      } else {
-        matrix[i][j] = Math.min(
-          matrix[i - 1][j - 1] + 1, // substitution
-          matrix[i][j - 1] + 1,     // insertion
-          matrix[i - 1][j] + 1      // deletion
-        );
-      }
-    }
-  }
-  
-  return matrix[b.length][a.length];
-}
-
 function normalizeName(name) {
   if (!name) return '';
   return name.toLowerCase().trim().replace(/\s+/g, ' ');
@@ -282,63 +253,6 @@ function findOverrideMatch(production, overrides) {
     
     // Match if client + carrier match (period-agnostic, like Our Sales)
     if (clientMatch && carrierMatch) {
-      return override;
-    }
-  }
-  
-  // FALLBACK: Fuzzy matching for name variations
-  // Handles cases like: Randy/Randi, Jaqueline/Jacqueline, compound surnames
-  const prodParts = prodClientNorm.toLowerCase().split(' ').filter(p => p.length > 0);
-  const prodFirstName = prodParts[0] || '';
-  const prodSurname = prodParts.slice(1).join(' ') || '';
-  
-  for (const override of overrides) {
-    const overrideClientNorm = normName(override.client_full_name);
-    const overrideCarrier = normalizeCarrier(override.carrier);
-    
-    // Carrier must still match
-    const carrierMatch = prodCarrier === overrideCarrier || 
-                        prodCarrier.includes(overrideCarrier) || 
-                        overrideCarrier.includes(prodCarrier);
-    if (!carrierMatch) continue;
-    
-    const overrideParts = overrideClientNorm.toLowerCase().split(' ').filter(p => p.length > 0);
-    const overrideFirstName = overrideParts[0] || '';
-    const overrideSurname = overrideParts.slice(1).join(' ') || '';
-    
-    // First name fuzzy match: exact, initial, or Levenshtein ≤ 1
-    let firstNameMatch = false;
-    if (prodFirstName === overrideFirstName) {
-      firstNameMatch = true; // Exact match
-    } else if (prodFirstName.length === 1 && prodFirstName === overrideFirstName[0]) {
-      firstNameMatch = true; // Initial match (production has initial)
-    } else if (overrideFirstName.length === 1 && overrideFirstName === prodFirstName[0]) {
-      firstNameMatch = true; // Initial match (override has initial)
-    } else if (prodFirstName.length > 2 && overrideFirstName.length > 2 && 
-               levenshtein(prodFirstName, overrideFirstName) <= 1) {
-      firstNameMatch = true; // Close spelling (Randy/Randi, Jaqueline/Jacqueline)
-    }
-    
-    if (!firstNameMatch) continue;
-    
-    // Surname fuzzy match: bidirectional contains with min 5 chars
-    let surnameMatch = false;
-    if (prodSurname === overrideSurname) {
-      surnameMatch = true; // Exact match
-    } else if (prodSurname.length >= 5 && overrideSurname.includes(prodSurname)) {
-      surnameMatch = true; // Production surname contained in override (e.g., "Plummer" in "Ford Plummer")
-    } else if (overrideSurname.length >= 5 && prodSurname.includes(overrideSurname)) {
-      surnameMatch = true; // Override surname contained in production (e.g., "Plummer" in "Ford Plummer")
-    }
-    
-    if (surnameMatch) {
-      // Fuzzy match found - log it for review
-      console.log('[FUZZY MATCH]', {
-        production: production.client_name,
-        override: override.client_full_name,
-        carrier: prodCarrier,
-        reason: prodClientNorm === overrideClientNorm ? 'exact' : 'fuzzy'
-      });
       return override;
     }
   }
