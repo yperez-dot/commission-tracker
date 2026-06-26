@@ -2806,6 +2806,14 @@ async function parseTHEStatementPDF(filePath, filename) {
     const dataBuffer = fs.readFileSync(filePath);
     const data = await pdfParse(dataBuffer);
     const lines = data.text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+    
+    // DEBUG: Log all lines containing 929779560 or RODRIGUEZ
+    console.log(`[THE-STATEMENT DEBUG] Processing ${lines.length} total lines`);
+    const targetLines = lines.filter(l => l.includes('929779560') || l.toUpperCase().includes('RODRIGUEZ'));
+    console.log(`[THE-STATEMENT DEBUG] Found ${targetLines.length} lines matching 929779560/RODRIGUEZ`);
+    targetLines.forEach((line, idx) => {
+      console.log(`[THE-STATEMENT LINE ${idx}] "${line}"`);
+    });
 
     const carrierMap = {
       'UNITED HEALTH CARE': 'UnitedHealthcare',
