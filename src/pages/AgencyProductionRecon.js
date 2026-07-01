@@ -265,6 +265,8 @@ export default function AgencyProductionRecon() {
   const [error, setError] = useState(null);
   const [production, setProduction] = useState([]);
   const [overrides, setOverrides] = useState([]);
+  const [carrierBSIRecords, setCarrierBSIRecords] = useState([]);
+  const [bsiUploadedKeys, setBsiUploadedKeys] = useState(new Set()); // "CARRIER|PERIOD" keys
   const [tab, setTab] = useState('missing'); // Default to Missing tab
   const [filterCarriers, setFilterCarriers] = useState([]);
   const [filterAgents, setFilterAgents] = useState([]);
@@ -285,25 +287,35 @@ export default function AgencyProductionRecon() {
       const prodData = await apiFetch('/agency-production?limit=5000');
       setProduction(prodData.production || []);
 
-      // Load override commission statements
-      const overrideData = await apiFetch('/records?limit=5000');
-      
-      // Filter to only override statements (by classification OR payee OR source)
-      // Includes BSI/NHP/THE records regardless of classification to catch all override payments
+      // Load BSI→THEI override statements (EXCLUDE carrier→BSI statement uploads)
+      const overrideData = await apiFetch('/records?limit=5000&exclude_upload_category=bsi_statement');
       const overrideStatements = (overrideData.records || []).filter(r => {
         const classification = r.classification?.toLowerCase() || '';
         const payee = r.payee?.toUpperCase() || '';
         const source = r.source?.toUpperCase() || '';
-        return classification.includes('agency override') || 
+        return classification.includes('agency override') ||
                classification.includes('override') ||
-               payee === 'BSI' || 
+               payee === 'BSI' ||
                payee === 'NHP' ||
                payee === 'THE' ||
                source === 'BSI' ||
                source === 'NHP';
       });
-      
       setOverrides(overrideStatements);
+
+      // Load Carrier→BSI records (only from bsi_statement uploads)
+      const carrierData = await apiFetch('/records?limit=5000&upload_category=bsi_statement');
+      setCarrierBSIRecords(carrierData.records || []);
+
+      // Build set of uploaded carrier+period keys so we know what's been uploaded
+      const bsiUploadsData = await apiFetch('/files/uploads?category=bsi_statement');
+      const uploadedKeys = new Set();
+      (bsiUploadsData || []).forEach(u => {
+        const carrier = (u.carrier || '').split(',').map(c => c.trim()).filter(Boolean);
+        const period = u.payment_period || '';
+        carrier.forEach(c => uploadedKeys.add(`${normalizeCarrier(c)}|${period}`));
+      });
+      setBsiUploadedKeys(uploadedKeys);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -311,11 +323,25 @@ export default function AgencyProductionRecon() {
     }
   }
 
-  // Match production to overrides
-  const matches = production.map(prod => ({
-    production: prod,
-    override: findOverrideMatch(prod, overrides)
-  }));
+  // Match production to overrides + carrier→BSI
+  const matches = production.map(prod => {
+    const override = findOverrideMatch(prod, overrides);
+    const carrierBSI = findOverrideMatch(prod, carrierBSIRecords);
+    // Determine if carrier statement has been uploaded for this carrier+period
+    const prodCarrier = normalizeCarrier(prod.carrier || '');
+    const prodPeriod = prod.payment_period || prod.effective_date?.substring(0,7)?.replace('-','') || '';
+    const carrierUploaded = bsiUploadedKeys.has(`${prodCarrier}|${prodPeriod}`) ||
+      [...bsiUploadedKeys].some(k => k.startsWith(`${prodCarrier}|`));
+    return { production: prod, override, carrierBSI, carrierUploaded };
+  });
+
+  // Three-way status
+  const getThreeWayStatus = (m) => {
+    if (m.override) return 'paid';                                      // ✅ Paid
+    if (m.carrierBSI && !m.override) return 'chase_bsi';               // 🔴 Chase BSI
+    if (!m.carrierBSI && m.carrierUploaded) return 'request_audit';    // 🟡 Request audit
+    return 'pending';                                                    // ⚪ Pending
+  };
 
   // Categorize by status
   const getCategory = (m) => {
@@ -777,105 +803,86 @@ export default function AgencyProductionRecon() {
                 </div>
               ) : (
                 <div style={{ overflowY: 'auto', maxHeight: 'calc(100vh - 280px)' }}>
-                  <table>
+                  <table style={{ tableLayout: 'fixed', width: '100%', borderCollapse: 'collapse' }}>
+                    <colgroup>
+                      <col style={{ width: '15%' }} />
+                      <col style={{ width: '15%' }} />
+                      <col style={{ width: '9%' }} />
+                      <col style={{ width: '8%' }} />
+                      <col style={{ width: '9%' }} />
+                      <col style={{ width: '9%' }} />
+                      <col style={{ width: '11%' }} />
+                      <col style={{ width: '15%' }} />
+                      <col style={{ width: '9%' }} />
+                    </colgroup>
                     <thead style={{ position: 'sticky', top: 0, background: 'var(--bg)', zIndex: 1 }}>
                       <tr>
-                        <th>Agent</th>
-                        <th>Client</th>
-                        <th>Carrier</th>
-                        <th>Plan</th>
-                        <th>Effective Date</th>
-                        <th>Status</th>
-                        <th style={{ textAlign: 'center' }}>Override</th>
+                        {[['Writing Agent','left'],['Member Name','left'],['Carrier','left'],['Plan','left'],
+                          ['Hector Amt','right'],['BSI→THEI','right'],
+                          ['Carrier→BSI','right'],['Override Status','center'],['Actions','center']
+                        ].map(([label, align], i) => (
+                          <th key={i} style={{
+                            padding: '8px 10px', textAlign: align, fontSize: 11, fontWeight: 600,
+                            whiteSpace: 'normal', wordWrap: 'break-word', overflowWrap: 'break-word',
+                            verticalAlign: 'top', borderBottom: '2px solid var(--border)',
+                            background: i >= 6 && i <= 7 ? 'var(--accent-light, #EDE9FE)' : 'var(--bg)'
+                          }}>{label}</th>
+                        ))}
                       </tr>
                     </thead>
                     <tbody>
-                      {displayData.map((m, idx) => (
-                        <tr key={idx}>
-                          <td style={{ fontSize: 13 }}>{m.production.agent_name || '—'}</td>
-                          <td style={{ fontWeight: 500 }}>
-                            <a 
-                              href="#"
-                              onClick={(e) => {
-                                e.preventDefault();
-                                if (m && m.production) {
-                                  setSelectedProduction(m.production);
-                                }
-                              }}
-                              style={{
-                                color: 'var(--blue)',
-                                textDecoration: 'none',
-                                cursor: 'pointer',
-                                borderBottom: '1px dashed var(--blue)'
-                              }}
-                              onMouseOver={(e) => e.target.style.borderBottom = '1px solid var(--blue)'}
-                              onMouseOut={(e) => e.target.style.borderBottom = '1px dashed var(--blue)'}
-                              title="Click to view upload details"
-                            >
-                              {m.production.client_name}
-                            </a>
-                          </td>
-                          <td>{formatCarrier(m.production.carrier)}</td>
-                          <td style={{ fontSize: 12 }}>{m.production.plan_name || '—'}</td>
-                          <td style={{ fontSize: 12 }}>
-                            {m.production.effective_date ? formatDate(m.production.effective_date) : '—'}
-                          </td>
-                          <td>
-                            {(() => {
-                              const status = m.production.status?.toLowerCase() || '';
-                              let displayStatus = 'Paid';
-                              let bgColor = '#D4EDDA';
-                              let textColor = '#155724';
-                              
-                              if (status.includes('cancel') || status.includes('terminated')) {
-                                displayStatus = 'Cancelled';
-                                bgColor = '#F8D7DA';
-                                textColor = '#721C24';
-                              } else if (status.includes('plan change') || status.includes('planchange')) {
-                                displayStatus = 'Plan Change';
-                                bgColor = '#E9D5FF';
-                                textColor = '#6B21A8';
-                              } else if (status.includes('plan denied') || status.includes('plan_denied') || status.includes('denied')) {
-                                displayStatus = 'Plan Denied';
-                                bgColor = '#FFF3CD';
-                                textColor = '#856404';
-                              } else if (status.includes('chase') || status.includes('chasing')) {
-                                displayStatus = 'Chase';
-                                bgColor = '#D1ECF1';
-                                textColor = '#0C5460';
-                              } else if (status.includes('missing') || status.includes('pending') || status.includes('not found')) {
-                                displayStatus = 'Missing';
-                                bgColor = '#F8F9FA';
-                                textColor = '#6C757D';
-                              } else if (status.includes('paid') || status.includes('complete') || status.includes('active') || status.includes('progress')) {
-                                displayStatus = 'Paid';
-                              }
-                              
-                              return (
-                                <span className="badge" style={{
-                                  background: bgColor,
-                                  color: textColor,
-                                  padding: '4px 8px',
-                                  borderRadius: 4,
-                                  fontSize: 11,
-                                  fontWeight: 500
-                                }}>
-                                  {displayStatus}
-                                </span>
-                              );
-                            })()}
-                          </td>
-                          <td style={{ textAlign: 'center' }}>
-                            {m.override ? (
-                              <span style={{ color: 'var(--green)', fontWeight: 600 }}>
-                                ✅ {fmt(m.override.commission || m.override.commission_amount || 0)}
-                              </span>
-                            ) : (
-                              <span style={{ color: 'var(--red)', fontWeight: 600 }}>❌ Missing</span>
-                            )}
-                          </td>
-                        </tr>
-                      ))}
+                      {displayData.map((m, idx) => {
+                        const twStatus = getThreeWayStatus(m);
+                        const tdBase = { padding: '8px 10px', fontSize: 12, verticalAlign: 'top',
+                          wordWrap: 'break-word', overflowWrap: 'break-word', whiteSpace: 'normal',
+                          borderBottom: '1px solid var(--border)' };
+                        const tdAccent = { ...tdBase, background: 'rgba(109,40,217,0.04)' };
+
+                        const statusBadge = () => {
+                          if (twStatus === 'paid')          return <span style={{ background:'#D4EDDA',color:'#155724',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>🟢 Paid</span>;
+                          if (twStatus === 'chase_bsi')     return <span style={{ background:'#F8D7DA',color:'#721C24',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>🔴 Chase BSI</span>;
+                          if (twStatus === 'request_audit') return <span style={{ background:'#FFF3CD',color:'#856404',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>🟡 Request Audit</span>;
+                          return <span style={{ background:'#F0F0F0',color:'#6C757D',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>⚪ Pending</span>;
+                        };
+
+                        return (
+                          <tr key={idx}>
+                            <td style={tdBase}>{m.production.agent_name || '—'}</td>
+                            <td style={{ ...tdBase, fontWeight: 500 }}>
+                              <a href="#" onClick={e => { e.preventDefault(); setSelectedProduction(m.production); }}
+                                style={{ color:'var(--blue)',textDecoration:'none',borderBottom:'1px dashed var(--blue)' }}
+                                onMouseOver={e=>e.currentTarget.style.borderBottom='1px solid var(--blue)'}
+                                onMouseOut={e=>e.currentTarget.style.borderBottom='1px dashed var(--blue)'}
+                              >{m.production.client_name}</a>
+                            </td>
+                            <td style={tdBase}>{formatCarrier(m.production.carrier)}</td>
+                            <td style={{ ...tdBase, fontSize: 11 }}>{m.production.plan_name || '—'}</td>
+                            <td style={{ ...tdBase, textAlign: 'right' }}>
+                              {m.production.commission_amount ? fmt(m.production.commission_amount) : '—'}
+                            </td>
+                            <td style={{ ...tdBase, textAlign: 'right' }}>
+                              {m.override
+                                ? <span style={{ color:'var(--green)',fontWeight:600 }}>{fmt(m.override.commission || m.override.commission_amount || 0)}</span>
+                                : <span style={{ color:'var(--red)',fontSize:11 }}>—</span>}
+                            </td>
+                            <td style={{ ...tdAccent, textAlign: 'right' }}>
+                              {m.carrierBSI
+                                ? <span style={{ color:'var(--green)',fontWeight:600 }}>{fmt(m.carrierBSI.commission || 0)}</span>
+                                : m.carrierUploaded
+                                  ? <span style={{ color:'var(--text-muted)',fontSize:11 }}>—</span>
+                                  : <span style={{ color:'var(--text-muted)',fontSize:10,fontStyle:'italic' }}>not uploaded</span>}
+                            </td>
+                            <td style={{ ...tdAccent, textAlign: 'center' }}>{statusBadge()}</td>
+                            <td style={{ ...tdBase, textAlign: 'center' }}>
+                              {(twStatus === 'chase_bsi' || twStatus === 'request_audit') && (
+                                <a href="#" onClick={e => { e.preventDefault(); setSelectedProduction(m.production); }}
+                                  style={{ color:'var(--red)',fontSize:11,textDecoration:'none',borderBottom:'1px dashed var(--red)',whiteSpace:'nowrap' }}
+                                >🚩 Flag</a>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
