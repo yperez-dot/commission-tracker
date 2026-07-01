@@ -4478,35 +4478,157 @@ module.exports = router;
 // BSI Statements Upload - separate from commission statements
 router.post('/upload-bsi-statement', requireAuth, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
-  
+
   try {
     const pool = getPool();
     const fs = require('fs');
-    
+
     // Check for duplicate filename
-    const existing = await pool.query('SELECT id FROM uploads WHERE original_name = $1 AND category = $2', 
+    const existing = await pool.query('SELECT id FROM uploads WHERE original_name = $1 AND category = $2',
       [req.file.originalname, 'bsi_statement']);
     if (existing.rows.length > 0) {
       try { fs.unlinkSync(req.file.path); } catch (e) {}
       return res.status(409).json({ error: `"${req.file.originalname}" has already been uploaded as a BSI statement.` });
     }
-    
-    // Store file metadata in uploads table
+
+    // ── Parse the file using existing parsers ──────────────────────────────
+    let records = [];
+    const origName = req.file.originalname;
+    const nameLower = origName.toLowerCase().replace(/\s+/g, '_');
+
+    // Helper: extract period from YYYY-MM-DD date in filename (e.g. UHC_BSI_STATEMENT_2026-01-01.xlsx → 202601)
+    function extractPeriodFromDateFilename(fn) {
+      const m = fn.match(/(20\d{2})-(0[1-9]|1[0-2])-\d{2}/);
+      if (m) return m[1] + m[2];
+      return null;
+    }
+
+    if (origName.endsWith('.pdf') || origName.endsWith('.PDF')) {
+      // PDF — use existing BSI/THE PDF parsers
+      if (isBSIConsolidatedPDF(origName)) {
+        records = await parseBSIConsolidatedPDF(req.file.path, origName);
+      } else if (isBSIPDF(origName)) {
+        records = await parseBSIPDF(req.file.path, origName);
+      } else if (isTHEStatementPDF(origName)) {
+        records = await parseTHEStatementPDF(req.file.path, origName);
+      } else {
+        // Generic PDF — try BSI consolidated
+        records = await parseBSIConsolidatedPDF(req.file.path, origName);
+      }
+    } else {
+      // Excel / CSV
+      const wb = XLSX.readFile(req.file.path);
+
+      // Inject period from YYYY-MM-DD filename before calling parsers
+      const datePeriod = extractPeriodFromDateFilename(origName);
+
+      if (isUHCDirectFile(origName)) {
+        records = parseUHCDirectRows(wb, origName);
+      } else if (isUHCFile(origName) || nameLower.includes('uhc')) {
+        records = parseUHCRows(wb, origName);
+        // If filename has YYYY-MM-DD format, backfill any missing periods
+        if (datePeriod) {
+          records = records.map(r => ({ ...r, period: r.period || datePeriod }));
+        }
+      } else if (nameLower.includes('humana')) {
+        records = parseHumanaRows(wb, origName);
+      } else if (nameLower.includes('aetna')) {
+        records = parseAetnaRows(wb, origName);
+      } else if (nameLower.includes('devoted')) {
+        records = parseDevotedRows(wb, origName);
+      } else if (isBSIFile(origName)) {
+        records = parseBSIConsolidatedRows(wb, origName);
+      } else {
+        // Fallback: try UHC (most common BSI Excel format)
+        records = parseUHCRows(wb, origName);
+        if (datePeriod) {
+          records = records.map(r => ({ ...r, period: r.period || datePeriod }));
+        }
+      }
+    }
+
+    if (!records || records.length === 0) {
+      try { fs.unlinkSync(req.file.path); } catch (e) {}
+      return res.status(400).json({ error: 'No records found in BSI statement. Please verify the file format.' });
+    }
+
+    const commissionSum = records.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0);
+    const carriers = [...new Set(records.map(r => r.carrier).filter(Boolean))];
+
+    // Insert upload metadata
     const uploadResult = await pool.query(
-      `INSERT INTO uploads (filename, original_name, carrier, row_count, commission_sum, uploaded_by, category) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7) 
+      `INSERT INTO uploads (filename, original_name, carrier, row_count, commission_sum, uploaded_by, category)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        RETURNING id`,
-      [req.file.filename, req.file.originalname, 'BSI', 0, 0, req.user.id, 'bsi_statement']
+      [req.file.filename, origName, carriers.join(', '), records.length, commissionSum, req.user.id, 'bsi_statement']
     );
-    
-    // For now, just store the file reference - parsing can be added later
+    const uploadId = uploadResult.rows[0].id;
+
+    // Ensure columns exist
+    try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS plan_type TEXT DEFAULT ''`); } catch(e) {}
+    try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS mga TEXT DEFAULT ''`); } catch(e) {}
+    try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS payee TEXT DEFAULT ''`); } catch(e) {}
+    try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS sub_agent_override NUMERIC DEFAULT 0`); } catch(e) {}
+    try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS statement_month TEXT`); } catch(e) {}
+    try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS members INTEGER DEFAULT 0`); } catch(e) {}
+
+    // Insert records into commission_records
+    for (const r of records) {
+      await pool.query(
+        `INSERT INTO commission_records (
+           upload_id, agent_name, carrier, plan_type, client_full_name, effective_date,
+           premium, commission, classification, payment_period, policy_number, payee, mga,
+           raw_data,
+           source, policy_written_date, gross_commission, thei_share, bsi_share,
+           producer_payable, split_applies, lob, sub_agent_override, statement_month, members
+         )
+         VALUES (
+           $1,$2,$3,$4,$5,$6,
+           $7,$8,$9,$10,$11,$12,$13,
+           $14,
+           $15,$16,$17,$18,$19,
+           $20,$21,$22,$23,$24,$25
+         )`,
+        [
+          uploadId, r.agent, r.carrier, r.planType || '', r.client, r.effectiveDate,
+          r.premium || 0, r.commission || 0, r.classification, r.period, r.policyNumber, r.payee || '', r.mga || '',
+          JSON.stringify(r.raw),
+          r.source || null,
+          (() => {
+            const v = r.policyWrittenDate;
+            if (!v) return null;
+            const m = String(v).match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+            if (m) return `${m[3]}-${m[1]}-${m[2]}`;
+            const m2 = String(v).match(/^(\d{4})-(\d{2})-(\d{2})/);
+            if (m2) return `${m2[1]}-${m2[2]}-${m2[3]}`;
+            return null;
+          })(),
+          r.grossCommission != null ? r.grossCommission : null,
+          r.theiShare != null ? r.theiShare : null,
+          r.bsiShare != null ? r.bsiShare : null,
+          r.producerPayable != null ? r.producerPayable : null,
+          r.splitApplies != null ? r.splitApplies : null,
+          r.lob || null,
+          r.subAgentOverride != null ? r.subAgentOverride : 0,
+          r.statementMonth || null,
+          r.members || 0,
+        ]
+      );
+    }
+
+    try { fs.unlinkSync(req.file.path); } catch (e) {}
+
     res.json({
       success: true,
-      message: 'BSI statement uploaded successfully',
-      filename: req.file.originalname,
-      uploadId: uploadResult.rows[0].id
+      message: `BSI statement uploaded: ${records.length} records imported`,
+      filename: origName,
+      uploadId,
+      rowCount: records.length,
+      commissionSum,
+      carriers,
+      preview: records.slice(0, 5)
     });
-    
+
   } catch (err) {
     console.error('BSI upload error:', err);
     res.status(500).json({ error: err.message });
