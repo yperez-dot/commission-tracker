@@ -4525,7 +4525,7 @@ function parseBSICarrierStatementRows(wb, filename) {
 
     const policyNumber = String(row['Policy Number'] || '').trim();
     const effectiveDate = formatDate(row['Original Effective Date']);
-    const period = String(row['Payment Period'] || '').trim() || statementPeriod || '';
+    const period = statementPeriod || String(row['Payment Period'] || '').trim(); // filename period is authoritative
     const rawPlanType = String(row['Plan Type'] || '').trim();
     const commAction = String(row['Commission Action'] || '').trim().toLowerCase();
 
@@ -4573,7 +4573,7 @@ function parseBSICarrierStatementRows(wb, filename) {
       const commission = typeof commissionRaw === 'number' ? commissionRaw
         : parseFloat(String(commissionRaw || '').replace(/[$,]/g, '')) || 0;
 
-      const period = String(row['Payment Period'] || '').trim() || statementPeriod || '';
+      const period = statementPeriod || String(row['Payment Period'] || '').trim(); // filename period is authoritative
       const agentName = isAgencyName(writingAgentRaw)
         ? 'The Health Experts Insurance'
         : (normalizeAgentName(writingAgentRaw) || writingAgentRaw || 'BSI Agent');

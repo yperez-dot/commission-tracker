@@ -323,10 +323,20 @@ export default function AgencyProductionRecon() {
     }
   }
 
+  // Strict period match for Carrier→BSI: only match within same period
+  function findCarrierBSIMatch(prod, carrierRecords) {
+    const prodPeriod = prod.payment_period || '';
+    // Filter to same period first (strict), then apply fuzzy name+carrier match
+    const samePeriod = prodPeriod
+      ? carrierRecords.filter(r => r.payment_period === prodPeriod)
+      : carrierRecords;
+    return findOverrideMatch(prod, samePeriod);
+  }
+
   // Match production to overrides + carrier→BSI
   const matches = production.map(prod => {
     const override = findOverrideMatch(prod, overrides);
-    const carrierBSI = findOverrideMatch(prod, carrierBSIRecords);
+    const carrierBSI = findCarrierBSIMatch(prod, carrierBSIRecords);
     // Determine if carrier statement has been uploaded for this carrier+period
     const prodCarrier = normalizeCarrier(prod.carrier || '');
     const prodPeriod = prod.payment_period || prod.effective_date?.substring(0,7)?.replace('-','') || '';
