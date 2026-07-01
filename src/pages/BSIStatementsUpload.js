@@ -118,9 +118,9 @@ export default function BSIStatementsUpload({ user }) {
           <div style={{ fontSize: 14, color: 'var(--text-muted)' }}>
             File: {uploadResult.filename}
           </div>
-          {uploadResult.recordsImported != null && (
+          {(uploadResult.rowCount != null || uploadResult.recordsImported != null) && (
             <div style={{ fontSize: 14, color: 'var(--text-muted)', marginTop: 4 }}>
-              Records imported: {uploadResult.recordsImported}
+              Records imported: {uploadResult.rowCount ?? uploadResult.recordsImported}
             </div>
           )}
         </div>
@@ -180,7 +180,7 @@ export default function BSIStatementsUpload({ user }) {
                       {u.uploaded_by_name || `User ${u.uploaded_by}`}
                     </td>
                     <td style={{ padding: 12, fontSize: 14, textAlign: 'right' }}>
-                      {u.record_count || 0}
+                      {u.row_count || 0}
                     </td>
                     <td style={{ padding: 12, textAlign: 'right' }}>
                       {user.role === 'admin' && (
