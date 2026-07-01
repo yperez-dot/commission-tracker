@@ -421,6 +421,177 @@ function isOscarIFPFile(wb) {
   return false;
 }
 
+// ─── 2026 CMS Maximum FMV Caps ──────────────────────────────────────────────
+// Source: Yahoska Perez 2026-07-01
+// Used for agency override anomaly flagging (non-Alba rows only)
+const CMS_FMV_CAPS_2026 = {
+  CA: { initial: 864, renewal: 432 },
+  NJ: { initial: 864, renewal: 432 },
+  CT: { initial: 781, renewal: 391 },
+  PA: { initial: 781, renewal: 391 },
+  DC: { initial: 781, renewal: 391 },
+  PR: { initial: 474, renewal: 237 },
+  VI: { initial: 474, renewal: 237 },
+};
+const CMS_FMV_DEFAULT_2026 = { initial: 694, renewal: 347 };
+
+function getCMSCap2026(state, eventType) {
+  const caps = CMS_FMV_CAPS_2026[(state || '').toUpperCase()] || CMS_FMV_DEFAULT_2026;
+  return caps[eventType] || caps.initial;
+}
+
+// ─── AETNA BSI CSV ────────────────────────────────────────────────────────────
+// Format: Aetna-to-BSI consolidated statement CSV
+// Filename pattern: AETNA_BSI_STATEMENT_YYYYMM[---uuid].csv
+// Alba Hernandez (NPN 21209073) is BSI's principal licensed agent;
+// her rows are individual agent commissions — skip CMS cap validation.
+
+function isAetnaBSICSVFilename(filename) {
+  const f = filename.toLowerCase().replace(/[\s()]/g, '_');
+  return f.includes('aetna_bsi_statement') || f.includes('aetna_bsi');
+}
+
+function parseAetnaBSICSV(wb, filename) {
+  const records = [];
+  console.log('[AETNA-BSI] Parser triggered for:', filename);
+
+  const ALBA_NPN = '21209073';
+  function isAlbaRow(npn, agentName) {
+    if (String(npn).trim() === ALBA_NPN) return true;
+    const n = (agentName || '').toLowerCase();
+    return n.includes('hernandez') && n.includes('alba');
+  }
+
+  function classifySalesEvent(se) {
+    const s = (se || '').trim().toLowerCase();
+    if (s === 'new business' || s === 'pronew') return 'initial';
+    if (s === 'renewal' || s.includes('residual')) return 'renewal';
+    // chargebacks, disenrollments, CMS trueups, HRA → skip
+    return 'skip';
+  }
+
+  function parseDate(raw) {
+    if (!raw) return null;
+    const s = String(raw).trim();
+    const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+    if (m) {
+      let y = m[3]; if (y.length === 2) y = `20${y}`;
+      return `${m[1].padStart(2,'0')}/${m[2].padStart(2,'0')}/${y}`;
+    }
+    return s || null;
+  }
+
+  try {
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rawRows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: false });
+    // Strip BOM from column names
+    const rows = rawRows.map(row => {
+      const clean = {};
+      for (const [k, v] of Object.entries(row)) {
+        clean[k.replace(/^[\ufeff\uFEFF]/, '').trim()] = v;
+      }
+      return clean;
+    });
+
+    console.log('[AETNA-BSI] Total rows (raw):', rows.length);
+
+    for (const row of rows) {
+      const paymentDate  = String(row['Payment Date'] || '').trim();
+      const memberName   = String(row['Member Name']  || '').trim();
+      const amtRaw       = row['Payee Amount'];
+      const memberState  = String(row['Member State'] || '').trim().toUpperCase();
+      const salesEvent   = String(row['Sales Event']  || '').trim();
+      const writingNPN   = String(row['Writing Agent NPN']   || '').trim();
+      const writingAgent = String(row['Writing Agent Name']  || '').trim();
+      const memberId     = String(row['Member ID']     || '').trim();
+      const coveragePeriod = String(row['Coverage Period'] || '').trim();
+      const effectiveDateRaw = row['Effective Date'];
+      const product      = String(row['Product'] || '').trim();
+
+      // Skip summary rows (no Payment Date) or total rows
+      if (!paymentDate || paymentDate.toLowerCase().startsWith('total')) continue;
+
+      // Parse amount
+      let amount = 0;
+      if (typeof amtRaw === 'number') {
+        amount = amtRaw;
+      } else {
+        amount = parseFloat(String(amtRaw).replace(/[$,]/g, '')) || 0;
+      }
+      if (amount === 0 && !memberName) continue; // blank row
+
+      // Derive period from Coverage Period (MM/DD/YYYY → YYYYMM)
+      let period = '';
+      const pm = coveragePeriod.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
+      if (pm) {
+        let y = pm[3]; if (y.length === 2) y = `20${y}`;
+        period = `${y}${pm[1].padStart(2,'0')}`;
+      }
+
+      const effectiveDate = parseDate(effectiveDateRaw);
+
+      // Plan type
+      let planType = 'Aetna MAPD';
+      const prodL = product.toLowerCase();
+      if (prodL.includes('pdp')) planType = 'Aetna PDP';
+      else if (prodL.includes('ppo') || prodL.includes('mapd')) planType = 'Aetna MAPD';
+
+      const eventType  = classifySalesEvent(salesEvent);
+      const alba       = isAlbaRow(writingNPN, writingAgent);
+
+      // Classification
+      let classification;
+      if (amount < 0 || eventType === 'skip') {
+        classification = 'Chargeback';
+      } else if (alba) {
+        // Alba's rows are individual agent commissions, not agency overrides
+        classification = eventType === 'renewal' ? 'Renewal' : 'New Business';
+      } else {
+        classification = eventType === 'renewal' ? 'Renewal' : 'New Business';
+      }
+
+      // CMS cap anomaly — agency override rows only, skip Alba + chargebacks/negatives
+      let anomaly = false;
+      if (!alba && amount > 0 && eventType !== 'skip') {
+        const cap = getCMSCap2026(memberState, eventType);
+        if (amount > cap) {
+          anomaly = true;
+          console.log(`[AETNA-BSI] ⚠️  ANOMALY: ${memberName} | ${memberState} | ${salesEvent} | $${amount} > cap $${cap}`);
+        }
+      }
+
+      // Normalize agent name: "Hernandez, Alba" → "Alba Hernandez"
+      const agentNormalized = writingAgent
+        ? writingAgent.replace(/^([^,]+),\s*(.+)$/, '$2 $1').trim()
+        : 'Broker Society Insurance';
+
+      records.push({
+        agent:          agentNormalized,
+        carrier:        'Aetna',
+        planType,
+        client:         memberName,
+        effectiveDate,
+        premium:        0,
+        commission:     amount,
+        classification,
+        period,
+        policyNumber:   memberId,
+        payee:          'BSI',
+        mga:            '',
+        anomaly,
+        raw: row,
+      });
+    }
+
+    const total = records.reduce((s, r) => s + r.commission, 0);
+    console.log(`[AETNA-BSI] Parsed ${records.length} records, total $${total.toFixed(2)}`);
+  } catch (err) {
+    console.error('[AETNA-BSI] Parser error:', err.message);
+  }
+
+  return records;
+}
+
 function isAetnaFile(filename) {
   const f = filename.toLowerCase().replace(/[\s()]/g, '_');
   return f.includes('aetna') || f.includes('producerstatement');
@@ -4056,6 +4227,9 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         }
       } else if (isAPLFile(req.file.originalname)) {
         records = parseAPLRows(wb);
+      } else if (isAetnaBSICSVFilename(req.file.originalname)) {
+        console.log('[ROUTING] Matched Aetna BSI CSV parser for:', req.file.originalname);
+        records = parseAetnaBSICSV(wb, req.file.originalname);
       } else if (isAetnaDirectCSVFilename(req.file.originalname) || isAetnaDirectCSV(wb)) {
         console.log('[ROUTING] Matched Aetna Direct CSV parser for:', req.file.originalname);
         records = parseAetnaDirectCSV(wb, req.file.originalname);
@@ -4207,6 +4381,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS sub_agent_override NUMERIC DEFAULT 0`); } catch(e) {}
     try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS statement_month TEXT`); } catch(e) {}
     try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS members INTEGER DEFAULT 0`); } catch(e) {}
+    try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS anomaly BOOLEAN DEFAULT false`); } catch(e) {}
 
     for (const r of records) {
       await pool.query(
@@ -4215,14 +4390,16 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
            premium, commission, classification, payment_period, policy_number, payee, mga,
            raw_data,
            source, policy_written_date, gross_commission, thei_share, bsi_share,
-           producer_payable, split_applies, lob, sub_agent_override, statement_month, members
+           producer_payable, split_applies, lob, sub_agent_override, statement_month, members,
+           anomaly
          )
          VALUES (
            $1,$2,$3,$4,$5,$6,
            $7,$8,$9,$10,$11,$12,$13,
            $14,
            $15,$16,$17,$18,$19,
-           $20,$21,$22,$23,$24,$25
+           $20,$21,$22,$23,$24,$25,
+           $26
          )`,
         [
           uploadId, r.agent, r.carrier, r.planType || '', r.client, r.effectiveDate,
@@ -4247,6 +4424,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
           r.subAgentOverride != null ? r.subAgentOverride : 0,
           r.statementMonth || null,
           r.members || 0,
+          r.anomaly === true,
         ]
       );
     }
