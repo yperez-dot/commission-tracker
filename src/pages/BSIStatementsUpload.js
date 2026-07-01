@@ -172,7 +172,78 @@ export default function BSIStatementsUpload({ user }) {
                   <tr key={u.id} style={{
                     borderBottom: i < uploads.length - 1 ? '1px solid var(--border)' : 'none'
                   }}>
-                    <td style={{ padding: 12, fontSize: 14 }}>{u.original_name}</td>
+                    <td style={{ padding: 12, fontSize: 14 }}>
+                      <a
+                        href="#"
+                        onClick={async (e) => {
+                          e.preventDefault();
+                          try {
+                            const data = await apiFetch(`/records?upload_id=${u.id}&limit=500`);
+                            const records = data.records || [];
+                            if (!records.length) { alert('No records found for this upload'); return; }
+                            const modal = document.createElement('div');
+                            modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center;z-index:9999;';
+                            const fmt = (v) => parseFloat(v||0).toFixed(2);
+                            const total = records.reduce((s,r)=>s+(parseFloat(r.commission)||0),0);
+                            const clsBadge = (cls) => {
+                              const bg = cls==='New Business'?'#c6f6d5':cls==='Renewal'?'#bee3f8':cls==='Chargeback'?'#fed7d7':cls==='Held'?'#fefcbf':'#e2e8f0';
+                              return `<span style="background:${bg};padding:2px 6px;border-radius:3px;font-size:11px;">${cls||'\u2014'}</span>`;
+                            };
+                            modal.innerHTML = `
+                              <div style="background:white;border-radius:8px;max-width:95vw;width:1100px;max-height:90vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,0.3);">
+                                <div style="padding:16px 20px;border-bottom:1px solid #ddd;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;background:white;z-index:1;">
+                                  <div>
+                                    <h2 style="margin:0;font-size:16px;">${u.original_name}</h2>
+                                    <p style="margin:4px 0 0;font-size:12px;color:#666;">${records.length} records &bull; $${fmt(total)} total</p>
+                                  </div>
+                                  <button onclick="this.closest('[style*=fixed]').remove()" style="background:#e53e3e;color:white;border:none;border-radius:4px;padding:6px 14px;cursor:pointer;font-size:12px;">&#x2715; Close</button>
+                                </div>
+                                <div style="padding:16px;overflow-x:auto;">
+                                  <table style="width:100%;border-collapse:collapse;font-size:12px;">
+                                    <thead>
+                                      <tr style="background:#f5f5f5;border-bottom:2px solid #ddd;">
+                                        <th style="text-align:left;padding:8px;">Agent</th>
+                                        <th style="text-align:left;padding:8px;">Client</th>
+                                        <th style="text-align:left;padding:8px;">Carrier</th>
+                                        <th style="text-align:left;padding:8px;">Plan</th>
+                                        <th style="text-align:left;padding:8px;">Eff. Date</th>
+                                        <th style="text-align:left;padding:8px;">Period</th>
+                                        <th style="text-align:left;padding:8px;">Classification</th>
+                                        <th style="text-align:right;padding:8px;">Commission</th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      ${records.map((r,i) => `
+                                        <tr style="border-bottom:1px solid #eee;${i%2===0?'background:#fafafa;':''}">
+                                          <td style="padding:7px 8px;">${r.agent_name||'\u2014'}</td>
+                                          <td style="padding:7px 8px;">${r.client_full_name||'\u2014'}</td>
+                                          <td style="padding:7px 8px;">${r.carrier||'\u2014'}</td>
+                                          <td style="padding:7px 8px;">${r.plan_type||'\u2014'}</td>
+                                          <td style="padding:7px 8px;">${r.effective_date||'\u2014'}</td>
+                                          <td style="padding:7px 8px;">${r.payment_period||'\u2014'}</td>
+                                          <td style="padding:7px 8px;">${clsBadge(r.classification)}</td>
+                                          <td style="padding:7px 8px;text-align:right;color:${parseFloat(r.commission)<0?'#e53e3e':'#2f855a'};font-weight:500;">$${fmt(r.commission)}</td>
+                                        </tr>
+                                      `).join('')}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </div>
+                            `;
+                            document.body.appendChild(modal);
+                            modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+                          } catch (err) {
+                            alert('Error loading records: ' + err.message);
+                          }
+                        }}
+                        style={{ color: 'var(--accent,#6B46C1)', textDecoration: 'none', cursor: 'pointer', borderBottom: '1px dashed currentColor' }}
+                        onMouseOver={e => e.currentTarget.style.borderBottom='1px solid currentColor'}
+                        onMouseOut={e => e.currentTarget.style.borderBottom='1px dashed currentColor'}
+                        title="Click to view records"
+                      >
+                        📄 {u.original_name}
+                      </a>
+                    </td>
                     <td style={{ padding: 12, fontSize: 14, color: 'var(--text-muted)' }}>
                       {formatDateTime(u.uploaded_at)}
                     </td>
