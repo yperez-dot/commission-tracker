@@ -4557,7 +4557,49 @@ function parseBSICarrierStatementRows(wb, filename) {
     });
   }
 
-  console.log(`[BSI-CARRIER] Parsed ${records.length} records, total $${records.reduce((s,r)=>s+(r.commission||0),0).toFixed(2)}`);
+  console.log(`[BSI-CARRIER] Commission Transactions: ${records.length} records, total $${records.reduce((s,r)=>s+(r.commission||0),0).toFixed(2)}`);
+
+  // ── Held Transactions — ingest, flagged as "Held", do NOT drop silently ──
+  const heldSheet = wb.SheetNames.find(s => s.toLowerCase().includes('held'));
+  if (heldSheet) {
+    const heldRows = XLSX.utils.sheet_to_json(wb.Sheets[heldSheet], { defval: '', raw: true });
+    let heldCount = 0;
+    for (const row of heldRows) {
+      const writingAgentRaw = String(row['Writing Agent Name'] || '').trim();
+      const client = String(row['Member Name'] || '').trim();
+      if (!client || !isValidClientName(client)) continue;
+
+      const commissionRaw = row['Commission'];
+      const commission = typeof commissionRaw === 'number' ? commissionRaw
+        : parseFloat(String(commissionRaw || '').replace(/[$,]/g, '')) || 0;
+
+      const period = String(row['Payment Period'] || '').trim() || statementPeriod || '';
+      const agentName = isAgencyName(writingAgentRaw)
+        ? 'The Health Experts Insurance'
+        : (normalizeAgentName(writingAgentRaw) || writingAgentRaw || 'BSI Agent');
+      const holdReason = String(row['Hold Reason'] || '').trim();
+
+      records.push({
+        agent: agentName,
+        carrier: 'UnitedHealthcare',
+        planType: derivePlanType('UnitedHealthcare', String(row['Plan Type']||'').trim(), String(row['Policy Number']||'').trim(), ''),
+        client,
+        effectiveDate: formatDate(row['Original Effective Date']),
+        premium: 0,
+        commission,  // typically $0 for held records
+        classification: 'Held',
+        period,
+        policyNumber: String(row['Policy Number'] || '').trim(),
+        payee: 'BSI',
+        mga: holdReason || 'Held — reason not specified',
+        raw: row
+      });
+      heldCount++;
+    }
+    console.log(`[BSI-CARRIER] Held Transactions: ${heldCount} records ingested (flagged as "Held")`);
+  }
+
+  console.log(`[BSI-CARRIER] Total: ${records.length} records`);
   return records;
 }
 
