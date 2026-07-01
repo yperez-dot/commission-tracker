@@ -4473,6 +4473,94 @@ router.post('/fix-aetna-classifications', requireAuth, async (req, res) => {
   }
 });
 
+// ─── BSI CARRIER STATEMENT EXCEL PARSER ─────────────────────────────────────
+// Handles BSI-provided carrier Excel statements (UHC, etc.)
+// Different from THEI-direct UHC files: Agent Name/ID fields contain BSI,
+// not THEI — so we use Writing Agent Name directly without isAgencyName() gating.
+function parseBSICarrierStatementRows(wb, filename) {
+  const records = [];
+
+  // Extract period from YYYY-MM-DD in filename (e.g. UHC_BSI_STATEMENT_2026-01-01.xlsx → 202601)
+  let statementPeriod = null;
+  const dateMatch = filename.match(/(20\d{2})-(0[1-9]|1[0-2])-\d{2}/);
+  if (dateMatch) {
+    statementPeriod = dateMatch[1] + dateMatch[2];
+  }
+  // Also try month-name extraction as fallback
+  if (!statementPeriod) {
+    const monthMap = { january:'01',february:'02',march:'03',april:'04',may:'05',june:'06',
+      july:'07',august:'08',september:'09',october:'10',november:'11',december:'12' };
+    const fnLower = filename.toLowerCase();
+    for (const [month, num] of Object.entries(monthMap)) {
+      if (fnLower.includes(month)) {
+        const ym = filename.match(/(20\d{2})/);
+        if (ym) { statementPeriod = ym[1] + num; break; }
+      }
+    }
+  }
+  console.log(`[BSI-CARRIER] Period: ${statementPeriod || 'unknown'} from "${filename}"`);
+
+  // Use "Commission Transactions" sheet; fall back to first sheet
+  const sheetName = wb.SheetNames.find(s => s.toLowerCase().includes('commission trans')) || wb.SheetNames[0];
+  const ws = wb.Sheets[sheetName];
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
+  console.log(`[BSI-CARRIER] Sheet "${sheetName}": ${rows.length} rows`);
+
+  // Summary row keywords to skip
+  const SKIP_KEYWORDS = ['commission earned','chargebacks','applied to balance',
+    'total commission','payment received','commission activity'];
+
+  for (const row of rows) {
+    // Use Writing Agent Name — this is the actual individual agent, not BSI
+    const writingAgentRaw = String(row['Writing Agent Name'] || '').trim();
+    const client = String(row['Member Name'] || '').trim();
+
+    if (!client || !isValidClientName(client)) continue;
+    if (SKIP_KEYWORDS.some(kw => client.toLowerCase().includes(kw))) continue;
+
+    const commissionRaw = row['Commission'];
+    const commission = typeof commissionRaw === 'number'
+      ? commissionRaw
+      : parseFloat(String(commissionRaw || '').replace(/[$,]/g, '')) || 0;
+
+    const policyNumber = String(row['Policy Number'] || '').trim();
+    const effectiveDate = formatDate(row['Original Effective Date']);
+    const period = String(row['Payment Period'] || '').trim() || statementPeriod || '';
+    const rawPlanType = String(row['Plan Type'] || '').trim();
+    const commAction = String(row['Commission Action'] || '').trim().toLowerCase();
+
+    // Map agent: isAgencyName check for THEI, otherwise normalize directly
+    const agentName = isAgencyName(writingAgentRaw)
+      ? 'The Health Experts Insurance'
+      : (normalizeAgentName(writingAgentRaw) || writingAgentRaw || 'BSI Agent');
+
+    const planType = derivePlanType('UnitedHealthcare', rawPlanType, policyNumber, '');
+    const classification = commission < 0 ? 'Chargeback'
+      : commAction === 'new' ? 'New Business'
+      : commAction === 'renewal' ? 'Renewal'
+      : commAction.includes('chargeback') ? 'Chargeback'
+      : 'Agent Commission';
+
+    records.push({
+      agent: agentName,
+      carrier: 'UnitedHealthcare',
+      planType,
+      client,
+      effectiveDate,
+      premium: parseFloat(row['Prem Amount']) || 0,
+      commission,
+      classification,
+      period,
+      policyNumber,
+      payee: 'BSI',
+      raw: row
+    });
+  }
+
+  console.log(`[BSI-CARRIER] Parsed ${records.length} records, total $${records.reduce((s,r)=>s+(r.commission||0),0).toFixed(2)}`);
+  return records;
+}
+
 module.exports = router;
 
 // BSI Statements Upload - separate from commission statements
@@ -4512,39 +4600,13 @@ router.post('/upload-bsi-statement', requireAuth, upload.single('file'), async (
       } else if (isTHEStatementPDF(origName)) {
         records = await parseTHEStatementPDF(req.file.path, origName);
       } else {
-        // Generic PDF — try BSI consolidated
         records = await parseBSIConsolidatedPDF(req.file.path, origName);
       }
     } else {
-      // Excel / CSV
+      // Excel / CSV — use dedicated BSI carrier statement parser
+      // This handles files where Agent Name/ID = BSI, not THEI
       const wb = XLSX.readFile(req.file.path);
-
-      // Inject period from YYYY-MM-DD filename before calling parsers
-      const datePeriod = extractPeriodFromDateFilename(origName);
-
-      if (isUHCDirectFile(origName)) {
-        records = parseUHCDirectRows(wb, origName);
-      } else if (isUHCFile(origName) || nameLower.includes('uhc')) {
-        records = parseUHCRows(wb, origName);
-        // If filename has YYYY-MM-DD format, backfill any missing periods
-        if (datePeriod) {
-          records = records.map(r => ({ ...r, period: r.period || datePeriod }));
-        }
-      } else if (nameLower.includes('humana')) {
-        records = parseHumanaRows(wb, origName);
-      } else if (nameLower.includes('aetna')) {
-        records = parseAetnaRows(wb, origName);
-      } else if (nameLower.includes('devoted')) {
-        records = parseDevotedRows(wb, origName);
-      } else if (isBSIFile(origName)) {
-        records = parseBSIConsolidatedRows(wb, origName);
-      } else {
-        // Fallback: try UHC (most common BSI Excel format)
-        records = parseUHCRows(wb, origName);
-        if (datePeriod) {
-          records = records.map(r => ({ ...r, period: r.period || datePeriod }));
-        }
-      }
+      records = parseBSICarrierStatementRows(wb, origName);
     }
 
     if (!records || records.length === 0) {
