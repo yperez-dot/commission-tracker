@@ -207,6 +207,14 @@ async function initSchema() {
       CREATE INDEX IF NOT EXISTS idx_records_lob ON commission_records(lob);
       CREATE INDEX IF NOT EXISTS idx_records_split ON commission_records(split_applies);
       CREATE INDEX IF NOT EXISTS idx_records_policy_date ON commission_records(policy_written_date);
+
+      -- Migration 2026-07-01: Manual override status for Agency Override Recon
+      -- Allows Yahoska to manually pin a row's status (paid/chase_bsi/request_audit/pending)
+      -- when the system-matched status is wrong or needs annotation.
+      ALTER TABLE agency_production ADD COLUMN IF NOT EXISTS manual_override_status VARCHAR(20);
+      ALTER TABLE agency_production ADD COLUMN IF NOT EXISTS manual_override_by VARCHAR(100);
+      ALTER TABLE agency_production ADD COLUMN IF NOT EXISTS manual_override_at TIMESTAMP;
+      CREATE INDEX IF NOT EXISTS idx_agency_production_manual_override ON agency_production(manual_override_status) WHERE manual_override_status IS NOT NULL;
     `);
 
     await seedDefaultAdmin(client);

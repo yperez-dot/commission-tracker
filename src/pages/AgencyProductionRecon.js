@@ -274,10 +274,33 @@ export default function AgencyProductionRecon() {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedOverride, setSelectedOverride] = useState(null);
   const [selectedProduction, setSelectedProduction] = useState(null);
+  const [overrideSaving, setOverrideSaving] = useState(null); // id of row currently saving
 
   useEffect(() => {
     loadData();
   }, []);
+
+  async function saveOverride(productionId, status) {
+    setOverrideSaving(productionId);
+    try {
+      await apiFetch(`/agency-production/${productionId}/override`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: status || null })
+      });
+      // Update local state immediately so the row re-renders without a full reload
+      setProduction(prev => prev.map(p =>
+        p.id === productionId
+          ? { ...p, manual_override_status: status || null,
+                    manual_override_at: status ? new Date().toISOString() : null }
+          : p
+      ));
+    } catch (err) {
+      alert('Failed to save override: ' + err.message);
+    } finally {
+      setOverrideSaving(null);
+    }
+  }
 
   async function loadData() {
     setLoading(true);
@@ -348,7 +371,9 @@ export default function AgencyProductionRecon() {
   // Three-way status
   // Hector = enrollment source of truth only (no dollar amounts).
   // Dollar flow: Carrier→BSI vs BSI→THEI.
+  // Manual overrides always win — system logic only runs when no override is set.
   const getThreeWayStatus = (m) => {
+    if (m.production.manual_override_status) return m.production.manual_override_status; // ✏️ Manual override
     if (m.override) return 'paid';                                                        // ✅ Paid: BSI paid THEI
     const carrierAmt = m.carrierBSI ? parseFloat(m.carrierBSI.commission || 0) : null;
     if (m.carrierBSI && carrierAmt > 0 && !m.override) return 'chase_bsi';               // 🔴 Chase BSI: carrier paid BSI >$0, BSI hasn't paid THEI
@@ -851,11 +876,26 @@ export default function AgencyProductionRecon() {
                           borderBottom: '1px solid var(--border)' };
                         const tdAccent = { ...tdBase, background: 'rgba(109,40,217,0.04)' };
 
+                        const isManual = !!m.production.manual_override_status;
                         const statusBadge = () => {
-                          if (twStatus === 'paid')          return <span style={{ background:'#D4EDDA',color:'#155724',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>🟢 Paid</span>;
-                          if (twStatus === 'chase_bsi')     return <span style={{ background:'#F8D7DA',color:'#721C24',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>🔴 Chase BSI</span>;
-                          if (twStatus === 'request_audit') return <span style={{ background:'#FFF3CD',color:'#856404',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>🟡 Request Audit</span>;
-                          return <span style={{ background:'#F0F0F0',color:'#6C757D',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>⚪ Pending</span>;
+                          const badge = (() => {
+                            if (twStatus === 'paid')          return <span style={{ background:'#D4EDDA',color:'#155724',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>🟢 Paid</span>;
+                            if (twStatus === 'chase_bsi')     return <span style={{ background:'#F8D7DA',color:'#721C24',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>🔴 Chase BSI</span>;
+                            if (twStatus === 'request_audit') return <span style={{ background:'#FFF3CD',color:'#856404',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>🟡 Request Audit</span>;
+                            return <span style={{ background:'#F0F0F0',color:'#6C757D',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>⚪ Pending</span>;
+                          })();
+                          return (
+                            <span style={{ display:'inline-flex',alignItems:'center',gap:4,flexWrap:'wrap',justifyContent:'center' }}>
+                              {badge}
+                              {isManual && (
+                                <span title={`Manually set${m.production.manual_override_by ? ' by ' + m.production.manual_override_by : ''}`}
+                                  style={{ fontSize:10,color:'var(--text-muted)',background:'var(--bg-subtle)',
+                                    border:'1px solid var(--border)',borderRadius:3,padding:'1px 4px',
+                                    lineHeight:1.3,whiteSpace:'nowrap' }}
+                                >✏️ manual</span>
+                              )}
+                            </span>
+                          );
                         };
 
                         return (
@@ -883,11 +923,31 @@ export default function AgencyProductionRecon() {
                             </td>
                             <td style={{ ...tdAccent, textAlign: 'center' }}>{statusBadge()}</td>
                             <td style={{ ...tdBase, textAlign: 'center' }}>
-                              {(twStatus === 'chase_bsi' || twStatus === 'request_audit') && (
-                                <a href="#" onClick={e => { e.preventDefault(); setSelectedProduction(m.production); }}
-                                  style={{ color:'var(--red)',fontSize:11,textDecoration:'none',borderBottom:'1px dashed var(--red)',whiteSpace:'nowrap' }}
-                                >🚩 Flag</a>
-                              )}
+                              <select
+                                value={m.production.manual_override_status || ''}
+                                disabled={overrideSaving === m.production.id}
+                                onChange={e => {
+                                  const val = e.target.value || null;
+                                  saveOverride(m.production.id, val);
+                                }}
+                                title={isManual && m.production.manual_override_by
+                                  ? `Manually set by ${m.production.manual_override_by}`
+                                  : 'Set manual override'}
+                                style={{
+                                  fontSize: 11, padding: '3px 5px', borderRadius: 4,
+                                  border: isManual ? '1.5px solid var(--accent)' : '1px solid var(--border)',
+                                  background: isManual ? 'var(--accent-light, #EDE9FE)' : 'var(--bg)',
+                                  color: isManual ? 'var(--accent-dark)' : 'var(--text)',
+                                  cursor: 'pointer', width: '100%', maxWidth: 110,
+                                  fontWeight: isManual ? 600 : 400
+                                }}
+                              >
+                                <option value="">{overrideSaving === m.production.id ? 'Saving…' : '— auto'}</option>
+                                <option value="paid">🟢 Paid</option>
+                                <option value="chase_bsi">🔴 Chase BSI</option>
+                                <option value="request_audit">🟡 Request Audit</option>
+                                <option value="pending">⚪ Pending</option>
+                              </select>
                             </td>
                           </tr>
                         );

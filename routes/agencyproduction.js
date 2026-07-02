@@ -630,6 +630,56 @@ router.delete('/upload/:id', requireAuth, async (req, res) => {
   }
 });
 
+// PATCH /api/agency-production/:id/override - Set or clear manual override status
+// Body: { status: 'paid' | 'chase_bsi' | 'request_audit' | 'pending' | null }
+// null clears the override and restores system-matched status
+router.patch('/:id/override', requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status } = req.body;
+    const pool = getPool();
+
+    const VALID_STATUSES = ['paid', 'chase_bsi', 'request_audit', 'pending', null];
+    if (!VALID_STATUSES.includes(status)) {
+      return res.status(400).json({ error: `Invalid status. Must be one of: ${VALID_STATUSES.filter(s => s !== null).join(', ')}, or null to clear.` });
+    }
+
+    // Verify row exists
+    const existing = await pool.query('SELECT id FROM agency_production WHERE id = $1', [id]);
+    if (existing.rows.length === 0) {
+      return res.status(404).json({ error: 'Production record not found' });
+    }
+
+    if (status === null) {
+      // Clear override — restore system-matched status
+      await pool.query(
+        `UPDATE agency_production
+         SET manual_override_status = NULL,
+             manual_override_by     = NULL,
+             manual_override_at     = NULL
+         WHERE id = $1`,
+        [id]
+      );
+      return res.json({ success: true, id, manual_override_status: null, cleared: true });
+    } else {
+      // Set override
+      const by = req.user?.name || req.user?.email || 'Unknown';
+      await pool.query(
+        `UPDATE agency_production
+         SET manual_override_status = $1,
+             manual_override_by     = $2,
+             manual_override_at     = NOW()
+         WHERE id = $3`,
+        [status, by, id]
+      );
+      return res.json({ success: true, id, manual_override_status: status, set_by: by });
+    }
+  } catch (err) {
+    console.error('Override error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // DELETE /api/agency-production/batch/:batch - Delete a batch
 router.delete('/batch/:batch', requireAuth, async (req, res) => {
   try {
