@@ -6,9 +6,10 @@ import { formatDate as formatDateUtil } from '../utils/dateFormat';
 // Version: 2026-06-19-18:50 - Added multi-select filters
 
 // Multi-select dropdown component
-function MultiSelect({ label, options, selected, onChange }) {
+function MultiSelect({ label, options, selected, onChange, formatOption }) {
   const [open, setOpen] = useState(false);
   const allSelected = selected.length === 0;
+  const fmt = formatOption || (v => v);
 
   function toggle(val) {
     if (selected.includes(val)) onChange(selected.filter(v => v !== val));
@@ -58,7 +59,7 @@ function MultiSelect({ label, options, selected, onChange }) {
                   }}>
                     {isSel && <span style={{ color: 'var(--sidebar-bg)', fontSize: 9 }}>✓</span>}
                   </span>
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{opt}</span>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{fmt(opt)}</span>
                 </button>
               );
             })}
@@ -271,7 +272,10 @@ export default function AgencyProductionRecon() {
   const [filterCarriers, setFilterCarriers] = useState([]);
   const [filterAgents, setFilterAgents] = useState([]);
   const [filterEffDates, setFilterEffDates] = useState([]);
+  const [filterOverrideStatus, setFilterOverrideStatus] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
+  const [sortCol, setSortCol] = useState(null);
+  const [sortDir, setSortDir] = useState('asc');
   const [selectedOverride, setSelectedOverride] = useState(null);
   const [selectedProduction, setSelectedProduction] = useState(null);
   const [overrideSaving, setOverrideSaving] = useState(null); // id of row currently saving
@@ -421,6 +425,10 @@ export default function AgencyProductionRecon() {
       filtered = filtered.filter(m => filterEffDates.includes(m.production.effective_date || ''));
     }
     
+    if (filterOverrideStatus.length > 0) {
+      filtered = filtered.filter(m => filterOverrideStatus.includes(getThreeWayStatus(m)));
+    }
+
     if (searchTerm.trim()) {
       const search = searchTerm.toLowerCase();
       filtered = filtered.filter(m => 
@@ -440,7 +448,7 @@ export default function AgencyProductionRecon() {
     paid: applyFilters(categorized.paid)
   };
 
-  const displayData = 
+  const rawDisplayData = 
     tab === 'missing' ? (filtered.missing || []) :
     tab === 'planchange' ? (filtered.planchange || []) :
     tab === 'plandenied' ? (filtered.plandenied || []) :
@@ -448,6 +456,28 @@ export default function AgencyProductionRecon() {
     tab === 'cancelled' ? (filtered.cancelled || []) :
     tab === 'paid' ? (filtered.paid || []) :
     [...(filtered.missing || []), ...(filtered.planchange || []), ...(filtered.plandenied || []), ...(filtered.chase || []), ...(filtered.cancelled || []), ...(filtered.paid || [])];
+
+  // Sort
+  function toggleSort(col) {
+    if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    else { setSortCol(col); setSortDir('asc'); }
+  }
+  function sortIcon(col) {
+    if (sortCol !== col) return <span style={{ opacity: 0.3, fontSize: 10 }}>⇅</span>;
+    return <span style={{ fontSize: 10 }}>{sortDir === 'asc' ? '↑' : '↓'}</span>;
+  }
+  const displayData = sortCol ? [...rawDisplayData].sort((a, b) => {
+    let va, vb;
+    if (sortCol === 'agent')    { va = a.production.agent_name || ''; vb = b.production.agent_name || ''; }
+    else if (sortCol === 'member')   { va = a.production.client_name || ''; vb = b.production.client_name || ''; }
+    else if (sortCol === 'carrier')  { va = a.production.carrier || ''; vb = b.production.carrier || ''; }
+    else if (sortCol === 'bsi_thei') { va = parseFloat(a.override?.commission || 0); vb = parseFloat(b.override?.commission || 0); }
+    else if (sortCol === 'c_bsi')    { va = parseFloat(a.carrierBSI?.commission || 0); vb = parseFloat(b.carrierBSI?.commission || 0); }
+    else if (sortCol === 'status')   { va = getThreeWayStatus(a); vb = getThreeWayStatus(b); }
+    else                             { va = ''; vb = ''; }
+    if (typeof va === 'number') return sortDir === 'asc' ? va - vb : vb - va;
+    return sortDir === 'asc' ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
+  }) : rawDisplayData;
 
   const agents = [...new Set(production.map(p => p.agent_name).filter(Boolean))].sort();
   // Get unique carriers and format them consistently
@@ -790,6 +820,21 @@ export default function AgencyProductionRecon() {
                   onChange={setFilterEffDates} 
                 />
               </div>
+              <div>
+                <div className="form-label" style={{ marginBottom: 6 }}>Override Status</div>
+                <MultiSelect
+                  label="Status"
+                  options={['paid','chase_bsi','request_audit','pending']}
+                  selected={filterOverrideStatus}
+                  onChange={setFilterOverrideStatus}
+                  formatOption={v => ({
+                    paid: '🟢 Paid',
+                    chase_bsi: '🔴 Chase BSI',
+                    request_audit: '🟡 Request Audit',
+                    pending: '⚪ Pending'
+                  })[v] || v}
+                />
+              </div>
             </div>
             <div style={{ display: 'flex', gap: 12 }}>
               <button className="btn btn-secondary" onClick={exportToCSV} disabled={loading}>
@@ -855,16 +900,26 @@ export default function AgencyProductionRecon() {
                     </colgroup>
                     <thead style={{ position: 'sticky', top: 0, background: 'var(--bg)', zIndex: 1 }}>
                       <tr>
-                        {[['Writing Agent','left'],['Member Name','left'],['Carrier','left'],
-                          ['BSI→THEI','right'],
-                          ['Carrier→BSI','right'],['Override Status','center'],['Actions','center']
-                        ].map(([label, align], i) => (
-                          <th key={i} style={{
+                        {[
+                          ['Writing Agent','left','agent'],
+                          ['Member Name','left','member'],
+                          ['Carrier','left','carrier'],
+                          ['BSI→THEI','right','bsi_thei'],
+                          ['Carrier→BSI','right','c_bsi'],
+                          ['Override Status','center','status'],
+                          ['Actions','center',null]
+                        ].map(([label, align, col], i) => (
+                          <th key={i} onClick={col ? () => toggleSort(col) : undefined} style={{
                             padding: '8px 10px', textAlign: align, fontSize: 11, fontWeight: 600,
                             whiteSpace: 'normal', wordWrap: 'break-word', overflowWrap: 'break-word',
                             verticalAlign: 'top', borderBottom: '2px solid var(--border)',
-                            background: i >= 4 && i <= 5 ? 'var(--accent-light, #EDE9FE)' : 'var(--bg)'
-                          }}>{label}</th>
+                            background: i >= 4 && i <= 5 ? 'var(--accent-light, #EDE9FE)' : 'var(--bg)',
+                            cursor: col ? 'pointer' : 'default', userSelect: 'none'
+                          }}>
+                            <span style={{ display:'inline-flex', alignItems:'center', gap:3 }}>
+                              {label}{col && sortIcon(col)}
+                            </span>
+                          </th>
                         ))}
                       </tr>
                     </thead>
