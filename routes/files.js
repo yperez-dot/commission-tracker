@@ -455,13 +455,6 @@ function parseAetnaBSICSV(wb, filename) {
   const records = [];
   console.log('[AETNA-BSI] Parser triggered for:', filename);
 
-  const ALBA_NPN = '21209073';
-  function isAlbaRow(npn, agentName) {
-    if (String(npn).trim() === ALBA_NPN) return true;
-    const n = (agentName || '').toLowerCase();
-    return n.includes('hernandez') && n.includes('alba');
-  }
-
   function classifySalesEvent(se) {
     const s = (se || '').trim().toLowerCase();
     if (s === 'new business' || s === 'pronew') return 'initial';
@@ -537,24 +530,20 @@ function parseAetnaBSICSV(wb, filename) {
       else if (prodL.includes('ppo') || prodL.includes('mapd')) planType = 'Aetna MAPD';
 
       const eventType  = classifySalesEvent(salesEvent);
-      const alba       = isAlbaRow(writingNPN, writingAgent);
-
-      // Classification
-      // Alba's rows = her individual agent commissions (BSI's agent, not THEI oversight)
-      // Non-Alba rows = THEI agency override rows
+      // ALL rows in this file are BSI agency override rows.
+      // Payee is always BSI (Broker Society Insurance). Alba being the writing agent
+      // does NOT make her rows agent commissions — Aetna pays her agent commission
+      // directly in a separate statement; it does not appear here.
       let classification;
       if (amount < 0 || eventType === 'skip') {
         classification = 'Chargeback';
-      } else if (alba) {
-        classification = 'Agent Commission';
       } else {
-        // THEI override row
         classification = eventType === 'renewal' ? 'Renewal' : 'New Business';
       }
 
-      // CMS cap anomaly — agency override rows only, skip Alba + chargebacks/negatives
+      // CMS cap anomaly check on all non-chargeback rows
       let anomaly = false;
-      if (!alba && amount > 0 && eventType !== 'skip') {
+      if (amount > 0 && eventType !== 'skip') {
         const cap = getCMSCap2026(memberState, eventType);
         if (amount > cap) {
           anomaly = true;
