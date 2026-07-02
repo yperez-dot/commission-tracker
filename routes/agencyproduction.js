@@ -406,7 +406,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         WHERE upload_batch = $1 
           AND agent_name = $2
           AND client_name = $3
-          AND effective_date = $4
+          AND effective_date IS NOT DISTINCT FROM $4
         LIMIT 1
       `;
       
