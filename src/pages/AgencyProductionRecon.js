@@ -346,11 +346,15 @@ export default function AgencyProductionRecon() {
   });
 
   // Three-way status
+  // Hector = enrollment source of truth only (no dollar amounts).
+  // Dollar flow: Carrier→BSI vs BSI→THEI.
   const getThreeWayStatus = (m) => {
-    if (m.override) return 'paid';                                      // ✅ Paid
-    if (m.carrierBSI && !m.override) return 'chase_bsi';               // 🔴 Chase BSI
-    if (!m.carrierBSI && m.carrierUploaded) return 'request_audit';    // 🟡 Request audit
-    return 'pending';                                                    // ⚪ Pending
+    if (m.override) return 'paid';                                                        // ✅ Paid: BSI paid THEI
+    const carrierAmt = m.carrierBSI ? parseFloat(m.carrierBSI.commission || 0) : null;
+    if (m.carrierBSI && carrierAmt > 0 && !m.override) return 'chase_bsi';               // 🔴 Chase BSI: carrier paid BSI >$0, BSI hasn't paid THEI
+    if (m.carrierBSI && carrierAmt === 0) return 'request_audit';                        // 🟡 Request Audit: carrier sent $0 to BSI for this client
+    if (!m.carrierBSI && m.carrierUploaded) return 'request_audit';                      // 🟡 Request Audit: month uploaded but client not in carrier→BSI statement
+    return 'pending';                                                                     // ⚪ Pending: carrier month not uploaded yet
   };
 
   // Categorize by status
@@ -461,24 +465,27 @@ export default function AgencyProductionRecon() {
       return;
     }
     
-    const headers = ['Agent', 'Client', 'Carrier', 'Effective Date', 'Status', 'Override Paid', 'Override Amount'];
+    const carrierBSIAmt = (m) => m.carrierBSI ? parseFloat(m.carrierBSI.commission || 0) : null;
+    const headers = ['Agent', 'Client', 'Carrier', 'Effective Date', 'BSI→THEI Amt', 'Carrier→BSI Amt', 'Status', 'Override Status'];
     const rows = dataToExport.map(m => {
       const agentName = m.production.agent_name || '—';
       const clientName = m.production.client_name || '—';
       const carrier = formatCarrier(m.production.carrier) || '—';
       const effectiveDate = m.production.effective_date ? formatDate(m.production.effective_date) : '—';
-      const status = m.production.status || '—';
-      const paid = m.override ? 'Yes' : 'No';
-      const amount = m.override ? (m.override.commission || m.override.commission_amount || '0') : '—';
+      const bsiThei = m.override ? (m.override.commission || m.override.commission_amount || '0') : '—';
+      const cBSI = carrierBSIAmt(m) !== null ? carrierBSIAmt(m).toFixed(2) : '—';
+      const enrollStatus = m.production.status || '—';
+      const overrideStatus = getThreeWayStatus(m);
       
       return [
         agentName,
         clientName,
         carrier,
         effectiveDate,
-        status,
-        paid,
-        amount
+        bsiThei,
+        cBSI,
+        enrollStatus,
+        overrideStatus
       ].map(val => `"${String(val).replace(/"/g, '""')}"`).join(',');
     });
     
@@ -813,26 +820,25 @@ export default function AgencyProductionRecon() {
                 <div style={{ overflowY: 'auto', maxHeight: 'calc(100vh - 280px)' }}>
                   <table style={{ tableLayout: 'fixed', width: '100%', borderCollapse: 'collapse' }}>
                     <colgroup>
-                      <col style={{ width: '17%' }} />
-                      <col style={{ width: '17%' }} />
-                      <col style={{ width: '11%' }} />
-                      <col style={{ width: '10%' }} />
-                      <col style={{ width: '10%' }} />
+                      <col style={{ width: '18%' }} />
+                      <col style={{ width: '18%' }} />
+                      <col style={{ width: '13%' }} />
                       <col style={{ width: '13%' }} />
                       <col style={{ width: '14%' }} />
+                      <col style={{ width: '16%' }} />
                       <col style={{ width: '8%' }} />
                     </colgroup>
                     <thead style={{ position: 'sticky', top: 0, background: 'var(--bg)', zIndex: 1 }}>
                       <tr>
                         {[['Writing Agent','left'],['Member Name','left'],['Carrier','left'],
-                          ['Hector Amt','right'],['BSI→THEI','right'],
+                          ['BSI→THEI','right'],
                           ['Carrier→BSI','right'],['Override Status','center'],['Actions','center']
                         ].map(([label, align], i) => (
                           <th key={i} style={{
                             padding: '8px 10px', textAlign: align, fontSize: 11, fontWeight: 600,
                             whiteSpace: 'normal', wordWrap: 'break-word', overflowWrap: 'break-word',
                             verticalAlign: 'top', borderBottom: '2px solid var(--border)',
-                            background: i >= 5 && i <= 6 ? 'var(--accent-light, #EDE9FE)' : 'var(--bg)'
+                            background: i >= 4 && i <= 5 ? 'var(--accent-light, #EDE9FE)' : 'var(--bg)'
                           }}>{label}</th>
                         ))}
                       </tr>
@@ -863,9 +869,6 @@ export default function AgencyProductionRecon() {
                               >{m.production.client_name}</a>
                             </td>
                             <td style={tdBase}>{formatCarrier(m.production.carrier)}</td>
-                            <td style={{ ...tdBase, textAlign: 'right' }}>
-                              {m.production.commission_amount ? fmt(m.production.commission_amount) : '—'}
-                            </td>
                             <td style={{ ...tdBase, textAlign: 'right' }}>
                               {m.override
                                 ? <span style={{ color:'var(--green)',fontWeight:600 }}>{fmt(m.override.commission || m.override.commission_amount || 0)}</span>
