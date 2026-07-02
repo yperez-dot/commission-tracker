@@ -110,9 +110,12 @@ router.get('/', requireAuth, async (req, res) => {
       [...params, parseInt(limit), parseInt(offset)]
     );
 
-    // Use cr alias on count query so WHERE cr.column refs work
+    // Count query needs the uploads join when upload_category/exclude_upload_category filters are active
+    const needsUploadJoin = (upload_category || exclude_upload_category)
+      ? ' LEFT JOIN uploads u ON cr.upload_id = u.id'
+      : '';
     const total = await pool.query(
-      `SELECT COUNT(*) as count FROM commission_records cr ${wc}`,
+      `SELECT COUNT(*) as count FROM commission_records cr${needsUploadJoin} ${wc}`,
       params
     );
 

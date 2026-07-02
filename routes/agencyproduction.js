@@ -356,7 +356,19 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         const lastName = (row.LAST || '').trim();
         clientName = `${firstName} ${lastName}`.trim().substring(0, 255);
       }
-      const planName = (row.PLAN_NAME || row['Plan Name'] || row.Plan_Name || row.PlanName || '').trim().substring(0, 255);
+      // Carrier-specific plan name column fallbacks
+      let planName = '';
+      if (carrier === 'Freedom') {
+        // Freedom Health report: PLAN_DESC, CONTRACT_DESC, PRODUCT_DESCRIPTION, then generic fallbacks
+        planName = (row.PLAN_DESC || row.CONTRACT_DESC || row.PLAN_DESCRIPTION || row.PRODUCT_DESCRIPTION ||
+                    row.PLAN_NAME || row['Plan Name'] || row.Plan_Name || row.PlanName || '').trim().substring(0, 255);
+      } else if (carrier === 'HealthSpring') {
+        // HealthSpring uses Application_ prefix: Application_Plan_Name, Application_Plan
+        planName = (row.Application_Plan_Name || row.Application_Plan || row.Plan_Name ||
+                    row.PLAN_NAME || row['Plan Name'] || row.PlanName || '').trim().substring(0, 255);
+      } else {
+        planName = (row.PLAN_NAME || row['Plan Name'] || row.Plan_Name || row.PlanName || '').trim().substring(0, 255);
+      }
       const policyNumber = (row.DOC_ID || row['Policy Number'] || row.Application_ID || row.HIC || '').toString().substring(0, 100);
       const statusValue = (row.Status || row.App_Status || row.Consumer_Status || '').substring(0, 50);
       const policyType = (row.PRODUCT_DESCRIPTION || row['Policy Type'] || row.Product || row.SubProduct || '').substring(0, 50);

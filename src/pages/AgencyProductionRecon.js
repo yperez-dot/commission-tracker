@@ -461,12 +461,11 @@ export default function AgencyProductionRecon() {
       return;
     }
     
-    const headers = ['Agent', 'Client', 'Carrier', 'Plan', 'Effective Date', 'Status', 'Override Paid', 'Override Amount'];
+    const headers = ['Agent', 'Client', 'Carrier', 'Effective Date', 'Status', 'Override Paid', 'Override Amount'];
     const rows = dataToExport.map(m => {
       const agentName = m.production.agent_name || '—';
       const clientName = m.production.client_name || '—';
       const carrier = formatCarrier(m.production.carrier) || '—';
-      const plan = m.production.plan_name || '—';
       const effectiveDate = m.production.effective_date ? formatDate(m.production.effective_date) : '—';
       const status = m.production.status || '—';
       const paid = m.override ? 'Yes' : 'No';
@@ -476,7 +475,6 @@ export default function AgencyProductionRecon() {
         agentName,
         clientName,
         carrier,
-        plan,
         effectiveDate,
         status,
         paid,
@@ -815,19 +813,18 @@ export default function AgencyProductionRecon() {
                 <div style={{ overflowY: 'auto', maxHeight: 'calc(100vh - 280px)' }}>
                   <table style={{ tableLayout: 'fixed', width: '100%', borderCollapse: 'collapse' }}>
                     <colgroup>
-                      <col style={{ width: '15%' }} />
-                      <col style={{ width: '15%' }} />
-                      <col style={{ width: '9%' }} />
-                      <col style={{ width: '8%' }} />
-                      <col style={{ width: '9%' }} />
-                      <col style={{ width: '9%' }} />
+                      <col style={{ width: '17%' }} />
+                      <col style={{ width: '17%' }} />
                       <col style={{ width: '11%' }} />
-                      <col style={{ width: '15%' }} />
-                      <col style={{ width: '9%' }} />
+                      <col style={{ width: '10%' }} />
+                      <col style={{ width: '10%' }} />
+                      <col style={{ width: '13%' }} />
+                      <col style={{ width: '14%' }} />
+                      <col style={{ width: '8%' }} />
                     </colgroup>
                     <thead style={{ position: 'sticky', top: 0, background: 'var(--bg)', zIndex: 1 }}>
                       <tr>
-                        {[['Writing Agent','left'],['Member Name','left'],['Carrier','left'],['Plan','left'],
+                        {[['Writing Agent','left'],['Member Name','left'],['Carrier','left'],
                           ['Hector Amt','right'],['BSI→THEI','right'],
                           ['Carrier→BSI','right'],['Override Status','center'],['Actions','center']
                         ].map(([label, align], i) => (
@@ -835,7 +832,7 @@ export default function AgencyProductionRecon() {
                             padding: '8px 10px', textAlign: align, fontSize: 11, fontWeight: 600,
                             whiteSpace: 'normal', wordWrap: 'break-word', overflowWrap: 'break-word',
                             verticalAlign: 'top', borderBottom: '2px solid var(--border)',
-                            background: i >= 6 && i <= 7 ? 'var(--accent-light, #EDE9FE)' : 'var(--bg)'
+                            background: i >= 5 && i <= 6 ? 'var(--accent-light, #EDE9FE)' : 'var(--bg)'
                           }}>{label}</th>
                         ))}
                       </tr>
@@ -866,7 +863,6 @@ export default function AgencyProductionRecon() {
                               >{m.production.client_name}</a>
                             </td>
                             <td style={tdBase}>{formatCarrier(m.production.carrier)}</td>
-                            <td style={{ ...tdBase, fontSize: 11 }}>{m.production.plan_name || '—'}</td>
                             <td style={{ ...tdBase, textAlign: 'right' }}>
                               {m.production.commission_amount ? fmt(m.production.commission_amount) : '—'}
                             </td>
