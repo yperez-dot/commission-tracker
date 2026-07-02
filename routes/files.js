@@ -4823,10 +4823,15 @@ router.post('/upload-bsi-statement', requireAuth, upload.single('file'), async (
         records = await parseBSIConsolidatedPDF(req.file.path, origName);
       }
     } else {
-      // Excel / CSV — use dedicated BSI carrier statement parser
-      // This handles files where Agent Name/ID = BSI, not THEI
+      // Excel / CSV — route to correct parser
       const wb = XLSX.readFile(req.file.path);
-      records = parseBSICarrierStatementRows(wb, origName);
+      if (isAetnaBSICSVFilename(origName)) {
+        console.log('[BSI-UPLOAD] Matched Aetna BSI CSV parser for:', origName);
+        records = parseAetnaBSICSV(wb, origName);
+      } else {
+        // Dedicated BSI carrier statement parser (handles files where Agent = BSI, not THEI)
+        records = parseBSICarrierStatementRows(wb, origName);
+      }
     }
 
     if (!records || records.length === 0) {
@@ -4853,6 +4858,7 @@ router.post('/upload-bsi-statement', requireAuth, upload.single('file'), async (
     try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS sub_agent_override NUMERIC DEFAULT 0`); } catch(e) {}
     try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS statement_month TEXT`); } catch(e) {}
     try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS members INTEGER DEFAULT 0`); } catch(e) {}
+    try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS anomaly BOOLEAN DEFAULT false`); } catch(e) {}
 
     // Insert records into commission_records
     for (const r of records) {
@@ -4862,14 +4868,16 @@ router.post('/upload-bsi-statement', requireAuth, upload.single('file'), async (
            premium, commission, classification, payment_period, policy_number, payee, mga,
            raw_data,
            source, policy_written_date, gross_commission, thei_share, bsi_share,
-           producer_payable, split_applies, lob, sub_agent_override, statement_month, members
+           producer_payable, split_applies, lob, sub_agent_override, statement_month, members,
+           anomaly
          )
          VALUES (
            $1,$2,$3,$4,$5,$6,
            $7,$8,$9,$10,$11,$12,$13,
            $14,
            $15,$16,$17,$18,$19,
-           $20,$21,$22,$23,$24,$25
+           $20,$21,$22,$23,$24,$25,
+           $26
          )`,
         [
           uploadId, r.agent, r.carrier, r.planType || '', r.client, r.effectiveDate,
@@ -4894,6 +4902,7 @@ router.post('/upload-bsi-statement', requireAuth, upload.single('file'), async (
           r.subAgentOverride != null ? r.subAgentOverride : 0,
           r.statementMonth || null,
           r.members || 0,
+          r.anomaly === true,
         ]
       );
     }
