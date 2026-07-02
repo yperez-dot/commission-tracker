@@ -890,13 +890,13 @@ export default function AgencyProductionRecon() {
                 <div style={{ overflowY: 'auto', maxHeight: 'calc(100vh - 280px)' }}>
                   <table style={{ tableLayout: 'fixed', width: '100%', borderCollapse: 'collapse' }}>
                     <colgroup>
-                      <col style={{ width: '18%' }} />
-                      <col style={{ width: '18%' }} />
-                      <col style={{ width: '13%' }} />
-                      <col style={{ width: '13%' }} />
-                      <col style={{ width: '14%' }} />
                       <col style={{ width: '16%' }} />
-                      <col style={{ width: '8%' }} />
+                      <col style={{ width: '16%' }} />
+                      <col style={{ width: '14%' }} />
+                      <col style={{ width: '9%' }} />
+                      <col style={{ width: '10%' }} />
+                      <col style={{ width: '18%' }} />
+                      <col style={{ width: '17%' }} />
                     </colgroup>
                     <thead style={{ position: 'sticky', top: 0, background: 'var(--bg)', zIndex: 1 }}>
                       <tr>
@@ -904,8 +904,8 @@ export default function AgencyProductionRecon() {
                           ['Writing Agent','left','agent'],
                           ['Member Name','left','member'],
                           ['Carrier','left','carrier'],
-                          ['BSI→THEI','right','bsi_thei'],
-                          ['Carrier→BSI','right','c_bsi'],
+                          ['BSI→THEI','center','bsi_thei'],
+                          ['Carrier→BSI','center','c_bsi'],
                           ['Override Status','center','status'],
                           ['Actions','center',null]
                         ].map(([label, align, col], i) => (
