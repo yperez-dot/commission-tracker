@@ -540,13 +540,15 @@ function parseAetnaBSICSV(wb, filename) {
       const alba       = isAlbaRow(writingNPN, writingAgent);
 
       // Classification
+      // Alba's rows = her individual agent commissions (BSI's agent, not THEI oversight)
+      // Non-Alba rows = THEI agency override rows
       let classification;
       if (amount < 0 || eventType === 'skip') {
         classification = 'Chargeback';
       } else if (alba) {
-        // Alba's rows are individual agent commissions, not agency overrides
-        classification = eventType === 'renewal' ? 'Renewal' : 'New Business';
+        classification = 'Agent Commission';
       } else {
+        // THEI override row
         classification = eventType === 'renewal' ? 'Renewal' : 'New Business';
       }
 
