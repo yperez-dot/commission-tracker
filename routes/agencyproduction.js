@@ -292,14 +292,37 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
 
     console.log(`Processing agency production file: ${req.file.originalname}`);
     console.log(`Detected carrier: ${carrier}`);
-    console.log(`Total rows: ${rows.length}`);
-    
-    // Debug: Show first row column names
-    if (rows.length > 0) {
-      console.log('=== COLUMN NAMES ===');
-      console.log(Object.keys(rows[0]));
-      console.log('=== FIRST ROW DATA ===');
-      console.log(rows[0]);
+    console.log(`Total rows (raw): ${rows.length}`);
+
+    // Pre-dedup rows within this file: some carrier reports (e.g. Freedom)
+    // list the same client 2-3x across sections — once with no effective date,
+    // once with one. Score each row and keep the best one per agent+client.
+    // Score: +2 for a real effective date, +1 for a non-blank status.
+    const scoreRow = (r) => {
+      const eff = r.EFF_DTE || r.EFF_DT || r['Effective Date'] || r.Effective_Date ||
+                  r.StartDate || r.EffectiveDate || r.Application_Effective_Date;
+      const st  = r.Status || r.App_Status || r.Consumer_Status || r.POLICY_STATUS || '';
+      return (eff ? 2 : 0) + (st ? 1 : 0);
+    };
+    {
+      const best = new Map();
+      for (const r of rows) {
+        const ag = (r.AGENT || r['Agent Name'] || r.Agent_Name || r.AgentName ||
+          r.Current_Agent_Name ||
+          (r.Agent_First_Name ? `${r.Agent_First_Name} ${r.Agent_Last_Name}` : '') ||
+          (r.FIRST !== undefined ? '' : '') || '').trim().toLowerCase();
+        const cl = (r.Application_Application_Name || r.FullName || r['Full Name'] ||
+          r.MEMBER || r['Member Name'] ||
+          (r.Member_First_Name ? `${r.Member_First_Name} ${r.Member_Last_Name}` : '') ||
+          (r['First Name'] !== undefined ? `${(r['First Name']||'')} ${(r['Last Name']||'')}` : '') ||
+          (r.Beneficiary_First_Name ? `${r.Beneficiary_First_Name} ${r.Beneficiary_Last_Name}` : '') ||
+          (r.FIRST !== undefined ? `${(r.FIRST||'')} ${(r.LAST||'')}` : '') || '').trim().toLowerCase();
+        const key = `${ag}|${cl}`;
+        if (!best.has(key) || scoreRow(r) > scoreRow(best.get(key))) best.set(key, r);
+      }
+      const deduped = [...best.values()];
+      console.log(`In-file dedup: ${rows.length} → ${deduped.length} rows (removed ${rows.length - deduped.length})`);
+      rows = deduped;
     }
 
     // Process each row
