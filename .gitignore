@@ -7,3 +7,7 @@ frontend/build/
 *.db-wal
 *.db-shm
 .DS_Store
+
+# One-off utility scripts — not part of deployed app
+reset_password.js
+send-status-summary.js
