@@ -57,6 +57,8 @@ export function normName(name) {
  * @param {string} carrier - Raw carrier name
  * @returns {string} - Normalized carrier name
  */
+// TODO(Commit 8): extract to shared module — currently duplicated in routes/records.js (normalizeCarrierKey).
+// Keep both files in sync until then.
 export function normalizeCarrier(carrier) {
   if (!carrier) return '';
   const c = carrier.toLowerCase().trim();

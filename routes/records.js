@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { getPool } = require('../db/database');
 const { requireAuth } = require('./auth');
-const { normalizeAllRecords } = require('./normalize');
+const { normalizeAllRecords, normalizeAgentName } = require('./normalize');
 function requireAdmin(req, res, next) {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
   next();
@@ -29,6 +29,50 @@ function agencyFilter(req, alias) {
   }
   // Health Experts: exclude all BSI carriers
   return col + " NOT IN ('Mutual of Omaha', 'United of Omaha', 'Fidelity Life', 'Instabrain', 'F&G', 'Fidelity & Guaranty', 'American Amicable', 'Transamerica', 'Ethos', 'American Home Life', 'National Life Group')";
+}
+
+// Smart Matching v2 helpers — deterministic keys only, no fuzzy/Levenshtein.
+
+// normalizeNameKey: accent-strip + uppercase + token-sort.
+// Handles "Perez, Maria" ↔ "Maria Perez", "José" ↔ "Jose", etc.
+function normalizeNameKey(name) {
+  if (!name) return '';
+  const noAccents = name.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const clean = noAccents.toUpperCase().replace(/[^A-Z0-9\s]/g, ' ');
+  return clean.split(/\s+/).filter(Boolean).sort().join('|');
+}
+
+// normalizeAgentKey: alias resolution (from normalize.js) then token-sort.
+// Handles "ROBLES, KATY" ↔ "Katy Robles", middle-name variants, etc.
+function normalizeAgentKey(name) {
+  if (!name) return '';
+  return normalizeNameKey(normalizeAgentName(name));
+}
+
+// normalizeCarrierKey: carrier-family normalization.
+// TODO(Commit 8): extract to shared module — currently duplicated in src/utils/reconMatching.js.
+// Keep both files in sync until then.
+function normalizeCarrierKey(carrier) {
+  if (!carrier) return '';
+  const c = carrier.toLowerCase().trim();
+  if (c.includes('humana')) return 'humana';
+  if (c.includes('aetna')) return 'aetna';
+  if (c.includes('uhc') || c.includes('united')) return 'unitedhealthcare';
+  if (c.includes('doctors')) return 'doctors';
+  if (c.includes('careplus') || c.includes('care plus')) return 'careplus';
+  if (c.includes('devoted')) return 'devoted';
+  if (c.includes('solis')) return 'solis';
+  if (c.includes('healthsun') || c.includes('health sun')) return 'healthsun';
+  if (c.includes('oscar')) return 'oscar';
+  if (c.includes('molina')) return 'molina';
+  if (c.includes('wellcare')) return 'wellcare';
+  if (c.includes('florida blue') || c.includes('bcbs') || c.includes('blue cross')) return 'floridablue';
+  if (c.includes('cigna')) return 'cigna';
+  if (c.includes('avmed')) return 'avmed';
+  if (c.includes('simply')) return 'simply';
+  if (c.includes('elevance') || c.includes('anthem')) return 'elevance';
+  if (c.includes('freedom')) return 'freedom';
+  return c.replace(/[^a-z0-9]/g, '');
 }
 
 router.get('/', requireAuth, async (req, res) => {
@@ -298,29 +342,76 @@ router.get('/missing-renewals', requireAuth, async (req, res) => {
       OR LOWER(agent_name) LIKE '%robles, katy%'
     )`;
 
-    let af;
+    // 1a — parameterized af filter (no string interpolation of user data)
+    let afClause = '';
+    let afParams = [];
     if (req.user.role === 'agent') {
-      af = `AND agent_name ILIKE '%${req.user.name}%'`;
+      afClause = `AND agent_name ILIKE $2`;
+      afParams = [`%${req.user.name}%`];
     } else if (_af) {
-      af = `AND ${_af}`;
+      afClause = `AND ${_af}`; // _af uses hardcoded carrier lists only — safe
+      afParams = [];
     } else if (scope === 'all') {
-      af = '';
+      afClause = '';
+      afParams = [];
     } else {
-      af = THEI_PRINCIPAL_FILTER;
+      afClause = THEI_PRINCIPAL_FILTER; // hardcoded literals — safe
+      afParams = [];
     }
     const [lastMonth, thisMonth] = await Promise.all([
-      pool.query(`SELECT agent_name, carrier, client_full_name, commission FROM commission_records WHERE payment_period = $1 ${af}`, [lastPeriod]),
-      pool.query(`SELECT agent_name, carrier, client_full_name, commission FROM commission_records WHERE payment_period = $1 ${af}`, [thisPeriod])
+      pool.query(`SELECT agent_name, carrier, client_full_name, commission FROM commission_records WHERE payment_period = $1 ${afClause}`, [lastPeriod, ...afParams]),
+      pool.query(`SELECT agent_name, carrier, client_full_name, commission FROM commission_records WHERE payment_period = $1 ${afClause}`, [thisPeriod, ...afParams])
     ]);
-    
+
     // CRITICAL: Match on client_name|carrier ONLY - do NOT include effective_date
     // Effective dates vary across different statement sources (BSI, NHP, direct carrier)
     // and would cause false "missing" flags for the same client
-    const thisKeys = new Set(thisMonth.rows.map(r => `${r.agent_name}|${r.carrier}|${r.client_full_name}`.toLowerCase()));
-    const lastKeys = new Set(lastMonth.rows.map(r => `${r.agent_name}|${r.carrier}|${r.client_full_name}`.toLowerCase()));
-    const missing = lastMonth.rows.filter(r => !thisKeys.has(`${r.agent_name}|${r.carrier}|${r.client_full_name}`.toLowerCase()));
-    const newClients = thisMonth.rows.filter(r => !lastKeys.has(`${r.agent_name}|${r.carrier}|${r.client_full_name}`.toLowerCase()));
-    res.json({ lastPeriodCount: lastMonth.rows.length, thisPeriodCount: thisMonth.rows.length, missing, newClients, lostRevenue: missing.reduce((s,r)=>s+(parseFloat(r.commission)||0),0) });
+
+    // Legacy exact-match keys (preserved for instrumentation baseline)
+    const toLegacyKey = r => `${r.agent_name}|${r.carrier}|${r.client_full_name}`.toLowerCase();
+    const thisExactKeys = new Set(thisMonth.rows.map(toLegacyKey));
+    const lastExactKeys = new Set(lastMonth.rows.map(toLegacyKey));
+
+    // 1c — Smart Matching v2: all three fields normalized, deterministic keys only.
+    // agent: alias resolution + token-sort | carrier: family normalization | client: accent-strip + token-sort
+    const toV2Key = r => `${normalizeAgentKey(r.agent_name)}|${normalizeCarrierKey(r.carrier)}|${normalizeNameKey(r.client_full_name)}`;
+    const thisV2Map = new Map();
+    for (const r of thisMonth.rows) {
+      const k = toV2Key(r);
+      if (!thisV2Map.has(k)) thisV2Map.set(k, r); // first match wins
+    }
+
+    // Compute legacy missing first (exact match) for instrumentation
+    const legacyMissing = lastMonth.rows.filter(r => !thisExactKeys.has(toLegacyKey(r)));
+    const legacyMissingCount = legacyMissing.length;
+
+    // v2: rescue records whose name just changed format
+    const rescuedByV2 = [];
+    const missing = legacyMissing.filter(r => {
+      const matchedRow = thisV2Map.get(toV2Key(r));
+      if (matchedRow) {
+        rescuedByV2.push({
+          last_period_name: r.client_full_name,
+          this_period_name: matchedRow.client_full_name,
+          carrier: r.carrier,
+          agent: r.agent_name,
+        });
+        return false; // rescued — not truly missing
+      }
+      return true;
+    });
+
+    const newClients = thisMonth.rows.filter(r => !lastExactKeys.has(toLegacyKey(r)));
+    res.json({
+      lastPeriodCount: lastMonth.rows.length,
+      thisPeriodCount: thisMonth.rows.length,
+      missing,
+      newClients,
+      lostRevenue: missing.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0),
+      legacyMissingCount,
+      rescuedByV2Count: rescuedByV2.length,
+      rescuedByV2,
+    });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -329,34 +420,43 @@ router.get('/filters', requireAuth, async (req, res) => {
     const pool = getPool();
     const _agFilter = agencyFilter(req, null);
     const isAdmin = req.user.role === 'admin' && !_agFilter;
-    const baseWhere = req.user.role === 'agent'
-      ? `WHERE agent_name ILIKE '%${req.user.name}%'`
-      : _agFilter ? `WHERE ${_agFilter}` : '';
+    // 1b — parameterized baseWhere (no string interpolation of user data)
+    let baseWhere, baseParams = [];
+    if (req.user.role === 'agent') {
+      baseWhere = `WHERE agent_name ILIKE $1`;
+      baseParams = [`%${req.user.name}%`];
+    } else if (_agFilter) {
+      baseWhere = `WHERE ${_agFilter}`; // _agFilter uses hardcoded carrier lists only — safe
+      baseParams = [];
+    } else {
+      baseWhere = '';
+      baseParams = [];
+    }
 
     const [agents, carriers, periods] = await Promise.all([
-      pool.query(`SELECT DISTINCT agent_name FROM commission_records ${baseWhere} ORDER BY agent_name`),
-      pool.query(`SELECT DISTINCT carrier FROM commission_records ${baseWhere} ORDER BY carrier`),
-      pool.query(`SELECT DISTINCT payment_period FROM commission_records ${baseWhere} ORDER BY payment_period DESC`)
+      pool.query(`SELECT DISTINCT agent_name FROM commission_records ${baseWhere} ORDER BY agent_name`, baseParams),
+      pool.query(`SELECT DISTINCT carrier FROM commission_records ${baseWhere} ORDER BY carrier`, baseParams),
+      pool.query(`SELECT DISTINCT payment_period FROM commission_records ${baseWhere} ORDER BY payment_period DESC`, baseParams)
     ]);
 
     let planTypes = [];
     try {
       const planBase = baseWhere ? baseWhere + ` AND plan_type IS NOT NULL AND plan_type != ''` : `WHERE plan_type IS NOT NULL AND plan_type != ''`;
-      const pt = await pool.query(`SELECT DISTINCT plan_type FROM commission_records ${planBase} ORDER BY plan_type`);
+      const pt = await pool.query(`SELECT DISTINCT plan_type FROM commission_records ${planBase} ORDER BY plan_type`, baseParams);
       planTypes = pt.rows.map(p => p.plan_type).filter(Boolean);
     } catch (e) { console.log('plan_type not available:', e.message); }
 
     let payees = [];
     try {
       const payeeBase = baseWhere ? baseWhere + ` AND payee IS NOT NULL AND payee != ''` : `WHERE payee IS NOT NULL AND payee != ''`;
-      const py = await pool.query(`SELECT DISTINCT payee FROM commission_records ${payeeBase} ORDER BY payee`);
+      const py = await pool.query(`SELECT DISTINCT payee FROM commission_records ${payeeBase} ORDER BY payee`, baseParams);
       payees = py.rows.map(p => p.payee).filter(Boolean);
     } catch (e) { console.log('payee not available:', e.message); }
 
     let classifications = [];
     try {
       const classBase = baseWhere ? baseWhere + ` AND classification IS NOT NULL AND classification != ''` : `WHERE classification IS NOT NULL AND classification != ''`;
-      const cl = await pool.query(`SELECT DISTINCT classification FROM commission_records ${classBase} ORDER BY classification`);
+      const cl = await pool.query(`SELECT DISTINCT classification FROM commission_records ${classBase} ORDER BY classification`, baseParams);
       const planTypeKeywords = /AARP|CSNP|DSNP|MAPD|PDP|MED SUP|MED ADV|MEDIGAP|SUPPLEMENT|HMO|PPO|Aetna|UnitedHealthcare|Humana|Cigna|Devoted|WellCare|Solis|Doctors|HealthSun/i;
       classifications = cl.rows.map(c => c.classification).filter(c => c && !planTypeKeywords.test(c));
     } catch (e) { console.log('classification not available:', e.message); }
@@ -364,7 +464,7 @@ router.get('/filters', requireAuth, async (req, res) => {
     let lobs = [];
     try {
       const lobBase = baseWhere ? baseWhere + ` AND lob IS NOT NULL AND lob != ''` : `WHERE lob IS NOT NULL AND lob != ''`;
-      const lb = await pool.query(`SELECT DISTINCT lob FROM commission_records ${lobBase} ORDER BY lob`);
+      const lb = await pool.query(`SELECT DISTINCT lob FROM commission_records ${lobBase} ORDER BY lob`, baseParams);
       lobs = lb.rows.map(l => l.lob).filter(Boolean);
     } catch (e) { console.log('lob not available:', e.message); }
 
