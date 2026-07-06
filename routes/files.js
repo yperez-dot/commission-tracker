@@ -2791,12 +2791,19 @@ async function parseBSIPDF(filePath, filename) {
 
       const lines = sectionText.split('\n').map(l => l.trim()).filter(Boolean);
       const carrierPattern = /^(UNITED\s+HEA?L?T?H?\s+CARE|HUMANA|AETNA|DEVOTED)\s*$/i;
+      // NAME-BLEED FIX: plan suffixes are a CLOSED set. '[A-Z]{2,5}' was greedy
+      // and consumed surname letters ("_HMO"+"DOUGLAS" → "_HMODO"+"UGLAS").
+      // MBI alternative added: Devoted rows (11-char MBI policies) previously
+      // matched no alternative and were silently dropped.
+      // Note: [A-Z]\d{8,12} removed — strict subset of [A-Z]\d{6,12}.
+      const PLAN_SUFFIX = '(?:HMO|PPO|PDP|MSUP|MA)';
+      const MBI = '[1-9][A-Z][0-9A-Z][0-9][A-Z][0-9A-Z][0-9][A-Z][0-9A-Z][0-9]{2}';
       const policyAlternatives = [
-        '[A-Z0-9]{6,15}_[A-Z]{2,5}',
+        `[A-Z0-9]{6,15}_${PLAN_SUFFIX}`,
+        MBI,
         '[A-Z]{2,3}\\d{8,15}',
         '\\d{9,15}',
         '[A-Z]\\d{6,12}',
-        '[A-Z]\\d{8,12}',
       ];
       const policyChars = `(?:${policyAlternatives.join('|')})`;
       const dataLinePattern = new RegExp(`^(${policyChars})([A-Z][A-Z\\s,'\\.\\-]+?)(\\d{2}\\/\\d{2}\\/\\d{4})(-?\\$[\\d,]+\\.\\d{2})$`);
@@ -3228,40 +3235,7 @@ async function parseBSIConsolidatedPDF(filePath, filename) {
       /^AETNA\s*\(\$/i,
     ];
 
-    // Parse data line: "969862877ALLEN, ELLY01/01/2026$37.50"
-    // or Humana/Aetna: "00023852293K_HMODODOUGLAS RICHMOND A01/01/2026$82.50"
-    const parseDataLine = (line) => {
-      // Amount at end: -$X.XX or $X.XX or $-
-      const amountMatch = line.match(/(-?\$[\d,]+\.\d{2}|\$-)$/);
-      if (!amountMatch) return null;
-      const amountStr = amountMatch[1];
-      if (amountStr === '$-') return null; // skip zero/dash
-
-      const withoutAmount = line.slice(0, line.length - amountStr.length);
-
-      // Date before amount: MM/DD/YYYY or M/D/YYYY
-      const dateMatch = withoutAmount.match(/(\d{1,2}\/\d{1,2}\/\d{4})$/);
-      if (!dateMatch) return null;
-      const dateStr = dateMatch[1];
-      const beforeDate = withoutAmount.slice(0, withoutAmount.length - dateStr.length);
-
-      // Policy: leading alphanumeric block
-      const policyMatch = beforeDate.match(/^([A-Z0-9_]+?)([A-Za-z].+)$/);
-      if (!policyMatch) return null;
-      const policyPart = policyMatch[1];
-      const clientPart = policyMatch[2].trim();
-
-      const dateParts = dateStr.split('/');
-      const period = dateParts.length === 3 ? dateParts[2] + dateParts[0].padStart(2, '0') : uploadPeriod;
-
-      return {
-        policy: policyPart,
-        client: clientPart,
-        date: dateStr,
-        amount: parseFloat(amountStr.replace(/[$,]/g, '')) || 0,
-        period,
-      };
-    };
+    // parseDataLine was defined here but never called — deleted in Commit 2 (2c).
 
     let i = 0;
     while (i < lines.length) {
@@ -3320,7 +3294,19 @@ async function parseBSIConsolidatedPDF(filePath, filename) {
             const dateStr = dm[1];
             const amountStr = dm[2];
             const beforeDate = dataLine.slice(0, dataLine.length - dateStr.length - amountStr.length);
-            const pm = beforeDate.match(/^([A-Z]?\d{6,15}|[A-Z0-9]{8,20})(.+)$/);
+            // NAME-BLEED FIX: '[A-Z0-9]{8,20}' greedily swallowed uppercase
+            // surnames into the policy field. Closed set of known formats.
+            // ORDER MATTERS: Humana suffix must come before generic numeric
+            // or '00023852293' matches before '00023852293K_HMO' can.
+            const MBI_PAT = '[1-9][A-Z][0-9A-Z][0-9][A-Z][0-9A-Z][0-9][A-Z][0-9A-Z][0-9]{2}';
+            const pm = beforeDate.match(new RegExp(
+              '^(' +
+              '[A-Z0-9]{6,15}_(?:HMO|PPO|PDP|MSUP|MA)' + // Humana suffix (FIRST — more specific)
+              '|[A-Z]{2,3}\\d{8,15}' +                   // Aetna (NG + 12 digits)
+              '|' + MBI_PAT +                             // Devoted MBI
+              '|[A-Z]?\\d{6,15}' +                       // UHC numeric (LAST)
+              ')([A-Z].+)$'
+            ));
             if (pm) {
               const dateParts = dateStr.split('/');
               const period = dateParts.length === 3 ? dateParts[2] + dateParts[0].padStart(2, '0') : uploadPeriod;
