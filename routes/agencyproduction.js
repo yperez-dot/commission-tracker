@@ -270,8 +270,11 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     }
 
     const pool = getPool();
+    const client = await pool.connect(); // 3b: transaction client
     const uploadDate = new Date();
     const uploadMonth = `${uploadDate.getFullYear()}-${String(uploadDate.getMonth() + 1).padStart(2, '0')}`;
+    const uploadedBy = req.user?.name || 'Unknown'; // 3b: moved up from bottom
+    let uploadId; // 3b: set after log row INSERT
 
     // Detect carrier from filename or first row
     let carrier = 'Unknown';
@@ -324,6 +327,17 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       console.log(`In-file dedup: ${rows.length} → ${deduped.length} rows (removed ${rows.length - deduped.length})`);
       rows = deduped;
     }
+
+    // 3b: wrap entire insert loop in a transaction
+    try {
+      await client.query('BEGIN');
+
+      const logResult = await client.query(
+        `INSERT INTO agency_production_uploads (filename, carrier, upload_batch, uploaded_by, record_count)
+         VALUES ($1, $2, $3, $4, 0) RETURNING id`,
+        [req.file.originalname, carrier, uploadMonth, uploadedBy]
+      );
+      uploadId = logResult.rows[0].id;
 
     // Process each row
     for (const row of rows) {
@@ -433,7 +447,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         LIMIT 1
       `;
       
-      const existingResult = await pool.query(existingQuery, [
+      const existingResult = await client.query(existingQuery, [ // 3b: use transaction client
         uploadMonth,
         agentName,
         clientName,
@@ -447,12 +461,13 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
 
       // Insert the row
       try {
-        await pool.query(
+        await client.query( // 3b: use transaction client
           `INSERT INTO agency_production 
            (agent_name, client_name, carrier, plan_name, policy_number, effective_date, 
             transaction_date, status, policy_type, enrollment_type, state, county, 
-            upload_batch, uploaded_at, raw_data, mbi, carrier_member_id, policy_number_production)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+            upload_batch, uploaded_at, raw_data, mbi, carrier_member_id, policy_number_production,
+            upload_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
           [
             agentName,
             clientName,
@@ -471,23 +486,30 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
             JSON.stringify(row),
             identifiers.mbi,                      // Phase 2: Medicare Beneficiary Identifier
             identifiers.carrier_member_id,        // Phase 2: Carrier-specific member ID
-            identifiers.policy_number_production  // Phase 2: Policy# (UHC Med Supp only)
+            identifiers.policy_number_production, // Phase 2: Policy# (UHC Med Supp only)
+            uploadId                               // 3c: batch identity
           ]
         );
         inserted++;
       } catch (err) {
-        console.error('Row insert error:', err.message);
-        skipped++;
+        console.error('Row insert error, aborting batch:', err.message);
+        throw err; // 3d: inside transaction — fail whole upload, never leave partial batches
       }
-    }
+    } // end for loop
 
-    // Log the upload to agency_production_uploads table
-    const uploadedBy = req.user?.name || 'Unknown';
-    await pool.query(
-      `INSERT INTO agency_production_uploads (filename, carrier, upload_batch, uploaded_by, record_count)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [req.file.originalname, carrier, uploadMonth, uploadedBy, inserted]
-    );
+      // 3b: update final record count, then commit
+      await client.query(
+        `UPDATE agency_production_uploads SET record_count = $1 WHERE id = $2`,
+        [inserted, uploadId]
+      );
+      await client.query('COMMIT');
+    } catch (txErr) {
+      await client.query('ROLLBACK');
+      throw txErr;
+    } finally {
+      client.release();
+    }
+    // 3b: old uploadedBy + uploads-log INSERT removed (moved to top of transaction)
 
     return res.json({
       success: true,
@@ -522,12 +544,15 @@ router.get('/', requireAuth, async (req, res) => {
       apu.uploaded_by as uploaded_by_user
     FROM agency_production ap
     LEFT JOIN LATERAL (
-      SELECT filename, uploaded_at, uploaded_by
-      FROM agency_production_uploads
-      WHERE upload_batch = ap.upload_batch
-      ORDER BY uploaded_at DESC
+      SELECT u.filename, u.uploaded_at, u.uploaded_by
+      FROM agency_production_uploads u
+      WHERE u.id = ap.upload_id
+         OR (ap.upload_id IS NULL
+             AND u.upload_batch = ap.upload_batch
+             AND u.carrier = ap.carrier)
+      ORDER BY u.uploaded_at DESC
       LIMIT 1
-    ) apu ON true
+    ) apu ON true -- 3e: join by upload_id; fallback for legacy rows
     WHERE 1=1`;
     const params = [];
 
@@ -618,20 +643,27 @@ router.delete('/upload/:id', requireAuth, async (req, res) => {
     const upload = uploadResult.rows[0];
     const { carrier, upload_batch, uploaded_at } = upload;
 
-    // Delete production records for this specific upload
-    // Match by carrier + batch + uploaded within 5 minutes of upload time
-    const uploadTime = new Date(uploaded_at);
-    const beforeTime = new Date(uploadTime.getTime() - 5 * 60 * 1000);
-    const afterTime = new Date(uploadTime.getTime() + 5 * 60 * 1000);
-
-    const productionResult = await pool.query(
-      `DELETE FROM agency_production 
-       WHERE carrier = $1 
-         AND upload_batch = $2 
-         AND uploaded_at >= $3 
-         AND uploaded_at <= $4`,
-      [carrier, upload_batch, beforeTime, afterTime]
+    // 3f: delete by upload_id (exact identity); legacy ±5min fallback for pre-migration rows
+    let productionResult = await pool.query(
+      `DELETE FROM agency_production WHERE upload_id = $1`,
+      [id]
     );
+
+    if (productionResult.rowCount === 0) {
+      // Legacy fallback: rows created before the upload_id migration
+      const uploadTime = new Date(uploaded_at);
+      const beforeTime = new Date(uploadTime.getTime() - 5 * 60 * 1000);
+      const afterTime = new Date(uploadTime.getTime() + 5 * 60 * 1000);
+      productionResult = await pool.query(
+        `DELETE FROM agency_production
+         WHERE upload_id IS NULL
+           AND carrier = $1
+           AND upload_batch = $2
+           AND uploaded_at >= $3
+           AND uploaded_at <= $4`,
+        [carrier, upload_batch, beforeTime, afterTime]
+      );
+    }
 
     // Delete the upload log entry
     await pool.query(
