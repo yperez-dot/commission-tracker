@@ -135,7 +135,8 @@ function isActivePolicy(row, carrier) {
       statusValue = (row.Status || '').trim();
       break;
     case 'Anthem':
-      statusValue = (row.Consumer_Status || row.App_Status || '').trim();
+      // Anthem files use Enrollment_Status (not Consumer_Status or App_Status)
+      statusValue = (row.Enrollment_Status || row.Consumer_Status || row.App_Status || '').trim();
       break;
     case 'Devoted':
       statusValue = (row.Status || '').trim();
@@ -291,7 +292,9 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     else if (filename.includes('cigna')) carrier = 'Cigna';
 
     let inserted = 0;
-    let skipped = 0;
+    let skippedMissingData = 0;
+    let skippedInactive = 0;
+    let skippedDuplicate = 0;
 
     console.log(`Processing agency production file: ${req.file.originalname}`);
     console.log(`Detected carrier: ${carrier}`);
@@ -423,7 +426,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
 
       // Skip if missing essential data
       if (!clientName || !agentName) {
-        skipped++;
+        skippedMissingData++;
         continue;
       }
       
@@ -433,7 +436,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       // Phase 2: Filter out inactive policies (don't create false "Override Missing" rows)
       if (!isActivePolicy(row, carrier)) {
         console.log(`Skipping inactive policy: ${clientName} (${statusValue})`);
-        skipped++;
+        skippedInactive++;
         continue;
       }
 
@@ -455,7 +458,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       ]);
 
       if (existingResult.rows.length > 0) {
-        skipped++;
+        skippedDuplicate++;
         continue;
       }
 
@@ -511,14 +514,25 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     }
     // 3b: old uploadedBy + uploads-log INSERT removed (moved to top of transaction)
 
+    const totalSkipped = skippedMissingData + skippedInactive + skippedDuplicate;
+    const skipDetails = [];
+    if (skippedInactive > 0)     skipDetails.push(`${skippedInactive} inactive/filtered`);
+    if (skippedDuplicate > 0)    skipDetails.push(`${skippedDuplicate} duplicate`);
+    if (skippedMissingData > 0)  skipDetails.push(`${skippedMissingData} missing-data`);
+
     return res.json({
       success: true,
       inserted: inserted,
-      skipped: skipped,
+      skipped: totalSkipped,
+      skipped_inactive: skippedInactive,
+      skipped_duplicate: skippedDuplicate,
+      skipped_missing_data: skippedMissingData,
       carrier: carrier,
       upload_batch: uploadMonth,
       total_processed: rows.length,
-      message: `Uploaded ${inserted} ${carrier} production records, skipped ${skipped} duplicates for batch ${uploadMonth}`
+      message: `Uploaded ${inserted} ${carrier} production records${
+        totalSkipped > 0 ? `, skipped ${totalSkipped} (${skipDetails.join(', ')})` : ''
+      } for batch ${uploadMonth}`
     });
 
   } catch (err) {
