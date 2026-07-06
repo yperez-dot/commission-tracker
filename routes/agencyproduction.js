@@ -5,6 +5,14 @@ const XLSX = require('xlsx');
 const { getPool } = require('../db/database');
 const { requireAuth } = require('./auth');
 
+// str() — safe Excel cell coercion: null/undefined → '', numbers/booleans → String, Dates → ISO date
+// Prevents TypeError when a numeric or null Excel cell value hits .trim() or .substring()
+function str(val) {
+  if (val === null || val === undefined) return '';
+  if (val instanceof Date) return val.toISOString().split('T')[0];
+  return String(val);
+}
+
 const upload = multer({ 
   storage: multer.memoryStorage(),
   limits: {
@@ -104,21 +112,24 @@ function isActivePolicy(row, carrier) {
       //   - ~44 NA/blank (not active)
       // Consumer_Status=ACTIVE (287) reflects actual enrollment = actual override payment
       // Med Supp uses POLICY_STATUS instead
-      statusValue = (row.Consumer_Status || row.POLICY_STATUS || '').trim();
+      statusValue = str(row.Consumer_Status || row.POLICY_STATUS).trim();
       break;
     case 'HealthSpring':
       // HealthSpring uses Status (not POLICY_STATUS)
-      statusValue = (row.Status || '').trim();
+      statusValue = str(row.Status).trim();
       break;
     case 'Freedom':
-      // Freedom uses POLICY_STATUS or APP_STATUS
-      statusValue = (row.POLICY_STATUS || row.APP_STATUS || '').trim();
+      // FINAL_STATUS is authoritative for Freedom:
+      //   NEW_EFFECTIVE = active, PLAN TRANSFER = active (our agent wrote the transfer, client retained)
+      //   CANCEL, Plan Denied = drop even if POLICY_STATUS = CMS Accepted
+      // Precedence: FINAL_STATUS → POLICY_STATUS → APP_STATUS
+      statusValue = str(row.FINAL_STATUS).trim() || str(row.POLICY_STATUS || row.APP_STATUS).trim();
       break;
     case 'Aetna':
       // Aetna has three status columns to check
-      const enrollStatus = (row.Enroll_Status || '').trim().toUpperCase();
-      const exitStatus = (row.Exit_Status || '').trim().toUpperCase();
-      const termStatus = (row.Term_Status || '').trim().toUpperCase();
+      const enrollStatus = str(row.Enroll_Status).trim().toUpperCase();
+      const exitStatus = str(row.Exit_Status).trim().toUpperCase();
+      const termStatus = str(row.Term_Status).trim().toUpperCase();
       
       // Drop if any status contains Cancel/Voluntary
       if (enrollStatus.includes('CANCEL')) return false;
@@ -132,17 +143,17 @@ function isActivePolicy(row, carrier) {
       return false;
       
     case 'Humana':
-      statusValue = (row.Status || '').trim();
+      statusValue = str(row.Status).trim();
       break;
     case 'Anthem':
       // Anthem files use Enrollment_Status (not Consumer_Status or App_Status)
-      statusValue = (row.Enrollment_Status || row.Consumer_Status || row.App_Status || '').trim();
+      statusValue = str(row.Enrollment_Status || row.Consumer_Status || row.App_Status).trim();
       break;
     case 'Devoted':
-      statusValue = (row.Status || '').trim();
+      statusValue = str(row.Status).trim();
       break;
     default:
-      statusValue = (row.Status || row.App_Status || row.Consumer_Status || row.POLICY_STATUS || '').trim();
+      statusValue = str(row.Status || row.App_Status || row.Consumer_Status || row.POLICY_STATUS).trim();
   }
   
   if (!statusValue) return false; // No status = drop (manual review needed)
@@ -160,8 +171,9 @@ function isActivePolicy(row, carrier) {
     'ACCEPTED',       // UHC Med Supp (policy accepted and active)
     'ENROLLED',       // HealthSpring, Devoted (actual enrollment, not just app submitted)
     'APPROVED',       // Devoted (approved for enrollment)
-    'CMS ACCEPTED',   // Freedom (CMS accepted the enrollment - active)
-    'NEW_EFFECTIVE'   // Freedom FINAL_STATUS (fresh active policy)
+    'CMS ACCEPTED',   // Freedom POLICY_STATUS fallback (CMS accepted the enrollment)
+    'NEW_EFFECTIVE',  // Freedom FINAL_STATUS — fresh active policy
+    'PLAN TRANSFER'   // Freedom FINAL_STATUS — our agent wrote the transfer, client retained
   ];
   
   for (const keepStatus of keepStatuses) {
@@ -440,13 +452,15 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         continue;
       }
 
-      // Check for duplicate (same agent + client + effective_date in same batch)
+      // Check for duplicate (same agent + client + carrier + effective_date in same batch)
+      // carrier is required: same client enrolled in two carriers same month is NOT a duplicate
       const existingQuery = `
         SELECT id FROM agency_production 
         WHERE upload_batch = $1 
           AND agent_name = $2
           AND client_name = $3
           AND effective_date IS NOT DISTINCT FROM $4
+          AND carrier = $5
         LIMIT 1
       `;
       
@@ -454,7 +468,8 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         uploadMonth,
         agentName,
         clientName,
-        effectiveDate
+        effectiveDate,
+        carrier
       ]);
 
       if (existingResult.rows.length > 0) {
