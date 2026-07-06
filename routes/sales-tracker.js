@@ -3,7 +3,8 @@ const router = express.Router();
 const fetch = require('node-fetch');
 const { requireAuth } = require('./auth');
 
-const NOTION_TOKEN = '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';
+const NOTION_TOKEN = process.env.NOTION_TOKEN;
+if (!NOTION_TOKEN) throw new Error('NOTION_TOKEN env var is required');
 const SALES_TRACKER_DB = 'dce5f374-c877-4280-b5be-3b922b4ff210';
 const NOTION_VERSION = '2022-06-28';
 
