@@ -885,12 +885,13 @@ router.get('/reconcile', requireAuth, async (req, res) => {
     }
 
     // Normalize client name: "LAST, FIRST" → "first last"; no-comma → lowercase trimmed
-    // Mirrors reconMatching.js normName() for consistent matching
+    // Non-comma path strips trailing single-letter initials (e.g. Humana BSI: "ALAN KITCHMAN L" → "alan kitchman")
+    // Mirrors AgencyProductionRecon.js normName() non-comma branch
     function normClient(col) {
       return `CASE
         WHEN ${col} LIKE '%,%'
         THEN LOWER(TRIM(SPLIT_PART(${col}, ',', 2)) || ' ' || TRIM(SPLIT_PART(${col}, ',', 1)))
-        ELSE LOWER(TRIM(REGEXP_REPLACE(COALESCE(${col}, ''), '\s+', ' ', 'g')))
+        ELSE TRIM(REGEXP_REPLACE(LOWER(TRIM(REGEXP_REPLACE(COALESCE(${col}, ''), '\s+', ' ', 'g'))), '\s+[a-z]\.?$', ''))
       END`;
     }
 
