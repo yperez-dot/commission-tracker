@@ -1210,9 +1210,9 @@ router.get('/export-bsi-recon', requireAuth, async (req, res) => {
       return ws;
     }
 
-    // ── Tab 1: Summary (first sheet) ─────────────────────────────────────────
+    // ── Tab 1: Summary (first sheet — created first so it appears first in workbook) ──
+    // Note: ExcelJS 4.x has no moveSheet(); create Summary before data tabs instead.
     const summaryWs = wb.addWorksheet('Summary');
-    wb.moveSheet('Summary', 0);
     summaryWs.getColumn(1).width = 35;
     summaryWs.getColumn(2).width = 20;
 
