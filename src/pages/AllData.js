@@ -171,7 +171,7 @@ export default function AllData({ user, initialFilters = {} }) {
     setDeleting(true);
     try {
       if (confirmDelete === 'all') {
-        await apiFetch('/records/bulk-delete', { method: 'POST', body: JSON.stringify({ deleteAll: true }) });
+        await apiFetch('/records/bulk-delete', { method: 'POST', body: JSON.stringify({ deleteAll: true, confirm: 'DELETE ALL' }) });
         setRecords([]); setTotal(0); setSelected(new Set());
       } else if (confirmDelete === 'selected') {
         await apiFetch('/records/bulk-delete', { method: 'POST', body: JSON.stringify({ ids: [...selected] }) });

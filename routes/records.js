@@ -139,17 +139,23 @@ router.get('/', requireAuth, async (req, res) => {
         cr.lob, cr.gross_commission, cr.thei_share, cr.bsi_share,
         cr.producer_payable, cr.sub_agent_override,
         cr.members, cr.statement_month,
-        CASE WHEN ps.status = 'termed' OR bob.status = 'termed' THEN true ELSE false END as is_termed
+        CASE WHEN
+          EXISTS (
+            SELECT 1 FROM policy_status ps
+            WHERE LOWER(TRIM(cr.client_full_name)) = LOWER(TRIM(ps.client_full_name))
+              AND LOWER(TRIM(cr.carrier)) = LOWER(TRIM(ps.carrier))
+              AND LOWER(TRIM(cr.agent_name)) = LOWER(TRIM(ps.agent_name))
+              AND ps.status = 'termed'
+          ) OR EXISTS (
+            SELECT 1 FROM book_of_business bob
+            WHERE LOWER(TRIM(cr.client_full_name)) = LOWER(TRIM(bob.client_full_name))
+              AND LOWER(TRIM(cr.carrier)) = LOWER(TRIM(bob.carrier))
+              AND LOWER(TRIM(cr.agent_name)) = LOWER(TRIM(bob.agent_name))
+              AND bob.status = 'termed'
+          )
+        THEN true ELSE false END as is_termed
        FROM commission_records cr 
        LEFT JOIN uploads u ON cr.upload_id = u.id
-       LEFT JOIN policy_status ps 
-         ON LOWER(TRIM(cr.client_full_name)) = LOWER(TRIM(ps.client_full_name))
-         AND LOWER(TRIM(cr.carrier)) = LOWER(TRIM(ps.carrier))
-         AND LOWER(TRIM(cr.agent_name)) = LOWER(TRIM(ps.agent_name))
-       LEFT JOIN book_of_business bob
-         ON LOWER(TRIM(cr.client_full_name)) = LOWER(TRIM(bob.client_full_name))
-         AND LOWER(TRIM(cr.carrier)) = LOWER(TRIM(bob.carrier))
-         AND LOWER(TRIM(cr.agent_name)) = LOWER(TRIM(bob.agent_name))
        ${wc} ${orderBy} LIMIT $${idx++} OFFSET $${idx++}`,
       [...params, parseInt(limit), parseInt(offset)]
     );
@@ -178,11 +184,13 @@ router.delete('/:id', requireAuth, requireAdmin, async (req, res) => {
 router.post('/bulk-delete', requireAuth, requireAdmin, async (req, res) => {
   try {
     const pool = getPool();
-    const { ids, deleteAll, agent, carrier, period, classification } = req.body;
+    const { ids, deleteAll, confirm, agent, carrier, period, classification } = req.body;
     if (deleteAll) {
+      if (confirm !== 'DELETE ALL') {
+        return res.status(400).json({ error: 'Must pass confirm: "DELETE ALL" to wipe all records.' });
+      }
       await pool.query('DELETE FROM commission_records');
       await pool.query('DELETE FROM uploads');
-      await pool.query('DELETE FROM book_of_business');
       res.json({ success: true, deleted: 'all', message: 'All records deleted' });
       return;
     }
@@ -226,7 +234,6 @@ router.get('/summary', requireAuth, async (req, res) => {
     if (view !== 'agent') {
       where.push(`NOT (lob = 'ACA' AND classification ILIKE '%agent commission%')`);
     }
-    where.push(`NOT (lob = 'ACA' AND classification ILIKE '%agent commission%')`);
 
     const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
 
@@ -278,7 +285,6 @@ router.get('/kpi', requireAuth, async (req, res) => {
     if (view !== 'agent') {
       where.push(`NOT (lob = 'ACA' AND classification ILIKE '%agent commission%')`);
     }
-    where.push(`NOT (lob = 'ACA' AND classification ILIKE '%agent commission%')`);
 
     const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
 
