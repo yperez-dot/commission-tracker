@@ -110,10 +110,9 @@ const AGENT_ALIASES = {
   'munoz, christian': 'Christian Munoz',
   'christian munoz': 'Christian Munoz',
 
-  // Per Yahoska 2026-05-12: BROKER SOCIETY INSURANCE rows on statements
-  // belong to Alba Hernandez, BSI's principal. Normalize to her name so
-  // it shows up in producer reports correctly.
-  'broker society insurance': 'Alba Hernandez',
+  // 'broker society insurance' alias intentionally removed 2026-07-07 per Yahoska:
+  // BSI agency-level production must stay separate from Alba's individual totals.
+  // BSI rows will remain as 'Broker Society Insurance' until further decision.
 
   'tailored insurance solutions inc': 'Tailored Insurance Solutions',
   'tailored insurance solutions': 'Tailored Insurance Solutions',

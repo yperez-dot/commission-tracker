@@ -817,4 +817,210 @@ router.get('/stats', requireAuth, async (req, res) => {
   }
 });
 
+// ─── THREE-WAY RECONCILIATION ────────────────────────────────────────────────
+// GET /api/agency-production/reconcile
+//
+// Leg 1 (source of truth): agency_production (Hector's reports)
+// Leg 2 (BSI→THEI):        commission_records from NHP/BSI/THE statement uploads
+// Leg 3 (Carrier→BSI):     commission_records from bsi_statement uploads
+//
+// Match key: normClient(client_name) + normCarrier(carrier)  — period-agnostic (v1 limitation)
+// Status (manual_override_status wins when set):
+//   paid          — Leg 2 match found (BSI paid THEI)
+//   chase_bsi     — Leg 3 match with commission > 0, no Leg 2 (carrier paid BSI, BSI hasn't paid THEI)
+//   request_audit — Leg 3 $0 record OR carrier month uploaded but client absent
+//   pending       — no carrier statement uploaded for this carrier yet
+//
+// v1 limitations: period-agnostic; single best match per client+carrier; chargebacks not de-duped;
+//   pagination accuracy not guaranteed when status filter is applied
+router.get('/reconcile', requireAuth, async (req, res) => {
+  try {
+    const pool = getPool();
+    const { batch, carrier, agent, status: statusFilter, limit = 500, offset = 0 } = req.query;
+
+    const params = [];
+    const apConds = [];
+    if (batch)   { apConds.push(`ap.upload_batch = $${params.length + 1}`);          params.push(batch); }
+    if (carrier) { apConds.push(`ap.carrier ILIKE $${params.length + 1}`);            params.push(`%${carrier}%`); }
+    if (agent)   { apConds.push(`ap.agent_name ILIKE $${params.length + 1}`);         params.push(`%${agent}%`); }
+    const apWhere = apConds.length ? `AND ${apConds.join(' AND ')}` : '';
+
+    // Inline SQL helpers — kept as JS functions so we can reuse them across CTEs
+    function normCarrier(col) {
+      return `CASE
+        WHEN LOWER(${col}) LIKE '%humana%'                                           THEN 'humana'
+        WHEN LOWER(${col}) LIKE '%aetna%'                                            THEN 'aetna'
+        WHEN LOWER(${col}) LIKE '%uhc%' OR LOWER(${col}) LIKE '%united%'             THEN 'unitedhealthcare'
+        WHEN LOWER(${col}) LIKE '%doctors%'                                          THEN 'doctors'
+        WHEN LOWER(${col}) LIKE '%careplus%' OR LOWER(${col}) LIKE '%care plus%'     THEN 'careplus'
+        WHEN LOWER(${col}) LIKE '%devoted%'                                          THEN 'devoted'
+        WHEN LOWER(${col}) LIKE '%solis%'                                            THEN 'solis'
+        WHEN LOWER(${col}) LIKE '%healthsun%' OR LOWER(${col}) LIKE '%health sun%'   THEN 'healthsun'
+        WHEN LOWER(${col}) LIKE '%oscar%'                                            THEN 'oscar health'
+        WHEN LOWER(${col}) LIKE '%molina%'                                           THEN 'molina'
+        WHEN LOWER(${col}) LIKE '%wellcare%'                                         THEN 'wellcare'
+        WHEN LOWER(${col}) LIKE '%freedom%'                                          THEN 'freedom'
+        ELSE LOWER(TRIM(${col}))
+      END`;
+    }
+
+    // Normalize client name: "LAST, FIRST" → "first last"; no-comma → lowercase trimmed
+    // Mirrors reconMatching.js normName() for consistent matching
+    function normClient(col) {
+      return `CASE
+        WHEN ${col} LIKE '%,%'
+        THEN LOWER(TRIM(SPLIT_PART(${col}, ',', 2)) || ' ' || TRIM(SPLIT_PART(${col}, ',', 1)))
+        ELSE LOWER(TRIM(REGEXP_REPLACE(COALESCE(${col}, ''), '\s+', ' ', 'g')))
+      END`;
+    }
+
+    const q = `
+      WITH
+      -- Leg 2: BSI→THEI commission statements (NHP, BSI consolidated PDFs, THE statements)
+      -- Uses ROW_NUMBER to get the latest record per client+carrier (handles dups & renewals)
+      leg2 AS (
+        SELECT id, client_full_name, carrier, policy_number, commission,
+               payment_period, classification, agent_name, nc, ncarr
+        FROM (
+          SELECT cr.id, cr.client_full_name, cr.carrier, cr.policy_number,
+                 cr.commission, cr.payment_period, cr.classification, cr.agent_name,
+                 ${normClient('cr.client_full_name')} AS nc,
+                 ${normCarrier('cr.carrier')}         AS ncarr,
+                 ROW_NUMBER() OVER (
+                   PARTITION BY ${normClient('cr.client_full_name')}, ${normCarrier('cr.carrier')}
+                   ORDER BY cr.id DESC
+                 ) AS rn
+          FROM commission_records cr
+          JOIN uploads u ON cr.upload_id = u.id
+          WHERE (u.category IS NULL OR u.category = 'commission_statement')
+            AND cr.payee IN ('BSI','NHP','THE')
+            AND cr.client_full_name IS NOT NULL
+            AND TRIM(cr.client_full_name) <> ''
+        ) sub WHERE rn = 1
+      ),
+      -- Leg 3: Carrier→BSI direct carrier statements (uploaded via /upload-bsi-statement)
+      leg3 AS (
+        SELECT id, client_full_name, carrier, policy_number, commission,
+               payment_period, classification, nc, ncarr
+        FROM (
+          SELECT cr.id, cr.client_full_name, cr.carrier, cr.policy_number,
+                 cr.commission, cr.payment_period, cr.classification,
+                 ${normClient('cr.client_full_name')} AS nc,
+                 ${normCarrier('cr.carrier')}         AS ncarr,
+                 ROW_NUMBER() OVER (
+                   PARTITION BY ${normClient('cr.client_full_name')}, ${normCarrier('cr.carrier')}
+                   ORDER BY cr.id DESC
+                 ) AS rn
+          FROM commission_records cr
+          JOIN uploads u ON cr.upload_id = u.id
+          WHERE u.category = 'bsi_statement'
+            AND cr.client_full_name IS NOT NULL
+            AND TRIM(cr.client_full_name) <> ''
+        ) sub WHERE rn = 1
+      ),
+      -- Which carrier keys have any bsi_statement upload (split comma-delimited carrier field)
+      -- Used to distinguish 'pending' (never uploaded) from 'request_audit' (uploaded, client absent)
+      carrier_has_uploads AS (
+        SELECT DISTINCT ${normCarrier('TRIM(cv.c)')} AS ncarr
+        FROM (
+          SELECT TRIM(unnest(STRING_TO_ARRAY(u.carrier, ','))) AS c
+          FROM uploads u
+          WHERE u.category = 'bsi_statement'
+            AND u.carrier IS NOT NULL AND TRIM(u.carrier) <> ''
+        ) cv
+        WHERE TRIM(cv.c) <> ''
+      )
+      SELECT
+        ap.id, ap.agent_name, ap.client_name, ap.carrier, ap.policy_number,
+        ap.effective_date, ap.upload_batch, ap.status AS production_status,
+        ap.enrollment_type, ap.plan_name, ap.manual_override_status,
+        -- Leg 2 (BSI→THEI)
+        l2.id              AS l2_id,
+        l2.commission      AS l2_commission,
+        l2.payment_period  AS l2_period,
+        l2.classification  AS l2_classification,
+        l2.policy_number   AS l2_policy,
+        l2.client_full_name AS l2_client,
+        l2.agent_name      AS l2_agent,
+        -- Leg 3 (Carrier→BSI)
+        l3.id              AS l3_id,
+        l3.commission      AS l3_commission,
+        l3.payment_period  AS l3_period,
+        l3.classification  AS l3_classification,
+        l3.policy_number   AS l3_policy,
+        l3.client_full_name AS l3_client,
+        -- Whether this carrier has ANY bsi_statement uploads (for pending detection)
+        (chu.ncarr IS NOT NULL) AS carrier_has_uploads,
+        -- Final reconciliation status — manual_override_status wins when non-empty
+        COALESCE(
+          NULLIF(TRIM(COALESCE(ap.manual_override_status, '')), ''),
+          CASE
+            WHEN l2.id IS NOT NULL                                   THEN 'paid'
+            WHEN l3.id IS NOT NULL AND COALESCE(l3.commission,0) > 0 THEN 'chase_bsi'
+            WHEN l3.id IS NOT NULL                                   THEN 'request_audit'
+            WHEN chu.ncarr IS NOT NULL                               THEN 'request_audit'
+            ELSE 'pending'
+          END
+        ) AS recon_status
+      FROM agency_production ap
+      LEFT JOIN leg2 l2  ON ${normClient('ap.client_name')} = l2.nc
+                        AND ${normCarrier('ap.carrier')}    = l2.ncarr
+      LEFT JOIN leg3 l3  ON ${normClient('ap.client_name')} = l3.nc
+                        AND ${normCarrier('ap.carrier')}    = l3.ncarr
+      LEFT JOIN carrier_has_uploads chu ON ${normCarrier('ap.carrier')} = chu.ncarr
+      WHERE 1=1 ${apWhere}
+      ORDER BY ap.carrier, ap.agent_name, ap.effective_date DESC NULLS LAST
+      LIMIT $${params.length + 1} OFFSET $${params.length + 2}
+    `;
+
+    params.push(parseInt(limit), parseInt(offset));
+    const result = await pool.query(q, params);
+
+    // Real db_total: COUNT of all matching agency_production rows (independent of LIMIT/OFFSET)
+    const countParams = params.slice(0, -2); // strip LIMIT and OFFSET
+    const countConditions = apConds.length ? `WHERE ${apConds.join(' AND ')}` : '';
+    const countResult = await pool.query(
+      `SELECT COUNT(*) AS db_total FROM agency_production ap ${countConditions}`,
+      countParams
+    );
+    const db_total = parseInt(countResult.rows[0].db_total);
+
+    // Post-query status filter (v1: pagination accuracy not guaranteed with this active)
+    const rows = statusFilter
+      ? result.rows.filter(r => r.recon_status === statusFilter)
+      : result.rows;
+
+    // Summary counts built from the current page result set
+    const counts = result.rows.reduce((acc, r) => {
+      const s = r.recon_status || 'pending';
+      acc[s] = (acc[s] || 0) + 1;
+      return acc;
+    }, {});
+
+    return res.json({
+      summary: {
+        db_total,                                      // true total rows in agency_production matching filters
+        page_count:    result.rows.length,             // rows returned in this page
+        paid:          counts['paid']          || 0,
+        chase_bsi:     counts['chase_bsi']     || 0,
+        request_audit: counts['request_audit'] || 0,
+        pending:       counts['pending']       || 0
+      },
+      rows,
+      limit:  parseInt(limit),
+      offset: parseInt(offset),
+      _note: [
+        'v1: period-agnostic matching — client+carrier key only',
+        'single best record per client+carrier per leg (latest id)',
+        'chargebacks not de-duped from positive records',
+        'pagination may not be accurate when status filter is applied'
+      ].join('; ')
+    });
+
+  } catch (err) {
+    console.error('[RECON-3WAY]', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
