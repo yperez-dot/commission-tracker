@@ -115,7 +115,15 @@ export default function AgencyProductionUpload() {
             } catch (e) {
               result = { message: text };
             }
-            results.push({ file: file.name, success: true, message: result.message || 'Upload successful!' });
+            results.push({
+              file: file.name,
+              success: true,
+              message: result.message || 'Upload successful!',
+              inserted: result.inserted,
+              skipped_inactive: result.skipped_inactive || 0,
+              skipped_duplicate: result.skipped_duplicate || 0,
+              skipped_missing_data: result.skipped_missing_data || 0
+            });
           }
         } catch (err) {
           clearTimeout(timeoutId);
@@ -281,14 +289,19 @@ export default function AgencyProductionUpload() {
               <div key={index} style={{
                 padding: '8px 12px',
                 marginTop: index > 0 ? '6px' : '0',
-                background: result.success ? 'var(--green-light)' : 'var(--red-light)',
-                border: `1px solid ${result.success ? 'var(--green)' : 'var(--red)'}`,
+                background: result.success ? (result.inserted === 0 ? 'var(--yellow-light, #fff8e1)' : 'var(--green-light)') : 'var(--red-light)',
+                border: `1px solid ${result.success ? (result.inserted === 0 ? 'var(--yellow, #f59e0b)' : 'var(--green)') : 'var(--red)'}`,
                 borderRadius: '4px',
                 fontSize: '12px',
-                color: result.success ? 'var(--green-dark)' : 'var(--red-dark)'
+                color: result.success ? (result.inserted === 0 ? 'var(--yellow-dark, #92400e)' : 'var(--green-dark)') : 'var(--red-dark)'
               }}>
-                <div style={{ fontWeight: 600 }}>{result.success ? '✅' : '❌'} {result.file}</div>
+                <div style={{ fontWeight: 600 }}>{result.success ? (result.inserted === 0 ? '⚠️' : '✅') : '❌'} {result.file}</div>
                 <div style={{ marginTop: '4px', opacity: 0.8 }}>{result.message}</div>
+                {result.success && result.inserted === 0 && (result.skipped_inactive > 0 || result.skipped_duplicate > 0 || result.skipped_missing_data > 0) && (
+                  <div style={{ marginTop: '4px', fontSize: '11px', opacity: 0.9 }}>
+                    Skipped: {[result.skipped_duplicate > 0 && `${result.skipped_duplicate} duplicate`, result.skipped_inactive > 0 && `${result.skipped_inactive} inactive`, result.skipped_missing_data > 0 && `${result.skipped_missing_data} missing data`].filter(Boolean).join(' · ')}
+                  </div>
+                )}
               </div>
             ))}
           </div>
@@ -350,7 +363,7 @@ export default function AgencyProductionUpload() {
                           onClick={async (e) => {
                             e.preventDefault();
                             try {
-                              const data = await apiFetch(`/agency-production?carrier=${encodeURIComponent(upload.carrier)}&batch=${encodeURIComponent(upload.upload_batch)}&limit=1000`);
+                              const data = await apiFetch(`/agency-production?upload_id=${upload.id}&limit=1000`);
                               const records = data.production || [];
                               
                               if (records.length === 0) {

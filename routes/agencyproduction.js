@@ -564,7 +564,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
 router.get('/', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
-    const { batch, carrier, agent, limit = 100, offset = 0 } = req.query;
+    const { batch, carrier, agent, upload_id, limit = 100, offset = 0 } = req.query;
 
     let query = `SELECT 
       ap.*, 
@@ -584,6 +584,11 @@ router.get('/', requireAuth, async (req, res) => {
     ) apu ON true -- 3e: join by upload_id; fallback for legacy rows
     WHERE 1=1`;
     const params = [];
+
+    if (upload_id) {
+      query += ` AND ap.upload_id = $${params.length + 1}`;
+      params.push(parseInt(upload_id));
+    }
 
     if (batch) {
       query += ` AND upload_batch = $${params.length + 1}`;
@@ -608,6 +613,10 @@ router.get('/', requireAuth, async (req, res) => {
     // Get total count
     let countQuery = 'SELECT COUNT(*) as count FROM agency_production ap WHERE 1=1';
     const countParams = [];
+    if (upload_id) {
+      countQuery += ` AND upload_id = $${countParams.length + 1}`;
+      countParams.push(parseInt(upload_id));
+    }
     if (batch) {
       countQuery += ` AND upload_batch = $${countParams.length + 1}`;
       countParams.push(batch);
