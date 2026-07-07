@@ -732,7 +732,7 @@ router.patch('/:id/override', requireAuth, async (req, res) => {
     const { status } = req.body;
     const pool = getPool();
 
-    const VALID_STATUSES = ['paid', 'chase_bsi', 'request_audit', 'pending', null];
+    const VALID_STATUSES = ['paid', 'chase_bsi', 'request_audit', 'held_licensing', 'no_pay_expected', 'pending', null];
     if (!VALID_STATUSES.includes(status)) {
       return res.status(400).json({ error: `Invalid status. Must be one of: ${VALID_STATUSES.filter(s => s !== null).join(', ')}, or null to clear.` });
     }
@@ -921,10 +921,11 @@ router.get('/reconcile', requireAuth, async (req, res) => {
       -- Leg 3: Carrier→BSI direct carrier statements (uploaded via /upload-bsi-statement)
       leg3 AS (
         SELECT id, client_full_name, carrier, policy_number, commission,
-               payment_period, classification, nc, ncarr
+               payment_period, classification, hold_reason, nc, ncarr
         FROM (
           SELECT cr.id, cr.client_full_name, cr.carrier, cr.policy_number,
                  cr.commission, cr.payment_period, cr.classification,
+                 cr.raw_data::jsonb->>'Hold Reason' AS hold_reason,
                  ${normClient('cr.client_full_name')} AS nc,
                  ${normCarrier('cr.carrier')}         AS ncarr,
                  ROW_NUMBER() OVER (
@@ -976,7 +977,12 @@ router.get('/reconcile', requireAuth, async (req, res) => {
           NULLIF(TRIM(COALESCE(ap.manual_override_status, '')), ''),
           CASE
             WHEN l2.id IS NOT NULL                                   THEN 'paid'
+            WHEN UPPER(TRIM(ap.status)) IN ('WITHDRAWN','IN PROGRESS','CANCELLED','DENIED') THEN 'no_pay_expected'
             WHEN l3.id IS NOT NULL AND COALESCE(l3.commission,0) > 0 THEN 'chase_bsi'
+            WHEN l3.id IS NOT NULL
+             AND l3.classification = 'Held'
+             AND (l3.hold_reason ILIKE '%not licensed%' OR l3.hold_reason ILIKE '%not appointed%')
+                                                                     THEN 'held_licensing'
             WHEN l3.id IS NOT NULL                                   THEN 'request_audit'
             WHEN chu.ncarr IS NOT NULL                               THEN 'request_audit'
             ELSE 'pending'
@@ -1038,8 +1044,10 @@ router.get('/reconcile', requireAuth, async (req, res) => {
         page_count:    result.rows.length,             // rows in this page (excludes Alba)
         paid:          counts['paid']          || 0,
         chase_bsi:     counts['chase_bsi']     || 0,
-        request_audit: counts['request_audit'] || 0,
-        pending:       counts['pending']       || 0,
+        request_audit:    counts['request_audit']    || 0,
+        held_licensing:   counts['held_licensing']   || 0,
+        no_pay_expected:  counts['no_pay_expected']  || 0,
+        pending:          counts['pending']          || 0,
         excluded_count: excluded.length               // Alba rows pulled out separately
       },
       rows,

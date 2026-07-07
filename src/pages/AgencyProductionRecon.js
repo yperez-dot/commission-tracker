@@ -270,12 +270,46 @@ function _findCarrierBSIMatch(prod, carrierRecords) {
   return findOverrideMatch(prod, samePeriod);
 }
 
+// Pure helper: true when a Carrier→BSI 'Held' record is a licensing hold (not Paper Check / Future Txn)
+function _isLicensingHold(record) {
+  if (!record || record.classification !== 'Held') return false;
+  try {
+    const rd = typeof record.raw_data === 'string' ? JSON.parse(record.raw_data) : (record.raw_data || {});
+    const reason = (rd['Hold Reason'] || '').toLowerCase();
+    return reason.includes('not licensed') || reason.includes('not appointed');
+  } catch { return false; }
+}
+
+// Pure helper: period-agnostic lookup for a Held record by client+carrier.
+// Used when _findCarrierBSIMatch misses because payment_period differs.
+function _findHeldRecord(prod, carrierRecords) {
+  const prodClientNorm = normName(prod.client_name);
+  const prodCarrier = normalizeCarrier(prod.carrier);
+  return carrierRecords.find(r =>
+    r.classification === 'Held' &&
+    normName(r.client_full_name) === prodClientNorm &&
+    (normalizeCarrier(r.carrier) === prodCarrier ||
+     normalizeCarrier(r.carrier).includes(prodCarrier) ||
+     prodCarrier.includes(normalizeCarrier(r.carrier)))
+  ) || null;
+}
+
 function _getThreeWayStatus(m) {
   if (m.production.manual_override_status) return m.production.manual_override_status;
   if (m.override) return 'paid';
+  // Bug 2: non-payable production status — checked AFTER l2 paid, so a cancelled app
+  // that actually received a commission still surfaces as paid (not silently suppressed)
+  const prodStatus = (m.production.status || '').toUpperCase().trim();
+  if (['WITHDRAWN', 'IN PROGRESS', 'CANCELLED', 'DENIED'].includes(prodStatus)) return 'no_pay_expected';
   const carrierAmt = m.carrierBSI ? parseFloat(m.carrierBSI.commission || 0) : null;
   if (m.carrierBSI && carrierAmt > 0 && !m.override) return 'chase_bsi';
-  if (m.carrierBSI && carrierAmt === 0) return 'request_audit';
+  // Bug 1a: Carrier→BSI match found but $0 — check if it's a licensing hold
+  if (m.carrierBSI && carrierAmt === 0) {
+    if (_isLicensingHold(m.carrierBSI)) return 'held_licensing';
+    return 'request_audit';
+  }
+  // Bug 1b: No Carrier→BSI period match, but a Held record exists for this client+carrier
+  if (!m.carrierBSI && m.heldRecord && _isLicensingHold(m.heldRecord)) return 'held_licensing';
   if (!m.carrierBSI && m.carrierUploaded) return 'request_audit';
   return 'pending';
 }
@@ -386,11 +420,12 @@ export default function AgencyProductionRecon() {
     return production.map(prod => {
       const override = findOverrideMatch(prod, overrides);
       const carrierBSI = _findCarrierBSIMatch(prod, carrierBSIRecords);
+      const heldRecord = _findHeldRecord(prod, carrierBSIRecords);
       const prodCarrier = normalizeCarrier(prod.carrier || '');
       const prodPeriod = prod.payment_period || prod.effective_date?.substring(0,7)?.replace('-','') || '';
       const carrierUploaded = bsiUploadedKeys.has(`${prodCarrier}|${prodPeriod}`) ||
         bsiKeysList.some(k => k.startsWith(`${prodCarrier}|`));
-      return { production: prod, override, carrierBSI, carrierUploaded };
+      return { production: prod, override, carrierBSI, heldRecord, carrierUploaded };
     });
   }, [production, overrides, carrierBSIRecords, bsiUploadedKeys]);
 
@@ -829,7 +864,7 @@ export default function AgencyProductionRecon() {
                 <div className="form-label" style={{ marginBottom: 6 }}>Override Status</div>
                 <MultiSelect
                   label="Status"
-                  options={['paid','chase_bsi','request_audit','held_licensing','pending']}
+                  options={['paid','chase_bsi','request_audit','held_licensing','no_pay_expected','pending']}
                   selected={filterOverrideStatus}
                   onChange={setFilterOverrideStatus}
                   formatOption={v => ({
@@ -837,6 +872,7 @@ export default function AgencyProductionRecon() {
                     chase_bsi: '🔴 Chase BSI',
                     request_audit: '🟡 Request Audit',
                     held_licensing: '🔒 Held – Licensing',
+                    no_pay_expected: '⛔ No Pay Expected',
                     pending: '⚪ Pending'
                   })[v] || v}
                 />
@@ -970,6 +1006,7 @@ export default function AgencyProductionRecon() {
                             if (twStatus === 'chase_bsi')     return <span style={{ background:'#F8D7DA',color:'#721C24',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>🔴 Chase BSI</span>;
                             if (twStatus === 'request_audit') return <span style={{ background:'#FFF3CD',color:'#856404',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>🟡 Request Audit</span>;
                             if (twStatus === 'held_licensing')  return <span style={{ background:'#E8E8E8',color:'#444',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>🔒 Held – Licensing</span>;
+                            if (twStatus === 'no_pay_expected')  return <span style={{ background:'#F3F0FF',color:'#6D28D9',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>⛔ No Pay Expected</span>;
                             return <span style={{ background:'#F0F0F0',color:'#6C757D',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>⚪ Pending</span>;
                           })();
                           return (
@@ -1039,6 +1076,7 @@ export default function AgencyProductionRecon() {
                                 <option value="chase_bsi">🔴 Chase BSI</option>
                                 <option value="request_audit">🟡 Request Audit</option>
                                 <option value="held_licensing">🔒 Held – Licensing</option>
+                                <option value="no_pay_expected">⛔ No Pay Expected</option>
                                 <option value="pending">⚪ Pending</option>
                               </select>
                             </td>
