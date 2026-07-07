@@ -44,6 +44,21 @@ function MultiSelect({ label, options, selected, onChange, formatOption }) {
               <span style={{ fontSize: 11, fontWeight: 500, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{label}</span>
               {selected.length > 0 && <button onClick={clear} style={{ fontSize: 11, color: 'var(--red)', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 500 }}>Clear</button>}
             </div>
+            <button onClick={clear} style={{
+                display: 'flex', alignItems: 'center', gap: 8, width: '100%',
+                padding: '6px 8px', background: allSelected ? 'var(--accent-light)' : 'none',
+                border: 'none', borderRadius: 4, cursor: 'pointer', textAlign: 'left', fontSize: 12,
+                color: allSelected ? 'var(--accent-dark)' : 'var(--text)', fontWeight: allSelected ? 500 : 400,
+                marginBottom: 2
+              }}>
+                <span style={{
+                  width: 14, height: 14, borderRadius: 3, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  border: allSelected ? 'none' : '1.5px solid var(--border)', background: allSelected ? 'var(--accent)' : 'transparent'
+                }}>
+                  {allSelected && <span style={{ color: 'var(--sidebar-bg)', fontSize: 9 }}>✓</span>}
+                </span>
+                <span>Select All</span>
+              </button>
             {options.map(opt => {
               const isSel = selected.includes(opt);
               return (
