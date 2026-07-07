@@ -866,12 +866,14 @@ function normReconCarrier(col) {
 }
 
 // Normalize client name for recon matching:
-//   “LAST, FIRST” → “first last”
+//   “LAST, FIRST MI” → “first last”  (strips trailing middle initials from first-name part)
+//   “LAST, FIRST”   → “first last”
 //   non-comma → lowercase + strip trailing single-letter initial (e.g. Humana BSI: “ALAN KITCHMAN L” → “alan kitchman”)
+// Both paths mirror AgencyProductionRecon.js normName() comma branch (first.replace(/(\s+[A-Z]\.?)+$/i, ''))
 function normReconClient(col) {
   return `CASE
     WHEN ${col} LIKE '%,%'
-    THEN LOWER(TRIM(SPLIT_PART(${col}, ',', 2)) || ' ' || TRIM(SPLIT_PART(${col}, ',', 1)))
+    THEN TRIM(REGEXP_REPLACE(LOWER(TRIM(SPLIT_PART(${col}, ',', 2))), '(\\s+[a-z]\\.?)+$', '')) || ' ' || LOWER(TRIM(SPLIT_PART(${col}, ',', 1)))
     ELSE TRIM(REGEXP_REPLACE(LOWER(TRIM(REGEXP_REPLACE(COALESCE(${col}, ''), '\\s+', ' ', 'g'))), '\\s+[a-z]\\.?$', ''))
   END`;
 }
