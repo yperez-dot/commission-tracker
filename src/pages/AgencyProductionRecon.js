@@ -893,10 +893,47 @@ export default function AgencyProductionRecon() {
                 />
               </div>
             </div>
-            <div style={{ display: 'flex', gap: 12 }}>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
               <button className="btn btn-secondary" onClick={exportToCSV} disabled={loading}>
                 📥 Export CSV
               </button>
+              {/* BSI Recon Export — cutoff date required, always blank */}
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center', background: 'var(--blue-light)', border: '1px solid var(--blue)', borderRadius: 6, padding: '4px 10px' }}>
+                <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--blue)', whiteSpace: 'nowrap' }}>
+                  BSI paid through:
+                </label>
+                <input
+                  type="date"
+                  id="bsiCutoffDate"
+                  style={{ fontSize: 12, border: '1px solid var(--border)', borderRadius: 4, padding: '3px 6px' }}
+                />
+                <button
+                  className="btn btn-primary"
+                  style={{ fontSize: 12, padding: '4px 12px', whiteSpace: 'nowrap' }}
+                  disabled={loading}
+                  onClick={() => {
+                    const cutoff = document.getElementById('bsiCutoffDate').value;
+                    if (!cutoff) { alert('Enter the date BSI has paid through before exporting.'); return; }
+                    const token = localStorage.getItem('token');
+                    const url = `${process.env.REACT_APP_API_URL}/api/agency-production/export-bsi-recon?cutoffDate=${cutoff}`;
+                    fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+                      .then(r => {
+                        if (!r.ok) return r.json().then(e => { throw new Error(e.error || r.status); });
+                        return r.blob();
+                      })
+                      .then(blob => {
+                        const a = document.createElement('a');
+                        a.href = URL.createObjectURL(blob);
+                        a.download = `BSI_Recon_Export_through_${cutoff.replace(/-/g,'')}.xlsx`;
+                        a.click();
+                        URL.revokeObjectURL(a.href);
+                      })
+                      .catch(err => alert('Export failed: ' + err.message));
+                  }}
+                >
+                  📤 Export BSI Recon
+                </button>
+              </div>
               <button className="btn btn-primary" onClick={loadData} disabled={loading}>
                 {loading ? 'Loading...' : '🔄 Refresh'}
               </button>

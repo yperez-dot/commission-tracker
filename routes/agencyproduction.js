@@ -833,15 +833,148 @@ router.get('/stats', requireAuth, async (req, res) => {
 // Leg 2 (BSI→THEI):        commission_records from NHP/BSI/THE statement uploads
 // Leg 3 (Carrier→BSI):     commission_records from bsi_statement uploads
 //
-// Match key: normClient(client_name) + normCarrier(carrier)  — period-agnostic (v1 limitation)
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared reconciliation helpers — used by /reconcile AND /export-bsi-recon
+// Extract once here so both routes stay in sync automatically.
+//
+// Match key: normReconClient(col) + normReconCarrier(col) — period-agnostic (v1 limitation)
 // Status (manual_override_status wins when set):
 //   paid          — Leg 2 match found (BSI paid THEI)
-//   chase_bsi     — Leg 3 match with commission > 0, no Leg 2 (carrier paid BSI, BSI hasn't paid THEI)
+//   chase_bsi     — Leg 3 match with commission > 0, no Leg 2 (carrier paid BSI, BSI hasn’t paid THEI)
 //   request_audit — Leg 3 $0 record OR carrier month uploaded but client absent
 //   pending       — no carrier statement uploaded for this carrier yet
 //
 // v1 limitations: period-agnostic; single best match per client+carrier; chargebacks not de-duped;
 //   pagination accuracy not guaranteed when status filter is applied
+// ─────────────────────────────────────────────────────────────────────────────
+function normReconCarrier(col) {
+  return `CASE
+    WHEN LOWER(${col}) LIKE '%humana%'                                           THEN 'humana'
+    WHEN LOWER(${col}) LIKE '%aetna%'                                            THEN 'aetna'
+    WHEN LOWER(${col}) LIKE '%uhc%' OR LOWER(${col}) LIKE '%united%'             THEN 'unitedhealthcare'
+    WHEN LOWER(${col}) LIKE '%doctors%'                                          THEN 'doctors'
+    WHEN LOWER(${col}) LIKE '%careplus%' OR LOWER(${col}) LIKE '%care plus%'     THEN 'careplus'
+    WHEN LOWER(${col}) LIKE '%devoted%'                                          THEN 'devoted'
+    WHEN LOWER(${col}) LIKE '%solis%'                                            THEN 'solis'
+    WHEN LOWER(${col}) LIKE '%healthsun%' OR LOWER(${col}) LIKE '%health sun%'   THEN 'healthsun'
+    WHEN LOWER(${col}) LIKE '%oscar%'                                            THEN 'oscar health'
+    WHEN LOWER(${col}) LIKE '%molina%'                                           THEN 'molina'
+    WHEN LOWER(${col}) LIKE '%wellcare%'                                         THEN 'wellcare'
+    WHEN LOWER(${col}) LIKE '%freedom%'                                          THEN 'freedom'
+    ELSE LOWER(TRIM(${col}))
+  END`;
+}
+
+// Normalize client name for recon matching:
+//   “LAST, FIRST” → “first last”
+//   non-comma → lowercase + strip trailing single-letter initial (e.g. Humana BSI: “ALAN KITCHMAN L” → “alan kitchman”)
+function normReconClient(col) {
+  return `CASE
+    WHEN ${col} LIKE '%,%'
+    THEN LOWER(TRIM(SPLIT_PART(${col}, ',', 2)) || ' ' || TRIM(SPLIT_PART(${col}, ',', 1)))
+    ELSE TRIM(REGEXP_REPLACE(LOWER(TRIM(REGEXP_REPLACE(COALESCE(${col}, ''), '\\s+', ' ', 'g'))), '\\s+[a-z]\\.?$', ''))
+  END`;
+}
+
+// Shared CTE query builder — returns the WITH...SELECT string for both /reconcile and /export-bsi-recon.
+// apWhere: extra AND conditions on ap rows (caller-supplied, already parameterized).
+function buildReconCTE(apWhere) {
+  return `
+    WITH
+    leg2 AS (
+      SELECT id, client_full_name, carrier, policy_number, commission,
+             payment_period, classification, agent_name, nc, ncarr
+      FROM (
+        SELECT cr.id, cr.client_full_name, cr.carrier, cr.policy_number,
+               cr.commission, cr.payment_period, cr.classification, cr.agent_name,
+               ${normReconClient('cr.client_full_name')} AS nc,
+               ${normReconCarrier('cr.carrier')}         AS ncarr,
+               ROW_NUMBER() OVER (
+                 PARTITION BY ${normReconClient('cr.client_full_name')}, ${normReconCarrier('cr.carrier')}
+                 ORDER BY cr.id DESC
+               ) AS rn
+        FROM commission_records cr
+        JOIN uploads u ON cr.upload_id = u.id
+        WHERE (u.category IS NULL OR u.category = 'commission_statement')
+          AND cr.payee IN ('BSI','NHP','THE')
+          AND cr.client_full_name IS NOT NULL
+          AND TRIM(cr.client_full_name) <> ''
+      ) sub WHERE rn = 1
+    ),
+    leg3 AS (
+      SELECT id, client_full_name, carrier, policy_number, commission,
+             payment_period, classification, hold_reason, nc, ncarr
+      FROM (
+        SELECT cr.id, cr.client_full_name, cr.carrier, cr.policy_number,
+               cr.commission, cr.payment_period, cr.classification,
+               cr.raw_data::jsonb->>'Hold Reason' AS hold_reason,
+               ${normReconClient('cr.client_full_name')} AS nc,
+               ${normReconCarrier('cr.carrier')}         AS ncarr,
+               ROW_NUMBER() OVER (
+                 PARTITION BY ${normReconClient('cr.client_full_name')}, ${normReconCarrier('cr.carrier')}
+                 ORDER BY cr.id DESC
+               ) AS rn
+        FROM commission_records cr
+        JOIN uploads u ON cr.upload_id = u.id
+        WHERE u.category = 'bsi_statement'
+          AND cr.client_full_name IS NOT NULL
+          AND TRIM(cr.client_full_name) <> ''
+      ) sub WHERE rn = 1
+    ),
+    carrier_has_uploads AS (
+      SELECT DISTINCT ${normReconCarrier('TRIM(cv.c)')} AS ncarr
+      FROM (
+        SELECT TRIM(unnest(STRING_TO_ARRAY(u.carrier, ','))) AS c
+        FROM uploads u
+        WHERE u.category = 'bsi_statement'
+          AND u.carrier IS NOT NULL AND TRIM(u.carrier) <> ''
+      ) cv
+      WHERE TRIM(cv.c) <> ''
+    )
+    SELECT
+      ap.id, ap.agent_name, ap.client_name, ap.carrier, ap.policy_number,
+      ap.effective_date, ap.upload_batch, ap.status AS production_status,
+      ap.enrollment_type, ap.plan_name, ap.manual_override_status,
+      l2.id              AS l2_id,
+      l2.commission      AS l2_commission,
+      l2.payment_period  AS l2_period,
+      l2.classification  AS l2_classification,
+      l2.policy_number   AS l2_policy,
+      l2.client_full_name AS l2_client,
+      l2.agent_name      AS l2_agent,
+      l3.id              AS l3_id,
+      l3.commission      AS l3_commission,
+      l3.payment_period  AS l3_period,
+      l3.classification  AS l3_classification,
+      l3.policy_number   AS l3_policy,
+      l3.client_full_name AS l3_client,
+      l3.hold_reason     AS l3_hold_reason,
+      (chu.ncarr IS NOT NULL) AS carrier_has_uploads,
+      COALESCE(
+        NULLIF(TRIM(COALESCE(ap.manual_override_status, '')), ''),
+        CASE
+          WHEN l2.id IS NOT NULL                                   THEN 'paid'
+          WHEN UPPER(TRIM(ap.status)) IN ('WITHDRAWN','IN PROGRESS','CANCELLED','DENIED') THEN 'no_pay_expected'
+          WHEN l3.id IS NOT NULL AND COALESCE(l3.commission,0) > 0 THEN 'chase_bsi'
+          WHEN l3.id IS NOT NULL
+           AND l3.classification = 'Held'
+           AND (l3.hold_reason ILIKE '%not licensed%' OR l3.hold_reason ILIKE '%not appointed%')
+                                                                   THEN 'held_licensing'
+          WHEN l3.id IS NOT NULL                                   THEN 'request_audit'
+          WHEN chu.ncarr IS NOT NULL                               THEN 'request_audit'
+          ELSE 'pending'
+        END
+      ) AS recon_status
+    FROM agency_production ap
+    LEFT JOIN leg2 l2  ON ${normReconClient('ap.client_name')} = l2.nc
+                      AND ${normReconCarrier('ap.carrier')}    = l2.ncarr
+    LEFT JOIN leg3 l3  ON ${normReconClient('ap.client_name')} = l3.nc
+                      AND ${normReconCarrier('ap.carrier')}    = l3.ncarr
+    LEFT JOIN carrier_has_uploads chu ON ${normReconCarrier('ap.carrier')} = chu.ncarr
+    WHERE 1=1 ${apWhere}
+  `;
+}
+
 // Alba Hernandez exclusion — BSI principal (agency-level production, not individual override validation)
 // Matches the single known variant in agency_production: 'HERNANDEZ, ALBA R'
 // If new variants are added to the table, extend this list.
@@ -865,137 +998,8 @@ router.get('/reconcile', requireAuth, async (req, res) => {
 
     const apWhere = apConds.length ? `AND ${apConds.join(' AND ')}` : '';
 
-    // Inline SQL helpers — kept as JS functions so we can reuse them across CTEs
-    function normCarrier(col) {
-      return `CASE
-        WHEN LOWER(${col}) LIKE '%humana%'                                           THEN 'humana'
-        WHEN LOWER(${col}) LIKE '%aetna%'                                            THEN 'aetna'
-        WHEN LOWER(${col}) LIKE '%uhc%' OR LOWER(${col}) LIKE '%united%'             THEN 'unitedhealthcare'
-        WHEN LOWER(${col}) LIKE '%doctors%'                                          THEN 'doctors'
-        WHEN LOWER(${col}) LIKE '%careplus%' OR LOWER(${col}) LIKE '%care plus%'     THEN 'careplus'
-        WHEN LOWER(${col}) LIKE '%devoted%'                                          THEN 'devoted'
-        WHEN LOWER(${col}) LIKE '%solis%'                                            THEN 'solis'
-        WHEN LOWER(${col}) LIKE '%healthsun%' OR LOWER(${col}) LIKE '%health sun%'   THEN 'healthsun'
-        WHEN LOWER(${col}) LIKE '%oscar%'                                            THEN 'oscar health'
-        WHEN LOWER(${col}) LIKE '%molina%'                                           THEN 'molina'
-        WHEN LOWER(${col}) LIKE '%wellcare%'                                         THEN 'wellcare'
-        WHEN LOWER(${col}) LIKE '%freedom%'                                          THEN 'freedom'
-        ELSE LOWER(TRIM(${col}))
-      END`;
-    }
-
-    // Normalize client name: "LAST, FIRST" → "first last"; no-comma → lowercase trimmed
-    // Non-comma path strips trailing single-letter initials (e.g. Humana BSI: "ALAN KITCHMAN L" → "alan kitchman")
-    // Mirrors AgencyProductionRecon.js normName() non-comma branch
-    function normClient(col) {
-      return `CASE
-        WHEN ${col} LIKE '%,%'
-        THEN LOWER(TRIM(SPLIT_PART(${col}, ',', 2)) || ' ' || TRIM(SPLIT_PART(${col}, ',', 1)))
-        ELSE TRIM(REGEXP_REPLACE(LOWER(TRIM(REGEXP_REPLACE(COALESCE(${col}, ''), '\s+', ' ', 'g'))), '\s+[a-z]\.?$', ''))
-      END`;
-    }
-
-    const q = `
-      WITH
-      -- Leg 2: BSI→THEI commission statements (NHP, BSI consolidated PDFs, THE statements)
-      -- Uses ROW_NUMBER to get the latest record per client+carrier (handles dups & renewals)
-      leg2 AS (
-        SELECT id, client_full_name, carrier, policy_number, commission,
-               payment_period, classification, agent_name, nc, ncarr
-        FROM (
-          SELECT cr.id, cr.client_full_name, cr.carrier, cr.policy_number,
-                 cr.commission, cr.payment_period, cr.classification, cr.agent_name,
-                 ${normClient('cr.client_full_name')} AS nc,
-                 ${normCarrier('cr.carrier')}         AS ncarr,
-                 ROW_NUMBER() OVER (
-                   PARTITION BY ${normClient('cr.client_full_name')}, ${normCarrier('cr.carrier')}
-                   ORDER BY cr.id DESC
-                 ) AS rn
-          FROM commission_records cr
-          JOIN uploads u ON cr.upload_id = u.id
-          WHERE (u.category IS NULL OR u.category = 'commission_statement')
-            AND cr.payee IN ('BSI','NHP','THE')
-            AND cr.client_full_name IS NOT NULL
-            AND TRIM(cr.client_full_name) <> ''
-        ) sub WHERE rn = 1
-      ),
-      -- Leg 3: Carrier→BSI direct carrier statements (uploaded via /upload-bsi-statement)
-      leg3 AS (
-        SELECT id, client_full_name, carrier, policy_number, commission,
-               payment_period, classification, hold_reason, nc, ncarr
-        FROM (
-          SELECT cr.id, cr.client_full_name, cr.carrier, cr.policy_number,
-                 cr.commission, cr.payment_period, cr.classification,
-                 cr.raw_data::jsonb->>'Hold Reason' AS hold_reason,
-                 ${normClient('cr.client_full_name')} AS nc,
-                 ${normCarrier('cr.carrier')}         AS ncarr,
-                 ROW_NUMBER() OVER (
-                   PARTITION BY ${normClient('cr.client_full_name')}, ${normCarrier('cr.carrier')}
-                   ORDER BY cr.id DESC
-                 ) AS rn
-          FROM commission_records cr
-          JOIN uploads u ON cr.upload_id = u.id
-          WHERE u.category = 'bsi_statement'
-            AND cr.client_full_name IS NOT NULL
-            AND TRIM(cr.client_full_name) <> ''
-        ) sub WHERE rn = 1
-      ),
-      -- Which carrier keys have any bsi_statement upload (split comma-delimited carrier field)
-      -- Used to distinguish 'pending' (never uploaded) from 'request_audit' (uploaded, client absent)
-      carrier_has_uploads AS (
-        SELECT DISTINCT ${normCarrier('TRIM(cv.c)')} AS ncarr
-        FROM (
-          SELECT TRIM(unnest(STRING_TO_ARRAY(u.carrier, ','))) AS c
-          FROM uploads u
-          WHERE u.category = 'bsi_statement'
-            AND u.carrier IS NOT NULL AND TRIM(u.carrier) <> ''
-        ) cv
-        WHERE TRIM(cv.c) <> ''
-      )
-      SELECT
-        ap.id, ap.agent_name, ap.client_name, ap.carrier, ap.policy_number,
-        ap.effective_date, ap.upload_batch, ap.status AS production_status,
-        ap.enrollment_type, ap.plan_name, ap.manual_override_status,
-        -- Leg 2 (BSI→THEI)
-        l2.id              AS l2_id,
-        l2.commission      AS l2_commission,
-        l2.payment_period  AS l2_period,
-        l2.classification  AS l2_classification,
-        l2.policy_number   AS l2_policy,
-        l2.client_full_name AS l2_client,
-        l2.agent_name      AS l2_agent,
-        -- Leg 3 (Carrier→BSI)
-        l3.id              AS l3_id,
-        l3.commission      AS l3_commission,
-        l3.payment_period  AS l3_period,
-        l3.classification  AS l3_classification,
-        l3.policy_number   AS l3_policy,
-        l3.client_full_name AS l3_client,
-        -- Whether this carrier has ANY bsi_statement uploads (for pending detection)
-        (chu.ncarr IS NOT NULL) AS carrier_has_uploads,
-        -- Final reconciliation status — manual_override_status wins when non-empty
-        COALESCE(
-          NULLIF(TRIM(COALESCE(ap.manual_override_status, '')), ''),
-          CASE
-            WHEN l2.id IS NOT NULL                                   THEN 'paid'
-            WHEN UPPER(TRIM(ap.status)) IN ('WITHDRAWN','IN PROGRESS','CANCELLED','DENIED') THEN 'no_pay_expected'
-            WHEN l3.id IS NOT NULL AND COALESCE(l3.commission,0) > 0 THEN 'chase_bsi'
-            WHEN l3.id IS NOT NULL
-             AND l3.classification = 'Held'
-             AND (l3.hold_reason ILIKE '%not licensed%' OR l3.hold_reason ILIKE '%not appointed%')
-                                                                     THEN 'held_licensing'
-            WHEN l3.id IS NOT NULL                                   THEN 'request_audit'
-            WHEN chu.ncarr IS NOT NULL                               THEN 'request_audit'
-            ELSE 'pending'
-          END
-        ) AS recon_status
-      FROM agency_production ap
-      LEFT JOIN leg2 l2  ON ${normClient('ap.client_name')} = l2.nc
-                        AND ${normCarrier('ap.carrier')}    = l2.ncarr
-      LEFT JOIN leg3 l3  ON ${normClient('ap.client_name')} = l3.nc
-                        AND ${normCarrier('ap.carrier')}    = l3.ncarr
-      LEFT JOIN carrier_has_uploads chu ON ${normCarrier('ap.carrier')} = chu.ncarr
-      WHERE 1=1 ${apWhere}
+    // Use shared module-level CTE builder — normReconClient/normReconCarrier/CASE are defined once above
+    const q = buildReconCTE(apWhere) + `
       ORDER BY ap.carrier, ap.agent_name, ap.effective_date DESC NULLS LAST
       LIMIT $${params.length + 1} OFFSET $${params.length + 2}
     `;
@@ -1066,6 +1070,284 @@ router.get('/reconcile', requireAuth, async (req, res) => {
 
   } catch (err) {
     console.error('[RECON-3WAY]', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// GET /agency-production/export-bsi-recon
+// Produces a .xlsx workbook for the monthly BSI audit/chase package.
+// Required query param: cutoffDate (YYYY-MM-DD) — "BSI has paid through ___"
+// Tabs: Summary | BSI Audit Requests | BSI Chase | Held — Licensing |
+//       No Payment Expected | Needs Effective Date
+// Rows with effective_date > cutoff are excluded and counted on Summary.
+// Alba rows are excluded entirely (same as /reconcile).
+// ─────────────────────────────────────────────────────────────────────────────
+router.get('/export-bsi-recon', requireAuth, async (req, res) => {
+  try {
+    const ExcelJS = require('exceljs');
+    const pool = getPool();
+    const { cutoffDate } = req.query;
+
+    if (!cutoffDate || !/^\d{4}-\d{2}-\d{2}$/.test(cutoffDate)) {
+      return res.status(400).json({ error: 'cutoffDate is required (YYYY-MM-DD). Enter the date BSI has paid through.' });
+    }
+
+    // ── Run full reconcile using shared CTE builder (no LIMIT — export needs all rows) ──
+    const params = [ALBA_EXCLUSION_NAMES];
+    const q = buildReconCTE('AND LOWER(TRIM(ap.agent_name)) != ALL($1)') + `
+      ORDER BY ap.carrier, ap.agent_name, ap.effective_date DESC NULLS LAST
+    `;
+
+    const result = await pool.query(q, params);
+    const allRows = result.rows;
+
+    // ── Bucket rows by scope ─────────────────────────────────────────────────
+    const cutoff = new Date(cutoffDate + 'T23:59:59Z');
+    const noEffDate   = [];
+    const afterCutoff = [];
+    const audit       = [];
+    const chase       = [];
+    const held        = [];
+    const withdrawn   = [];  // WITHDRAWN + CANCELLED + DENIED (no action)
+    const inProgress  = [];  // IN PROGRESS (internal flag, not sent to BSI)
+
+    for (const r of allRows) {
+      // No effective date → its own tab
+      if (!r.effective_date) { noEffDate.push(r); continue; }
+      // After cutoff → excluded, counted on summary
+      if (new Date(r.effective_date) > cutoff) { afterCutoff.push(r); continue; }
+      // Skip paid and pending — not BSI-facing
+      if (r.recon_status === 'paid' || r.recon_status === 'pending') continue;
+
+      switch (r.recon_status) {
+        case 'request_audit':  audit.push(r);      break;
+        case 'chase_bsi':      chase.push(r);      break;
+        case 'held_licensing': held.push(r);       break;
+        case 'no_pay_expected':
+          if (UPPER_STATUS(r.production_status) === 'IN PROGRESS') inProgress.push(r);
+          else withdrawn.push(r);  // WITHDRAWN, CANCELLED, DENIED
+          break;
+      }
+    }
+
+    function UPPER_STATUS(s) { return (s || '').toUpperCase().trim(); }
+
+    // ── Build workbook ───────────────────────────────────────────────────────
+    const wb = new ExcelJS.Workbook();
+    wb.creator = 'OliComm — The Health Experts Insurance';
+    wb.created = new Date();
+
+    // Shared style constants
+    const HEADER_FILL  = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F3864' } }; // dark blue
+    const AMBER_FILL   = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF2CC' } }; // amber tint
+    const GRAY_FILL    = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF2F2F2' } }; // gray tint
+    const HEADER_FONT  = { name: 'Arial', bold: true, color: { argb: 'FFFFFFFF' }, size: 10 };
+    const BODY_FONT    = { name: 'Arial', size: 10 };
+    const THIN_BORDER  = { style: 'thin', color: { argb: 'FFB0B0B0' } };
+    const CELL_BORDER  = { top: THIN_BORDER, left: THIN_BORDER, bottom: THIN_BORDER, right: THIN_BORDER };
+
+    const COL_DEFS = [
+      { header: 'Agent',          key: 'agent_name',       width: 28 },
+      { header: 'Client',         key: 'client_name',      width: 30 },
+      { header: 'Carrier',        key: 'carrier',          width: 20 },
+      { header: 'Eff Date',       key: 'effective_date',   width: 13 },
+      { header: 'Prod Status',    key: 'production_status',width: 16 },
+      { header: 'Carrier→BSI $',  key: 'l3_commission',    width: 15 },
+      { header: 'BSI Pd Period',  key: 'l3_period',        width: 14 },
+      { header: 'BSI→THEI $',     key: 'l2_commission',    width: 13 },
+      { header: 'THEI Pd Period', key: 'l2_period',        width: 14 },
+      { header: 'Override Status',key: 'manual_override_status', width: 18 },
+      { header: 'Policy #',       key: 'policy_number',    width: 18 },
+    ];
+
+    function addSheetWithRows(name, rows, rowFill) {
+      const ws = wb.addWorksheet(name);
+      ws.columns = COL_DEFS.map(c => ({ header: c.header, key: c.key, width: c.width }));
+
+      // Style header row
+      const hdrRow = ws.getRow(1);
+      hdrRow.eachCell(cell => {
+        cell.fill   = HEADER_FILL;
+        cell.font   = HEADER_FONT;
+        cell.border = CELL_BORDER;
+        cell.alignment = { vertical: 'middle', horizontal: 'center' };
+      });
+      hdrRow.height = 18;
+      ws.views = [{ state: 'frozen', ySplit: 1 }];
+
+      // Data rows
+      rows.forEach(r => {
+        const row = ws.addRow({
+          agent_name:      r.agent_name || '',
+          client_name:     r.client_name || '',
+          carrier:         r.carrier || '',
+          effective_date:  r.effective_date ? new Date(r.effective_date).toLocaleDateString('en-US') : '—',
+          production_status: r.production_status || '',
+          l3_commission:   r.l3_commission != null ? parseFloat(r.l3_commission) : '',
+          l3_period:       r.l3_period || '',
+          l2_commission:   r.l2_commission != null ? parseFloat(r.l2_commission) : '',
+          l2_period:       r.l2_period || '',
+          manual_override_status: r.manual_override_status || '',
+          policy_number:   r.policy_number || '',
+        });
+        row.font = BODY_FONT;
+        if (rowFill) {
+          row.eachCell(cell => {
+            cell.fill = rowFill;
+            cell.border = CELL_BORDER;
+          });
+        } else {
+          row.eachCell(cell => { cell.border = CELL_BORDER; });
+        }
+        // Currency formatting
+        ['l3_commission', 'l2_commission'].forEach(key => {
+          const cell = row.getCell(key);
+          if (cell.value !== '') cell.numFmt = '$#,##0.00';
+        });
+      });
+
+      return ws;
+    }
+
+    // ── Tab 1: Summary (first sheet) ─────────────────────────────────────────
+    const summaryWs = wb.addWorksheet('Summary');
+    wb.moveSheet('Summary', 0);
+    summaryWs.getColumn(1).width = 35;
+    summaryWs.getColumn(2).width = 20;
+
+    const genDate  = new Date().toLocaleDateString('en-US', { year:'numeric', month:'long', day:'numeric' });
+    const summaryRows = [
+      ['BSI RECON EXPORT — THE HEALTH EXPERTS INSURANCE', ''],
+      ['', ''],
+      ['Generated',            genDate],
+      ['BSI Paid Through',     cutoffDate],
+      ['', ''],
+      ['TAB COUNTS', ''],
+      ['BSI Audit Requests',   audit.length],
+      ['BSI Chase',            chase.length],
+      ['Held — Licensing',     held.length],
+      ['No Pay — No Action',   withdrawn.length],
+      ['No Pay — In Progress', inProgress.length],
+      ['Needs Effective Date', noEffDate.length],
+      ['', ''],
+      ['Rows excluded (eff date after cutoff)', afterCutoff.length],
+      ['', ''],
+      ['WHAT EACH TAB MEANS', ''],
+      ['BSI Audit Requests',   'Send to BSI. Carrier paid BSI for these enrollments, but THEI has not received the override. These require BSI to confirm payment or provide detail.'],
+      ['BSI Chase',            'Send to BSI. Carrier paid BSI. BSI has not remitted to THEI. Chase BSI for the outstanding amount.'],
+      ['Held — Licensing',     'Informational only — do not send to BSI. Carrier held payment due to licensing/appointment issue. No audit owed; track for resolution.'],
+      ['No Pay — No Action',   'Do not send to BSI. Production status is Withdrawn, Cancelled, or Denied. No commission is expected; no action needed.'],
+      ['No Pay — In Progress', 'INTERNAL USE ONLY — do not send to BSI. Application is still in progress. Monitor internally; not yet a BSI audit item.'],
+      ['Needs Effective Date', 'Data quality flag. These rows have no effective date and cannot be scoped to the cutoff. Review source data to fill in missing dates.'],
+    ];
+
+    summaryRows.forEach((rowData, i) => {
+      const row = summaryWs.getRow(i + 1);
+      row.getCell(1).value = rowData[0];
+      row.getCell(2).value = rowData[1];
+      row.font = { name: 'Arial', size: 10 };
+
+      // Title row
+      if (i === 0) {
+        row.getCell(1).font = { name: 'Arial', bold: true, size: 13 };
+      }
+      // Section headers
+      if (rowData[0] === 'TAB COUNTS' || rowData[0] === 'WHAT EACH TAB MEANS') {
+        row.getCell(1).font = { name: 'Arial', bold: true, size: 10 };
+        row.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9E1F2' } };
+      }
+      // Data labels
+      if (['Generated','BSI Paid Through','Rows excluded (eff date after cutoff)'].includes(rowData[0])) {
+        row.getCell(1).font = { name: 'Arial', bold: true, size: 10 };
+      }
+      // Wrap the description cells
+      if (i >= 16) {
+        summaryWs.getColumn(2).width = 80;
+        row.getCell(2).alignment = { wrapText: true };
+        row.height = 30;
+      }
+    });
+
+    // ── Tab 2–5: Data tabs ───────────────────────────────────────────────────
+    addSheetWithRows('BSI — Audit Requests',  audit,      null);
+    addSheetWithRows('BSI — Chase',           chase,      null);
+    addSheetWithRows('Held — Licensing',      held,       AMBER_FILL);
+
+    // No Payment Expected — two sections within one sheet
+    const noPayWs = wb.addWorksheet('No Payment Expected');
+    noPayWs.columns = COL_DEFS.map(c => ({ header: c.header, key: c.key, width: c.width }));
+
+    function addNoPaySection(ws, label, rows, startRow) {
+      // Section header row
+      const labelRow = ws.getRow(startRow);
+      labelRow.getCell(1).value = label;
+      labelRow.getCell(1).font = { name: 'Arial', bold: true, size: 10, color: { argb: 'FF595959' } };
+      labelRow.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9D9D9' } };
+      ws.mergeCells(startRow, 1, startRow, COL_DEFS.length);
+      startRow++;
+
+      // Column headers for this section
+      const hdrRow = ws.getRow(startRow);
+      COL_DEFS.forEach((c, idx) => {
+        const cell = hdrRow.getCell(idx + 1);
+        cell.value  = c.header;
+        cell.fill   = HEADER_FILL;
+        cell.font   = HEADER_FONT;
+        cell.border = CELL_BORDER;
+        cell.alignment = { vertical: 'middle', horizontal: 'center' };
+      });
+      hdrRow.height = 18;
+      startRow++;
+
+      rows.forEach(r => {
+        const row = ws.getRow(startRow);
+        const vals = {
+          agent_name: r.agent_name || '', client_name: r.client_name || '',
+          carrier: r.carrier || '',
+          effective_date: r.effective_date ? new Date(r.effective_date).toLocaleDateString('en-US') : '—',
+          production_status: r.production_status || '',
+          l3_commission: r.l3_commission != null ? parseFloat(r.l3_commission) : '',
+          l3_period: r.l3_period || '',
+          l2_commission: r.l2_commission != null ? parseFloat(r.l2_commission) : '',
+          l2_period: r.l2_period || '',
+          manual_override_status: r.manual_override_status || '',
+          policy_number: r.policy_number || '',
+        };
+        COL_DEFS.forEach((c, idx) => {
+          const cell = row.getCell(idx + 1);
+          cell.value  = vals[c.key];
+          cell.font   = BODY_FONT;
+          cell.fill   = GRAY_FILL;
+          cell.border = CELL_BORDER;
+          if ((c.key === 'l3_commission' || c.key === 'l2_commission') && vals[c.key] !== '') {
+            cell.numFmt = '$#,##0.00';
+          }
+        });
+        startRow++;
+      });
+
+      return startRow + 1; // blank gap between sections
+    }
+
+    let noPayRow = 1;
+    noPayRow = addNoPaySection(noPayWs, 'NO ACTION — Withdrawn / Cancelled / Denied (do not send to BSI)', withdrawn, noPayRow);
+    noPayRow = addNoPaySection(noPayWs, 'INTERNAL FLAG — In Progress (do not send to BSI — monitor internally)', inProgress, noPayRow);
+    noPayWs.views = [{ state: 'frozen', ySplit: 2 }];
+
+    // ── Tab 6: Needs Effective Date ──────────────────────────────────────────
+    addSheetWithRows('Needs Effective Date',  noEffDate,  null);
+
+    // ── Stream response ──────────────────────────────────────────────────────
+    const safeDate = cutoffDate.replace(/-/g, '');
+    const filename = `BSI_Recon_Export_through_${safeDate}_${new Date().toISOString().slice(0,10).replace(/-/g,'')}.xlsx`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    await wb.xlsx.write(res);
+    res.end();
+
+  } catch (err) {
+    console.error('[BSI-EXPORT]', err);
     return res.status(500).json({ error: err.message });
   }
 });
