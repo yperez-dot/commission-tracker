@@ -833,6 +833,12 @@ router.get('/stats', requireAuth, async (req, res) => {
 //
 // v1 limitations: period-agnostic; single best match per client+carrier; chargebacks not de-duped;
 //   pagination accuracy not guaranteed when status filter is applied
+// Alba Hernandez exclusion — BSI principal (agency-level production, not individual override validation)
+// Matches the single known variant in agency_production: 'HERNANDEZ, ALBA R'
+// If new variants are added to the table, extend this list.
+const ALBA_EXCLUSION_NAMES = ['hernandez, alba r', 'hernandez, alba', 'alba hernandez', 'alba ritela hernandez'];
+const ALBA_EXCLUSION_REASON = 'BSI principal — agency-level production; not subject to individual override validation';
+
 router.get('/reconcile', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
@@ -843,6 +849,11 @@ router.get('/reconcile', requireAuth, async (req, res) => {
     if (batch)   { apConds.push(`ap.upload_batch = $${params.length + 1}`);          params.push(batch); }
     if (carrier) { apConds.push(`ap.carrier ILIKE $${params.length + 1}`);            params.push(`%${carrier}%`); }
     if (agent)   { apConds.push(`ap.agent_name ILIKE $${params.length + 1}`);         params.push(`%${agent}%`); }
+
+    // Exclude Alba rows from main reconciliation — pulled into excluded[] separately
+    apConds.push(`LOWER(TRIM(ap.agent_name)) != ALL($${params.length + 1})`);
+    params.push(ALBA_EXCLUSION_NAMES);
+
     const apWhere = apConds.length ? `AND ${apConds.join(' AND ')}` : '';
 
     // Inline SQL helpers — kept as JS functions so we can reuse them across CTEs
@@ -976,21 +987,36 @@ router.get('/reconcile', requireAuth, async (req, res) => {
     params.push(parseInt(limit), parseInt(offset));
     const result = await pool.query(q, params);
 
-    // Real db_total: COUNT of all matching agency_production rows (independent of LIMIT/OFFSET)
+    // Real db_total: COUNT of non-excluded rows matching filters (independent of LIMIT/OFFSET)
     const countParams = params.slice(0, -2); // strip LIMIT and OFFSET
-    const countConditions = apConds.length ? `WHERE ${apConds.join(' AND ')}` : '';
+    const countConditions = `WHERE ${apConds.join(' AND ')}`;
     const countResult = await pool.query(
       `SELECT COUNT(*) AS db_total FROM agency_production ap ${countConditions}`,
       countParams
     );
     const db_total = parseInt(countResult.rows[0].db_total);
 
+    // Fetch excluded rows (Alba) separately — NOT included in main counts
+    const albaParams = params.slice(0, params.length - 2 - 1); // strip limit, offset, and the alba exclusion param
+    const albaUserConds = apConds.slice(0, -1); // remove the alba exclusion condition
+    const albaWhere = albaUserConds.length
+      ? `WHERE ${albaUserConds.join(' AND ')} AND LOWER(TRIM(ap.agent_name)) = ANY($${albaParams.length + 1})`
+      : `WHERE LOWER(TRIM(ap.agent_name)) = ANY($${albaParams.length + 1})`;
+    albaParams.push(ALBA_EXCLUSION_NAMES);
+    const albaResult = await pool.query(
+      `SELECT ap.id, ap.agent_name, ap.client_name, ap.carrier, ap.effective_date, ap.upload_batch
+       FROM agency_production ap ${albaWhere}
+       ORDER BY ap.carrier, ap.effective_date DESC NULLS LAST`,
+      albaParams
+    );
+    const excluded = albaResult.rows.map(r => ({ ...r, exclusion_reason: ALBA_EXCLUSION_REASON }));
+
     // Post-query status filter (v1: pagination accuracy not guaranteed with this active)
     const rows = statusFilter
       ? result.rows.filter(r => r.recon_status === statusFilter)
       : result.rows;
 
-    // Summary counts built from the current page result set
+    // Summary counts built from the current page result set (Alba rows NOT included)
     const counts = result.rows.reduce((acc, r) => {
       const s = r.recon_status || 'pending';
       acc[s] = (acc[s] || 0) + 1;
@@ -999,21 +1025,24 @@ router.get('/reconcile', requireAuth, async (req, res) => {
 
     return res.json({
       summary: {
-        db_total,                                      // true total rows in agency_production matching filters
-        page_count:    result.rows.length,             // rows returned in this page
+        db_total,                                      // non-excluded rows matching filters
+        page_count:    result.rows.length,             // rows in this page (excludes Alba)
         paid:          counts['paid']          || 0,
         chase_bsi:     counts['chase_bsi']     || 0,
         request_audit: counts['request_audit'] || 0,
-        pending:       counts['pending']       || 0
+        pending:       counts['pending']       || 0,
+        excluded_count: excluded.length               // Alba rows pulled out separately
       },
       rows,
+      excluded,                                        // Alba rows with exclusion_reason
       limit:  parseInt(limit),
       offset: parseInt(offset),
       _note: [
         'v1: period-agnostic matching — client+carrier key only',
         'single best record per client+carrier per leg (latest id)',
         'chargebacks not de-duped from positive records',
-        'pagination may not be accurate when status filter is applied'
+        'pagination may not be accurate when status filter is applied',
+        'Alba Hernandez rows excluded from counts — see excluded[]'
       ].join('; ')
     });
 
