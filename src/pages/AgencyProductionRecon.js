@@ -394,11 +394,15 @@ export default function AgencyProductionRecon() {
     if (status.includes('plan change') || status.includes('plan_change')) return 'planchange';
     if (status.includes('cancel') || status.includes('terminated')) return 'cancelled';
     if (status.includes('chase') || status.includes('chasing')) return 'chase';
-    return 'missing'; // No override = missing
+    // Audit: carrier paid BSI >$0, BSI→THEI missing, status ≠ IN PROGRESS
+    const carrierAmt = m.carrierBSI ? parseFloat(m.carrierBSI.commission || 0) : null;
+    if (carrierAmt !== null && carrierAmt > 0 && !status.includes('in progress')) return 'audit';
+    return 'missing'; // No carrier data at all
   };
 
   const categorized = {
     missing: matches.filter(m => getCategory(m) === 'missing'),
+    audit: matches.filter(m => getCategory(m) === 'audit'),
     planchange: matches.filter(m => getCategory(m) === 'planchange'),
     plandenied: matches.filter(m => getCategory(m) === 'plandenied'),
     chase: matches.filter(m => getCategory(m) === 'chase'),
@@ -443,19 +447,23 @@ export default function AgencyProductionRecon() {
 
   const filtered = {
     missing: applyFilters(categorized.missing),
+    audit: applyFilters(categorized.audit),
     planchange: applyFilters(categorized.planchange),
+    plandenied: applyFilters(categorized.plandenied),
+    chase: applyFilters(categorized.chase),
     cancelled: applyFilters(categorized.cancelled),
     paid: applyFilters(categorized.paid)
   };
 
   const rawDisplayData = 
     tab === 'missing' ? (filtered.missing || []) :
+    tab === 'audit' ? (filtered.audit || []) :
     tab === 'planchange' ? (filtered.planchange || []) :
     tab === 'plandenied' ? (filtered.plandenied || []) :
     tab === 'chase' ? (filtered.chase || []) :
     tab === 'cancelled' ? (filtered.cancelled || []) :
     tab === 'paid' ? (filtered.paid || []) :
-    [...(filtered.missing || []), ...(filtered.planchange || []), ...(filtered.plandenied || []), ...(filtered.chase || []), ...(filtered.cancelled || []), ...(filtered.paid || [])];
+    [...(filtered.missing || []), ...(filtered.audit || []), ...(filtered.planchange || []), ...(filtered.plandenied || []), ...(filtered.chase || []), ...(filtered.cancelled || []), ...(filtered.paid || [])];
 
   // Sort
   function toggleSort(col) {
@@ -498,6 +506,30 @@ export default function AgencyProductionRecon() {
     let dataToExport = [];
     let filename = '';
     
+    if (tab === 'audit') {
+      // Audit tab: custom columns — Carrier, Agent, Client, Effective Date, Amount, Status, Note
+      const auditRows = filtered.audit || [];
+      if (auditRows.length === 0) { alert('No data to export'); return; }
+      const auditHeaders = ['Carrier', 'Agent', 'Client', 'Effective Date', 'Amount', 'Status', 'Note'];
+      const auditCsvRows = auditRows.map(m => [
+        formatCarrier(m.production.carrier) || '\u2014',
+        m.production.agent_name || '\u2014',
+        m.production.client_name || '\u2014',
+        m.production.effective_date ? formatDate(m.production.effective_date) : '\u2014',
+        m.carrierBSI ? parseFloat(m.carrierBSI.commission || 0).toFixed(2) : '\u2014',
+        m.production.status || '\u2014',
+        ''
+      ].map(val => `"${String(val).replace(/"/g, '""')}"`).join(','));
+      const auditCsv = [auditHeaders.join(','), ...auditCsvRows].join('\n');
+      const auditBlob = new Blob([auditCsv], { type: 'text/csv;charset=utf-8;' });
+      const auditLink = document.createElement('a');
+      auditLink.href = URL.createObjectURL(auditBlob);
+      auditLink.download = `agency-overrides-audit-${new Date().toISOString().split('T')[0]}.csv`;
+      auditLink.click();
+      URL.revokeObjectURL(auditLink.href);
+      return;
+    }
+
     if (tab === 'missing') {
       dataToExport = filtered.missing || [];
       filename = `agency-overrides-missing-${new Date().toISOString().split('T')[0]}.csv`;
@@ -511,7 +543,7 @@ export default function AgencyProductionRecon() {
       dataToExport = filtered.paid || [];
       filename = `agency-overrides-paid-${new Date().toISOString().split('T')[0]}.csv`;
     } else {
-      dataToExport = [...(filtered.missing || []), ...(filtered.planchange || []), ...(filtered.cancelled || []), ...(filtered.paid || [])];
+      dataToExport = [...(filtered.missing || []), ...(filtered.audit || []), ...(filtered.planchange || []), ...(filtered.plandenied || []), ...(filtered.chase || []), ...(filtered.cancelled || []), ...(filtered.paid || [])];
       filename = `agency-overrides-all-${new Date().toISOString().split('T')[0]}.csv`;
     }
     
@@ -856,28 +888,61 @@ export default function AgencyProductionRecon() {
         {!loading && (
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
             <div style={{ borderBottom: '1px solid var(--border)', padding: '0 20px', display: 'flex', gap: 2 }}>
-              <button style={tabStyle('missing')} onClick={() => setTab('missing')}>
+              <button style={tabStyle('missing')} onClick={() => setTab('missing')}
+                title="No carrier data uploaded for this carrier+period — override status unknown">
                 Missing ({(filtered.missing || []).length})
               </button>
-              <button style={tabStyle('planchange')} onClick={() => setTab('planchange')}>
+              <button style={tabStyle('planchange')} onClick={() => setTab('planchange')}
+                title="Client changed plans; original override may not apply">
                 Plan Change ({(filtered.planchange || []).length})
               </button>
-              <button style={tabStyle('plandenied')} onClick={() => setTab('plandenied')}>
+              <button style={tabStyle('plandenied')} onClick={() => setTab('plandenied')}
+                title="Application denied by the carrier; no override expected">
                 Plan Denied ({(filtered.plandenied || []).length})
               </button>
-              <button style={tabStyle('chase')} onClick={() => setTab('chase')}>
+              <button style={tabStyle('audit')} onClick={() => setTab('audit')}
+                title="Carrier paid BSI >$0, but BSI→THEI override is missing — needs follow-up">
+                {(() => {
+                  const auditList = filtered.audit || [];
+                  const auditTotal = auditList.reduce((s, m) => s + parseFloat(m.carrierBSI?.commission || 0), 0);
+                  return `Audit (${auditList.length}) · $${auditTotal.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                })()}
+              </button>
+              <button style={tabStyle('chase')} onClick={() => setTab('chase')}
+                title="Override being actively chased or disputed with BSI">
                 Chase ({(filtered.chase || []).length})
               </button>
-              <button style={tabStyle('cancelled')} onClick={() => setTab('cancelled')}>
+              <button style={tabStyle('cancelled')} onClick={() => setTab('cancelled')}
+                title="Application cancelled or member terminated; no override expected">
                 Cancelled ({(filtered.cancelled || []).length})
               </button>
-              <button style={tabStyle('paid')} onClick={() => setTab('paid')}>
+              <button style={tabStyle('paid')} onClick={() => setTab('paid')}
+                title="BSI→THEI override commission confirmed in uploaded statements">
                 Paid ({(filtered.paid || []).length})
               </button>
-              <button style={tabStyle('all')} onClick={() => setTab('all')}>
-                All ({(filtered.missing || []).length + (filtered.planchange || []).length + (filtered.plandenied || []).length + (filtered.chase || []).length + (filtered.cancelled || []).length + (filtered.paid || []).length})
+              <button style={tabStyle('all')} onClick={() => setTab('all')}
+                title="All production records across every status category">
+                All ({(filtered.missing || []).length + (filtered.audit || []).length + (filtered.planchange || []).length + (filtered.plandenied || []).length + (filtered.chase || []).length + (filtered.cancelled || []).length + (filtered.paid || []).length})
               </button>
             </div>
+            {/* One-line subtitle per tab */}
+            {tab !== 'all' && (() => {
+              const subtitles = {
+                missing:    'No carrier data uploaded for this carrier+period — override status unknown.',
+                audit:      'Carrier paid BSI >$0, but BSI→THEI override is missing — needs follow-up.',
+                planchange: 'Client changed plans; original override may not apply.',
+                plandenied: 'Application denied by the carrier; no override expected.',
+                chase:      'Override being actively chased or disputed with BSI.',
+                cancelled:  'Application cancelled or member terminated; no override expected.',
+                paid:       'BSI→THEI override commission confirmed in uploaded statements.',
+              };
+              const text = subtitles[tab];
+              return text ? (
+                <div style={{ padding: '6px 20px', fontSize: 12, color: 'var(--text-muted)', borderBottom: '1px solid var(--border)', background: 'var(--bg-subtle, #fafafa)' }}>
+                  {text}
+                </div>
+              ) : null;
+            })()}
 
             <div style={{ padding: 20 }}>
               {displayData.length === 0 ? (
@@ -962,6 +1027,14 @@ export default function AgencyProductionRecon() {
                                 onMouseOver={e=>e.currentTarget.style.borderBottom='1px solid var(--blue)'}
                                 onMouseOut={e=>e.currentTarget.style.borderBottom='1px dashed var(--blue)'}
                               >{m.production.client_name}</a>
+                              {tab === 'audit' && (m.production.status?.toLowerCase() || '').includes('completed') && (
+                                <span title="Application completed ≠ active enrollment — verify with carrier"
+                                  style={{ display:'inline-block', marginLeft:4, background:'#FFF3CD', color:'#856404',
+                                    padding:'1px 5px', borderRadius:3, fontSize:10, fontWeight:600,
+                                    verticalAlign:'middle', whiteSpace:'nowrap' }}>
+                                  ⚠️ Verify enrollment
+                                </span>
+                              )}
                             </td>
                             <td style={tdBase}>{formatCarrier(m.production.carrier)}</td>
                             <td style={{ ...tdBase, textAlign: 'right' }}>
