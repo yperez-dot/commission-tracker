@@ -477,16 +477,16 @@ The `extractPeriodFromStatementMonth` function already exists in `files.js` — 
 
 ---
 
-## 🐛 Follow-up: 30 Bleeding Aetna/MBI Records in DB (logged 2026-07-06)
+## 🐛 Follow-up: 102 Bleeding Aetna/MBI Records in DB (logged 2026-07-06, count corrected 2026-07-07)
 
 **Root cause:** Old `parseBSIConsolidatedPDF` Pattern 1 used `[A-Z0-9]{8,20}` which greedily
 consumed surname letters into MBI policy numbers.
 **Example:** `1EQ0U45TX00TURNER` / client=`A,Rebecca` → should be policy=`1EQ0U45TX00`, client=`Turner A, Rebecca`
-**Count:** 30 records (all Aetna, all MBI format)
+**Count:** 102 records (all Aetna, all MBI format — original "30" was an unverified estimate; actual query confirmed 102 on 2026-07-07)
 **Status:** Code fix shipped in Commit 2. Existing DB data NOT retroactively corrected.
 
 **Decision needed (post-Commit 2):**
-- Option A: One-time cleanup script — re-parse policy/client split for the 30 affected rows
+- Option A: One-time cleanup script — re-parse policy/client split for the 102 affected rows
 - Option B: Re-upload the affected statement PDF (triggers full re-parse, replaces records)
 
 **Do not touch until Yahoska decides.**
