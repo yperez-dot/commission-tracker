@@ -4632,6 +4632,98 @@ router.post('/fix-aetna-classifications', requireAuth, async (req, res) => {
 // Handles BSI-provided carrier Excel statements (UHC, etc.)
 // Different from THEI-direct UHC files: Agent Name/ID fields contain BSI,
 // not THEI — so we use Writing Agent Name directly without isAgencyName() gating.
+// Detect Humana/Devoted BSI split files by filename prefix
+function isHumanaDevotedBSIFile(filename) {
+  const f = filename.toLowerCase().replace(/\s+/g, '_');
+  return f.includes('humana_bsi_statement') || f.includes('devoted_bsi_statement');
+}
+
+// Parser for Humana/Devoted BSI split Excel files.
+// Format: blank row 0, real headers at row 1, data from row 2.
+// Agent column is "Writing Agent" (NOT "Agent Name" = BSI agency, NOT "Writing Agent Name").
+// Carrier is explicit in "Carrier" column ("HUMANA" or "Devoted Health").
+// Commission in "Commission ($)", dates as Excel serials, classification from "First Year/Renewal".
+function parseHumanaDevotedBSIRows(wb, filename) {
+  const records = [];
+
+  // Period from YYYY-MM-DD in filename
+  const dateMatch = filename.match(/(20\d{2})-(0[1-9]|1[0-2])-\d{2}/);
+  const statementPeriod = dateMatch ? dateMatch[1] + dateMatch[2] : 'Unknown';
+
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rawRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+
+  // Row 0 is blank, row 1 is the real header row
+  const headers = rawRows[1];
+  if (!headers || headers.length === 0) {
+    console.warn('[HUMANA-DEVOTED-BSI] No header row found in', filename);
+    return records;
+  }
+
+  const rows = XLSX.utils.sheet_to_json(ws, { header: headers, defval: '', range: 2 });
+  console.log(`[HUMANA-DEVOTED-BSI] ${filename} | Period: ${statementPeriod} | Rows: ${rows.length}`);
+
+  for (const row of rows) {
+    const client = String(row['Insured Name'] || '').trim();
+    if (!client || !isValidClientName(client)) continue;
+
+    const writingAgentRaw = String(row['Writing Agent'] || '').trim();
+    const carrierRaw      = String(row['Carrier'] || '').trim();
+    const policyNumber    = String(row['Policy #'] || '').trim();
+    const productRaw      = String(row['Product'] || '').trim();
+    const statusRaw       = String(row['Status'] || '').trim();
+    const fyRaw           = String(row['First Year/Renewal'] || '').trim().toLowerCase();
+
+    // Commission ($) may be a number or a string with $ sign
+    const commissionRaw = row['Commission ($)'];
+    const commission = typeof commissionRaw === 'number'
+      ? commissionRaw
+      : parseFloat(String(commissionRaw || '').replace(/[$,]/g, '')) || 0;
+
+    // Effective date — Excel serial number
+    const effectiveDate = formatDate(row['Original EffectiveDate']);
+
+    // Normalize carrier
+    const carrierLower = carrierRaw.toLowerCase();
+    let carrier;
+    if (carrierLower.includes('humana'))       carrier = 'Humana';
+    else if (carrierLower.includes('devoted')) carrier = 'Devoted';
+    else                                        carrier = carrierRaw;
+
+    // Classification: chargebacks first, then First Year vs any Renewal variant
+    let classification;
+    if (commission < 0)               classification = 'Chargeback';
+    else if (fyRaw.includes('first')) classification = 'New Business';
+    else if (fyRaw.includes('renew')) classification = 'Renewal';
+    else                              classification = 'Agent Commission';
+
+    // Agent name — "Writing Agent" is the individual; "Agent Name" is the BSI agency
+    const agentName = isAgencyName(writingAgentRaw)
+      ? 'The Health Experts Insurance'
+      : (normalizeAgentName(writingAgentRaw) || writingAgentRaw || 'BSI Agent');
+
+    records.push({
+      agent: agentName,
+      carrier,
+      planType: derivePlanType(carrier, productRaw, policyNumber, ''),
+      client,
+      effectiveDate,
+      premium: 0,
+      commission,
+      classification,
+      period: statementPeriod,
+      policyNumber,
+      payee: 'BSI',
+      mga: statusRaw === 'Open' ? 'Held — Open status' : '',
+      raw: row
+    });
+  }
+
+  const total = records.reduce((s, r) => s + (r.commission || 0), 0);
+  console.log(`[HUMANA-DEVOTED-BSI] Parsed ${records.length} records, total $${total.toFixed(2)}`);
+  return records;
+}
+
 function parseBSICarrierStatementRows(wb, filename) {
   const records = [];
 
@@ -4805,6 +4897,9 @@ router.post('/upload-bsi-statement', requireAuth, upload.single('file'), async (
       if (isAetnaBSICSVFilename(origName)) {
         console.log('[BSI-UPLOAD] Matched Aetna BSI CSV parser for:', origName);
         records = parseAetnaBSICSV(wb, origName);
+      } else if (isHumanaDevotedBSIFile(origName)) {
+        console.log('[BSI-UPLOAD] Matched Humana/Devoted BSI parser for:', origName);
+        records = parseHumanaDevotedBSIRows(wb, origName);
       } else {
         // Dedicated BSI carrier statement parser (handles files where Agent = BSI, not THEI)
         records = parseBSICarrierStatementRows(wb, origName);
