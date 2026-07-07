@@ -914,7 +914,7 @@ export default function AgencyProductionRecon() {
                   onClick={() => {
                     const cutoff = document.getElementById('bsiCutoffDate').value;
                     if (!cutoff) { alert('Enter the date BSI has paid through before exporting.'); return; }
-                    const token = localStorage.getItem('token');
+                    const token = localStorage.getItem('he_token');
                     const url = `${process.env.REACT_APP_API_URL}/api/agency-production/export-bsi-recon?cutoffDate=${cutoff}`;
                     fetch(url, { headers: { Authorization: `Bearer ${token}` } })
                       .then(r => {
