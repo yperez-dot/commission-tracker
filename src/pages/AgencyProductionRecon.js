@@ -993,14 +993,7 @@ export default function AgencyProductionRecon() {
                                 onMouseOver={e=>e.currentTarget.style.borderBottom='1px solid var(--blue)'}
                                 onMouseOut={e=>e.currentTarget.style.borderBottom='1px dashed var(--blue)'}
                               >{m.production.client_name}</a>
-                              {tab === 'missing' && (m.production.status?.toLowerCase() || '').includes('completed') && (
-                                <span title="Application completed ≠ active enrollment — verify with carrier"
-                                  style={{ display:'inline-block', marginLeft:4, background:'#FFF3CD', color:'#856404',
-                                    padding:'1px 5px', borderRadius:3, fontSize:10, fontWeight:600,
-                                    verticalAlign:'middle', whiteSpace:'nowrap' }}>
-                                  ⚠️ Verify enrollment
-                                </span>
-                              )}
+
                             </td>
                             <td style={tdBase}>{formatCarrier(m.production.carrier)}</td>
                             <td style={{ ...tdBase, fontSize: 11, color: 'var(--text-muted)' }}>
