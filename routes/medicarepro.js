@@ -55,13 +55,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     const hasAgentColumns = rows[0] && ('Agent First' in rows[0] || 'Agent Last' in rows[0]);
     const formatType = hasAgentColumns ? 'sales_by_agency' : 'client_list';
 
-    console.log(`Detected CSV format: ${formatType}`);
-    if (rows[0]) {
-      console.log('=== DEBUG: First row ALL keys ===');
-      console.log(JSON.stringify(Object.keys(rows[0]), null, 2));
-      console.log('=== DEBUG: First row FULL DATA ===');
-      console.log(JSON.stringify(rows[0], null, 2));
-    }
+
 
     // Process each row
     for (const row of rows) {
@@ -77,9 +71,6 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         if (agentName === 'Yahoska Test') {
           agentName = 'Yahoska Perez';
         }
-        
-        // Debug log EVERY row to see what's happening
-        console.log(`Row ${inserted + 1}: agentFirst="${agentFirst}" agentLast="${agentLast}" => agentName="${agentName}"`);
         
         const memberFirst = (row['Member First'] || '').trim();
         const memberLast = (row['Member Last'] || '').trim();

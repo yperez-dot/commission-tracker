@@ -757,8 +757,6 @@ function parseUHCSummary(wb) {
   let hasNegativeBalance = false;
   let agentName = '';
   
-  console.log('🔍 [DEBUG] parseUHCSummary - Processing rows:', rows.length);
-  
   for (const row of rows) {
     // FIX: Handle both number and string formats for Commission Activity
     const commActivityRaw = row['Commission Activity'];
@@ -772,14 +770,7 @@ function parseUHCSummary(wb) {
     const paymentAmount = parseFloat(row['Payment Amount']) || 0;
     const endingBalance = parseFloat(row['Ending Balance']) || 0;
     
-    console.log('🔍 [DEBUG] Row:', {
-      statementDate: row['Statement Date'],
-      
-      commissionActivityParsed: commissionActivity,
-      paymentAmount,
-      endingBalance
-    });
-    
+
     if (commissionActivity > 0) {
       totalCommissionEarned += commissionActivity;
     } else if (commissionActivity < 0) {
@@ -792,14 +783,6 @@ function parseUHCSummary(wb) {
       hasNegativeBalance = true;
     }
   }
-  
-  console.log('🔍 [DEBUG] Final totals:', {
-    totalCommissionEarned,
-    totalChargebacks,
-    netActivity: totalCommissionEarned + totalChargebacks,
-    totalPaymentReceived,
-    hasNegativeBalance
-  });
   
   const transSheet = wb.SheetNames.find(s => s.toLowerCase().includes('commission trans'));
   if (transSheet) {
@@ -819,8 +802,6 @@ function parseUHCSummary(wb) {
     agentName: agentName || 'Unknown Agent'
   };
   
-  console.log('🔍 [DEBUG] parseUHCSummary returning:', result);
-  
   return result;
 }
 
@@ -830,8 +811,6 @@ function parseUHCSummary(wb) {
  */
 function parseUHCRows(wb, filename) {
   const records = [];
-  
-  console.log('🔍 [DEBUG] parseUHCRows called with filename:', filename);
   
   // Extract period from filename (KR_UHC_STATEMENT_FEBRUARY_2026.xlsx → 202602)
   let statementPeriod = null;
@@ -947,14 +926,7 @@ function parseUHCRows(wb, filename) {
     });
   }
   
-  console.log(`🔍 [DEBUG] parseUHCRows returning ${records.length} total records`);
-  if (records.length > 0) {
-    console.log('🔍 [DEBUG] Sample records:', records.slice(0, 3).map(r => ({
-      client: r.client,
-      commission: r.commission,
-      classification: r.classification
-    })));
-  }
+
   
   return records;
 }
@@ -2241,23 +2213,18 @@ function parseAetnaRows(wb, filename) {
  */
 function isAetnaDirectCSV(wb) {
   if (!wb || !wb.Sheets || !wb.SheetNames || !wb.SheetNames.length) {
-    console.log('[DEBUG] isAetnaDirectCSV - No workbook/sheets');
     return false;
   }
   
   const ws = wb.Sheets[wb.SheetNames[0]];
   const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
   if (!rows.length) {
-    console.log('[DEBUG] isAetnaDirectCSV - No rows');
     return false;
   }
   
   // Strip BOM (\ufeff) and other invisible characters from all headers
   const rawHeaders = Object.keys(rows[0]);
-  console.log('[DEBUG] isAetnaDirectCSV - Raw headers (first 3):', rawHeaders.slice(0, 3).map(h => JSON.stringify(h)));
-  
   const headers = rawHeaders.map(h => h.replace(/^[\ufeff\uFEFF]/, '').toLowerCase().trim());
-  console.log('[DEBUG] isAetnaDirectCSV - Cleaned headers:', headers);
   
   // Must have at least 3 of these key columns
   const keyColumns = ['paymentdate', 'memberid', 'payeeamount', 'coverageperiod', 'membername'];
@@ -2265,12 +2232,7 @@ function isAetnaDirectCSV(wb) {
     headers.some(h => h.replace(/[\s_-]/g, '') === col)
   ).length;
   
-  console.log('[DEBUG] isAetnaDirectCSV - Matched', matchCount, 'of', keyColumns.length, 'key columns');
-  
-  const hasAllColumns = matchCount >= 3;
-  console.log('[DEBUG] isAetnaDirectCSV - Detection result:', hasAllColumns);
-  
-  return hasAllColumns;
+  return matchCount >= 3;
 }
 
 /**
@@ -3235,7 +3197,7 @@ async function parseBSIConsolidatedPDF(filePath, filename) {
       /^AETNA\s*\(\$/i,
     ];
 
-    // parseDataLine was defined here but never called — deleted in Commit 2 (2c).
+
 
     let i = 0;
     while (i < lines.length) {
