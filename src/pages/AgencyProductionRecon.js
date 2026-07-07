@@ -829,13 +829,14 @@ export default function AgencyProductionRecon() {
                 <div className="form-label" style={{ marginBottom: 6 }}>Override Status</div>
                 <MultiSelect
                   label="Status"
-                  options={['paid','chase_bsi','request_audit','pending']}
+                  options={['paid','chase_bsi','request_audit','held_licensing','pending']}
                   selected={filterOverrideStatus}
                   onChange={setFilterOverrideStatus}
                   formatOption={v => ({
                     paid: '🟢 Paid',
                     chase_bsi: '🔴 Chase BSI',
                     request_audit: '🟡 Request Audit',
+                    held_licensing: '🔒 Held – Licensing',
                     pending: '⚪ Pending'
                   })[v] || v}
                 />
@@ -968,6 +969,7 @@ export default function AgencyProductionRecon() {
                             if (twStatus === 'paid')          return <span style={{ background:'#D4EDDA',color:'#155724',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>🟢 Paid</span>;
                             if (twStatus === 'chase_bsi')     return <span style={{ background:'#F8D7DA',color:'#721C24',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>🔴 Chase BSI</span>;
                             if (twStatus === 'request_audit') return <span style={{ background:'#FFF3CD',color:'#856404',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>🟡 Request Audit</span>;
+                            if (twStatus === 'held_licensing')  return <span style={{ background:'#E8E8E8',color:'#444',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>🔒 Held – Licensing</span>;
                             return <span style={{ background:'#F0F0F0',color:'#6C757D',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>⚪ Pending</span>;
                           })();
                           return (
@@ -1036,6 +1038,7 @@ export default function AgencyProductionRecon() {
                                 <option value="paid">🟢 Paid</option>
                                 <option value="chase_bsi">🔴 Chase BSI</option>
                                 <option value="request_audit">🟡 Request Audit</option>
+                                <option value="held_licensing">🔒 Held – Licensing</option>
                                 <option value="pending">⚪ Pending</option>
                               </select>
                             </td>
