@@ -25,7 +25,6 @@ const AGENT_ALIASES = {
   'jill ann taylor': 'Jill Taylor',
   'jill taylor': 'Jill Taylor',
   'taylor, jill a': 'Jill Taylor',
-  'taylor jill a': 'Jill Taylor',
 
   'berenguer, gina ferro': 'Gina Berenguer',
   'berenguer gina f': 'Gina Berenguer',
@@ -185,6 +184,16 @@ async function normalizeAllRecords(pool) {
       await pool.query('UPDATE book_of_business SET agent_name = $1 WHERE id = $2', [normalized, rec.id]);
     }
   }
+
+  // Also normalize policy_status so is_termed EXISTS checks match correctly
+  const ps = await pool.query('SELECT id, agent_name FROM policy_status');
+  for (const rec of ps.rows) {
+    const normalized = normalizeAgentName(rec.agent_name);
+    if (normalized !== rec.agent_name) {
+      await pool.query('UPDATE policy_status SET agent_name = $1 WHERE id = $2', [normalized, rec.id]);
+    }
+  }
+
   return updated;
 }
 
