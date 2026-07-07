@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { apiFetch } from '../api';
 import { formatCarrier } from '../utils/formatCarrier';
 import { formatDate as formatDateUtil } from '../utils/dateFormat';
@@ -261,6 +261,37 @@ function findOverrideMatch(production, overrides) {
   return null;
 }
 
+// Pure helpers — defined outside component so useMemo deps stay stable
+function _findCarrierBSIMatch(prod, carrierRecords) {
+  const prodPeriod = prod.payment_period || '';
+  const samePeriod = prodPeriod
+    ? carrierRecords.filter(r => r.payment_period === prodPeriod)
+    : carrierRecords;
+  return findOverrideMatch(prod, samePeriod);
+}
+
+function _getThreeWayStatus(m) {
+  if (m.production.manual_override_status) return m.production.manual_override_status;
+  if (m.override) return 'paid';
+  const carrierAmt = m.carrierBSI ? parseFloat(m.carrierBSI.commission || 0) : null;
+  if (m.carrierBSI && carrierAmt > 0 && !m.override) return 'chase_bsi';
+  if (m.carrierBSI && carrierAmt === 0) return 'request_audit';
+  if (!m.carrierBSI && m.carrierUploaded) return 'request_audit';
+  return 'pending';
+}
+
+function _getCategory(m) {
+  if (m.override) return 'paid';
+  const status = m.production.status?.toLowerCase() || '';
+  if (status.includes('plan denied') || status.includes('plan_denied') || status.includes('denied')) return 'plandenied';
+  if (status.includes('plan change') || status.includes('plan_change')) return 'planchange';
+  if (status.includes('cancel') || status.includes('terminated')) return 'cancelled';
+  if (status.includes('chase') || status.includes('chasing')) return 'chase';
+  const carrierAmt = m.carrierBSI ? parseFloat(m.carrierBSI.commission || 0) : null;
+  if (carrierAmt !== null && carrierAmt > 0 && !status.includes('in progress')) return 'audit';
+  return 'missing';
+}
+
 export default function AgencyProductionRecon() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -350,122 +381,83 @@ export default function AgencyProductionRecon() {
     }
   }
 
-  // Strict period match for Carrier→BSI: only match within same period
-  function findCarrierBSIMatch(prod, carrierRecords) {
-    const prodPeriod = prod.payment_period || '';
-    // Filter to same period first (strict), then apply fuzzy name+carrier match
-    const samePeriod = prodPeriod
-      ? carrierRecords.filter(r => r.payment_period === prodPeriod)
-      : carrierRecords;
-    return findOverrideMatch(prod, samePeriod);
-  }
+  // ─── Memoized computations ─────────────────────────────────────────────────
+  // matches: O(n×m) fuzzy matching — only rerun when source data changes
+  const matches = useMemo(() => {
+    const bsiKeysList = [...bsiUploadedKeys];
+    return production.map(prod => {
+      const override = findOverrideMatch(prod, overrides);
+      const carrierBSI = _findCarrierBSIMatch(prod, carrierBSIRecords);
+      const prodCarrier = normalizeCarrier(prod.carrier || '');
+      const prodPeriod = prod.payment_period || prod.effective_date?.substring(0,7)?.replace('-','') || '';
+      const carrierUploaded = bsiUploadedKeys.has(`${prodCarrier}|${prodPeriod}`) ||
+        bsiKeysList.some(k => k.startsWith(`${prodCarrier}|`));
+      return { production: prod, override, carrierBSI, carrierUploaded };
+    });
+  }, [production, overrides, carrierBSIRecords, bsiUploadedKeys]);
 
-  // Match production to overrides + carrier→BSI
-  const matches = production.map(prod => {
-    const override = findOverrideMatch(prod, overrides);
-    const carrierBSI = findCarrierBSIMatch(prod, carrierBSIRecords);
-    // Determine if carrier statement has been uploaded for this carrier+period
-    const prodCarrier = normalizeCarrier(prod.carrier || '');
-    const prodPeriod = prod.payment_period || prod.effective_date?.substring(0,7)?.replace('-','') || '';
-    const carrierUploaded = bsiUploadedKeys.has(`${prodCarrier}|${prodPeriod}`) ||
-      [...bsiUploadedKeys].some(k => k.startsWith(`${prodCarrier}|`));
-    return { production: prod, override, carrierBSI, carrierUploaded };
-  });
+  // Aliases so JSX can call the stable outer functions by their original names
+  const getThreeWayStatus = _getThreeWayStatus;
+  const getCategory = _getCategory;
 
-  // Three-way status
-  // Hector = enrollment source of truth only (no dollar amounts).
-  // Dollar flow: Carrier→BSI vs BSI→THEI.
-  // Manual overrides always win — system logic only runs when no override is set.
-  const getThreeWayStatus = (m) => {
-    if (m.production.manual_override_status) return m.production.manual_override_status; // ✏️ Manual override
-    if (m.override) return 'paid';                                                        // ✅ Paid: BSI paid THEI
-    const carrierAmt = m.carrierBSI ? parseFloat(m.carrierBSI.commission || 0) : null;
-    if (m.carrierBSI && carrierAmt > 0 && !m.override) return 'chase_bsi';               // 🔴 Chase BSI: carrier paid BSI >$0, BSI hasn't paid THEI
-    if (m.carrierBSI && carrierAmt === 0) return 'request_audit';                        // 🟡 Request Audit: carrier sent $0 to BSI for this client
-    if (!m.carrierBSI && m.carrierUploaded) return 'request_audit';                      // 🟡 Request Audit: month uploaded but client not in carrier→BSI statement
-    return 'pending';                                                                     // ⚪ Pending: carrier month not uploaded yet
-  };
+  // categorized: only reruns when matches changes
+  const categorized = useMemo(() => ({
+    missing:    matches.filter(m => _getCategory(m) === 'missing'),
+    audit:      matches.filter(m => _getCategory(m) === 'audit'),
+    planchange: matches.filter(m => _getCategory(m) === 'planchange'),
+    plandenied: matches.filter(m => _getCategory(m) === 'plandenied'),
+    chase:      matches.filter(m => _getCategory(m) === 'chase'),
+    cancelled:  matches.filter(m => _getCategory(m) === 'cancelled'),
+    paid:       matches.filter(m => _getCategory(m) === 'paid'),
+  }), [matches]);
 
-  // Categorize by status
-  const getCategory = (m) => {
-    if (m.override) return 'paid';
-    const status = m.production.status?.toLowerCase() || '';
-    if (status.includes('plan denied') || status.includes('plan_denied') || status.includes('denied')) return 'plandenied';
-    if (status.includes('plan change') || status.includes('plan_change')) return 'planchange';
-    if (status.includes('cancel') || status.includes('terminated')) return 'cancelled';
-    if (status.includes('chase') || status.includes('chasing')) return 'chase';
-    // Audit: carrier paid BSI >$0, BSI→THEI missing, status ≠ IN PROGRESS
-    const carrierAmt = m.carrierBSI ? parseFloat(m.carrierBSI.commission || 0) : null;
-    if (carrierAmt !== null && carrierAmt > 0 && !status.includes('in progress')) return 'audit';
-    return 'missing'; // No carrier data at all
-  };
-
-  const categorized = {
-    missing: matches.filter(m => getCategory(m) === 'missing'),
-    audit: matches.filter(m => getCategory(m) === 'audit'),
-    planchange: matches.filter(m => getCategory(m) === 'planchange'),
-    plandenied: matches.filter(m => getCategory(m) === 'plandenied'),
-    chase: matches.filter(m => getCategory(m) === 'chase'),
-    cancelled: matches.filter(m => getCategory(m) === 'cancelled'),
-    paid: matches.filter(m => getCategory(m) === 'paid')
-  };
-
-  // Apply filters to each category
-  const applyFilters = (list) => {
-    let filtered = list;
-    
-    if (filterAgents.length > 0) {
-      filtered = filtered.filter(m => filterAgents.includes(m.production.agent_name));
+  // filtered: only reruns when data or filter state changes (NOT on tab switch)
+  const filtered = useMemo(() => {
+    function applyFilters(list) {
+      let result = list;
+      if (filterAgents.length > 0)
+        result = result.filter(m => filterAgents.includes(m.production.agent_name));
+      if (filterCarriers.length > 0)
+        result = result.filter(m => filterCarriers.some(fc => normalizeCarrier(fc) === normalizeCarrier(m.production.carrier)));
+      if (filterEffDates.length > 0)
+        result = result.filter(m => filterEffDates.includes(m.production.effective_date || ''));
+      if (filterOverrideStatus.length > 0)
+        result = result.filter(m => filterOverrideStatus.includes(_getThreeWayStatus(m)));
+      if (searchTerm.trim()) {
+        const search = searchTerm.toLowerCase();
+        result = result.filter(m =>
+          (m.production.client_name || '').toLowerCase().includes(search) ||
+          (m.production.agent_name || '').toLowerCase().includes(search) ||
+          (m.production.carrier || '').toLowerCase().includes(search)
+        );
+      }
+      return result;
     }
-    
-    if (filterCarriers.length > 0) {
-      filtered = filtered.filter(m => {
-        const prodCarrier = normalizeCarrier(m.production.carrier);
-        return filterCarriers.some(fc => normalizeCarrier(fc) === prodCarrier);
-      });
-    }
-    
-    if (filterEffDates.length > 0) {
-      filtered = filtered.filter(m => filterEffDates.includes(m.production.effective_date || ''));
-    }
-    
-    if (filterOverrideStatus.length > 0) {
-      filtered = filtered.filter(m => filterOverrideStatus.includes(getThreeWayStatus(m)));
-    }
+    return {
+      missing:    applyFilters(categorized.missing),
+      audit:      applyFilters(categorized.audit),
+      planchange: applyFilters(categorized.planchange),
+      plandenied: applyFilters(categorized.plandenied),
+      chase:      applyFilters(categorized.chase),
+      cancelled:  applyFilters(categorized.cancelled),
+      paid:       applyFilters(categorized.paid),
+    };
+  }, [categorized, filterAgents, filterCarriers, filterEffDates, filterOverrideStatus, searchTerm]);
 
-    if (searchTerm.trim()) {
-      const search = searchTerm.toLowerCase();
-      filtered = filtered.filter(m => 
-        (m.production.client_name || '').toLowerCase().includes(search) ||
-        (m.production.agent_name || '').toLowerCase().includes(search) ||
-        (m.production.carrier || '').toLowerCase().includes(search)
-      );
-    }
-    
-    return filtered;
-  };
-
-  const filtered = {
-    missing: applyFilters(categorized.missing),
-    audit: applyFilters(categorized.audit),
-    planchange: applyFilters(categorized.planchange),
-    plandenied: applyFilters(categorized.plandenied),
-    chase: applyFilters(categorized.chase),
-    cancelled: applyFilters(categorized.cancelled),
-    paid: applyFilters(categorized.paid)
-  };
-
-  const rawDisplayData = 
-    tab === 'missing' ? (filtered.missing || []) :
-    tab === 'audit' ? (filtered.audit || []) :
+  // rawDisplayData: only reruns on tab or filtered change
+  const rawDisplayData = useMemo(() => (
+    tab === 'missing'    ? (filtered.missing    || []) :
+    tab === 'audit'      ? (filtered.audit      || []) :
     tab === 'planchange' ? (filtered.planchange || []) :
     tab === 'plandenied' ? (filtered.plandenied || []) :
-    tab === 'chase' ? (filtered.chase || []) :
-    tab === 'cancelled' ? (filtered.cancelled || []) :
-    tab === 'paid' ? (filtered.paid || []) :
-    [...(filtered.missing || []), ...(filtered.audit || []), ...(filtered.planchange || []), ...(filtered.plandenied || []), ...(filtered.chase || []), ...(filtered.cancelled || []), ...(filtered.paid || [])];
+    tab === 'chase'      ? (filtered.chase      || []) :
+    tab === 'cancelled'  ? (filtered.cancelled  || []) :
+    tab === 'paid'       ? (filtered.paid       || []) :
+    [...(filtered.missing||[]), ...(filtered.audit||[]), ...(filtered.planchange||[]),
+     ...(filtered.plandenied||[]), ...(filtered.chase||[]), ...(filtered.cancelled||[]), ...(filtered.paid||[])]
+  ), [filtered, tab]);
 
-  // Sort
+  // Sort helpers (stable refs, no memo needed)
   function toggleSort(col) {
     if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
     else { setSortCol(col); setSortDir('asc'); }
@@ -474,33 +466,42 @@ export default function AgencyProductionRecon() {
     if (sortCol !== col) return <span style={{ opacity: 0.3, fontSize: 10 }}>⇅</span>;
     return <span style={{ fontSize: 10 }}>{sortDir === 'asc' ? '↑' : '↓'}</span>;
   }
-  const displayData = sortCol ? [...rawDisplayData].sort((a, b) => {
-    let va, vb;
-    if (sortCol === 'agent')    { va = a.production.agent_name || ''; vb = b.production.agent_name || ''; }
-    else if (sortCol === 'member')   { va = a.production.client_name || ''; vb = b.production.client_name || ''; }
-    else if (sortCol === 'carrier')  { va = a.production.carrier || ''; vb = b.production.carrier || ''; }
-    else if (sortCol === 'bsi_thei') { va = parseFloat(a.override?.commission || 0); vb = parseFloat(b.override?.commission || 0); }
-    else if (sortCol === 'c_bsi')    { va = parseFloat(a.carrierBSI?.commission || 0); vb = parseFloat(b.carrierBSI?.commission || 0); }
-    else if (sortCol === 'status')   { va = getThreeWayStatus(a); vb = getThreeWayStatus(b); }
-    else                             { va = ''; vb = ''; }
-    if (typeof va === 'number') return sortDir === 'asc' ? va - vb : vb - va;
-    return sortDir === 'asc' ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
-  }) : rawDisplayData;
 
-  const agents = [...new Set(production.map(p => p.agent_name).filter(Boolean))].sort();
-  // Get unique carriers and format them consistently
-  const uniqueCarriers = [...new Set(production.map(p => normalizeCarrier(p.carrier)).filter(Boolean))];
-  const carriers = uniqueCarriers
-    .map(c => {
-      // Find original carrier name for display
-      const original = production.find(p => normalizeCarrier(p.carrier) === c)?.carrier;
-      return formatCarrier(original || c);
-    })
-    .filter((v, i, arr) => arr.indexOf(v) === i) // Remove duplicates after formatting
-    .sort();
-  
-  // Get unique effective dates
-  const effectiveDates = [...new Set(production.map(p => p.effective_date).filter(Boolean))].sort((a, b) => b.localeCompare(a)); // Sort descending (newest first)
+  // displayData: only reruns when visible rows or sort changes
+  const displayData = useMemo(() => (
+    sortCol ? [...rawDisplayData].sort((a, b) => {
+      let va, vb;
+      if (sortCol === 'agent')    { va = a.production.agent_name || ''; vb = b.production.agent_name || ''; }
+      else if (sortCol === 'member')   { va = a.production.client_name || ''; vb = b.production.client_name || ''; }
+      else if (sortCol === 'carrier')  { va = a.production.carrier || ''; vb = b.production.carrier || ''; }
+      else if (sortCol === 'bsi_thei') { va = parseFloat(a.override?.commission || 0); vb = parseFloat(b.override?.commission || 0); }
+      else if (sortCol === 'c_bsi')    { va = parseFloat(a.carrierBSI?.commission || 0); vb = parseFloat(b.carrierBSI?.commission || 0); }
+      else if (sortCol === 'status')   { va = _getThreeWayStatus(a); vb = _getThreeWayStatus(b); }
+      else                             { va = ''; vb = ''; }
+      if (typeof va === 'number') return sortDir === 'asc' ? va - vb : vb - va;
+      return sortDir === 'asc' ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
+    }) : rawDisplayData
+  ), [rawDisplayData, sortCol, sortDir]);
+
+  // agents / carriers / effectiveDates: only reruns when production data changes
+  const agents = useMemo(
+    () => [...new Set(production.map(p => p.agent_name).filter(Boolean))].sort(),
+    [production]
+  );
+  const carriers = useMemo(() => {
+    const uniqueC = [...new Set(production.map(p => normalizeCarrier(p.carrier)).filter(Boolean))];
+    return uniqueC
+      .map(c => {
+        const original = production.find(p => normalizeCarrier(p.carrier) === c)?.carrier;
+        return formatCarrier(original || c);
+      })
+      .filter((v, i, arr) => arr.indexOf(v) === i)
+      .sort();
+  }, [production]);
+  const effectiveDates = useMemo(
+    () => [...new Set(production.map(p => p.effective_date).filter(Boolean))].sort((a, b) => b.localeCompare(a)),
+    [production]
+  );
 
   function exportToCSV() {
     let dataToExport = [];
