@@ -471,7 +471,8 @@ export default function AgencyProductionRecon() {
       else if (sortCol === 'carrier')  { va = a.production.carrier || ''; vb = b.production.carrier || ''; }
       else if (sortCol === 'bsi_thei') { va = parseFloat(a.override?.commission || 0); vb = parseFloat(b.override?.commission || 0); }
       else if (sortCol === 'c_bsi')    { va = parseFloat(a.carrierBSI?.commission || 0); vb = parseFloat(b.carrierBSI?.commission || 0); }
-      else if (sortCol === 'status')   { va = _getThreeWayStatus(a); vb = _getThreeWayStatus(b); }
+      else if (sortCol === 'eff_date') { va = a.production.effective_date || ''; vb = b.production.effective_date || ''; }
+    else if (sortCol === 'status')   { va = _getThreeWayStatus(a); vb = _getThreeWayStatus(b); }
       else                             { va = ''; vb = ''; }
       if (typeof va === 'number') return sortDir === 'asc' ? va - vb : vb - va;
       return sortDir === 'asc' ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
@@ -918,12 +919,13 @@ export default function AgencyProductionRecon() {
                 <div style={{ overflowY: 'auto', maxHeight: 'calc(100vh - 280px)' }}>
                   <table style={{ tableLayout: 'fixed', width: '100%', borderCollapse: 'collapse' }}>
                     <colgroup>
-                      <col style={{ width: '16%' }} />
-                      <col style={{ width: '16%' }} />
                       <col style={{ width: '14%' }} />
+                      <col style={{ width: '14%' }} />
+                      <col style={{ width: '12%' }} />
                       <col style={{ width: '9%' }} />
-                      <col style={{ width: '10%' }} />
-                      <col style={{ width: '18%' }} />
+                      <col style={{ width: '8%' }} />
+                      <col style={{ width: '9%' }} />
+                      <col style={{ width: '17%' }} />
                       <col style={{ width: '17%' }} />
                     </colgroup>
                     <thead style={{ position: 'sticky', top: 0, background: 'var(--bg)', zIndex: 1 }}>
@@ -932,6 +934,7 @@ export default function AgencyProductionRecon() {
                           ['Writing Agent','left','agent'],
                           ['Member Name','left','member'],
                           ['Carrier','left','carrier'],
+                          ['Eff Date','left','eff_date'],
                           ['BSI→THEI','center','bsi_thei'],
                           ['Carrier→BSI','center','c_bsi'],
                           ['Override Status','center','status'],
@@ -1000,6 +1003,9 @@ export default function AgencyProductionRecon() {
                               )}
                             </td>
                             <td style={tdBase}>{formatCarrier(m.production.carrier)}</td>
+                            <td style={{ ...tdBase, fontSize: 11, color: 'var(--text-muted)' }}>
+                              {m.production.effective_date ? formatDate(m.production.effective_date) : '—'}
+                            </td>
                             <td style={{ ...tdBase, textAlign: 'right' }}>
                               {m.override
                                 ? <span style={{ color:'var(--green)',fontWeight:600 }}>{fmt(m.override.commission || m.override.commission_amount || 0)}</span>
