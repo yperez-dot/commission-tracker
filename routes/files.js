@@ -492,7 +492,8 @@ function parseAetnaBSICSV(wb, filename) {
       const paymentDate  = String(row['Payment Date'] || '').trim();
       const memberName   = String(row['Member Name']  || '').trim();
       const amtRaw       = row['Payee Amount'];
-      const memberState  = String(row['Member State'] || '').trim().toUpperCase();
+      const memberStateRaw = String(row['State'] || row['Member State'] || '').trim().split('-')[0].toUpperCase();
+      const memberState    = /^[A-Z]{2}$/.test(memberStateRaw) ? memberStateRaw : null;
       const salesEvent   = String(row['Sales Event']  || '').trim();
       const writingNPN   = String(row['Writing Agent NPN']   || '').trim();
       const writingAgent = String(row['Writing Agent Name']  || '').trim();
@@ -4328,23 +4329,23 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         `INSERT INTO commission_records (
            upload_id, agent_name, carrier, plan_type, client_full_name, effective_date,
            premium, commission, classification, payment_period, policy_number, payee, mga,
-           raw_data, member_state,
+           raw_data,
            source, policy_written_date, gross_commission, thei_share, bsi_share,
            producer_payable, split_applies, lob, sub_agent_override, statement_month, members,
-           anomaly
+           anomaly, member_state
          )
          VALUES (
            $1,$2,$3,$4,$5,$6,
            $7,$8,$9,$10,$11,$12,$13,
-           $14,$15,
-           $16,$17,$18,$19,$20,
-           $21,$22,$23,$24,$25,$26,
-           $27
+           $14,
+           $15,$16,$17,$18,$19,
+           $20,$21,$22,$23,$24,$25,
+           $26,$27
          )`,
         [
           uploadId, r.agent, r.carrier, r.planType || '', r.client, r.effectiveDate,
           r.premium || 0, r.commission || 0, r.classification, r.period, r.policyNumber, r.payee || '', r.mga || '',
-          JSON.stringify(r.raw), r.memberState || null,
+          JSON.stringify(r.raw),
           r.source || null,
           (() => {
             const v = r.policyWrittenDate;
@@ -4365,6 +4366,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
           r.statementMonth || null,
           r.members || 0,
           r.anomaly === true,
+          r.memberState || null,
         ]
       );
     }
@@ -4901,23 +4903,23 @@ router.post('/upload-bsi-statement', requireAuth, upload.single('file'), async (
         `INSERT INTO commission_records (
            upload_id, agent_name, carrier, plan_type, client_full_name, effective_date,
            premium, commission, classification, payment_period, policy_number, payee, mga,
-           raw_data, member_state,
+           raw_data,
            source, policy_written_date, gross_commission, thei_share, bsi_share,
            producer_payable, split_applies, lob, sub_agent_override, statement_month, members,
-           anomaly
+           anomaly, member_state
          )
          VALUES (
            $1,$2,$3,$4,$5,$6,
            $7,$8,$9,$10,$11,$12,$13,
-           $14,$15,
-           $16,$17,$18,$19,$20,
-           $21,$22,$23,$24,$25,$26,
-           $27
+           $14,
+           $15,$16,$17,$18,$19,
+           $20,$21,$22,$23,$24,$25,
+           $26,$27
          )`,
         [
           uploadId, r.agent, r.carrier, r.planType || '', r.client, r.effectiveDate,
           r.premium || 0, r.commission || 0, r.classification, r.period, r.policyNumber, r.payee || '', r.mga || '',
-          JSON.stringify(r.raw), r.memberState || null,
+          JSON.stringify(r.raw),
           r.source || null,
           (() => {
             const v = r.policyWrittenDate;
@@ -4938,6 +4940,7 @@ router.post('/upload-bsi-statement', requireAuth, upload.single('file'), async (
           r.statementMonth || null,
           r.members || 0,
           r.anomaly === true,
+          r.memberState || null,
         ]
       );
     }
