@@ -295,6 +295,22 @@ function _isLicensingHold(record) {
   } catch { return false; }
 }
 
+// Extract hold detail for held_licensing rows: { reason, state, county }
+// Prefers the carrierBSI Held record; falls back to heldRecord.
+function _getHoldDetail(m) {
+  const src = (m.carrierBSI && m.carrierBSI.classification === 'Held') ? m.carrierBSI
+            : m.heldRecord || null;
+  if (!src) return null;
+  try {
+    const rd = typeof src.raw_data === 'string' ? JSON.parse(src.raw_data) : (src.raw_data || {});
+    return {
+      reason: rd['Hold Reason'] || null,
+      state:  rd['Member State'] || null,
+      county: rd['Member County'] || null,
+    };
+  } catch { return null; }
+}
+
 // Pure helper: period-agnostic lookup for a Held record by client+carrier.
 // Used when _findCarrierBSIMatch misses because payment_period differs.
 function _findHeldRecord(prod, carrierRecords) {
@@ -1057,7 +1073,21 @@ export default function AgencyProductionRecon() {
                             if (twStatus === 'paid')          return <span style={{ background:'#D4EDDA',color:'#155724',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>🟢 Paid</span>;
                             if (twStatus === 'chase_bsi')     return <span style={{ background:'#F8D7DA',color:'#721C24',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>🔴 Chase BSI</span>;
                             if (twStatus === 'request_audit') return <span style={{ background:'#FFF3CD',color:'#856404',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>🟡 Request Audit</span>;
-                            if (twStatus === 'held_licensing')  return <span style={{ background:'#E8E8E8',color:'#444',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>🔒 Held – Licensing</span>;
+                            if (twStatus === 'held_licensing') {
+                              const hd = _getHoldDetail(m);
+                              return (
+                                <span style={{ display:'flex',flexDirection:'column',alignItems:'flex-start',gap:2 }}>
+                                  <span style={{ background:'#E8E8E8',color:'#444',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>🔒 Held – Licensing</span>
+                                  {hd && (hd.state || hd.reason) && (
+                                    <span style={{ fontSize:10,color:'#888',fontStyle:'italic',paddingLeft:2 }}>
+                                      {hd.state && <strong style={{ fontStyle:'normal',color:'#555' }}>{hd.state}</strong>}
+                                      {hd.state && hd.reason && ' · '}
+                                      {hd.reason}
+                                    </span>
+                                  )}
+                                </span>
+                              );
+                            }
                             if (twStatus === 'no_pay_expected')  return <span style={{ background:'#F3F0FF',color:'#6D28D9',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>⛔ No Pay Expected</span>;
                             return <span style={{ background:'#F0F0F0',color:'#6C757D',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>⚪ Pending</span>;
                           })();

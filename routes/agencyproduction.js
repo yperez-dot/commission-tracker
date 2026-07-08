@@ -905,11 +905,12 @@ function buildReconCTE(apWhere) {
     ),
     leg3 AS (
       SELECT id, client_full_name, carrier, policy_number, commission,
-             payment_period, classification, hold_reason, nc, ncarr
+             payment_period, classification, hold_reason, member_state, nc, ncarr
       FROM (
         SELECT cr.id, cr.client_full_name, cr.carrier, cr.policy_number,
                cr.commission, cr.payment_period, cr.classification,
-               cr.raw_data::jsonb->>'Hold Reason' AS hold_reason,
+               cr.raw_data::jsonb->>'Hold Reason'    AS hold_reason,
+               cr.raw_data::jsonb->>'Member State'   AS member_state,
                ${normReconClient('cr.client_full_name')} AS nc,
                ${normReconCarrier('cr.carrier')}         AS ncarr,
                ROW_NUMBER() OVER (
@@ -951,6 +952,7 @@ function buildReconCTE(apWhere) {
       l3.policy_number   AS l3_policy,
       l3.client_full_name AS l3_client,
       l3.hold_reason     AS l3_hold_reason,
+      l3.member_state    AS l3_member_state,
       (chu.ncarr IS NOT NULL) AS carrier_has_uploads,
       COALESCE(
         NULLIF(TRIM(COALESCE(ap.manual_override_status, '')), ''),
@@ -1163,9 +1165,10 @@ router.get('/export-bsi-recon', requireAuth, async (req, res) => {
       { header: 'Policy #',       key: 'policy_number',    width: 18 },
     ];
 
-    function addSheetWithRows(name, rows, rowFill) {
+    function addSheetWithRows(name, rows, rowFill, extraCols) {
+      const cols = extraCols ? [...COL_DEFS, ...extraCols] : COL_DEFS;
       const ws = wb.addWorksheet(name);
-      ws.columns = COL_DEFS.map(c => ({ header: c.header, key: c.key, width: c.width }));
+      ws.columns = cols.map(c => ({ header: c.header, key: c.key, width: c.width }));
 
       // Style header row
       const hdrRow = ws.getRow(1);
@@ -1180,7 +1183,7 @@ router.get('/export-bsi-recon', requireAuth, async (req, res) => {
 
       // Data rows
       rows.forEach(r => {
-        const row = ws.addRow({
+        const baseRowData = {
           agent_name:      r.agent_name || '',
           client_name:     r.client_name || '',
           carrier:         r.carrier || '',
@@ -1192,7 +1195,9 @@ router.get('/export-bsi-recon', requireAuth, async (req, res) => {
           l2_period:       r.l2_period || '',
           manual_override_status: r.manual_override_status || '',
           policy_number:   r.policy_number || '',
-        });
+        };
+        if (extraCols) extraCols.forEach(c => { baseRowData[c.key] = r[c.key] || ''; });
+        const row = ws.addRow(baseRowData);
         row.font = BODY_FONT;
         if (rowFill) {
           row.eachCell(cell => {
@@ -1274,7 +1279,11 @@ router.get('/export-bsi-recon', requireAuth, async (req, res) => {
     // ── Tab 2–5: Data tabs ───────────────────────────────────────────────────
     addSheetWithRows('BSI — Audit Requests',  audit,      null);
     addSheetWithRows('BSI — Chase',           chase,      null);
-    addSheetWithRows('Held — Licensing',      held,       AMBER_FILL);
+    addSheetWithRows('Held — Licensing',      held,       AMBER_FILL,
+      [
+        { header: 'State',       key: 'l3_member_state',  width: 8  },
+        { header: 'Hold Reason', key: 'l3_hold_reason',   width: 55 },
+      ]);
 
     // No Payment Expected — two sections within one sheet
     const noPayWs = wb.addWorksheet('No Payment Expected');
