@@ -1351,6 +1351,7 @@ router.get('/export-bsi-recon', requireAuth, async (req, res) => {
           agent_name: r.agent_name || '', client_name: r.client_name || '',
           carrier: r.carrier || '',
           effective_date: r.effective_date ? new Date(r.effective_date).toLocaleDateString('en-US') : '—',
+          state:           r.state || r.l3_member_state || '',
           production_status: mapAppStatus(r.production_status),
           l3_commission: r.l3_commission != null ? parseFloat(r.l3_commission) : '',
           l3_period: r.l3_period || '',
