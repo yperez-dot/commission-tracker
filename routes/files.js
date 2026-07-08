@@ -570,6 +570,7 @@ function parseAetnaBSICSV(wb, filename) {
         payee:          'BSI',
         mga:            '',
         anomaly,
+        memberState,
         raw: row,
       });
     }
@@ -4327,7 +4328,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         `INSERT INTO commission_records (
            upload_id, agent_name, carrier, plan_type, client_full_name, effective_date,
            premium, commission, classification, payment_period, policy_number, payee, mga,
-           raw_data,
+           raw_data, member_state,
            source, policy_written_date, gross_commission, thei_share, bsi_share,
            producer_payable, split_applies, lob, sub_agent_override, statement_month, members,
            anomaly
@@ -4335,15 +4336,15 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
          VALUES (
            $1,$2,$3,$4,$5,$6,
            $7,$8,$9,$10,$11,$12,$13,
-           $14,
-           $15,$16,$17,$18,$19,
-           $20,$21,$22,$23,$24,$25,
-           $26
+           $14,$15,
+           $16,$17,$18,$19,$20,
+           $21,$22,$23,$24,$25,$26,
+           $27
          )`,
         [
           uploadId, r.agent, r.carrier, r.planType || '', r.client, r.effectiveDate,
           r.premium || 0, r.commission || 0, r.classification, r.period, r.policyNumber, r.payee || '', r.mga || '',
-          JSON.stringify(r.raw),
+          JSON.stringify(r.raw), r.memberState || null,
           r.source || null,
           (() => {
             const v = r.policyWrittenDate;
@@ -4900,7 +4901,7 @@ router.post('/upload-bsi-statement', requireAuth, upload.single('file'), async (
         `INSERT INTO commission_records (
            upload_id, agent_name, carrier, plan_type, client_full_name, effective_date,
            premium, commission, classification, payment_period, policy_number, payee, mga,
-           raw_data,
+           raw_data, member_state,
            source, policy_written_date, gross_commission, thei_share, bsi_share,
            producer_payable, split_applies, lob, sub_agent_override, statement_month, members,
            anomaly
@@ -4908,15 +4909,15 @@ router.post('/upload-bsi-statement', requireAuth, upload.single('file'), async (
          VALUES (
            $1,$2,$3,$4,$5,$6,
            $7,$8,$9,$10,$11,$12,$13,
-           $14,
-           $15,$16,$17,$18,$19,
-           $20,$21,$22,$23,$24,$25,
-           $26
+           $14,$15,
+           $16,$17,$18,$19,$20,
+           $21,$22,$23,$24,$25,$26,
+           $27
          )`,
         [
           uploadId, r.agent, r.carrier, r.planType || '', r.client, r.effectiveDate,
           r.premium || 0, r.commission || 0, r.classification, r.period, r.policyNumber, r.payee || '', r.mga || '',
-          JSON.stringify(r.raw),
+          JSON.stringify(r.raw), r.memberState || null,
           r.source || null,
           (() => {
             const v = r.policyWrittenDate;
