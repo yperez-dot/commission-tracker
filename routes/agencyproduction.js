@@ -937,7 +937,7 @@ function buildReconCTE(apWhere) {
     SELECT
       ap.id, ap.agent_name, ap.client_name, ap.carrier, ap.policy_number,
       ap.effective_date, ap.upload_batch, ap.status AS production_status,
-      ap.enrollment_type, ap.plan_name, ap.manual_override_status,
+      ap.enrollment_type, ap.plan_name, ap.manual_override_status, ap.state,
       l2.id              AS l2_id,
       l2.commission      AS l2_commission,
       l2.payment_period  AS l2_period,
@@ -1169,6 +1169,7 @@ router.get('/export-bsi-recon', requireAuth, async (req, res) => {
       { header: 'Client',         key: 'client_name',      width: 30 },
       { header: 'Carrier',        key: 'carrier',          width: 20 },
       { header: 'Eff Date',       key: 'effective_date',   width: 13 },
+      { header: 'State',          key: 'state',            width:  8 },
       { header: 'App Status (Carrier)', key: 'production_status', width: 20 },
       { header: 'Carrier→BSI $',  key: 'l3_commission',    width: 15 },
       { header: 'BSI Pd Period',  key: 'l3_period',        width: 14 },
@@ -1203,6 +1204,7 @@ router.get('/export-bsi-recon', requireAuth, async (req, res) => {
           client_name:     r.client_name || '',
           carrier:         r.carrier || '',
           effective_date:  r.effective_date ? new Date(r.effective_date).toLocaleDateString('en-US') : '—',
+          state:           r.state || r.l3_member_state || '',
           production_status: mapAppStatus(r.production_status),
           l3_commission:   r.l3_commission != null ? parseFloat(r.l3_commission) : '',
           l3_period:       r.l3_period || '',
@@ -1313,7 +1315,7 @@ router.get('/export-bsi-recon', requireAuth, async (req, res) => {
     addSheetWithRows('BSI — Chase',          chase,       null);
     addSheetWithRows('Held — Licensing',      held,       AMBER_FILL,
       [
-        { header: 'State',       key: 'l3_member_state',  width: 8  },
+        { header: 'State (BSI Stmt)', key: 'l3_member_state', width: 14 },
         { header: 'Hold Reason', key: 'l3_hold_reason',   width: 55 },
       ]);
 
