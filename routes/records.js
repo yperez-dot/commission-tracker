@@ -456,6 +456,34 @@ router.get('/missing-renewals', requireAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// GET /records/held-licensing-keys
+// Returns {client_full_name, carrier} pairs for bsi_statement Held records
+// whose hold_reason indicates a licensing/appointment issue.
+// Filtered server-side because:
+//   (a) raw_data is not exposed to the frontend via GET /records, and
+//   (b) not all Held records are licensing holds — "Payment Type Paper Check"
+//       (30 rows) and "Future Transaction" (11 rows) also exist and must not
+//       trigger the badge.
+// Only 56 rows currently match the licensing filter (all UnitedHealthcare).
+router.get('/held-licensing-keys', requireAuth, async (req, res) => {
+  try {
+    const pool = getPool();
+    const result = await pool.query(`
+      SELECT cr.client_full_name, cr.carrier
+      FROM commission_records cr
+      JOIN uploads u ON cr.upload_id = u.id
+      WHERE u.category = 'bsi_statement'
+        AND cr.classification = 'Held'
+        AND (
+          cr.raw_data::jsonb->>'Hold Reason' ILIKE '%not licensed%'
+          OR cr.raw_data::jsonb->>'Hold Reason' ILIKE '%not appointed%'
+        )
+        AND cr.client_full_name IS NOT NULL
+    `);
+    res.json({ keys: result.rows });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 router.get('/filters', requireAuth, async (req, res) => {
   try {
     const pool = getPool();

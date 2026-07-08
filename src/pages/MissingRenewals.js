@@ -44,7 +44,10 @@ function normName(name) {
     
     // Strip common suffixes from surname
     last = last.replace(/\b(JR|SR|III|II|IV|V)\.?$/i, '').trim();
-    
+    // Strip trailing middle initial(s) from first-name part — same class of fix
+    // as normReconClient comma-path (backend commit 9199248).
+    // "Alfred G." → "Alfred", "Joseph M." → "Joseph"
+    first = first.replace(/(\s+[A-Za-z]\.?)+$/i, '').trim();
     // Return "FIRST LAST" in Title Case
     const normalized = `${first} ${last}`.replace(/\s+/g, ' ').trim();
     return toTitleCase(normalized);
@@ -63,8 +66,9 @@ function nameVariants(name) {
   const result = [norm];
 
   if (parts.length >= 2) {
-    // Strip single-letter middle initial from end: "hector proano alcivar p" → "hector proano alcivar"
-    const noTrailingInitial = parts.filter((p, i) => !(i === parts.length - 1 && p.length === 1)).join(' ');
+    // Strip trailing initial from end — /^[A-Za-z]\.[?]$/ catches both "G" (len 1,
+    // worked before) and "G." (len 2 with period, was silently missed by p.length===1)
+    const noTrailingInitial = parts.filter((p, i) => !(i === parts.length - 1 && /^[A-Za-z]\.?$/.test(p))).join(' ');
     if (noTrailingInitial !== norm) result.push(noTrailingInitial);
 
     // Reversed word order: "hector proano alcivar" → "alcivar proano hector"
@@ -72,7 +76,7 @@ function nameVariants(name) {
     if (!result.includes(reversed)) result.push(reversed);
 
     // Reversed without trailing initial
-    const partsNoInitial = parts.filter((p, i) => !(i === parts.length - 1 && p.length === 1));
+    const partsNoInitial = parts.filter((p, i) => !(i === parts.length - 1 && /^[A-Za-z]\.?$/.test(p)));
     const reversedNoInitial = [...partsNoInitial].reverse().join(' ');
     if (!result.includes(reversedNoInitial)) result.push(reversedNoInitial);
   }
@@ -481,6 +485,27 @@ if (effDate && checkDate) {
         });
       }
 
+      // Held-licensing detection — must run before policyStatus so the flag is
+      // set before the row reaches the render. Best-effort: a fetch error suppresses
+      // the badge silently rather than breaking the page.
+      let heldKeySet = new Set();
+      try {
+        const heldData = await apiFetch('/records/held-licensing-keys');
+        for (const h of (heldData.keys || [])) {
+          heldKeySet.add(`${normName(h.client_full_name)}|${normCarrier(h.carrier)}`);
+        }
+      } catch (e) { console.warn('held-licensing-keys fetch failed:', e.message); }
+
+      for (const row of built) {
+        if (row.isMissing) {
+          if (heldKeySet.has(`${normName(row.client)}|${normCarrier(row.carrier)}`)) {
+            row.isHeld = true;
+            // isMissing stays true: row still surfaces under showMissingOnly
+            // and keeps its amber background. Only the badge changes.
+          }
+        }
+      }
+
       // Fetch policy status for all clients
       const policyStatusData = await apiFetch('/bob/policy-status');
       const policyStatusMap = {};
@@ -577,7 +602,7 @@ if (effDate && checkDate) {
       r.agent, r.carrier, formatPeriodLabel(selectedPeriod) || selectedPeriod,
       r.client, r.effectiveDate,
       r.isMissing ? '$0.00' : fmt(r.commission),
-      r.isMissing ? 'Missing' : 'Paid',
+      r.isHeld ? 'Held – Licensing' : r.isMissing ? 'Missing' : 'Paid',
       r.monthsMissing
     ]);
     const csv = [headers, ...data].map(r => r.map(v => `"${String(v||'').replace(/"/g,'""')}"`).join(',')).join('\n');
@@ -666,8 +691,9 @@ if (effDate && checkDate) {
     return sortDir === 'asc' ? cmp : -cmp;
   });
 
-  const filteredMissing = filtered.filter(r => r.isMissing).length;
-  const filteredPaid = filtered.filter(r => !r.isMissing).length;
+  const filteredMissing = filtered.filter(r => r.isMissing && !r.isHeld).length;
+  const filteredHeld    = filtered.filter(r => r.isHeld).length;
+  const filteredPaid    = filtered.filter(r => !r.isMissing).length;
   const totalCommission = filtered.filter(r => !r.isMissing).reduce((s,r) => s + r.commission, 0);
   const periodLabel = formatPeriodLabel(selectedPeriod) || selectedPeriod;
 
@@ -681,7 +707,8 @@ if (effDate && checkDate) {
                 <div style={{ fontWeight:500,fontSize:15 }}>{selectedClient.client}</div>
                 <div style={{ fontSize:12,color:'var(--text-muted)',marginTop:2 }}>
                   {selectedClient.carrier} · {selectedClient.agent} · Effective {selectedClient.effectiveDate}
-                  {selectedClient.isMissing && <span style={{ marginLeft:8,background:'#FFF4D6',color:'#856404',borderRadius:4,padding:'1px 6px',fontSize:11,fontWeight:500 }}>Missing</span>}
+                  {selectedClient.isHeld && <span style={{ marginLeft:8,background:'#E8E8E8',color:'#444',borderRadius:4,padding:'1px 6px',fontSize:11,fontWeight:500 }}>🔒 Held – Licensing</span>}
+                  {selectedClient.isMissing && !selectedClient.isHeld && <span style={{ marginLeft:8,background:'#FFF4D6',color:'#856404',borderRadius:4,padding:'1px 6px',fontSize:11,fontWeight:500 }}>Missing</span>}
                 </div>
               </div>
               <button onClick={() => setSelectedClient(null)} style={{ background:'none',border:'none',fontSize:20,cursor:'pointer',color:'var(--text-muted)' }}>✕</button>
@@ -840,6 +867,10 @@ if (effDate && checkDate) {
               <span style={{ color:'var(--text-muted)' }}>Total rows: <strong>{filtered.length}</strong></span>
               <span style={{ color:'var(--text-muted)',margin:'0 4px' }}>|</span>
               <span style={{ color:'var(--red)',fontWeight:500 }}>Missing: {filteredMissing}</span>
+              {filteredHeld > 0 && <>
+                <span style={{ color:'var(--text-muted)',margin:'0 4px' }}>|</span>
+                <span style={{ color:'#555',fontWeight:500 }}>🔒 Held – Licensing: {filteredHeld}</span>
+              </>}
               <span style={{ color:'var(--text-muted)',margin:'0 4px' }}>|</span>
               <span style={{ color:'var(--green)',fontWeight:500 }}>Paid: {filteredPaid}</span>
               <span style={{ color:'var(--text-muted)',margin:'0 4px' }}>|</span>
@@ -892,7 +923,7 @@ if (effDate && checkDate) {
                         transition: 'opacity 0.3s ease'
                       }}>
                         <td style={{ padding:'4px 6px' }}>
-                          {r.isMissing && <span style={{ display:'block',width:3,height:'100%',background:'var(--amber)',borderRadius:2 }}></span>}
+                          {(r.isMissing || r.isHeld) && <span style={{ display:'block',width:3,height:'100%',background:r.isHeld?'#aaa':'var(--amber)',borderRadius:2 }}></span>}
                         </td>
                         <td style={{ color:'var(--text-muted)',fontSize:11 }}>{i+1}</td>
                         <td style={{ fontWeight:400 }}>{r.agent}</td>
@@ -937,9 +968,11 @@ if (effDate && checkDate) {
                             <span className="badge badge-gray" data-status-key={rowKey}>⏳ Pending</span>
                           )}
                           {(!r.policyStatus || r.policyStatus === 'active') && (
-                            r.isMissing
-                              ? <span className="badge badge-amber" data-status-key={rowKey}>Missing</span>
-                              : <span className="badge badge-green" data-status-key={rowKey}>Paid</span>
+                            r.isHeld
+                              ? <span className="badge" style={{ background:'#E8E8E8',color:'#444' }} data-status-key={rowKey}>🔒 Held – Licensing</span>
+                              : r.isMissing
+                                ? <span className="badge badge-amber" data-status-key={rowKey}>Missing</span>
+                                : <span className="badge badge-green" data-status-key={rowKey}>Paid</span>
                           )}
                         </td>
                         <td style={{ fontSize:12,color:'var(--text-muted)' }}>
@@ -951,7 +984,7 @@ if (effDate && checkDate) {
                           }
                         </td>
                         <td style={{ fontSize:11 }}>
-                          {r.isMissing && (!r.policyStatus || r.policyStatus === 'active' || r.policyStatus === 'chase') && (
+                          {r.isMissing && !r.isHeld && (!r.policyStatus || r.policyStatus === 'active' || r.policyStatus === 'chase') && (
                             <select
                               onChange={async (e) => {
                                 const action = e.target.value;
