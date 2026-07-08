@@ -1137,6 +1137,19 @@ router.get('/export-bsi-recon', requireAuth, async (req, res) => {
 
     function UPPER_STATUS(s) { return (s || '').toUpperCase().trim(); }
 
+    // Change 2: split audit by carrier coverage
+    const auditBacked = audit.filter(r => r.carrier_has_uploads);  // we hold BSI statements
+    const auditVerify = audit.filter(r => !r.carrier_has_uploads); // no statements on file
+
+    // Change 1: map raw production status values to BSI-readable app-level labels.
+    // "Paid" on Hector's report = carrier finalized the app, not that BSI paid THEI.
+    function mapAppStatus(raw) {
+      const s = UPPER_STATUS(raw);
+      if (['COMPLETED','PAID','ACTIVE POLICY','ENROLLED'].includes(s)) return 'Finalized';
+      if (s === 'APPROVED') return 'Approved';
+      return raw || '';
+    }
+
     // ── Build workbook ───────────────────────────────────────────────────────
     const wb = new ExcelJS.Workbook();
     wb.creator = 'OliComm — The Health Experts Insurance';
@@ -1156,7 +1169,7 @@ router.get('/export-bsi-recon', requireAuth, async (req, res) => {
       { header: 'Client',         key: 'client_name',      width: 30 },
       { header: 'Carrier',        key: 'carrier',          width: 20 },
       { header: 'Eff Date',       key: 'effective_date',   width: 13 },
-      { header: 'Prod Status',    key: 'production_status',width: 16 },
+      { header: 'App Status (Carrier)', key: 'production_status', width: 20 },
       { header: 'Carrier→BSI $',  key: 'l3_commission',    width: 15 },
       { header: 'BSI Pd Period',  key: 'l3_period',        width: 14 },
       { header: 'BSI→THEI $',     key: 'l2_commission',    width: 13 },
@@ -1165,7 +1178,9 @@ router.get('/export-bsi-recon', requireAuth, async (req, res) => {
       { header: 'Policy #',       key: 'policy_number',    width: 18 },
     ];
 
-    function addSheetWithRows(name, rows, rowFill, extraCols) {
+    // subtitle param (optional): inserts a merged row above the header with descriptive text.
+    // Uses spliceRows to push header+data down — verified on ExcelJS 4.4.0.
+    function addSheetWithRows(name, rows, rowFill, extraCols, subtitle) {
       const cols = extraCols ? [...COL_DEFS, ...extraCols] : COL_DEFS;
       const ws = wb.addWorksheet(name);
       ws.columns = cols.map(c => ({ header: c.header, key: c.key, width: c.width }));
@@ -1188,7 +1203,7 @@ router.get('/export-bsi-recon', requireAuth, async (req, res) => {
           client_name:     r.client_name || '',
           carrier:         r.carrier || '',
           effective_date:  r.effective_date ? new Date(r.effective_date).toLocaleDateString('en-US') : '—',
-          production_status: r.production_status || '',
+          production_status: mapAppStatus(r.production_status),
           l3_commission:   r.l3_commission != null ? parseFloat(r.l3_commission) : '',
           l3_period:       r.l3_period || '',
           l2_commission:   r.l2_commission != null ? parseFloat(r.l2_commission) : '',
@@ -1214,6 +1229,19 @@ router.get('/export-bsi-recon', requireAuth, async (req, res) => {
         });
       });
 
+      // Insert subtitle row above header if specified
+      if (subtitle) {
+        ws.spliceRows(1, 0, []);
+        const subRow = ws.getRow(1);
+        ws.mergeCells(1, 1, 1, cols.length);
+        subRow.getCell(1).value = subtitle;
+        subRow.getCell(1).font  = { name: 'Arial', italic: true, size: 9, color: { argb: 'FF444444' } };
+        subRow.getCell(1).fill  = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8EEF8' } };
+        subRow.getCell(1).alignment = { wrapText: true, vertical: 'middle' };
+        subRow.height = 30;
+        ws.views = [{ state: 'frozen', ySplit: 2 }];
+      }
+
       return ws;
     }
 
@@ -1229,24 +1257,25 @@ router.get('/export-bsi-recon', requireAuth, async (req, res) => {
       ['', ''],
       ['Generated',            genDate],
       ['BSI Paid Through',     cutoffDate],
+      ['Effective dates through', `${cutoffDate} (BSI confirmed paid-through period)`],
       ['', ''],
-      ['TAB COUNTS', ''],
-      ['BSI Audit Requests',   audit.length],
-      ['BSI Chase',            chase.length],
-      ['Held — Licensing',     held.length],
-      ['No Pay — No Action',   withdrawn.length],
-      ['No Pay — In Progress', inProgress.length],
-      ['Needs Effective Date', noEffDate.length],
+      ['PAYMENT REQUEST SUMMARY', ''],
+      ['Audit requests (statement-backed, UHC)',  auditBacked.length],
+      ['Verify status (no statements held)',       auditVerify.length],
+      ['Pass-through owed (carrier paid BSI)',     chase.length],
+      ['Held – licensing (visibility only)',        held.length],
+      ['No payment expected (visibility only)',    withdrawn.length + inProgress.length],
       ['', ''],
       ['Rows excluded (eff date after cutoff)', afterCutoff.length],
+      ['Rows excluded (no effective date)',      noEffDate.length],
       ['', ''],
       ['WHAT EACH TAB MEANS', ''],
-      ['BSI Audit Requests',   'Send to BSI. Carrier paid BSI for these enrollments, but THEI has not received the override. These require BSI to confirm payment or provide detail.'],
-      ['BSI Chase',            'Send to BSI. Carrier paid BSI. BSI has not remitted to THEI. Chase BSI for the outstanding amount.'],
-      ['Held — Licensing',     'Informational only — do not send to BSI. Carrier held payment due to licensing/appointment issue. No audit owed; track for resolution.'],
-      ['No Pay — No Action',   'Do not send to BSI. Production status is Withdrawn, Cancelled, or Denied. No commission is expected; no action needed.'],
-      ['No Pay — In Progress', 'INTERNAL USE ONLY — do not send to BSI. Application is still in progress. Monitor internally; not yet a BSI audit item.'],
-      ['Needs Effective Date', 'Data quality flag. These rows have no effective date and cannot be scoped to the cutoff. Review source data to fill in missing dates.'],
+      ['BSI — Audit Requests',   'Send to BSI. App finalized on Hector’s report. We hold carrier statements for these enrollments and find no payment in either leg — no carrier-to-BSI record and no BSI-to-THEI record. Payment or written audit response requested.'],
+      ['BSI — Verify Status',    'Send to BSI. We do not hold carrier statements for these carriers. Production is finalized on our records — please confirm payment status on your carrier statements.'],
+      ['BSI — Chase',            'Send to BSI. Carrier paid BSI (shown on carrier→BSI statement). BSI has not remitted to THEI. Chase BSI for the outstanding amount.'],
+      ['Held — Licensing',       'Informational only — do not send to BSI. Carrier held payment due to licensing/appointment issue. No audit owed; track for resolution.'],
+      ['No Pay — No Action',     'Do not send to BSI. Production status is Withdrawn, Cancelled, or Denied. No commission expected.'],
+      ['No Pay — In Progress',   'INTERNAL USE ONLY — do not send to BSI. Application still in progress. Monitor internally.'],
     ];
 
     summaryRows.forEach((rowData, i) => {
@@ -1260,12 +1289,12 @@ router.get('/export-bsi-recon', requireAuth, async (req, res) => {
         row.getCell(1).font = { name: 'Arial', bold: true, size: 13 };
       }
       // Section headers
-      if (rowData[0] === 'TAB COUNTS' || rowData[0] === 'WHAT EACH TAB MEANS') {
+      if (rowData[0] === 'PAYMENT REQUEST SUMMARY' || rowData[0] === 'WHAT EACH TAB MEANS') {
         row.getCell(1).font = { name: 'Arial', bold: true, size: 10 };
         row.getCell(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFD9E1F2' } };
       }
       // Data labels
-      if (['Generated','BSI Paid Through','Rows excluded (eff date after cutoff)'].includes(rowData[0])) {
+      if (['Generated','BSI Paid Through','Effective dates through','Rows excluded (eff date after cutoff)','Rows excluded (no effective date)'].includes(rowData[0])) {
         row.getCell(1).font = { name: 'Arial', bold: true, size: 10 };
       }
       // Wrap the description cells
@@ -1277,8 +1306,11 @@ router.get('/export-bsi-recon', requireAuth, async (req, res) => {
     });
 
     // ── Tab 2–5: Data tabs ───────────────────────────────────────────────────
-    addSheetWithRows('BSI — Audit Requests',  audit,      null);
-    addSheetWithRows('BSI — Chase',           chase,      null);
+    addSheetWithRows('BSI — Audit Requests', auditBacked, null, null,
+      'Production on Hector’s report with no matching BSI-to-THEI record AND no payment shown on your carrier statements. App finalized, effective date through ' + cutoffDate + '. Payment or audit response requested.');
+    addSheetWithRows('BSI — Verify Status',  auditVerify, null, null,
+      'Production finalized on our records; we do not hold carrier statements for these carriers. Please check your carrier statements and confirm payment status for each.');
+    addSheetWithRows('BSI — Chase',          chase,       null);
     addSheetWithRows('Held — Licensing',      held,       AMBER_FILL,
       [
         { header: 'State',       key: 'l3_member_state',  width: 8  },
@@ -1317,7 +1349,7 @@ router.get('/export-bsi-recon', requireAuth, async (req, res) => {
           agent_name: r.agent_name || '', client_name: r.client_name || '',
           carrier: r.carrier || '',
           effective_date: r.effective_date ? new Date(r.effective_date).toLocaleDateString('en-US') : '—',
-          production_status: r.production_status || '',
+          production_status: mapAppStatus(r.production_status),
           l3_commission: r.l3_commission != null ? parseFloat(r.l3_commission) : '',
           l3_period: r.l3_period || '',
           l2_commission: r.l2_commission != null ? parseFloat(r.l2_commission) : '',
