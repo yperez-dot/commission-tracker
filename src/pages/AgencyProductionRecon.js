@@ -1075,17 +1075,27 @@ export default function AgencyProductionRecon() {
                             if (twStatus === 'request_audit') return <span style={{ background:'#FFF3CD',color:'#856404',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>🟡 Request Audit</span>;
                             if (twStatus === 'held_licensing') {
                               const hd = _getHoldDetail(m);
+                              // Option A: badge + state pill inline; full reason on hover tooltip.
+                              // Outer statusBadge wrapper is already inline-flex so pill is
+                              // a natural sibling of the badge — no column flex needed.
                               return (
-                                <span style={{ display:'flex',flexDirection:'column',alignItems:'flex-start',gap:2 }}>
+                                <>
                                   <span style={{ background:'#E8E8E8',color:'#444',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>🔒 Held – Licensing</span>
                                   {hd && (hd.state || hd.reason) && (
-                                    <span style={{ fontSize:10,color:'#888',fontStyle:'italic',paddingLeft:2 }}>
-                                      {hd.state && <strong style={{ fontStyle:'normal',color:'#555' }}>{hd.state}</strong>}
-                                      {hd.state && hd.reason && ' · '}
-                                      {hd.reason}
+                                    <span
+                                      title={hd.reason || undefined}
+                                      style={{
+                                        display:'inline-flex',alignItems:'center',gap:3,
+                                        border:'1px solid #bbb',borderRadius:4,
+                                        padding:'2px 7px',fontSize:11,fontWeight:500,
+                                        color:'#555',background:'#fff',whiteSpace:'nowrap',
+                                        cursor: hd.reason ? 'help' : 'default',
+                                      }}
+                                    >
+                                      {hd.state || 'ⓘ'}{hd.reason && <span style={{ fontSize:10,color:'#999',lineHeight:1 }}>ⓘ</span>}
                                     </span>
                                   )}
-                                </span>
+                                </>
                               );
                             }
                             if (twStatus === 'no_pay_expected')  return <span style={{ background:'#F3F0FF',color:'#6D28D9',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>⛔ No Pay Expected</span>;
