@@ -416,6 +416,12 @@ router.get('/missing-renewals', requireAuth, async (req, res) => {
     // Before flagging a renewal missing, check whether a bsi_statement Held record
     // exists for this name+carrier with a licensing/appointment hold reason — same
     // logic as /reconcile held_licensing. Match is format-tolerant via normalizeNameKey.
+    //
+    // TODO: remove carrier = 'UnitedHealthcare' guard once normClient() in
+    // agencyproduction.js is fixed to strip trailing single-letter initials
+    // (e.g. "ALAN KITCHMAN L" → "alan kitchman"). Until then, Humana Held records
+    // use a non-comma name format that normalizeNameKey() cannot reliably match,
+    // so we scope detection to UHC only (all 56 current held rows are UHC anyway).
     const heldResult = await pool.query(`
       SELECT cr.client_full_name, cr.carrier
       FROM commission_records cr
@@ -427,6 +433,7 @@ router.get('/missing-renewals', requireAuth, async (req, res) => {
           OR cr.raw_data::jsonb->>'Hold Reason' ILIKE '%not appointed%'
         )
         AND cr.client_full_name IS NOT NULL
+        AND cr.carrier = 'UnitedHealthcare'
     `);
     const heldKeys = new Set();
     for (const h of heldResult.rows) {
@@ -468,6 +475,9 @@ router.get('/missing-renewals', requireAuth, async (req, res) => {
 router.get('/held-licensing-keys', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
+    // TODO: remove carrier = 'UnitedHealthcare' guard once normClient() in
+    // agencyproduction.js strips trailing single-letter initials. See matching
+    // comment in the held_licensing detection block above.
     const result = await pool.query(`
       SELECT cr.client_full_name, cr.carrier
       FROM commission_records cr
@@ -479,6 +489,7 @@ router.get('/held-licensing-keys', requireAuth, async (req, res) => {
           OR cr.raw_data::jsonb->>'Hold Reason' ILIKE '%not appointed%'
         )
         AND cr.client_full_name IS NOT NULL
+        AND cr.carrier = 'UnitedHealthcare'
     `);
     res.json({ keys: result.rows });
   } catch (err) { res.status(500).json({ error: err.message }); }
