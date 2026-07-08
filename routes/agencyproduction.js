@@ -1138,15 +1138,8 @@ router.get('/export-bsi-recon', requireAuth, async (req, res) => {
     function UPPER_STATUS(s) { return (s || '').toUpperCase().trim(); }
 
     // Change 2: split audit by carrier coverage
-    // TODO: remove UHC-only guard once normClient trailing-initial bug is fixed and
-    // Humana/Devoted re-verified. Bug confirmed 2026-07-07: SQL normClient() doesn't
-    // strip trailing middle initials ("ALAN KITCHMAN L" ≠ "KITCHMAN, ALAN"), causing
-    // ~58 false request_audits on Jan-2026 Humana alone. Fix = one REGEXP_REPLACE in
-    // normClient() in routes/agencyproduction.js. Until then, only UHC rows are
-    // evidence-backed enough to go into Audit Requests; Humana+Devoted go to Verify.
-    const auditBacked = audit.filter(r => r.carrier_has_uploads &&
-      (r.carrier || '').toLowerCase().includes('united')); // TEMP: UHC only
-    const auditVerify = audit.filter(r => !auditBacked.includes(r)); // all others
+    const auditBacked = audit.filter(r => r.carrier_has_uploads);
+    const auditVerify = audit.filter(r => !r.carrier_has_uploads);
 
     // Change 1: map raw production status values to BSI-readable app-level labels.
     // "Paid" on Hector's report = carrier finalized the app, not that BSI paid THEI.
