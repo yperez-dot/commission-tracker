@@ -980,7 +980,7 @@ function buildReconCTE(apWhere) {
 // Alba Hernandez exclusion — BSI principal (agency-level production, not individual override validation)
 // Matches the single known variant in agency_production: 'HERNANDEZ, ALBA R'
 // If new variants are added to the table, extend this list.
-const ALBA_EXCLUSION_NAMES = ['hernandez, alba r', 'hernandez, alba', 'alba hernandez', 'alba ritela hernandez'];
+const ALBA_EXCLUSION_NAMES = ['hernandez, alba r', 'hernandez, alba', 'alba hernandez', 'alba ritela hernandez', 'broker society insurance'];
 const ALBA_EXCLUSION_REASON = 'BSI principal — agency-level production; not subject to individual override validation';
 
 router.get('/reconcile', requireAuth, async (req, res) => {
