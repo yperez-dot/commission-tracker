@@ -34,12 +34,17 @@ function agencyFilter(req, alias) {
 // Smart Matching v2 helpers — deterministic keys only, no fuzzy/Levenshtein.
 
 // normalizeNameKey: accent-strip + uppercase + token-sort.
-// Handles "Perez, Maria" ↔ "Maria Perez", "José" ↔ "Jose", etc.
+// Handles "Perez, Maria" ↔ "Maria Perez", "José" ↔ "Jose",
+// "Tate, Joseph M." ↔ "Joseph Tate" (middle initials stripped), etc.
+// Single-char tokens are dropped before sort — same class of fix as normReconClient
+// comma-path stripping in agencyproduction.js (Commit 9199248).
+// Known edge case: solo-initial first names ("A Smith") collapse to just the surname;
+// acceptable risk — not present in Medicare commission statement data.
 function normalizeNameKey(name) {
   if (!name) return '';
   const noAccents = name.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   const clean = noAccents.toUpperCase().replace(/[^A-Z0-9\s]/g, ' ');
-  return clean.split(/\s+/).filter(Boolean).sort().join('|');
+  return clean.split(/\s+/).filter(t => t.length > 1).sort().join('|');
 }
 
 // normalizeAgentKey: alias resolution (from normalize.js) then token-sort.
@@ -393,7 +398,7 @@ router.get('/missing-renewals', requireAuth, async (req, res) => {
 
     // v2: rescue records whose name just changed format
     const rescuedByV2 = [];
-    const missing = legacyMissing.filter(r => {
+    const afterV2 = legacyMissing.filter(r => {
       const matchedRow = thisV2Map.get(toV2Key(r));
       if (matchedRow) {
         rescuedByV2.push({
@@ -407,6 +412,34 @@ router.get('/missing-renewals', requireAuth, async (req, res) => {
       return true;
     });
 
+    // Fix: held_licensing detection.
+    // Before flagging a renewal missing, check whether a bsi_statement Held record
+    // exists for this name+carrier with a licensing/appointment hold reason — same
+    // logic as /reconcile held_licensing. Match is format-tolerant via normalizeNameKey.
+    const heldResult = await pool.query(`
+      SELECT cr.client_full_name, cr.carrier
+      FROM commission_records cr
+      JOIN uploads u ON cr.upload_id = u.id
+      WHERE u.category = 'bsi_statement'
+        AND cr.classification = 'Held'
+        AND (
+          cr.raw_data::jsonb->>'Hold Reason' ILIKE '%not licensed%'
+          OR cr.raw_data::jsonb->>'Hold Reason' ILIKE '%not appointed%'
+        )
+        AND cr.client_full_name IS NOT NULL
+    `);
+    const heldKeys = new Set();
+    for (const h of heldResult.rows) {
+      heldKeys.add(`${normalizeNameKey(h.client_full_name)}|${normalizeCarrierKey(h.carrier)}`);
+    }
+
+    const heldLicensing = [];
+    const missing = afterV2.filter(r => {
+      const hk = `${normalizeNameKey(r.client_full_name)}|${normalizeCarrierKey(r.carrier)}`;
+      if (heldKeys.has(hk)) { heldLicensing.push(r); return false; }
+      return true;
+    });
+
     const newClients = thisMonth.rows.filter(r => !lastExactKeys.has(toLegacyKey(r)));
     res.json({
       lastPeriodCount: lastMonth.rows.length,
@@ -417,6 +450,8 @@ router.get('/missing-renewals', requireAuth, async (req, res) => {
       legacyMissingCount,
       rescuedByV2Count: rescuedByV2.length,
       rescuedByV2,
+      heldLicensing,
+      heldLicensingCount: heldLicensing.length,
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
