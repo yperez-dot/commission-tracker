@@ -18,6 +18,25 @@ node -c routes/files.js
 
 ## ✅ Before EVERY push to production:
 
+### 00. Diff review order (added 2026-07-08)
+**Show `git diff` BEFORE asking for go. Wait for explicit approval of the diff, THEN push.**
+Do not accept a "push" approval that precedes the diff review — restate that the diff is still pending.
+Sequence: diff shown → Yahoska reviews → "go" → push. Not: build → "go" → push → show diff.
+
+---
+
+### 0. Missing Renewals Baseline Snapshot (if touching records.js OR MissingRenewals.js)
+
+**Record the current Missing count BEFORE pushing** — open the Missing Renewals page, note the count shown in the header, write it here or in the commit message. Without a baseline, "stop and report if counts move unexpectedly" has nothing to compare against.
+
+```
+Pre-push Missing count: _____  (period: ______, filters: ______)
+```
+
+Why: The frontend builds its own match using `/bob` + `/records` directly (client-side normName/nameVariants). No backend instrumentation fields are live for this view. The only baseline that exists is a screenshot or manual note taken before the deploy.
+
+---
+
 ### 1. Syntax Check (2 seconds)
 ```bash
 # Check main files
