@@ -480,6 +480,7 @@ if (effDate && checkDate) {
           effectiveDate: client.effective_date,
           lastPaidPeriod: client.last_commission_date,
           commission,
+          lastKnownCommission: parseFloat(client.last_commission_amount) || 0,
           isMissing,
           monthsMissing: client.months_missing || 0,
           bobId: client.id,
@@ -604,7 +605,7 @@ if (effDate && checkDate) {
     const data = sorted.map(r => [
       r.agent, r.carrier, formatPeriodLabel(selectedPeriod) || selectedPeriod,
       r.client, r.effectiveDate,
-      r.isMissing ? '$0.00' : fmt(r.commission),
+      r.isMissing ? (r.lastKnownCommission > 0 ? fmt(r.lastKnownCommission) : '—') : fmt(r.commission),
       r.isHeld ? 'Held – Licensing' : r.isMissing ? 'Missing' : 'Paid',
       r.monthsMissing
     ]);
@@ -958,7 +959,7 @@ if (effDate && checkDate) {
                           })()}
                         </td>
                         <td style={{ fontWeight:500,color:r.isMissing?'var(--text-muted)':'var(--green)' }}>
-                          {r.isMissing ? '$0.00' : fmt(r.commission)}
+                          {r.isMissing ? (r.lastKnownCommission > 0 ? fmt(r.lastKnownCommission) : '—') : fmt(r.commission)}
                         </td>
                         <td>
                           {r.policyStatus === 'chase' && (
