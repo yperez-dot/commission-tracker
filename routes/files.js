@@ -2012,7 +2012,8 @@ function parseHealthSunRows(ws, filename) {
     const agentRaw = String(row['Agent Name'] || '').trim();
     const commission = parseFloat(row['PaidAmount']) || 0;
     const effectiveDateRaw = String(row['Effective Date'] || '').trim();
-    const compensationMonth = String(row['Compensation Month'] || '').trim();
+    const compensationMonthRaw = row['Compensation Month'];
+    const compensationMonth = String(compensationMonthRaw || '').trim();
     const commissionType = String(row['Commission Type'] || '').trim();
     const initialRenewal = String(row['Initial / Renewal'] || '').trim();
     const planName = String(row['Product Plan Name'] || '').trim();
@@ -2020,9 +2021,18 @@ function parseHealthSunRows(ws, filename) {
 
     if (!isValidClientName(client) || commission === 0) continue;
 
-    // Parse period from Compensation Month (2026-05-01 → 202605)
-    const periodMatch = compensationMonth.match(/^(\d{4})-(\d{2})/);
-    const period = periodMatch ? periodMatch[1] + periodMatch[2] : 'Unknown';
+    // Parse period — handles Excel serial (number), YYYY-MM-DD, and M/D/YYYY
+    let period = 'Unknown';
+    if (typeof compensationMonthRaw === 'number' && compensationMonthRaw > 40000) {
+      const d = new Date(Date.UTC(1899, 11, 30));
+      d.setUTCDate(d.getUTCDate() + compensationMonthRaw);
+      period = `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+    } else {
+      const isoMatch = compensationMonth.match(/^(\d{4})-(\d{2})/);
+      const mdyMatch = compensationMonth.match(/^(\d{1,2})\/\d{1,2}\/(\d{4})$/);
+      if (isoMatch) period = isoMatch[1] + isoMatch[2];
+      else if (mdyMatch) period = mdyMatch[2] + mdyMatch[1].padStart(2, '0');
+    }
 
     // Parse effective date
     const effectiveDate = formatDate(effectiveDateRaw);
