@@ -151,6 +151,9 @@ function normCarrier(c) {
   if (s.includes('simply')) return 'simply';
   if (s.includes('molina')) return 'molina';
   if (s.includes('solis')) return 'solis';
+  if (s.includes('healthsun') || s.includes('health sun')) return 'healthsun';
+  if (s.includes('doctors')) return 'doctors healthcare';
+  if (s.includes('avmed') || s.includes('av med')) return 'avmed';
   return s;
 }
 
