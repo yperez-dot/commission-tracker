@@ -151,6 +151,9 @@ function normCarrier(c) {
   if (s.includes('simply')) return 'simply';
   if (s.includes('molina')) return 'molina';
   if (s.includes('solis')) return 'solis';
+  if (s.includes('healthsun') || s.includes('health sun')) return 'healthsun';
+  if (s.includes('doctors')) return 'doctors healthcare';
+  if (s.includes('avmed') || s.includes('av med')) return 'avmed';
   return s;
 }
 
@@ -344,22 +347,6 @@ export default function MissingRenewals({ user }) {
 
       const allRecData = await apiFetch('/records?limit=10000');
       
-      // DEBUG: Check records fetch
-      console.log('[DEBUG-LILIA] Total records fetched:', allRecData.records?.length);
-      if (allRecData.records?.length >= 10000) {
-        console.warn('[DEBUG-LILIA] ⚠️ WARNING: Hit 10000 record limit! Some records may be missing.');
-      }
-      const devotedRecords = allRecData.records?.filter(r => 
-        String(r.carrier || '').toLowerCase().includes('devoted')
-      ) || [];
-      console.log('[DEBUG-LILIA] Devoted records in fetch:', devotedRecords.length);
-      
-      const devotedLiliaRecords = devotedRecords.filter(r => {
-        const name = String(r.client_full_name || '').toLowerCase();
-        return name.includes('lilia') || name.includes('torres');
-      });
-      console.log('[DEBUG-LILIA] Devoted records with Lilia/Torres:', devotedLiliaRecords);
-      
       const allRecs = (allRecData.records || []).filter(r => {
         if (!r.payment_period) return false;
         if (r.payment_period === selectedPeriod) return true;
@@ -367,16 +354,6 @@ export default function MissingRenewals({ user }) {
         return n && targetNorm && n === targetNorm;
       });
       
-      // DEBUG: Check if Lilia records survived the period filter
-      const devotedLiliaAfterFilter = allRecs.filter(r => {
-        const name = String(r.client_full_name || '').toLowerCase();
-        const carrier = String(r.carrier || '').toLowerCase();
-        return carrier.includes('devoted') && (name.includes('lilia') || name.includes('torres'));
-      });
-      console.log('[DEBUG-LILIA] Devoted Lilia/Torres records AFTER period filter:', devotedLiliaAfterFilter);
-      console.log('[DEBUG-LILIA] Selected period:', selectedPeriod);
-      console.log('[DEBUG-LILIA] Target normalized period:', targetNorm);
-
       // Build full-name lookup: "normname|carrier" → records[]
       // CRITICAL: Match on client_name|carrier ONLY - do NOT include effective_date
       // Effective dates vary across different statement sources (BSI, NHP, direct carrier)
@@ -387,15 +364,6 @@ export default function MissingRenewals({ user }) {
         if (!recMap[key]) recMap[key] = [];
         recMap[key].push(r);
       }
-
-      // DEBUG: Show all Devoted keys in recMap
-      console.log('[DEBUG-LILIA] All Devoted keys in recMap:');
-      Object.keys(recMap).filter(k => k.includes('devoted')).forEach(k => {
-        console.log('[DEBUG-LILIA]   Key:', k, '→', recMap[k].length, 'records');
-        if (k.includes('lilia') || k.includes('torres')) {
-          console.log('[DEBUG-LILIA]   >>> LILIA/TORRES MATCH FOUND IN RECMAP!', recMap[k]);
-        }
-      });
 
       // Build last-name lookup for fuzzy fallback
       const lastNameMap = {};
@@ -416,18 +384,6 @@ export default function MissingRenewals({ user }) {
 
       for (const client of bobClients) {
         const nc = normCarrier(client.carrier);
-
-        // DEBUG: Lilia Torres matching
-        if (client.client_full_name.includes('LILIA') || client.client_full_name.includes('Torres')) {
-          console.log('[DEBUG-LILIA] BOB client:', client.client_full_name, client.carrier);
-          console.log('[DEBUG-LILIA] normName:', normName(client.client_full_name));
-          console.log('[DEBUG-LILIA] normCarrier:', normCarrier(client.carrier));
-          console.log('[DEBUG-LILIA] lookup key:', normName(client.client_full_name) + '|' + normCarrier(client.carrier));
-          console.log('[DEBUG-LILIA] recMap has key?', !!recMap[normName(client.client_full_name) + '|' + normCarrier(client.carrier)]);
-          if (recMap[normName(client.client_full_name) + '|' + normCarrier(client.carrier)]) {
-            console.log('[DEBUG-LILIA] recMap records:', recMap[normName(client.client_full_name) + '|' + normCarrier(client.carrier)]);
-          }
-        }
 
         const effDate = parseEffDate(client.effective_date);
 if (effDate && checkDate) {
@@ -477,6 +433,7 @@ if (effDate && checkDate) {
           effectiveDate: client.effective_date,
           lastPaidPeriod: client.last_commission_date,
           commission,
+          lastKnownCommission: parseFloat(client.last_commission_amount) || 0,
           isMissing,
           monthsMissing: client.months_missing || 0,
           bobId: client.id,
@@ -601,7 +558,7 @@ if (effDate && checkDate) {
     const data = sorted.map(r => [
       r.agent, r.carrier, formatPeriodLabel(selectedPeriod) || selectedPeriod,
       r.client, r.effectiveDate,
-      r.isMissing ? '$0.00' : fmt(r.commission),
+      r.isMissing ? (r.lastKnownCommission > 0 ? fmt(r.lastKnownCommission) : '—') : fmt(r.commission),
       r.isHeld ? 'Held – Licensing' : r.isMissing ? 'Missing' : 'Paid',
       r.monthsMissing
     ]);
@@ -955,7 +912,7 @@ if (effDate && checkDate) {
                           })()}
                         </td>
                         <td style={{ fontWeight:500,color:r.isMissing?'var(--text-muted)':'var(--green)' }}>
-                          {r.isMissing ? '$0.00' : fmt(r.commission)}
+                          {r.isMissing ? (r.lastKnownCommission > 0 ? fmt(r.lastKnownCommission) : '—') : fmt(r.commission)}
                         </td>
                         <td>
                           {r.policyStatus === 'chase' && (

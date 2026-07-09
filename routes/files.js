@@ -3834,10 +3834,6 @@ function parseGoldKidneyRows(wb, filename) {
       period = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
     }
     
-    console.log('[GOLD_KIDNEY] Extracted period:', period);
-    console.log('[GOLD_KIDNEY] Column indices:', colIdx);
-    console.log('[GOLD_KIDNEY] Processing', data.length - 1, 'data rows');
-    
     // Process data rows
     for (let i = 1; i < data.length; i++) {
       const row = data[i];
@@ -3900,9 +3896,6 @@ function parseGoldKidneyRows(wb, filename) {
         }
       });
     }
-    
-    console.log('[GOLD_KIDNEY] Parsed', records.length, 'records');
-    console.log('[GOLD_KIDNEY] Total commission:', records.reduce((sum, r) => sum + r.commission, 0).toFixed(2));
     
   } catch (err) {
     console.error('[GOLD_KIDNEY] Parser error:', err.message);
@@ -4136,7 +4129,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         console.log('[UPLOAD] ✓ Oscar IFP detection MATCHED!');
         console.log('[UPLOAD] Using Oscar IFP parser');
         records = parseOscarIFPRows(wb, req.file.originalname);
-      } else if ((console.log('[UPLOAD] Testing Gold Kidney...'), isGoldKidneyFile(wb))) {
+      } else if (isGoldKidneyFile(wb)) {
         console.log('[UPLOAD] ✓ Gold Kidney detection MATCHED!');
         console.log('[UPLOAD] Using Gold Kidney parser');
         records = parseGoldKidneyRows(wb, req.file.originalname);
