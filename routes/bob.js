@@ -416,7 +416,14 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   try {
     const pool = getPool();
-    const { carrier } = req.body;
+    const { carrier: rawCarrier } = req.body;
+    // Normalize known casing variants — everything else passes through unchanged
+    const _cs = (rawCarrier || '').toLowerCase().trim();
+    const carrier = (_cs.includes('healthsun') || _cs.includes('health sun')) ? 'HealthSun'
+                  : _cs.includes('devoted')                                    ? 'Devoted Health'
+                  : _cs.includes('doctors')                                    ? 'Doctors Healthcare'
+                  : (_cs.includes('avmed') || _cs.includes('av med'))          ? 'AvMed'
+                  : rawCarrier;
     if (!carrier) return res.status(400).json({ error: 'Carrier name required' });
 
     const wb = XLSX.readFile(req.file.path);
