@@ -592,11 +592,13 @@ export default function AgencyProductionRecon() {
     }
     
     const carrierBSIAmt = (m) => m.carrierBSI ? parseFloat(m.carrierBSI.commission || 0) : null;
-    const headers = ['Agent', 'Client', 'Carrier', 'Effective Date', 'BSI→THEI Amt', 'Carrier→BSI Amt', 'Status', 'Override Status'];
+    const headers = ['Agent', 'Client', 'Carrier', 'State', 'Effective Date', 'BSI→THEI Amt', 'Carrier→BSI Amt', 'Status', 'Override Status'];
     const rows = dataToExport.map(m => {
       const agentName = m.production.agent_name || '—';
       const clientName = m.production.client_name || '—';
       const carrier = formatCarrier(m.production.carrier) || '—';
+      const hd = _getHoldDetail(m);
+      const state = (hd && hd.state) || m.production.state || '—';
       const effectiveDate = m.production.effective_date ? formatDate(m.production.effective_date) : '—';
       const bsiThei = m.override ? (m.override.commission || m.override.commission_amount || '0') : '—';
       const cBSI = carrierBSIAmt(m) !== null ? carrierBSIAmt(m).toFixed(2) : '—';
@@ -607,6 +609,7 @@ export default function AgencyProductionRecon() {
         agentName,
         clientName,
         carrier,
+        state,
         effectiveDate,
         bsiThei,
         cBSI,
