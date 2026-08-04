@@ -295,8 +295,8 @@ function isSolisFile(filename) {
 }
 
 function isHealthSunFile(filename) {
-  const f = filename.toLowerCase().replace(/\s+/g, '_');
-  return (f.includes('healthsun') || f.includes('commission_report')) &&
+  const f = filename.toLowerCase().replace(/[\s-]+/g, '_');  // normalize spaces and hyphens
+  return (f.includes('healthsun') || f.includes('commission_report') || f.includes('_hs_statement')) &&
          (f.endsWith('.csv') || f.endsWith('.xlsx'));
 }
 
