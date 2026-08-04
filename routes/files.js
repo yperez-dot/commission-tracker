@@ -4697,10 +4697,11 @@ function isAMLPortalExportFile(filename, wb) {
 function parseAMLPortalRows(wb, filename) {
   const records = [];
   const ws = wb.Sheets[wb.SheetNames[0]];
-  // raw:false forces XLSX to format dates as strings (MM/DD/YYYY) instead of Excel serials
-  const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: false });
+  // raw:true preserves numeric types — Commission ($) arrives as float, Statement Date as Excel serial
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
 
   // Currency: handles '$648.96', '-$50.00', '($289.17)', '$0.00'
+  // Under raw:true, double-quoted CSV currency values arrive as numbers already parsed by XLSX
   function parseCurrency(val) {
     const s = String(val || '').trim();
     const negative = (s.startsWith('(') && s.endsWith(')')) || s.startsWith('-');
@@ -4708,9 +4709,16 @@ function parseAMLPortalRows(wb, filename) {
     return negative ? -num : num;
   }
 
-  // Period from 'MM/DD/YYYY' -> 'YYYYMM'
-  function parsePeriod(dateStr) {
-    const m = String(dateStr || '').match(/^(\d{2})\/\d{2}\/(20\d{2})$/);
+  // Period from Excel serial OR 'MM/DD/YYYY' string -> 'YYYYMM'
+  // Statement Date arrives as Excel serial under raw:true (1899-12-30 epoch, same as HealthSun/Solis)
+  function parsePeriod(val) {
+    if (typeof val === 'number' && val > 40000) {
+      const d = new Date(Date.UTC(1899, 11, 30));
+      d.setUTCDate(d.getUTCDate() + Math.floor(val));
+      return `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+    }
+    // Fallback: string 'MM/DD/YYYY' — 4-digit year required, 2-digit falls through to Unknown
+    const m = String(val || '').match(/^(\d{2})\/\d{2}\/(20\d{2})$/);
     if (m) return m[2] + m[1];
     return 'Unknown';
   }
