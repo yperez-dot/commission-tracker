@@ -4200,6 +4200,17 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       if (payeeLc === 'bsi' || /statement-the|statement_-the|broker_society|bsi/.test(fnLc)) inferredSource = 'BSI';
       else if (payeeLc === 'nhp' || /^the_health_experts_insurance_statement|nhp/.test(fnLc)) inferredSource = 'NHP';
 
+      // Build overrideSet for agent-direct pass-through detection (mirrors /backfill-business-rules logic)
+      // NOTE: does NOT cover Christian/Horacio 50/25/25 or Marco $10-deduction on Override rows —
+      // those formulas exist only as one-time DB corrections (2026-08-04). BSI upload pause stays in
+      // effect for statements touching their Agency Override rows until those formulas are built in code.
+      const overrideRowsUpload = await pool.query(`
+        SELECT DISTINCT LOWER(agent_name) AS agent, LOWER(carrier) AS carrier
+        FROM commission_records
+        WHERE classification = 'Agency Override' AND source IS NOT NULL
+      `);
+      const overrideSetUpload = new Set(overrideRowsUpload.rows.map(r => `${r.agent}|${r.carrier}`));
+
       records = records.map(r => {
         if (r.source) return r;
 
@@ -4212,15 +4223,13 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
 
         const netCommission = parseFloat(r.commission) || 0;
 
+        // Agent-direct rows: NB/Renewal/Chargeback for agents with a known Agency Override relationship
+        const isAgentDirectRow = classification === 'new business' || classification === 'renewal' || classification === 'chargeback';
+        const hasMatchingOverride = overrideSetUpload.has(`${agentLc}|${carrierLc}`);
+
         let splitApplies, theiShare, bsiShare, producerPayable, grossCommission;
 
-        if (inferredSource === 'direct_carrier') {
-          splitApplies = false;
-          grossCommission = netCommission;
-          theiShare = netCommission;
-          bsiShare = 0;
-          producerPayable = 0;
-        } else if (isCommissionRow) {
+        if (isCommissionRow) {
           splitApplies = false;
           grossCommission = netCommission;
           theiShare = 0;
@@ -4234,6 +4243,18 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
           } else {
             theiShare = grossCommission; bsiShare = 0; producerPayable = 0;
           }
+        } else if (inferredSource === 'direct_carrier') {
+          splitApplies = false;
+          grossCommission = netCommission;
+          theiShare = netCommission;
+          bsiShare = 0;
+          producerPayable = 0;
+        } else if (isAgentDirectRow && hasMatchingOverride) {
+          splitApplies = false;
+          grossCommission = netCommission;
+          theiShare = 0;
+          bsiShare = 0;
+          producerPayable = grossCommission;
         } else {
           splitApplies = true;
           grossCommission = Math.round(netCommission * 2 * 100) / 100;
