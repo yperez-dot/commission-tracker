@@ -4201,15 +4201,30 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       else if (payeeLc === 'nhp' || /^the_health_experts_insurance_statement|nhp/.test(fnLc)) inferredSource = 'NHP';
 
       // Build overrideSet for agent-direct pass-through detection (mirrors /backfill-business-rules logic)
-      // NOTE: does NOT cover Christian/Horacio 50/25/25 or Marco $10-deduction on Override rows —
-      // those formulas exist only as one-time DB corrections (2026-08-04). BSI upload pause stays in
-      // effect for statements touching their Agency Override rows until those formulas are built in code.
       const overrideRowsUpload = await pool.query(`
         SELECT DISTINCT LOWER(agent_name) AS agent, LOWER(carrier) AS carrier
         FROM commission_records
         WHERE classification = 'Agency Override' AND source IS NOT NULL
       `);
       const overrideSetUpload = new Set(overrideRowsUpload.rows.map(r => `${r.agent}|${r.carrier}`));
+
+      // Integrity Partners agents: 50% producer / 25% THEI / 25% BSI
+      const INTEGRITY_AGENTS_UPLOAD = ['christian munoz', 'horacio mendieta', 'cam insurance solutions corp'];
+
+      // Marco agents: $10 deduction per policy first occurrence, then 50/50 THEI/BSI
+      const MARCO_AGENTS_UPLOAD = ['jena brewer','kelly carpenter','adrian cruz','long khuu',
+        'nicholas mccalla','tyler payton','anthony portorreal','michael rivera',
+        'cristy witcher','michael mateo','miriam jimenez','jendy vanheyningen'];
+
+      // Pre-existing deducted policies — prevents re-deducting on re-upload of same statement
+      const alreadyDeductedUpload = await pool.query(`
+        SELECT DISTINCT policy_number FROM commission_records
+        WHERE classification = 'Agency Override' AND sub_agent_override > 0
+      `);
+      const deductedPoliciesUpload = new Set(alreadyDeductedUpload.rows.map(r => r.policy_number));
+
+      // Sort by period ASC so Marco's $10 deduction always hits earliest occurrence per policy
+      records.sort((a, b) => (a.period || '').localeCompare(b.period || ''));
 
       records = records.map(r => {
         if (r.source) return r;
@@ -4226,8 +4241,12 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         // Agent-direct rows: NB/Renewal/Chargeback for agents with a known Agency Override relationship
         const isAgentDirectRow = classification === 'new business' || classification === 'renewal' || classification === 'chargeback';
         const hasMatchingOverride = overrideSetUpload.has(`${agentLc}|${carrierLc}`);
+        const isIntegrityPartnersUpload = INTEGRITY_AGENTS_UPLOAD.some(n => agentLc.includes(n));
+        const isJendyPostCutoffUpload = agentLc.includes('jendy vanheyningen') && (r.period || '') >= '202606';
+        const isMarcoAgentUpload = MARCO_AGENTS_UPLOAD.some(n => agentLc.includes(n)) && !isJendyPostCutoffUpload;
 
         let splitApplies, theiShare, bsiShare, producerPayable, grossCommission;
+        let subAgentOverride = 0;
 
         if (isCommissionRow) {
           splitApplies = false;
@@ -4255,6 +4274,30 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
           theiShare = 0;
           bsiShare = 0;
           producerPayable = grossCommission;
+        } else if (classification === 'agency override' && isIntegrityPartnersUpload) {
+          // Integrity Partners (Christian Munoz, Horacio Mendieta, CAM): 50% producer / 25% THEI / 25% BSI
+          splitApplies = false;
+          grossCommission = netCommission;
+          producerPayable = Math.round(grossCommission * 0.50 * 100) / 100;
+          theiShare = Math.round(grossCommission * 0.25 * 100) / 100;
+          bsiShare = Math.round(grossCommission * 0.25 * 100) / 100;
+        } else if (classification === 'agency override' && isMarcoAgentUpload) {
+          // Marco agents: $10 flat deduction on first Override occurrence per policy, then 50/50 THEI/BSI
+          // records sorted by period ASC above so earliest occurrence gets the deduction
+          splitApplies = false;
+          grossCommission = netCommission;
+          producerPayable = 0;
+          const alreadyDeductedU = deductedPoliciesUpload.has(r.policyNumber);
+          if (!alreadyDeductedU && grossCommission >= 10) {
+            subAgentOverride = 10;
+            theiShare = Math.round((grossCommission - 10) / 2 * 100) / 100;
+            bsiShare = Math.round((grossCommission - 10) / 2 * 100) / 100;
+            deductedPoliciesUpload.add(r.policyNumber);
+          } else {
+            subAgentOverride = 0;
+            theiShare = Math.round(grossCommission / 2 * 100) / 100;
+            bsiShare = Math.round(grossCommission / 2 * 100) / 100;
+          }
         } else {
           splitApplies = true;
           grossCommission = Math.round(netCommission * 2 * 100) / 100;
@@ -4285,7 +4328,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
           producerPayable,
           splitApplies,
           lob,
-          subAgentOverride: r.subAgentOverride || 0,
+          subAgentOverride: subAgentOverride,
         };
       });
     }
