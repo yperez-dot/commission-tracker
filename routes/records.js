@@ -745,6 +745,7 @@ router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, r
       FROM commission_records cr
       LEFT JOIN uploads u ON u.id = cr.upload_id
       ${whereClause}
+      ORDER BY cr.payment_period ASC NULLS LAST
     `);
 
     // Pre-query: build set of agent|carrier combos that have a known Agency Override relationship.
@@ -759,6 +760,23 @@ router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, r
         AND source IS NOT NULL
     `);
     const overrideSet = new Set(overrideRows.rows.map(r => `${r.agent}|${r.carrier}`));
+
+    // Integrity Partners agents: 50% producer / 25% THEI / 25% BSI on all Agency Override rows
+    const INTEGRITY_AGENTS_LIST = ['christian munoz', 'horacio mendieta', 'cam insurance solutions corp'];
+
+    // Marco's agents: $10 deduction per policy first occurrence, then 50/50 THEI/BSI split
+    // Jendy Vanheyningen excluded from Marco's deduction for payment_period >= 202606
+    const MARCO_AGENTS_LIST = ['jena brewer','kelly carpenter','adrian cruz','long khuu',
+      'nicholas mccalla','tyler payton','anthony portorreal','michael rivera',
+      'cristy witcher','michael mateo','miriam jimenez','jendy vanheyningen'];
+
+    // Policies already deducted in DB — prevents re-deducting on re-run or force backfill
+    // ORDER BY payment_period ASC (added above) ensures earliest period processed first within batch
+    const alreadyDeductedRows = await pool.query(`
+      SELECT DISTINCT policy_number FROM commission_records
+      WHERE classification = 'Agency Override' AND sub_agent_override > 0
+    `);
+    const deductedPolicies = new Set(alreadyDeductedRows.rows.map(r => r.policy_number));
 
     let updated = 0;
     let skipped = 0;
@@ -790,6 +808,12 @@ router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, r
       const hasMatchingOverride = overrideSet.has(`${String(agent || '').toLowerCase()}|${String(carrier || '').toLowerCase()}`);
 
       let splitApplies, theiShare, bsiShare, producerPayable, grossCommission;
+      let subAgentOverride = 0;
+
+      const agentLcB = String(agent || '').toLowerCase();
+      const isIntegrityPartners = INTEGRITY_AGENTS_LIST.some(n => agentLcB.includes(n));
+      const isJendyPostCutoff = agentLcB.includes('jendy vanheyningen') && (row.payment_period || '') >= '202606';
+      const isMarcoAgent = MARCO_AGENTS_LIST.some(n => agentLcB.includes(n)) && !isJendyPostCutoff;
 
       if (isCommissionRow) {
         splitApplies = false;
@@ -823,6 +847,30 @@ router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, r
         theiShare = 0;
         bsiShare = 0;
         producerPayable = grossCommission;
+      } else if (classification === 'agency override' && isIntegrityPartners) {
+        // Integrity Partners (Christian Munoz, Horacio Mendieta, CAM): 50% producer / 25% THEI / 25% BSI
+        splitApplies = false;
+        grossCommission = netCommission;
+        producerPayable = Math.round(grossCommission * 0.50 * 100) / 100;
+        theiShare = Math.round(grossCommission * 0.25 * 100) / 100;
+        bsiShare = Math.round(grossCommission * 0.25 * 100) / 100;
+      } else if (classification === 'agency override' && isMarcoAgent) {
+        // Marco agents: $10 flat deduction on first Override occurrence per policy, then 50/50 THEI/BSI
+        // ORDER BY payment_period ASC ensures earliest period gets the deduction
+        splitApplies = false;
+        grossCommission = netCommission;
+        producerPayable = 0;
+        const alreadyDeducted = deductedPolicies.has(row.policy_number);
+        if (!alreadyDeducted && grossCommission >= 10) {
+          subAgentOverride = 10;
+          theiShare = Math.round((grossCommission - 10) / 2 * 100) / 100;
+          bsiShare = Math.round((grossCommission - 10) / 2 * 100) / 100;
+          deductedPolicies.add(row.policy_number); // prevent double-deduction within same batch
+        } else {
+          subAgentOverride = 0;
+          theiShare = Math.round(grossCommission / 2 * 100) / 100;
+          bsiShare = Math.round(grossCommission / 2 * 100) / 100;
+        }
       } else {
         splitApplies = true;
         grossCommission = Math.round(netCommission * 2 * 100) / 100;
@@ -859,9 +907,10 @@ router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, r
                 bsi_share = $5,
                 producer_payable = $6,
                 split_applies = $7,
-                lob = $8
-          WHERE id = $9`,
-        [source, policyWrittenDate, grossCommission, theiShare, bsiShare, producerPayable, splitApplies, lob, row.id]
+                lob = $8,
+                sub_agent_override = $9
+          WHERE id = $10`,
+        [source, policyWrittenDate, grossCommission, theiShare, bsiShare, producerPayable, splitApplies, lob, subAgentOverride, row.id]
       );
       updated++;
     }
