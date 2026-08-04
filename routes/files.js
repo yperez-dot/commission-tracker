@@ -4853,12 +4853,15 @@ function parseHumanaDevotedBSIRows(wb, filename) {
     else if (carrierLower.includes('devoted')) carrier = 'Devoted';
     else                                        carrier = carrierRaw;
 
-    // Classification: chargebacks first, then First Year vs any Renewal variant
+    // Classification: Commission Type field is authoritative for Override; fyRaw handles New Business vs Renewal
+    // Override check FIRST — prevents commission type from being inferred from enrollment type
+    const commissionTypeLower = commissionType ? commissionType.toLowerCase() : '';
     let classification;
-    if (commission < 0)               classification = 'Chargeback';
-    else if (fyRaw.includes('first')) classification = 'New Business';
-    else if (fyRaw.includes('renew')) classification = 'Renewal';
-    else                              classification = 'Agent Commission';
+    if (commission < 0)                               classification = 'Chargeback';
+    else if (commissionTypeLower.includes('override')) classification = 'Agency Override';
+    else if (fyRaw.includes('first'))                 classification = 'New Business';
+    else if (fyRaw.includes('renew'))                 classification = 'Renewal';
+    else                                              classification = 'New Business'; // fallback
 
     // Agent name — "Writing Agent" is the individual; "Agent Name" is the BSI agency
     const agentName = isAgencyName(writingAgentRaw)
