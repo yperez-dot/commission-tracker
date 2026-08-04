@@ -4023,6 +4023,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       if (f.includes('commission-statement') || f.includes('integrity') || f.includes('apl')) return 'APL';
       if (f.includes('commissions_ledger') || f.includes('solis')) return 'Solis';
       if (f.includes('moo') || f.includes('mutual')) return 'Mutual of Omaha';
+      if (f.includes('contracts_commissiondetails')) return 'BSI'; // AML portal export
       if (f.includes('yourfmo') || f.includes('commissiondetails')) return 'YourFMO';
       if (f.includes('commissiondata') || f.includes('humana')) return 'Humana';
       if (f.includes('devoted')) return 'Devoted';
@@ -4177,6 +4178,13 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       } else if (isAetnaDirectCSVFilename(req.file.originalname) || isAetnaDirectCSV(wb)) {
         console.log('[ROUTING] Matched Aetna Direct CSV parser for:', req.file.originalname);
         records = parseAetnaDirectCSV(wb, req.file.originalname);
+      } else if (isAMLPortalExportFile(req.file.originalname, wb)) {
+        console.log('[ROUTING] Matched AML portal export parser for:', req.file.originalname);
+        records = parseAMLPortalRows(wb, req.file.originalname);
+        if (!records.length) {
+          try { fs.unlinkSync(req.file.path); } catch(e) {}
+          return res.status(400).json({ error: 'No records found in AML portal export. Verify this is a Contracts/CommissionDetails CSV.' });
+        }
       } else if (isAetnaFile(req.file.originalname)) {
         console.log('[ROUTING] Matched generic Aetna parser for:', req.file.originalname);
         records = parseAetnaRows(wb, req.file.originalname);
@@ -4665,6 +4673,116 @@ router.post('/fix-aetna-classifications', requireAuth, async (req, res) => {
 // Different from THEI-direct UHC files: Agent Name/ID fields contain BSI,
 // not THEI — so we use Writing Agent Name directly without isAgencyName() gating.
 // Detect Humana/Devoted BSI split files by filename prefix
+// ─── AML AGENCY PORTAL EXPORT PARSER ────────────────────────────────────────
+// Format: Contracts_CommissionDetails_AMLAgency_{id}_{timestamp}.CSV
+// One row per Writing Agent per week — payee-level cash flow, NOT per-policy.
+// Policy # and Insured Name ARE present → feeds existing isIntegrityPartners/isMarcoAgent splits.
+// source is NOT set here — determinePayee() returns 'BSI' for this filename pattern,
+// so the upload-time map() assigns source = 'BSI' and runs the correct split branches.
+function isAMLPortalExportFile(filename, wb) {
+  const f = (filename || '').toLowerCase().replace(/[\s-]+/g, '_');
+  if (f.includes('contracts_commissiondetails')) return true;
+  // Fallback: header signature check (filename may vary)
+  try {
+    const ws = wb && wb.Sheets[wb.SheetNames[0]];
+    if (!ws) return false;
+    const firstRow = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })[0] || [];
+    const headers = firstRow.map(h => String(h || '').trim());
+    return headers.includes('Writing Agent') &&
+           headers.includes('Policy #') &&
+           headers.includes('Commission Type');
+  } catch (e) { return false; }
+}
+
+function parseAMLPortalRows(wb, filename) {
+  const records = [];
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+
+  // Currency: handles '$648.96', '-$50.00', '($289.17)', '$0.00'
+  function parseCurrency(val) {
+    const s = String(val || '').trim();
+    const negative = (s.startsWith('(') && s.endsWith(')')) || s.startsWith('-');
+    const num = parseFloat(s.replace(/[$,()/]/g, '').replace(/^-/, '')) || 0;
+    return negative ? -num : num;
+  }
+
+  // Period from 'MM/DD/YYYY' -> 'YYYYMM'
+  function parsePeriod(dateStr) {
+    const m = String(dateStr || '').match(/^(\d{2})\/\d{2}\/(20\d{2})$/);
+    if (m) return m[2] + m[1];
+    return 'Unknown';
+  }
+
+  for (const row of rows) {
+    const writingAgentRaw   = String(row['Writing Agent'] || '').trim();
+    const insuredName       = String(row['Insured Name'] || '').trim();
+    const policyNumber      = String(row['Policy #'] || '').trim();
+    const carrierRaw        = String(row['Carrier'] || '').trim();
+    const statementDate     = String(row['Statement Date'] || '').trim();
+    const originalEffDate   = row['Original EffectiveDate'] || row['Effective Date'] || '';
+    const commissionType    = String(row['Commission Type'] || '').trim();
+    const productRaw        = String(row['Product'] || '').trim();
+    const stateRaw          = String(row['State'] || '').trim();
+    const commission        = parseCurrency(row['Commission ($)']);
+    // Status field: ignored per spec — include every row regardless
+
+    if (!isValidClientName(insuredName)) continue;
+    if (!policyNumber) continue;
+
+    // Classification: 'Agency Override' for positive, 'Chargeback' for negative
+    // Commission Type confirmed 100% 'Override' in sample; log if different
+    let classification;
+    if (commission < 0) {
+      classification = 'Chargeback';
+    } else {
+      classification = 'Agency Override';
+      if (commissionType && commissionType.toUpperCase() !== 'OVERRIDE') {
+        console.warn(`[AML-PORTAL] Unexpected Commission Type '${commissionType}' for policy ${policyNumber} — classifying as Agency Override`);
+      }
+    }
+
+    // Writing Agent is the individual; normalize same as other parsers
+    const agent = isAgencyName(writingAgentRaw)
+      ? 'The Health Experts Insurance'
+      : (normalizeAgentName(writingAgentRaw) || writingAgentRaw || 'BSI Agent');
+
+    // Carrier
+    const carrierLower = carrierRaw.toLowerCase();
+    let carrier;
+    if (carrierLower.includes('humana'))        carrier = 'Humana';
+    else if (carrierLower.includes('devoted'))  carrier = 'Devoted Health';
+    else                                         carrier = carrierRaw;
+
+    const period        = parsePeriod(statementDate);
+    const effectiveDate = formatDate(originalEffDate);
+    const planType      = derivePlanType(carrier, productRaw, policyNumber, '');
+
+    // source NOT set here — determinePayee() returns 'BSI' for this filename,
+    // so the upload-time map() assigns source='BSI' and runs split branches correctly
+    records.push({
+      agent,
+      carrier,
+      planType,
+      client: insuredName,
+      effectiveDate,
+      premium: 0,
+      commission,
+      classification,
+      period,
+      policyNumber,
+      payee: 'BSI',
+      memberState: stateRaw,
+      statementMonth: carrierRaw,
+      raw: row,
+    });
+  }
+
+  const total = records.reduce((s, r) => s + (r.commission || 0), 0);
+  console.log(`[AML-PORTAL] ${filename} | ${records.length} records | total $${total.toFixed(2)}`);
+  return records;
+}
+
 function isHumanaDevotedBSIFile(filename) {
   const f = filename.toLowerCase().replace(/\s+/g, '_');
   return f.includes('humana_bsi_statement') || f.includes('devoted_bsi_statement');
