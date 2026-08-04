@@ -4804,13 +4804,17 @@ function parseHumanaDevotedBSIRows(wb, filename) {
   const rawRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
 
   // Row 0 is blank, row 1 is the real header row
-  const headers = rawRows[1];
+  // Auto-detect header row: original format has blank row 0 then real headers at row 1.
+  // AML portal CSV exports have headers directly at row 0 (no blank lead row).
+  const row0Vals = (rawRows[0] || []).map(v => String(v || '').toLowerCase());
+  const headerRowIdx = row0Vals.some(v => v.includes('insured') || v.includes('policy') || v.includes('writing agent')) ? 0 : 1;
+  const headers = rawRows[headerRowIdx];
   if (!headers || headers.length === 0) {
     console.warn('[HUMANA-DEVOTED-BSI] No header row found in', filename);
     return records;
   }
 
-  const rows = XLSX.utils.sheet_to_json(ws, { header: headers, defval: '', range: 2 });
+  const rows = XLSX.utils.sheet_to_json(ws, { header: headers, defval: '', range: headerRowIdx + 1 });
   console.log(`[HUMANA-DEVOTED-BSI] ${filename} | Period: ${statementPeriod} | Rows: ${rows.length}`);
 
   for (const row of rows) {
