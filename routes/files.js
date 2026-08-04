@@ -4728,7 +4728,7 @@ function parseAMLPortalRows(wb, filename) {
     const insuredName       = String(row['Insured Name'] || '').trim();
     const policyNumber      = String(row['Policy #'] || '').trim();
     const carrierRaw        = String(row['Carrier'] || '').trim();
-    const statementDate     = String(row['Statement Date'] || '').trim();
+    const statementDate     = row['Statement Date'] ?? ''; // preserve number type for Excel serial conversion in parsePeriod
     const originalEffDate   = row['Original EffectiveDate'] || row['Effective Date'] || '';
     const commissionType    = String(row['Commission Type'] || '').trim();
     const productRaw        = String(row['Product'] || '').trim();
