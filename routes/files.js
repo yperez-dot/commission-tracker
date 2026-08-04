@@ -4697,7 +4697,8 @@ function isAMLPortalExportFile(filename, wb) {
 function parseAMLPortalRows(wb, filename) {
   const records = [];
   const ws = wb.Sheets[wb.SheetNames[0]];
-  const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+  // raw:false forces XLSX to format dates as strings (MM/DD/YYYY) instead of Excel serials
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: false });
 
   // Currency: handles '$648.96', '-$50.00', '($289.17)', '$0.00'
   function parseCurrency(val) {
