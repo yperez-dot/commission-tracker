@@ -5051,6 +5051,13 @@ router.post('/upload-bsi-statement', requireAuth, upload.single('file'), async (
       if (isAetnaBSICSVFilename(origName)) {
         console.log('[BSI-UPLOAD] Matched Aetna BSI CSV parser for:', origName);
         records = parseAetnaBSICSV(wb, origName);
+      } else if (isAMLPortalExportFile(origName, wb)) {
+        console.log('[BSI-UPLOAD] Matched AML portal export parser for:', origName);
+        records = parseAMLPortalRows(wb, origName);
+        if (!records.length) {
+          try { fs.unlinkSync(req.file.path); } catch(e) {}
+          return res.status(400).json({ error: 'No records found in AML portal export. Verify this is a Contracts/CommissionDetails CSV.' });
+        }
       } else if (isHumanaDevotedBSIFile(origName)) {
         console.log('[BSI-UPLOAD] Matched Humana/Devoted BSI parser for:', origName);
         records = parseHumanaDevotedBSIRows(wb, origName);
