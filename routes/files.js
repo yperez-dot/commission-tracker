@@ -3959,26 +3959,26 @@ async function findDuplicates(pool, records) {
   const filtered = records.filter(r => r.client && r.effectiveDate && r.policyNumber);
   if (!filtered.length) return [];
 
-  // Match key: policy_number + client_name + effective_date + commission_amount
-  // This catches re-uploads of the same statement regardless of filename
-  // If all four match, it's definitely the same transaction
+  // Match key: policy_number + client_name + effective_date + commission_amount + payment_period
+  // payment_period is required: monthly renewals repeat the same policy/client/date/amount every month
+  // Without it, every renewal upload after the first gets flagged as a cross-month duplicate
   const conditions = filtered.map((r, i) =>
-    `(policy_number = $${i*4+1} AND LOWER(client_full_name) = LOWER($${i*4+2}) AND effective_date = $${i*4+3} AND commission = $${i*4+4})`
+    `(policy_number = $${i*5+1} AND LOWER(client_full_name) = LOWER($${i*5+2}) AND effective_date = $${i*5+3} AND commission = $${i*5+4} AND payment_period = $${i*5+5})`
   ).join(' OR ');
 
-  const params = filtered.flatMap(r => [r.policyNumber, r.client, r.effectiveDate, r.commission]);
+  const params = filtered.flatMap(r => [r.policyNumber, r.client, r.effectiveDate, r.commission, r.period || '']);
 
   const result = await pool.query(
-    `SELECT policy_number, client_full_name, effective_date, commission FROM commission_records WHERE ${conditions}`,
+    `SELECT policy_number, client_full_name, effective_date, commission, payment_period FROM commission_records WHERE ${conditions}`,
     params
   );
 
   const existingSet = new Set(result.rows.map(r =>
-    `${r.policy_number}|${r.client_full_name.toLowerCase()}|${r.effective_date}|${r.commission}`
+    `${r.policy_number}|${r.client_full_name.toLowerCase()}|${r.effective_date}|${r.commission}|${r.payment_period || ''}`
   ));
 
   return filtered.filter(r =>
-    existingSet.has(`${r.policyNumber}|${r.client.toLowerCase()}|${r.effectiveDate}|${r.commission}`)
+    existingSet.has(`${r.policyNumber}|${r.client.toLowerCase()}|${r.effectiveDate}|${r.commission}|${r.period || ''}`)
   ).map(r => ({
     client: r.client,
     carrier: r.carrier,
