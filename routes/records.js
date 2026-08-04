@@ -747,6 +747,19 @@ router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, r
       ${whereClause}
     `);
 
+    // Pre-query: build set of agent|carrier combos that have a known Agency Override relationship.
+    // Used to identify agent-level New Business/Renewal/Chargeback rows that should be pass-through.
+    // Keyed on agent|carrier only (not period) — override statements may arrive on a different cadence
+    // than transaction feeds, so a missing override row for a given period does not mean the row is
+    // not agent-level; it means that month's override statement hasn't been uploaded yet.
+    const overrideRows = await pool.query(`
+      SELECT DISTINCT LOWER(agent_name) AS agent, LOWER(carrier) AS carrier
+      FROM commission_records
+      WHERE classification = 'Agency Override'
+        AND source IS NOT NULL
+    `);
+    const overrideSet = new Set(overrideRows.rows.map(r => `${r.agent}|${r.carrier}`));
+
     let updated = 0;
     let skipped = 0;
     const sources = { BSI: 0, NHP: 0, direct_carrier: 0, manual: 0 };
@@ -768,6 +781,14 @@ router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, r
 
       const isAcaPassThroughAgent = NO_SPLIT_AGENTS.some(a => String(agent || '').toLowerCase().includes(a));
       const isAcaCarrier = ACA_CARRIERS_LIST.some(c => String(carrier || '').toLowerCase().includes(c));
+
+      // Agent-direct rows: New Business, Renewal, or Chargeback for an agent who also has Agency Override
+      // rows on record for this carrier. These are individual agent commissions (pass-through), not
+      // agency overrides (BSI split). The Agency Override rows for the same agent/carrier are uploaded
+      // separately and already processed correctly.
+      const isAgentDirectRow = classification === 'new business' || classification === 'renewal' || classification === 'chargeback';
+      const hasMatchingOverride = overrideSet.has(`${String(agent || '').toLowerCase()}|${String(carrier || '').toLowerCase()}`);
+
       let splitApplies, theiShare, bsiShare, producerPayable, grossCommission;
 
       if (isCommissionRow) {
@@ -794,6 +815,14 @@ router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, r
         theiShare = netCommission;
         bsiShare = 0;
         producerPayable = 0;
+      } else if (isAgentDirectRow && hasMatchingOverride) {
+        // Agent-level transaction for a principal who has a separate Agency Override row for this carrier.
+        // Treat as pass-through: 100% to producer, no THEI/BSI split.
+        splitApplies = false;
+        grossCommission = netCommission;
+        theiShare = 0;
+        bsiShare = 0;
+        producerPayable = grossCommission;
       } else {
         splitApplies = true;
         grossCommission = Math.round(netCommission * 2 * 100) / 100;
