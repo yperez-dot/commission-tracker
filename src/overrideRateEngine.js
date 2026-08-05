@@ -218,7 +218,9 @@ function resolveYearType(row) {
   // 3. Aetna BSI CSV + UHC THEI direct statement — 'Sales Event' field
   //    'New Business' = Initial; everything else (Renewal, Involuntary Pro-Rata, etc.) = Renewal
   if (row.salesEvent) {
-    return row.salesEvent === 'New Business' ? 'Initial' : 'Renewal';
+    // PRONEW = Aetna code for pro-rated New Business = Initial (confirmed 2026-08-04)
+    const se = row.salesEvent.toUpperCase();
+    return (se === 'NEW BUSINESS' || se === 'PRONEW') ? 'Initial' : 'Renewal';
   }
 
   // 4. Fallback — Commission Action (UHC when Comp Type is blank)
