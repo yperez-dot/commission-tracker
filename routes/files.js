@@ -1047,10 +1047,9 @@ function parseUHCDirectRows(wb, filename) {
   return records;
 }
 
-// THEI Humana statements are CSV/XLSX exports with a title block above the
-// transaction header. They are distinct from Humana's legacy CommissionData
-// SpreadsheetML export handled by parseHumanaRows below.
-function parseTHEHumanaStatementRows(wb, filename) {
+// THEI carrier statements are CSV/XLSX exports with a title block above the
+// transaction header. They are distinct from the legacy carrier exports.
+function parseTHECarrierStatementRows(wb, filename) {
   for (const sheetName of wb.SheetNames) {
     const ws = wb.Sheets[sheetName];
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
@@ -1084,6 +1083,12 @@ function parseTHEHumanaStatementRows(wb, filename) {
     const period = statementDateMatch
       ? `${statementDateMatch[2].length === 2 ? `20${statementDateMatch[2]}` : statementDateMatch[2]}${statementDateMatch[1].padStart(2, '0')}`
       : 'Unknown';
+    const carrier = /devoted/i.test(statementText) ? 'Devoted' : 'Humana';
+    const agentRow = rows.slice(headerRowIndex + 1).find((row) =>
+      String(row[0] || '').includes('Agent Number:')
+    );
+    const agentMatch = String(agentRow?.[0] || '').match(/^(.*?)\s*\(/);
+    const agent = normalizeAgentName(agentMatch?.[1].trim()) || 'The Health Experts Insurance';
     const records = [];
 
     for (const row of rows.slice(headerRowIndex + 1)) {
@@ -1106,9 +1111,9 @@ function parseTHEHumanaStatementRows(wb, filename) {
 
       const product = String(row[productIdx] || '').trim();
       records.push({
-        agent: 'The Health Experts Insurance',
-        carrier: 'Humana',
-        planType: derivePlanType('Humana', product, policyNumber, ''),
+        agent,
+        carrier,
+        planType: derivePlanType(carrier, product, policyNumber, ''),
         client,
         effectiveDate: formatDate(row[effectiveDateIdx] || row[originalEffectiveDateIdx]),
         premium: 0,
@@ -1116,7 +1121,7 @@ function parseTHEHumanaStatementRows(wb, filename) {
         classification,
         period,
         policyNumber,
-        payee: 'Humana',
+        payee: carrier,
         raw: row
       });
     }
@@ -1131,7 +1136,7 @@ function parseHumanaRows(wb, filename, rawBuffer) {
   const records = [];
 
   try {
-    const theiStatementRecords = parseTHEHumanaStatementRows(wb, filename);
+    const theiStatementRecords = parseTHECarrierStatementRows(wb, filename);
     if (theiStatementRecords !== null) {
       console.log(`[HUMANA] Parsed ${theiStatementRecords.length} THEI statement records`);
       return theiStatementRecords;
@@ -4219,6 +4224,9 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       } else if (isBSIFile(req.file.originalname)) {
         console.log('[UPLOAD] Using BSI parser');
         records = parseBSIRows(wb, req.file.originalname);
+      } else if (parseTHECarrierStatementRows(wb, req.file.originalname) !== null) {
+        console.log('[UPLOAD] Using THEI carrier statement parser');
+        records = parseTHECarrierStatementRows(wb, req.file.originalname);
       } else if (isDevotedFile(req.file.originalname) || isDevotedXLS(wb)) {
         console.log('[UPLOAD] Using Devoted Health parser');
         records = parseDevotedRows(wb, req.file.originalname);
