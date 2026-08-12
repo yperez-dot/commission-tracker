@@ -249,7 +249,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     }
 
     // Parse Excel file
-    let workbook, rows;
+    let workbook, rows, headers;
     try {
       workbook = XLSX.read(req.file.buffer, { type: 'buffer' });
       const sheetName = workbook.SheetNames[0];
@@ -258,6 +258,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       }
       const worksheet = workbook.Sheets[sheetName];
       rows = XLSX.utils.sheet_to_json(worksheet);
+      headers = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' })[0] || [];
     } catch (parseErr) {
       console.error('Excel parse error:', parseErr);
       return res.status(400).json({ 
@@ -270,15 +271,25 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       return res.status(400).json({ error: 'Excel file is empty or has no data rows' });
     }
     
-    // Check if we have required columns
-    const firstRow = rows[0];
-    const hasAgent = firstRow.AGENT || firstRow['Agent Name'] || firstRow.Agent_Name || firstRow.Agent_First_Name || firstRow.AgentName || firstRow.Current_Agent_Name || firstRow.agent || firstRow['agent name'];
-    const hasMember = firstRow.MEMBER || firstRow['Member Name'] || firstRow.Member_First_Name || firstRow.Member_Last_Name || firstRow['First Name'] || firstRow['Last Name'] || firstRow.Beneficiary_First_Name || firstRow.Beneficiary_Last_Name || firstRow.FIRST || firstRow.LAST || firstRow.FullName || firstRow['Full Name'] || firstRow.Application_Application_Name || firstRow.member || firstRow['member name'];
+    // Check for supported headers, rather than values in the first row. A valid
+    // report can have a blank first agent or member cell.
+    const hasColumn = (...columns) =>
+      columns.some((column) => headers.includes(column));
+    const hasAgent = hasColumn(
+      'AGENT', 'Agent Name', 'Agent_Name', 'Agent_First_Name', 'AgentName',
+      'Current_Agent_Name', 'Writing_Agent_Name', 'agent', 'agent name'
+    );
+    const hasMember = hasColumn(
+      'MEMBER', 'Member Name', 'Member_First_Name', 'Member_Last_Name',
+      'First Name', 'Last Name', 'First_Name', 'Last_Name',
+      'Beneficiary_First_Name', 'Beneficiary_Last_Name', 'FIRST', 'LAST',
+      'FullName', 'Full Name', 'Application_Application_Name', 'member', 'member name'
+    );
     
     if (!hasAgent && !hasMember) {
       return res.status(400).json({ 
         error: 'Excel file is missing required columns',
-        details: `Expected columns like AGENT, Agent_First_Name, MEMBER, Beneficiary_First_Name, etc. Found: ${Object.keys(firstRow).slice(0, 10).join(', ')}...`
+        details: `Expected columns like AGENT, Writing_Agent_Name, Agent_First_Name, MEMBER, First_Name, or Beneficiary_First_Name. Found: ${headers.slice(0, 10).join(', ')}...`
       });
     }
 
@@ -326,13 +337,14 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       const best = new Map();
       for (const r of rows) {
         const ag = (r.AGENT || r['Agent Name'] || r.Agent_Name || r.AgentName ||
-          r.Current_Agent_Name ||
+          r.Current_Agent_Name || r.Writing_Agent_Name ||
           (r.Agent_First_Name ? `${r.Agent_First_Name} ${r.Agent_Last_Name}` : '') ||
           (r.FIRST !== undefined ? '' : '') || '').trim().toLowerCase();
         const cl = (r.Application_Application_Name || r.FullName || r['Full Name'] ||
           r.MEMBER || r['Member Name'] ||
           (r.Member_First_Name ? `${r.Member_First_Name} ${r.Member_Last_Name}` : '') ||
           (r['First Name'] !== undefined ? `${(r['First Name']||'')} ${(r['Last Name']||'')}` : '') ||
+          (r.First_Name !== undefined ? `${(r.First_Name||'')} ${(r.Last_Name||'')}` : '') ||
           (r.Beneficiary_First_Name ? `${r.Beneficiary_First_Name} ${r.Beneficiary_Last_Name}` : '') ||
           (r.FIRST !== undefined ? `${(r.FIRST||'')} ${(r.LAST||'')}` : '') || '').trim().toLowerCase();
         const key = `${ag}|${cl}`;
@@ -358,8 +370,8 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     for (const row of rows) {
       // Handle different agent name formats
       let agentName = '';
-      if (row.AGENT || row['Agent Name'] || row.Agent_Name || row.AgentName || row.Current_Agent_Name) {
-        agentName = (row.AGENT || row['Agent Name'] || row.Agent_Name || row.AgentName || row.Current_Agent_Name || '').trim().substring(0, 255);
+      if (row.AGENT || row['Agent Name'] || row.Agent_Name || row.AgentName || row.Current_Agent_Name || row.Writing_Agent_Name) {
+        agentName = (row.AGENT || row['Agent Name'] || row.Agent_Name || row.AgentName || row.Current_Agent_Name || row.Writing_Agent_Name || '').trim().substring(0, 255);
       } else if (row.Agent_First_Name || row.Agent_Last_Name) {
         // Anthem format: separate agent first/last names
         const firstName = (row.Agent_First_Name || '').trim();
@@ -396,6 +408,11 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         // UHC Med Sup format: separate first/last names (spaces)
         const firstName = (row['First Name'] || '').trim();
         const lastName = (row['Last Name'] || '').trim();
+        clientName = `${firstName} ${lastName}`.trim().substring(0, 255);
+      } else if (row.First_Name || row.Last_Name) {
+        // Aetna format: separate first/last names (underscores)
+        const firstName = (row.First_Name || '').trim();
+        const lastName = (row.Last_Name || '').trim();
         clientName = `${firstName} ${lastName}`.trim().substring(0, 255);
       } else if (row.Beneficiary_First_Name || row.Beneficiary_Last_Name) {
         // Anthem format: beneficiary first/last names
