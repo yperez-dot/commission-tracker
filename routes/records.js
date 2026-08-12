@@ -929,7 +929,7 @@ router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, r
 });
 
 // ─── FIX MED LOB ──────────────────────────────────────────────────────────────
-router.post('/fix-med-lob', requireAuth, async (req, res) => {
+router.post('/fix-med-lob', requireAuth, requireAdmin, async (req, res) => {
   try {
     const pool = getPool();
     const result = await pool.query(`UPDATE commission_records SET lob = 'MA' WHERE lob = 'MED' RETURNING id`);
@@ -941,7 +941,7 @@ router.post('/fix-med-lob', requireAuth, async (req, res) => {
 });
 
 // ─── FIX ACA CLASSIFICATIONS ─────────────────────────────────────────────────
-router.post('/fix-aca-classifications', requireAuth, async (req, res) => {
+router.post('/fix-aca-classifications', requireAuth, requireAdmin, async (req, res) => {
   try {
     const pool = getPool();
     

@@ -3,7 +3,7 @@ const router = express.Router();
 const multer = require('multer');
 const XLSX = require('xlsx');
 const { getPool } = require('../db/database');
-const { requireAuth } = require('./auth');
+const { requireAuth, requireAdmin } = require('./auth');
 
 // str() — safe Excel cell coercion: null/undefined → '', numbers/booleans → String, Dates → ISO date
 // Prevents TypeError when a numeric or null Excel cell value hits .trim() or .substring()
@@ -680,7 +680,7 @@ router.get('/uploads', requireAuth, async (req, res) => {
 });
 
 // DELETE /api/agency-production/upload/:id - Delete a single upload
-router.delete('/upload/:id', requireAuth, async (req, res) => {
+router.delete('/upload/:id', requireAuth, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const pool = getPool();
@@ -791,7 +791,7 @@ router.patch('/:id/override', requireAuth, async (req, res) => {
 });
 
 // DELETE /api/agency-production/batch/:batch - Delete a batch
-router.delete('/batch/:batch', requireAuth, async (req, res) => {
+router.delete('/batch/:batch', requireAuth, requireAdmin, async (req, res) => {
   try {
     const { batch } = req.params;
     const pool = getPool();

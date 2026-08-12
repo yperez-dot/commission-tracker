@@ -6,7 +6,7 @@ const path = require('path');
 const fs = require('fs');
 const Anthropic = require('@anthropic-ai/sdk');
 const { getPool } = require('../db/database');
-const { requireAuth } = require('./auth');
+const { requireAuth, requireAdmin } = require('./auth');
 const { normalizeAgentName } = require('./normalize');
 const { detectPlanChanges } = require('./planChanges');
 let pdfParse;
@@ -707,7 +707,7 @@ function normalizePeriod(value) {
 
 function normalizeBSICarrier(company) {
   const c = String(company || '').toLowerCase();
-  if (c.includes('united') || c.includes('uhc')) return 'UnitedHealthcare';
+  if ((c.includes('united') && !c.includes('omaha')) || c.includes('uhc')) return 'UnitedHealthcare';
   if (c.includes('humana') && c.includes('devoted')) return 'Humana/Devoted';
   if (c.includes('humana')) return 'Humana';
   if (c.includes('devoted')) return 'Devoted';
@@ -726,7 +726,7 @@ function normalizeNHPCarrier(carrierMonth) {
   if (c.includes('humana')) return 'Humana';
   if (c.includes('oscar')) return 'Oscar Health';
   if (c.includes('simply')) return 'Simply';
-  if (c.includes('united') || c.includes('uhc')) return 'UnitedHealthcare';
+  if ((c.includes('united') && !c.includes('omaha')) || c.includes('uhc')) return 'UnitedHealthcare';
   if (c.includes('molina')) return 'Molina';
   if (c.includes('wellcare')) return 'WellCare';
   return String(carrierMonth || '').split(' - ')[0].trim();
@@ -4592,7 +4592,7 @@ router.get('/uploads', requireAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-router.delete('/uploads/:id', requireAuth, async (req, res) => {
+router.delete('/uploads/:id', requireAuth, requireAdmin, async (req, res) => {
   try {
     const pool = getPool();
     await pool.query('DELETE FROM uploads WHERE id = $1', [req.params.id]);
@@ -4722,7 +4722,7 @@ router.post('/apply-bsi-split', requireAuth, async (req, res) => {
 });
 
 // POST /api/files/fix-aetna-classifications - Fix Aetna New Business → Renewal where effective date ≠ payment month
-router.post('/fix-aetna-classifications', requireAuth, async (req, res) => {
+router.post('/fix-aetna-classifications', requireAuth, requireAdmin, async (req, res) => {
   try {
     const pool = getPool();
     

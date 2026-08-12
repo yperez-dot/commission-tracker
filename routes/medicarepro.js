@@ -3,7 +3,7 @@ const router = express.Router();
 const multer = require('multer');
 const csv = require('csv-parser');
 const { getPool } = require('../db/database');
-const { requireAuth } = require('./auth');
+const { requireAuth, requireAdmin } = require('./auth');
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -342,7 +342,7 @@ router.get('/uploads', requireAuth, async (req, res) => {
 });
 
 // DELETE /api/medicarepro/batch/:batch - Delete a batch and all its records
-router.delete('/batch/:batch', requireAuth, async (req, res) => {
+router.delete('/batch/:batch', requireAuth, requireAdmin, async (req, res) => {
   try {
     const { batch } = req.params;
     const pool = getPool();

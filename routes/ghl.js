@@ -1,8 +1,9 @@
+const { requireAuth, requireAdmin } = require('./auth');
 const express = require('express');
 const router = express.Router();
 
 // Test GHL API connection
-router.get('/test', async (req, res) => {
+router.get('/test', requireAuth, requireAdmin, async (req, res) => {
   const token = process.env.GHL_API_TOKEN;
   const locationId = process.env.GHL_LOCATION_ID;
   const baseUrl = process.env.GHL_API_BASE_URL || 'https://services.leadconnectorhq.com';
