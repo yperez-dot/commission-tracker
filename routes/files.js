@@ -1080,8 +1080,10 @@ function parseTHEHumanaStatementRows(wb, filename) {
       .flat()
       .map((value) => String(value || '').trim())
       .join(' ');
-    const statementDateMatch = statementText.match(/Statement Date:\s*(\d{1,2}\/\d{1,2}\/\d{4})/i);
-    const period = statementDateMatch ? normalizePeriod(statementDateMatch[1]) : 'Unknown';
+    const statementDateMatch = statementText.match(/Statement Date:\s*(\d{1,2})\/\d{1,2}\/(\d{2,4})/i);
+    const period = statementDateMatch
+      ? `${statementDateMatch[2].length === 2 ? `20${statementDateMatch[2]}` : statementDateMatch[2]}${statementDateMatch[1].padStart(2, '0')}`
+      : 'Unknown';
     const records = [];
 
     for (const row of rows.slice(headerRowIndex + 1)) {
