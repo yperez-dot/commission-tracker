@@ -1047,10 +1047,94 @@ function parseUHCDirectRows(wb, filename) {
   return records;
 }
 
+// THEI Humana statements are CSV/XLSX exports with a title block above the
+// transaction header. They are distinct from Humana's legacy CommissionData
+// SpreadsheetML export handled by parseHumanaRows below.
+function parseTHEHumanaStatementRows(wb, filename) {
+  for (const sheetName of wb.SheetNames) {
+    const ws = wb.Sheets[sheetName];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false });
+    const headerRowIndex = rows.findIndex((row) =>
+      String(row[0] || '').trim() === 'Policy #' &&
+      String(row[1] || '').trim() === 'Name of Insured'
+    );
+
+    if (headerRowIndex < 0) continue;
+
+    const headers = rows[headerRowIndex].map((header) => String(header || '').trim());
+    const columnIndex = (name) => headers.indexOf(name);
+    const policyIdx = columnIndex('Policy #');
+    const clientIdx = columnIndex('Name of Insured');
+    const transactionIdx = columnIndex('Transaction Type');
+    const productIdx = columnIndex('Product');
+    const effectiveDateIdx = columnIndex('Effective Date');
+    const originalEffectiveDateIdx = columnIndex('Original Effective Date');
+    const netCommissionIdx = columnIndex('Net Comm');
+
+    if (policyIdx < 0 || clientIdx < 0 || netCommissionIdx < 0) {
+      return [];
+    }
+
+    const statementText = rows
+      .slice(0, headerRowIndex)
+      .flat()
+      .map((value) => String(value || '').trim())
+      .join(' ');
+    const statementDateMatch = statementText.match(/Statement Date:\s*(\d{1,2}\/\d{1,2}\/\d{4})/i);
+    const period = statementDateMatch ? normalizePeriod(statementDateMatch[1]) : 'Unknown';
+    const records = [];
+
+    for (const row of rows.slice(headerRowIndex + 1)) {
+      const policyNumber = String(row[policyIdx] || '').trim();
+      const client = String(row[clientIdx] || '').trim();
+      const commissionText = String(row[netCommissionIdx] || '').trim();
+      const isNegative = /^\(.*\)$/.test(commissionText);
+      let commission = parseFloat(commissionText.replace(/[$,()]/g, '')) || 0;
+      if (isNegative) commission = -commission;
+
+      if (!policyNumber || !isValidClientName(client) || commission === 0) continue;
+
+      const transactionType = String(row[transactionIdx] || '').trim();
+      const transactionTypeLower = transactionType.toLowerCase();
+      let classification = 'Agent Commission';
+      if (commission < 0) classification = 'Chargeback';
+      else if (transactionTypeLower.includes('override')) classification = 'Agency Override';
+      else if (transactionTypeLower.includes('new business')) classification = 'New Business';
+      else if (transactionTypeLower.includes('renewal')) classification = 'Renewal';
+
+      const product = String(row[productIdx] || '').trim();
+      records.push({
+        agent: 'The Health Experts Insurance',
+        carrier: 'Humana',
+        planType: derivePlanType('Humana', product, policyNumber, ''),
+        client,
+        effectiveDate: formatDate(row[effectiveDateIdx] || row[originalEffectiveDateIdx]),
+        premium: 0,
+        commission,
+        classification,
+        period,
+        policyNumber,
+        payee: 'Humana',
+        raw: row
+      });
+    }
+
+    return records;
+  }
+
+  return null;
+}
+
 function parseHumanaRows(wb, filename, rawBuffer) {
   const records = [];
 
   try {
+    const theiStatementRecords = parseTHEHumanaStatementRows(wb, filename);
+    if (theiStatementRecords !== null) {
+      console.log(`[HUMANA] Parsed ${theiStatementRecords.length} THEI statement records`);
+      return theiStatementRecords;
+    }
+
     if (!rawBuffer) {
       console.error('parseHumanaRows: no rawBuffer provided');
       return records;
