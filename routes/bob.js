@@ -5,7 +5,7 @@ const XLSX = require('xlsx');
 const path = require('path');
 const fs = require('fs');
 const { getPool } = require('../db/database');
-const { requireAuth } = require('./auth');
+const { requireAuth, requireAdmin } = require('./auth');
 const { normalizeAgentName } = require('./normalize');
 const UPLOADS_DIR = path.join('/tmp', 'uploads');
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
@@ -626,7 +626,7 @@ router.post('/build-from-statements', requireAuth, async (req, res) => {
 });
 
 // ─── POST reset-and-rebuild — clears ALL BOB and rebuilds fresh ───────────────
-router.post('/reset-and-rebuild', requireAuth, async (req, res) => {
+router.post('/reset-and-rebuild', requireAuth, requireAdmin, async (req, res) => {
   try {
     const pool = getPool();
     if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
@@ -714,7 +714,7 @@ router.post('/reset-and-rebuild', requireAuth, async (req, res) => {
 });
 
 // ─── POST bulk-delete by carrier ──────────────────────────────────────────────
-router.post('/bulk-delete', requireAuth, async (req, res) => {
+router.post('/bulk-delete', requireAuth, requireAdmin, async (req, res) => {
   try {
     const pool = getPool();
     const { carrier, ids } = req.body;
@@ -734,7 +734,7 @@ router.post('/bulk-delete', requireAuth, async (req, res) => {
 });
 
 // ─── DELETE single client ─────────────────────────────────────────────────────
-router.delete('/:id', requireAuth, async (req, res) => {
+router.delete('/:id', requireAuth, requireAdmin, async (req, res) => {
   try {
     const pool = getPool();
     await pool.query('DELETE FROM book_of_business WHERE id = $1', [req.params.id]);
