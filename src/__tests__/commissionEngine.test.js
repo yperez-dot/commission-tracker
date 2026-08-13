@@ -1257,6 +1257,19 @@ describe('reconciliation observe-only helpers', () => {
       expect(result.group).toBe(GROUP.SOURCE_BACKED);
     });
 
+    it('matched New + "Active Policy" → SOURCE_NEW (Humana production status)', () => {
+      const result = classifyReconRow({
+        cr_id: 6,
+        ap_id: 15,
+        xwalk_id: 8,
+        commission: 100,
+        commission_type: 'New Business',
+        prod_new_p2p: 'New',
+        prod_status: 'Active Policy',
+      });
+      expect(result.status).toBe(STATUS.SOURCE_NEW);
+    });
+
     it('no crosswalk match → PENDING_NO_MATCH with UNMATCHED group', () => {
       const result = classifyReconRow({
         cr_id: 7,

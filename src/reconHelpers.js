@@ -44,9 +44,15 @@ const GROUP = Object.freeze({
   UNMATCHED: 'UNMATCHED',
 });
 
-const PROD_ACTIVE_STATUSES = new Set(['active', 'enrolled', 'effective', 'paid']);
+const PROD_ACTIVE_STATUSES = new Set([
+  'active',
+  'active policy',
+  'enrolled',
+  'effective',
+  'paid',
+]);
 const PROD_CANCELLED_STATUSES = new Set([
-  'cancelled', 'termed', 'terminated', 'disenrolled', 'lapsed',
+  'cancelled', 'canceled', 'termed', 'terminated', 'disenrolled', 'lapsed',
 ]);
 
 const FIRST_YEAR_PATTERNS = [/first.?year/i, /\bfy\b/i, /\bnew business\b/i];
