@@ -22,7 +22,7 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState('dashboard');
   const [pageParams, setPageParams] = useState({});
-  const [expandedMenus, setExpandedMenus] = useState({ uploads: false, reconciliation: false });
+  const [expandedMenus, setExpandedMenus] = useState({ uploads: false, reconciliation: false, payroll: false });
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     localStorage.getItem('olicomm_sidebar_collapsed') === 'true'
   );
@@ -123,7 +123,16 @@ export default function App() {
         { id: 'renewals', label: 'Missing Renewals' },
       ]
     }] : []),
-    { id: 'payroll', label: 'Payroll' },
+    {
+      id: 'payroll',
+      label: 'Payroll',
+      children: [
+        { id: 'payroll-payouts', label: 'Agent Payouts' },
+        { id: 'payroll-overrides', label: 'House Statements' },
+        { id: 'payroll-loa', label: 'LOA' },
+        { id: 'payroll-history', label: 'Payment History' },
+      ]
+    },
     { id: 'reports', label: 'Reports' },
     ...(user.role === 'admin' ? [
       { id: 'users', label: 'User Accounts' },
@@ -148,7 +157,11 @@ export default function App() {
     renewals: <MissingRenewals key={agencyView} user={effectiveUser} />,
     reconciliation: <Reconciliation key={agencyView} user={effectiveUser} />,
     'direct-recon': <Reconciliation key={agencyView} user={effectiveUser} />,
-    payroll: <Payroll key={agencyView} user={effectiveUser} />,
+    payroll: <Payroll key={agencyView} user={effectiveUser} initialTab="payroll" onNavigate={navigate} />,
+    'payroll-payouts': <Payroll key={`${agencyView}-payouts`} user={effectiveUser} initialTab="payroll" onNavigate={navigate} />,
+    'payroll-overrides': <Payroll key={`${agencyView}-overrides`} user={effectiveUser} initialTab="overrides" onNavigate={navigate} />,
+    'payroll-loa': <Payroll key={`${agencyView}-loa`} user={effectiveUser} initialTab="loa" onNavigate={navigate} />,
+    'payroll-history': <Payroll key={`${agencyView}-history`} user={effectiveUser} initialTab="history" onNavigate={navigate} />,
     reports: <Reports key={agencyView} user={effectiveUser} />,
     agents: <Agents key={agencyView} user={effectiveUser} />,
     users: <AdminUsers key={agencyView} user={effectiveUser} />
