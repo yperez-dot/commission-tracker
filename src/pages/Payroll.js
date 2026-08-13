@@ -50,6 +50,21 @@ function downloadTextFile(filename, text) {
   URL.revokeObjectURL(url);
 }
 
+function downloadBase64File(filename, base64, mime) {
+  const bin = atob(base64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i += 1) bytes[i] = bin.charCodeAt(i);
+  const blob = new Blob([bytes], {
+    type: mime || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 function chipStyle(active) {
   return {
     padding: '6px 12px',
@@ -255,7 +270,7 @@ function PayoutRow({ p, isPaid, paidDate, onTogglePaid, onExport, exportLabel })
   );
 }
 
-function OverridePayeeRow({ s, onExport }) {
+function OverridePayeeRow({ s, onExport, exportLabel = 'Statement' }) {
   const [expanded, setExpanded] = useState(false);
   return (
     <div style={{ borderBottom: '0.5px solid var(--border)' }}>
@@ -272,7 +287,7 @@ function OverridePayeeRow({ s, onExport }) {
             {expanded ? 'Hide' : 'Details'}
           </button>
           <button className="btn" onClick={onExport} style={{ fontSize: 11, padding: '4px 10px' }}>
-            Statement
+            {exportLabel}
           </button>
         </div>
       </div>
@@ -375,16 +390,28 @@ function HouseOverridesPanel() {
     }
   }
 
+  const useExcel = ovType === 'thei_override' || ovType === 'bsi_override';
+
   async function exportAll() {
     if (!ovType || !ovPeriod) return;
     setOvLoading(true);
     setOvError('');
     try {
-      const data = await apiFetch(
-        `/override-statements/export-all?type=${encodeURIComponent(ovType)}&period=${encodeURIComponent(ovPeriod)}`
-      );
-      if (data.summaryCsv) downloadTextFile(data.summaryFilename || 'summary.csv', data.summaryCsv);
-      for (const f of data.files || []) downloadTextFile(f.filename, f.csv);
+      if (useExcel) {
+        const data = await apiFetch(
+          `/override-statements/export-all?type=${encodeURIComponent(ovType)}&period=${encodeURIComponent(ovPeriod)}`
+        );
+        for (const f of data.files || []) {
+          if (f.xlsxBase64) downloadBase64File(f.filename, f.xlsxBase64);
+        }
+        if (data.summaryCsv) downloadTextFile(data.summaryFilename || 'summary.csv', data.summaryCsv);
+      } else {
+        const data = await apiFetch(
+          `/override-statements/export-all?type=${encodeURIComponent(ovType)}&period=${encodeURIComponent(ovPeriod)}`
+        );
+        if (data.summaryCsv) downloadTextFile(data.summaryFilename || 'summary.csv', data.summaryCsv);
+        for (const f of data.files || []) downloadTextFile(f.filename, f.csv);
+      }
     } catch (e) {
       setOvError(e.message || 'Export failed');
     } finally {
@@ -394,6 +421,18 @@ function HouseOverridesPanel() {
 
   async function exportOne(payee) {
     try {
+      if (useExcel) {
+        const qs = new URLSearchParams({
+          type: ovType,
+          period: ovPeriod,
+          payee,
+        });
+        await apiDownload(
+          `/override-statements/export-xlsx?${qs.toString()}`,
+          `${ovType === 'bsi_override' ? 'BSI' : 'THEI'}_Override_Statement_${ovPeriod}.xlsx`
+        );
+        return;
+      }
       const data = await apiFetch(
         `/override-statements/export-all?type=${encodeURIComponent(ovType)}&period=${encodeURIComponent(ovPeriod)}`
       );
@@ -461,7 +500,7 @@ function HouseOverridesPanel() {
           </button>
           {preview && (
             <button className="btn" onClick={exportAll} disabled={ovLoading}>
-              Export all CSVs
+              {useExcel ? 'Export all Excel' : 'Export all CSVs'}
             </button>
           )}
         </div>
@@ -492,7 +531,12 @@ function HouseOverridesPanel() {
             </div>
           ) : (
             (preview.statements || []).map((s) => (
-              <OverridePayeeRow key={s.payee} s={s} onExport={() => exportOne(s.payee)} />
+              <OverridePayeeRow
+                key={s.payee}
+                s={s}
+                exportLabel={useExcel ? 'Excel' : 'CSV'}
+                onExport={() => exportOne(s.payee)}
+              />
             ))
           )}
         </div>

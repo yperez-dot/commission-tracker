@@ -20,7 +20,7 @@ const { Pool } = require('pg');
 const ExcelJS = require('exceljs');
 
 const DEFAULT_OUT = '/workspace/exports/thei-remittance-vs-bsi-feed';
-const PERIODS = ['202605', '202606', '202607'];
+const PERIODS = ['202603', '202604', '202605', '202606', '202607'];
 
 function outDirFromArgs() {
   const i = process.argv.indexOf('--out');
@@ -77,6 +77,12 @@ async function main() {
         WHERE original_name ILIKE '%T.H.E%'
            OR original_name ILIKE '%thei_statement_BSI%'
            OR original_name ILIKE '%THE_STATEMENTS%'
+           OR original_name ILIKE '%Medicare Statement%THE%'
+           OR original_name ILIKE '%Medicare_Statement%THE%'
+           OR original_name ILIKE '%Statement-health experts%'
+           OR original_name ILIKE '%Statement-health_experts%'
+           OR original_name ILIKE '%Health_Experts-March%'
+           OR original_name ILIKE '%Health Experts-March%'
         ORDER BY id
       `)
     ).rows;
@@ -272,7 +278,7 @@ async function main() {
     note.getCell('A7').value =
       'Line matching is messy (pro-rates / class differences) — use Summary totals first, then unpaid expected lines.';
 
-    const outPath = path.join(outDir, 'THEI_Remittance_vs_BSI_Feed_May-Jul_2026.xlsx');
+    const outPath = path.join(outDir, 'THEI_Remittance_vs_BSI_Feed_Mar-Jul_2026.xlsx');
     await wb.xlsx.writeFile(outPath);
     console.log(`\nWrote ${outPath}`);
   } finally {
