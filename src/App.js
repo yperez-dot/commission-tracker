@@ -114,13 +114,13 @@ export default function App() {
     },
     { id: 'alldata', label: 'All Data' },
     { id: 'bob', label: 'Book of Business' },
-    { id: 'renewals', label: 'Missing Renewals' },
     ...(!isBSI ? [{
       id: 'reconciliation',
       label: 'Reconciliation',
       children: [
         { id: 'direct-recon', label: 'Our Sales' },
         { id: 'agency-production-recon', label: 'Agency Override Recon' },
+        { id: 'renewals', label: 'Missing Renewals' },
       ]
     }] : []),
     { id: 'payroll', label: 'Payroll' },
