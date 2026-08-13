@@ -156,6 +156,168 @@ function PayoutRow({ p, isPaid, paidDate, onTogglePaid, onExport, periodLabel, i
   );
 }
 
+function downloadTextFile(filename, text) {
+  const blob = new Blob([text], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function OverrideStatementsPanel() {
+  const [ovTypes, setOvTypes] = useState([]);
+  const [ovPeriods, setOvPeriods] = useState([]);
+  const [ovType, setOvType] = useState('thei_override');
+  const [ovPeriod, setOvPeriod] = useState('');
+  const [preview, setPreview] = useState(null);
+  const [ovLoading, setOvLoading] = useState(false);
+  const [ovError, setOvError] = useState('');
+
+  useEffect(() => {
+    apiFetch('/override-statements/types')
+      .then((d) => setOvTypes(d.types || []))
+      .catch((e) => console.error(e));
+    apiFetch('/override-statements/periods')
+      .then((d) => setOvPeriods(d.periods || []))
+      .catch((e) => console.error(e));
+  }, []);
+
+  async function loadPreview() {
+    if (!ovType || !ovPeriod) return;
+    setOvLoading(true);
+    setOvError('');
+    try {
+      const data = await apiFetch(
+        `/override-statements/preview?type=${encodeURIComponent(ovType)}&period=${encodeURIComponent(ovPeriod)}`
+      );
+      setPreview(data);
+    } catch (e) {
+      setOvError(e.message || 'Failed to load preview');
+      setPreview(null);
+    } finally {
+      setOvLoading(false);
+    }
+  }
+
+  async function exportAll() {
+    if (!ovType || !ovPeriod) return;
+    setOvLoading(true);
+    setOvError('');
+    try {
+      const data = await apiFetch(
+        `/override-statements/export-all?type=${encodeURIComponent(ovType)}&period=${encodeURIComponent(ovPeriod)}`
+      );
+      if (data.summaryCsv) downloadTextFile(data.summaryFilename || 'summary.csv', data.summaryCsv);
+      for (const f of data.files || []) {
+        downloadTextFile(f.filename, f.csv);
+      }
+    } catch (e) {
+      setOvError(e.message || 'Export failed');
+    } finally {
+      setOvLoading(false);
+    }
+  }
+
+  async function exportOne(payee) {
+    try {
+      const data = await apiFetch(
+        `/override-statements/export-all?type=${encodeURIComponent(ovType)}&period=${encodeURIComponent(ovPeriod)}`
+      );
+      const file = (data.files || []).find((f) => f.payee === payee);
+      if (file) downloadTextFile(file.filename, file.csv);
+    } catch (e) {
+      setOvError(e.message || 'Export failed');
+    }
+  }
+
+  return (
+    <div>
+      <div className="card" style={{ marginBottom: 14, padding: '14px 16px' }}>
+        <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8 }}>
+          Override statements — BSI / THEI / Marco / Integrity
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
+          Uses existing split columns only (thei_share, bsi_share, sub_agent_override, producer_payable). Does not change financials.
+        </div>
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <div>
+            <div className="form-label">Statement type</div>
+            <select className="filter-select" value={ovType} onChange={(e) => { setOvType(e.target.value); setPreview(null); }} style={{ minWidth: 220 }}>
+              {ovTypes.map((t) => (
+                <option key={t.id} value={t.id}>{t.label}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <div className="form-label">Period</div>
+            <select className="filter-select" value={ovPeriod} onChange={(e) => { setOvPeriod(e.target.value); setPreview(null); }} style={{ minWidth: 160 }}>
+              <option value="">Select period...</option>
+              <option value="all">— All periods —</option>
+              {ovPeriods.map((p) => {
+                const label = formatPeriodLabel(p.period);
+                return label ? <option key={p.period} value={p.period}>{label}</option> : null;
+              })}
+            </select>
+          </div>
+          <button
+            onClick={loadPreview}
+            disabled={!ovType || !ovPeriod || ovLoading}
+            style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 6, padding: '7px 14px', fontSize: 12, cursor: 'pointer', fontWeight: 500 }}
+          >
+            {ovLoading ? 'Loading…' : 'Preview'}
+          </button>
+          {preview && (
+            <button
+              onClick={exportAll}
+              disabled={ovLoading}
+              style={{ background: 'none', border: '0.5px solid var(--border)', borderRadius: 6, padding: '6px 14px', fontSize: 12, cursor: 'pointer' }}
+            >
+              ↓ Export all CSVs
+            </button>
+          )}
+        </div>
+        {ovError && <div style={{ marginTop: 10, color: 'var(--red)', fontSize: 12 }}>{ovError}</div>}
+      </div>
+
+      {preview && (
+        <div className="card" style={{ padding: 0 }}>
+          <div style={{ padding: '10px 14px', borderBottom: '0.5px solid var(--border)', display: 'flex', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 13, fontWeight: 500 }}>
+              {preview.periodLabel} — {preview.statementCount} payee statement{preview.statementCount !== 1 ? 's' : ''}
+            </span>
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--green)' }}>{fmt(preview.grandTotal)}</span>
+          </div>
+          {(preview.statements || []).length === 0 ? (
+            <div className="empty-state">
+              <div className="empty-title">No override lines for this type/period</div>
+            </div>
+          ) : (
+            (preview.statements || []).map((s) => (
+              <div key={s.payee} style={{ padding: '12px 14px', borderBottom: '0.5px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <div style={{ fontWeight: 500, fontSize: 13 }}>{s.payee}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{s.lineCount} line{s.lineCount !== 1 ? 's' : ''}</div>
+                </div>
+                <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                  <span style={{ fontWeight: 600, color: s.total < 0 ? 'var(--red)' : 'var(--green)' }}>{fmt(s.total)}</span>
+                  <button
+                    onClick={() => exportOne(s.payee)}
+                    style={{ background: 'none', border: '0.5px solid var(--border)', borderRadius: 6, padding: '4px 10px', fontSize: 11, cursor: 'pointer' }}
+                  >
+                    ↓ Statement
+                  </button>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Payroll({ user }) {
   const [periods, setPeriods] = useState([]);
   const [selectedPeriod, setSelectedPeriod] = useState('');
@@ -309,12 +471,17 @@ export default function Payroll({ user }) {
       <div className="page-body">
         <div style={{ display:'flex', gap:8, marginBottom:14, borderBottom:'1px solid var(--border)' }}>
           <button style={tabStyle('payroll')} onClick={()=>setTab('payroll')}>Agent Statements</button>
+          <button style={tabStyle('overrides')} onClick={()=>setTab('overrides')}>Override Statements</button>
           <button style={tabStyle('loa')} onClick={()=>setTab('loa')}>LOA Statements</button>
           <button style={tabStyle('history')} onClick={()=>setTab('history')}>
             Payment History
             {history.length>0 && <span style={{ background:'var(--accent)', color:'var(--sidebar-bg)', borderRadius:99, fontSize:10, padding:'1px 6px', marginLeft:4, fontWeight:500 }}>{history.length}</span>}
           </button>
         </div>
+
+        {tab==='overrides' && (
+          <OverrideStatementsPanel />
+        )}
 
         {tab==='loa' && (
           <LOAStatements />

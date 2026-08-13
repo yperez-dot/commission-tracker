@@ -484,9 +484,16 @@ async function main() {
     if (summary.totalEligible === 0) {
       console.log('  Nothing to do.');
     } else {
+      // When writing, never advance OFFSET — updated rows leave the eligible set,
+      // so OFFSET would skip remaining NULL/PROVISIONAL rows. Always fetch next page from 0.
+      // Dry-run may use OFFSET because rows are not mutated.
+      let processed = 0;
       let offset = 0;
-      while (offset < summary.totalEligible) {
-        const rows = await fetchCandidateBatch(client, { limit: batchSize, offset });
+      while (processed < summary.totalEligible) {
+        const rows = await fetchCandidateBatch(client, {
+          limit: batchSize,
+          offset: writeMode ? 0 : offset,
+        });
         if (rows.length === 0) break;
 
         const updates = [];
@@ -500,9 +507,10 @@ async function main() {
           await writeUpdates(client, updates, new Date().toISOString());
         }
 
-        offset += rows.length;
+        processed += rows.length;
+        if (!writeMode) offset += rows.length;
         process.stdout.write(
-          `\r  Processed ${Math.min(offset, summary.totalEligible)} / ${summary.totalEligible} …`
+          `\r  Processed ${Math.min(processed, summary.totalEligible)} / ${summary.totalEligible} …`
         );
       }
       process.stdout.write('\n');
