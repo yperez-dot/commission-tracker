@@ -118,7 +118,7 @@ describe('overrideStatementBuilder', () => {
     expect(classifyOverrideLine(rows[3], STATEMENT_TYPES.THEI_OVERRIDE)).toBeNull();
   });
 
-  it('Alba statement uses producer_payable across classifications', () => {
+  it('Alba statement pays agent commissions only (excludes Agency Override)', () => {
     const albaRows = [
       {
         id: 10,
@@ -150,6 +150,20 @@ describe('overrideStatementBuilder', () => {
         sub_agent_override: 0,
       },
       {
+        id: 13,
+        agent_name: 'Alba Hernandez',
+        client_full_name: 'CLIENT H',
+        policy_number: 'P8',
+        carrier: 'Humana',
+        payment_period: '202601',
+        classification: 'Agency Override',
+        commission: 180,
+        thei_share: 90,
+        bsi_share: 90,
+        producer_payable: 180,
+        sub_agent_override: 0,
+      },
+      {
         id: 12,
         agent_name: 'Someone Else',
         client_full_name: 'CLIENT G',
@@ -167,7 +181,7 @@ describe('overrideStatementBuilder', () => {
     const bundle = buildOverrideStatements(albaRows, STATEMENT_TYPES.ALBA, { period: '202601' });
     expect(bundle.statements).toHaveLength(1);
     expect(bundle.statements[0].payee).toBe('Alba Hernandez');
-    expect(bundle.grandTotal).toBe(250);
+    expect(bundle.grandTotal).toBe(250); // 300 - 50; override excluded
     expect(bundle.statements[0].lineCount).toBe(2);
   });
 });

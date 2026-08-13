@@ -29,8 +29,17 @@ async function fetchOverrideRows(pool, period, type) {
   const params = [];
   let where;
   if (type === STATEMENT_TYPES.ALBA) {
-    // Alba agent statement: all classifications with producer_payable
-    where = `WHERE agent_name ILIKE '%alba%hernandez%' AND COALESCE(producer_payable,0) <> 0`;
+    // Alba is paid agent commissions only — exclude Agency Override remittance.
+    where = `WHERE agent_name ILIKE '%alba%hernandez%'
+      AND COALESCE(producer_payable,0) <> 0
+      AND LOWER(COALESCE(classification,'')) NOT LIKE '%override%'
+      AND (
+        LOWER(COALESCE(classification,'')) LIKE '%new business%'
+        OR LOWER(COALESCE(classification,'')) LIKE '%renewal%'
+        OR LOWER(COALESCE(classification,'')) LIKE '%chargeback%'
+        OR LOWER(COALESCE(classification,'')) LIKE '%agent commission%'
+        OR LOWER(TRIM(COALESCE(classification,''))) = 'commission'
+      )`;
   } else {
     where = `WHERE classification ILIKE '%override%'`;
   }
@@ -77,7 +86,7 @@ router.get('/types', requireAuth, (_req, res) => {
         id: STATEMENT_TYPES.ALBA,
         label: 'Alba Hernandez',
         amountField: 'producer_payable',
-        description: 'Alba agent payout statement (producer_payable)',
+        description: 'Alba agent commissions only (NB / Renewal / Chargeback) — not Agency Override',
       },
     ],
   });

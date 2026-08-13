@@ -17,6 +17,7 @@ const {
   isIntegrityAgent,
   isMarcoAgent,
   isAlbaHernandez,
+  isAlbaAgentCommission,
   isAgencyOverride,
 } = require('./payeeSchedules');
 
@@ -144,8 +145,9 @@ function classifyOverrideLine(row, statementType) {
       };
     }
     case STATEMENT_TYPES.ALBA: {
-      // Alba agent payout statement — all classifications with producer_payable.
+      // Alba is paid AGENT commissions only — not Agency Override remittance.
       if (!isAlbaHernandez(row.agent_name)) return null;
+      if (!isAlbaAgentCommission(row.classification)) return null;
       const amount = num(row.producer_payable);
       if (amount === 0) return null;
       return {
@@ -153,8 +155,8 @@ function classifyOverrideLine(row, statementType) {
         amountField: 'producer_payable',
         amount,
         pot: num(row.gross_commission) || num(row.commission) || Math.abs(amount),
-        shareLabel: 'producer',
-        schedule: 'alba_producer_payable',
+        shareLabel: 'agent_commission',
+        schedule: 'alba_agent_commission',
       };
     }
     default:
@@ -309,14 +311,14 @@ function statementToCsv(bundle, payeeStatement) {
       : bundle.type === STATEMENT_TYPES.INTEGRITY
         ? 'Integrity Partners Producer Statement (50%)'
         : bundle.type === STATEMENT_TYPES.ALBA
-          ? 'Alba Hernandez Agent Statement (producer_payable)'
+          ? 'Alba Hernandez Agent Commission Statement'
         : bundle.type === STATEMENT_TYPES.BSI_OVERRIDE
           ? 'BSI Override Statement (50% of override pot)'
           : 'THEI Override Statement (50% of override pot)';
 
   const splitNote =
     bundle.type === STATEMENT_TYPES.ALBA
-      ? 'Alba agent payout — uses producer_payable (New Business / Renewal / Chargeback)'
+      ? 'Alba is paid agent commissions only (New Business / Renewal / Chargeback) — Agency Override excluded'
       : 'Split: THEI and BSI are 50/50 of the override pot (Integrity 50/25/25; Marco $10 then 50/50)';
 
   const lines = [

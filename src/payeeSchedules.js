@@ -65,6 +65,19 @@ function isAlbaHernandez(agentName) {
   return n.includes('alba') && n.includes('hernandez');
 }
 
+/** Classifications THEI/BSI pays Alba as agent commission (not agency override). */
+function isAlbaAgentCommission(classification) {
+  const c = String(classification || '').toLowerCase();
+  if (c.includes('override')) return false;
+  return (
+    c.includes('new business') ||
+    c.includes('renewal') ||
+    c.includes('chargeback') ||
+    c.includes('agent commission') ||
+    c === 'commission'
+  );
+}
+
 function isAgencyOverride(classification) {
   return String(classification || '').toLowerCase().includes('override');
 }
@@ -77,6 +90,7 @@ module.exports = {
   isIntegrityAgent,
   isMarcoAgent,
   isAlbaHernandez,
+  isAlbaAgentCommission,
   isAgencyOverride,
   normName,
 };

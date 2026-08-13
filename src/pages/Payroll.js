@@ -245,7 +245,7 @@ function OverrideStatementsPanel() {
         </div>
         <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
           THEI and BSI are <strong>50/50</strong> of the override pot (Integrity 50/25/25; Marco $10 then 50/50).
-          Alba uses <strong>producer_payable</strong> (her agent payout). Does not change financials.
+          Alba is paid <strong>agent commissions</strong> only (NB / Renewal / Chargeback) — Agency Override stays on THEI/BSI statements.
         </div>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <div>
@@ -371,7 +371,16 @@ export default function Payroll({ user }) {
           const producerPayable = parseFloat(r.producer_payable || 0);
           const isACAPayable = lob === 'ACA' && producerPayable !== 0;
           const isAlba = isAlbaName(r.agent_name);
-          return ((isACAPayable || hasSubAgentOverride) || (isAlba && producerPayable !== 0)) && !isYourTeam(r.agent_name);
+          const isAlbaAgentComm =
+            isAlba &&
+            producerPayable !== 0 &&
+            !classification.includes('override') &&
+            (classification.includes('new business') ||
+              classification.includes('renewal') ||
+              classification.includes('chargeback') ||
+              classification.includes('agent commission') ||
+              classification === 'commission');
+          return ((isACAPayable || hasSubAgentOverride) || isAlbaAgentComm) && !isYourTeam(r.agent_name);
         });
       }
 
@@ -393,9 +402,13 @@ export default function Payroll({ user }) {
         grouped[agent].total += commission;
 
         // FIX: Show agent if they have ANY non-zero producer_payable (including chargeback-only agents)
+        const classification = (r.classification || '').toLowerCase();
         const isACAPayableCheck = (r.lob || '').toUpperCase() === 'ACA' && parseFloat(r.producer_payable || 0) !== 0;
         const hasSubAgentOverride = parseFloat(r.sub_agent_override || 0) > 0;
-        const isAlbaRow = isAlbaName(r.agent_name) && parseFloat(r.producer_payable || 0) !== 0;
+        const isAlbaRow =
+          isAlbaName(r.agent_name) &&
+          parseFloat(r.producer_payable || 0) !== 0 &&
+          !classification.includes('override');
         if (isACAPayableCheck || hasSubAgentOverride || isAlbaRow) grouped[agent].hasPositivePayable = true;
       }
 
