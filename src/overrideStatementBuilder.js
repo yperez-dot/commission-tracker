@@ -19,6 +19,7 @@ const {
   isAlbaHernandez,
   isAlbaAgentCommission,
   isAgencyOverride,
+  ALBA_DISPLAY_NAME,
 } = require('./payeeSchedules');
 
 function num(v) {
@@ -145,13 +146,13 @@ function classifyOverrideLine(row, statementType) {
       };
     }
     case STATEMENT_TYPES.ALBA: {
-      // Alba is paid AGENT commissions only — not Agency Override remittance.
+      // Lina (Alba) is paid AGENT commissions only — not Agency Override remittance.
       if (!isAlbaHernandez(row.agent_name)) return null;
       if (!isAlbaAgentCommission(row.classification)) return null;
       const amount = num(row.producer_payable);
       if (amount === 0) return null;
       return {
-        payee: 'Alba Hernandez',
+        payee: ALBA_DISPLAY_NAME,
         amountField: 'producer_payable',
         amount,
         pot: num(row.gross_commission) || num(row.commission) || Math.abs(amount),
@@ -311,14 +312,14 @@ function statementToCsv(bundle, payeeStatement) {
       : bundle.type === STATEMENT_TYPES.INTEGRITY
         ? 'Integrity Partners Producer Statement (50%)'
         : bundle.type === STATEMENT_TYPES.ALBA
-          ? 'Alba Hernandez Agent Commission Statement'
+          ? 'Lina Hernandez Agent Commission Statement'
         : bundle.type === STATEMENT_TYPES.BSI_OVERRIDE
           ? 'BSI Override Statement (50% of override pot)'
           : 'THEI Override Statement (50% of override pot)';
 
   const splitNote =
     bundle.type === STATEMENT_TYPES.ALBA
-      ? 'Alba is paid agent commissions only (New Business / Renewal / Chargeback) — Agency Override excluded'
+      ? 'Lina Hernandez is paid agent commissions only (New Business / Renewal / Chargeback) — Agency Override excluded'
       : 'Split: THEI and BSI are 50/50 of the override pot (Integrity 50/25/25; Marco $10 then 50/50)';
 
   const lines = [

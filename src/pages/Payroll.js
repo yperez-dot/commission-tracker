@@ -17,7 +17,13 @@ function isYourTeam(name) {
 
 function isAlbaName(name) {
   const n = String(name || '').toLowerCase();
-  return n.includes('alba') && n.includes('hernandez');
+  if (!n.includes('hernandez')) return false;
+  return n.includes('alba') || n.includes('lina') || n.includes('ritela');
+}
+
+/** Payroll display name — BSI/pay uses Lina; DB rows may still say Alba. */
+function albaPayrollDisplayName(name) {
+  return isAlbaName(name) ? 'Lina Hernandez' : name;
 }
 
 function formatPeriodLabel(p) {
@@ -241,11 +247,11 @@ function OverrideStatementsPanel() {
     <div>
       <div className="card" style={{ marginBottom: 14, padding: '14px 16px' }}>
         <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8 }}>
-          Override statements — BSI / THEI / Marco / Integrity / Alba
+          Override statements — BSI / THEI / Marco / Integrity / Lina
         </div>
         <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
           THEI and BSI are <strong>50/50</strong> of the override pot (Integrity 50/25/25; Marco $10 then 50/50).
-          Alba is paid <strong>agent commissions</strong> only (NB / Renewal / Chargeback) — Agency Override stays on THEI/BSI statements.
+          Lina Hernandez is paid <strong>agent commissions</strong> only (NB / Renewal / Chargeback) — Agency Override stays on THEI/BSI statements.
         </div>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <div>
@@ -386,7 +392,7 @@ export default function Payroll({ user }) {
 
       const grouped = {}, seen = new Set();
       for (const r of allRecs) {
-        const agent = r.agent_name || 'Unknown';
+        const agent = albaPayrollDisplayName(r.agent_name || 'Unknown');
         const hasSubAgentOV = parseFloat(r.sub_agent_override || 0) !== 0;
         const hasProducerPayable = r.producer_payable != null;
         const commission = hasSubAgentOV 

@@ -5,7 +5,7 @@ const {
   buildOverrideStatements,
   classifyOverrideLine,
 } = require('../overrideStatementBuilder');
-const { isMarcoAgent, isIntegrityAgent } = require('../payeeSchedules');
+const { isMarcoAgent, isIntegrityAgent, isAlbaHernandez } = require('../payeeSchedules');
 
 describe('payeeSchedules', () => {
   it('recognizes Integrity agents including CAM', () => {
@@ -180,9 +180,24 @@ describe('overrideStatementBuilder', () => {
     ];
     const bundle = buildOverrideStatements(albaRows, STATEMENT_TYPES.ALBA, { period: '202601' });
     expect(bundle.statements).toHaveLength(1);
-    expect(bundle.statements[0].payee).toBe('Alba Hernandez');
+    expect(bundle.statements[0].payee).toBe('Lina Hernandez');
     expect(bundle.grandTotal).toBe(250); // 300 - 50; override excluded
     expect(bundle.statements[0].lineCount).toBe(2);
+  });
+
+  it('matches Lina Hernandez name variants on Alba statement type', () => {
+    expect(isAlbaHernandez('Lina Hernandez')).toBe(true);
+    expect(isAlbaHernandez('Alba Ritela Hernandez')).toBe(true);
+    const row = {
+      id: 99,
+      agent_name: 'Lina Hernandez',
+      classification: 'Renewal',
+      producer_payable: 36,
+      payment_period: '202607',
+    };
+    const line = classifyOverrideLine(row, STATEMENT_TYPES.ALBA);
+    expect(line.payee).toBe('Lina Hernandez');
+    expect(line.amount).toBe(36);
   });
 });
 

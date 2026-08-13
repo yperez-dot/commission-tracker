@@ -32,7 +32,11 @@ async function fetchOverrideRows(pool, period, type) {
     // Alba is paid agent commissions only — exclude Agency Override remittance.
     // Build from our commission_records (producer_payable), not from BSI→Alba
     // payee PDFs (those are the OUTPUT format we will replicate, not an import feed).
-    where = `WHERE agent_name ILIKE '%alba%hernandez%'
+    where = `WHERE (
+        agent_name ILIKE '%alba%hernandez%'
+        OR agent_name ILIKE '%lina%hernandez%'
+        OR agent_name ILIKE '%alba%ritela%'
+      )
       AND COALESCE(producer_payable,0) <> 0
       AND LOWER(COALESCE(classification,'')) NOT LIKE '%override%'
       AND (
@@ -86,9 +90,9 @@ router.get('/types', requireAuth, (_req, res) => {
       },
       {
         id: STATEMENT_TYPES.ALBA,
-        label: 'Alba Hernandez',
+        label: 'Lina Hernandez',
         amountField: 'producer_payable',
-        description: 'Alba agent commissions only (NB / Renewal / Chargeback) — not Agency Override',
+        description: 'Lina (Alba) agent commissions only (NB / Renewal / Chargeback) — not Agency Override',
       },
     ],
   });
@@ -106,7 +110,10 @@ router.get('/periods', requireAuth, async (_req, res) => {
         AND payment_period <> 'Unknown'
         AND (
           classification ILIKE '%override%'
-          OR (agent_name ILIKE '%alba%hernandez%' AND COALESCE(producer_payable,0) <> 0)
+          OR (
+            (agent_name ILIKE '%alba%hernandez%' OR agent_name ILIKE '%lina%hernandez%' OR agent_name ILIKE '%alba%ritela%')
+            AND COALESCE(producer_payable,0) <> 0
+          )
         )
       GROUP BY 1
       ORDER BY 1 DESC

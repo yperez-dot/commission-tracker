@@ -60,12 +60,17 @@ function isMarcoAgent(agentName, paymentPeriod) {
   return true;
 }
 
+/** Canonical payroll / statement display name for Alba / Lina Hernandez. */
+const ALBA_DISPLAY_NAME = 'Lina Hernandez';
+
 function isAlbaHernandez(agentName) {
   const n = normName(agentName);
-  return n.includes('alba') && n.includes('hernandez');
+  if (!n.includes('hernandez')) return false;
+  // BSI labels her "Lina"; carrier feeds often use Alba / Alba Ritela.
+  return n.includes('alba') || n.includes('lina') || n.includes('ritela');
 }
 
-/** Classifications THEI/BSI pays Alba as agent commission (not agency override). */
+/** Classifications THEI/BSI pays Alba/Lina as agent commission (not agency override). */
 function isAlbaAgentCommission(classification) {
   const c = String(classification || '').toLowerCase();
   if (c.includes('override')) return false;
@@ -87,6 +92,7 @@ module.exports = {
   MARCO_AGENTS,
   MARCO_JENDY_CUTOFF,
   STATEMENT_TYPES,
+  ALBA_DISPLAY_NAME,
   isIntegrityAgent,
   isMarcoAgent,
   isAlbaHernandez,
