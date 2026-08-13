@@ -28,6 +28,7 @@ const {
   resolveYearType,
   resolveAetnaStateGroup,
   OVERRIDE_RATE_TABLE,
+  UHC_SCHEDULE_HONOR,
   AETNA_FL_PLAN_CROSSWALK,
   excelSerialToDate,
   canonicalizeProductFamily,
@@ -1067,6 +1068,27 @@ describe('OVERRIDE_RATE_TABLE — data integrity', () => {
 
   it('UHC National Renewal = 75 (contract-verified)', () => {
     expect(OVERRIDE_RATE_TABLE.UHC.National.Renewal).toBe(75);
+  });
+
+  it('UHC California HMO/SNP: Initial=175, Renewal=105 (2026 FMO amendment)', () => {
+    expect(OVERRIDE_RATE_TABLE.UHC.California.Initial).toBe(175);
+    expect(OVERRIDE_RATE_TABLE.UHC.California.Renewal).toBe(105);
+  });
+
+  it('UHC non-SNP PPO pots documented (not auto-selected yet)', () => {
+    expect(OVERRIDE_RATE_TABLE.UHC.Non_SNP_PPO_National).toEqual({ Initial: 96, Renewal: 53 });
+    expect(OVERRIDE_RATE_TABLE.UHC.Non_SNP_PPO_California).toEqual({ Initial: 120, Renewal: 73 });
+  });
+
+  it('UHC Level Up honor true-up: $7.50 THEI per National Initial sale', () => {
+    expect(UHC_SCHEDULE_HONOR.nationalInitialSchedule).toBe(150);
+    expect(UHC_SCHEDULE_HONOR.nationalInitialHonored).toBe(165);
+    expect(UHC_SCHEDULE_HONOR.theiTrueUpPerSale).toBe(7.5);
+  });
+
+  it('Humana PDP: Initial=19, Renewal=9 (2026 SFMO schedule)', () => {
+    expect(OVERRIDE_RATE_TABLE.Humana.PDP.Initial).toBe(19);
+    expect(OVERRIDE_RATE_TABLE.Humana.PDP.Renewal).toBe(9);
   });
 
   it('Aetna Florida DSNP is flat: Initial === Renewal === 240', () => {

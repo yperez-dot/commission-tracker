@@ -86,12 +86,42 @@ const STATE_GROUPS = {
 // ⚠️ Freedom, Elevance: rates are contractually correct but NOT currently being
 //    paid due to BSI/Alba certification gap. Flag rows for review, do NOT update splits.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// UHC 2026 FMO amendment (Exhibit 2) — FMO max roll-up − Writing Agent
+// Source PDF: UHC_2026_Commission_Amendment_FMO (Sep 9, 2025 letter)
+//
+// Initial HMO + All SNP: Nat 844−694=150 | CT/PA/DC 931−781=150 |
+//   NJ 1014−864=150 | CA 1039−864=175
+// Renewal HMO + SNP:     Nat 422−347=75  | CT/PA/DC 466−391=75  |
+//   NJ 507−432=75  | CA 537−432=105
+// Initial non-SNP PPO:   Nat/CT/NJ 96 | CA 120  (not wired — BSI Plan Type is MAPD/DSNP/CSNP only)
+// Renewal non-SNP PPO:   Nat/CT/NJ 53 | CA 73   (same pot for “existing MA” vs “other” renewals)
+// PDP 2026: all levels $0
+//
+// Level Up/BSI commercial honor (not in carrier schedule): signed 2025 override
+// was $165 National Initial; 2026 schedule is $150. They true-up THEI at $7.50/sale
+// (= half of the $15 gap). Peel from carrier→BSI feeds still uses schedule $150 so
+// albaComp stays aligned with Writing Agent FMV; honor is a remittance true-up.
+// ---------------------------------------------------------------------------
+const UHC_SCHEDULE_HONOR = {
+  // National (and CT/PA/DC, NJ) Initial: schedule 150 vs honored 165
+  nationalInitialSchedule: 150,
+  nationalInitialHonored: 165,
+  theiTrueUpPerSale: 7.5, // (165 − 150) / 2
+};
+
 const OVERRIDE_RATE_TABLE = {
   UHC: {
+    // HMO + SNP (and typical Alba MAPD/DSNP/CSNP BSI rows) — verified 2026 FMO schedule
     National:    { Initial: 150, Renewal: 75 },
     California:  { Initial: 175, Renewal: 105 },
     'New Jersey':{ Initial: 150, Renewal: 75 },
     CT_PA_DC:    { Initial: 150, Renewal: 75 },
+    // Non-SNP PPO pots (documented; not selected until Plan Type can distinguish PPO)
+    Non_SNP_PPO_National:    { Initial: 96, Renewal: 53 },
+    Non_SNP_PPO_California:  { Initial: 120, Renewal: 73 },
+    Non_SNP_PPO_New_Jersey:  { Initial: 96, Renewal: 53 },
+    Non_SNP_PPO_CT_PA_DC:    { Initial: 96, Renewal: 53 },
   },
 
   Aetna: {
@@ -105,10 +135,12 @@ const OVERRIDE_RATE_TABLE = {
   },
 
   Humana: {
-    National:  { Initial: 150, Renewal: 75 },
-    CT_DC_PA:  { Initial: 150, Renewal: 75 },
-    CA_NJ:     { Initial: 150, Renewal: 75 }, // inferred, strong match
-    PDP:       { Initial: 19,  Renewal: 8  },
+    // SFMO − Writing Agent (2026 Field Commission Schedule)
+    National:  { Initial: 150, Renewal: 75 }, // 844−694 / 422−347
+    CT_DC_PA:  { Initial: 150, Renewal: 75 }, // 931−781 / 466−391
+    CA_NJ:     { Initial: 150, Renewal: 75 }, // NJ 1014−864 / 507−432; CA same pot pattern
+    // PDP All States except Basic RX: SFMO 133−114=19 Initial; 66−57=9 Renewal
+    PDP:       { Initial: 19,  Renewal: 9  },
   },
 
   HealthSpring: {
@@ -382,6 +414,7 @@ module.exports = {
   calculateAlbaOverrideSplit,
   shouldProcessBSIOverrideRow,
   OVERRIDE_RATE_TABLE,
+  UHC_SCHEDULE_HONOR,
   STATE_GROUPS,
   AETNA_FL_PLAN_CROSSWALK,
   resolveYearType,
