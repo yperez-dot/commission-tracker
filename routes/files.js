@@ -531,10 +531,9 @@ function parseAetnaBSICSV(wb, filename) {
       else if (prodL.includes('ppo') || prodL.includes('mapd')) planType = 'Aetna MAPD';
 
       const eventType  = classifySalesEvent(salesEvent);
-      // ALL rows in this file are BSI agency override rows.
-      // Payee is always BSI (Broker Society Insurance). Alba being the writing agent
-      // does NOT make her rows agent commissions — Aetna pays her agent commission
-      // directly in a separate statement; it does not appear here.
+      // Aetna→BSI carrier feed (payee BSI). Writing-agent Alba/Lina rows are her
+      // agent production that BSI remits; upload attribution sets producer_payable.
+      // Agency-level override dollars appear under other BSI feeds / remittance.
       let classification;
       if (amount < 0 || eventType === 'skip') {
         classification = 'Chargeback';
@@ -1308,7 +1307,7 @@ function parseBSIRows(wb, filename) {
       if (cell) rowVals.push(String(cell.v || '').toLowerCase());
     }
     const str = rowVals.join('|');
-    if (str.includes('agent') && str.includes('client') && str.includes('commission')) {
+    if (str.includes('agent') && str.includes('client') && (str.includes('commission') || str.includes('commision'))) {
       headerRow = r;
       break;
     }
@@ -1335,7 +1334,8 @@ function parseBSIRows(wb, filename) {
   const policyCol     = findCol(['policy', 'policynumber']);
   const clientCol     = findCol(['clientname', 'client', 'membername', 'member', 'insured']);
   const effDateCol    = findCol(['effectivedate', 'effective', 'effdate']);
-  const commissionCol = findCol(['commission', 'amount', 'comp']);
+  // BSI THE remittance CSVs often misspell the column as COMMISION
+  const commissionCol = findCol(['commission', 'commision', 'amount', 'comp']);
 
   for (const row of rows) {
     const agent = normalizeAgentName(String(agentCol ? row[agentCol] : '').trim());
@@ -1378,6 +1378,17 @@ function parseBSIRows(wb, filename) {
   }
   return records;
 }
+
+/**
+ * Detect BSI → THE remittance workbook (e.g. "JULY - THE" / T.H.E_STATEMENTS.csv).
+ * Implementation lives in src/theRemittanceStatement.js
+ */
+const {
+  isTheRemittanceStatement,
+  parseTheRemittanceStatement,
+} = require('../src/theRemittanceStatement');
+
+const { applyBsiBookAgentProduction } = require('../src/bsiBookAttribution');
 
 // Extract period from NHP "Carrier-Statement Month" column (e.g., "Cigna - April 2026" → "202604")
 function extractPeriodFromStatementMonth(statementMonth) {
@@ -1574,6 +1585,8 @@ function parseNHPRows(wb, uploadPeriod) {
         
         // Christian Munoz & Horacio Mendieta special handling
         // Fixed rates on UHC/Doctors/Solis/HealthSun NEW BUSINESS only
+        // Gross NHP pots (see OVERRIDE_RATE_TABLE): Doctors 175, HealthSun 157.50,
+        // Solis 210/140, UHC honor 165 → these fixed cuts come off before 50/50.
         const agentLower = agent.toLowerCase();
         const carrierLower = carrier.toLowerCase();
         const isChristianOrHoracio = agentLower.includes('christian munoz') || agentLower.includes('horacio mendieta');
@@ -1583,10 +1596,10 @@ function parseNHPRows(wb, uploadPeriod) {
         if (isChristianOrHoracio && isSpecialCarrier && isNewBusiness && grossCommission > 0) {
           // Determine fixed rate
           let fixedRate = 0;
-          if (carrierLower.includes('unitedhealthcare') || carrierLower.includes('united healthcare')) fixedRate = 82.50;
-          else if (carrierLower.includes('doctors')) fixedRate = 50;
-          else if (carrierLower.includes('solis')) fixedRate = 62.50;
-          else if (carrierLower.includes('healthsun')) fixedRate = 52.50;
+          if (carrierLower.includes('unitedhealthcare') || carrierLower.includes('united healthcare')) fixedRate = 82.50; // half of $165 honor
+          else if (carrierLower.includes('doctors')) fixedRate = 50;       // from $175 pot
+          else if (carrierLower.includes('solis')) fixedRate = 62.50;      // from $210 Initial pot
+          else if (carrierLower.includes('healthsun')) fixedRate = 52.50;  // from $157.50 pot
           
           subAgentOverride = fixedRate;
           // After deducting sub-agent payment, split the remainder with BSI if eligible
@@ -3459,6 +3472,41 @@ async function parseBSIConsolidatedPDF(filePath, filename) {
 
     summaryDeductions.forEach(r => records.push(r));
 
+    // BSI consolidated PDFs store the FULL override pot. Apply THEI/BSI 50/50 here so
+    // upload-time map (which skips when source is set) cannot mis-label as direct_carrier
+    // 100% THEI — that bug made override statements look nothing like a 50/50 split.
+    const { splitFullOverridePot } = require('../src/overrideSplitMath');
+    const deducted = new Set();
+    for (const r of records) {
+      const cls = String(r.classification || '').toLowerCase();
+      const isSplitRow = cls.includes('override') || cls === 'chargeback';
+      if (!isSplitRow) {
+        r.source = r.source || 'BSI';
+        r.grossCommission = r.grossCommission != null ? r.grossCommission : r.commission;
+        r.theiShare = r.theiShare != null ? r.theiShare : r.commission;
+        r.bsiShare = r.bsiShare != null ? r.bsiShare : 0;
+        r.producerPayable = r.producerPayable != null ? r.producerPayable : 0;
+        r.splitApplies = false;
+        continue;
+      }
+      const already = deducted.has(r.policyNumber);
+      const split = splitFullOverridePot(r.commission, {
+        agentName: r.agent,
+        paymentPeriod: r.period,
+        alreadyDeducted: already,
+      });
+      if (split.subAgentOverride) deducted.add(r.policyNumber);
+      r.source = 'BSI';
+      r.grossCommission = split.grossCommission;
+      r.theiShare = split.theiShare;
+      r.bsiShare = split.bsiShare;
+      r.producerPayable = split.producerPayable;
+      r.subAgentOverride = split.subAgentOverride;
+      r.splitApplies = split.splitApplies;
+      // Keep commission = full pot for audit; shares hold the 50/50 payable amounts.
+      r.commission = split.grossCommission;
+    }
+
     console.log(`[BSI-CONSOLIDATED] parsed ${records.length} records:`,
       records.reduce((acc, r) => { acc[r.carrier] = (acc[r.carrier]||0)+1; return acc; }, {}));
 
@@ -4106,10 +4154,14 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     }
 
     const determinePayee = (filename) => {
-      const f = filename.toLowerCase();
+      // Normalize spaces → underscores so "Statement-health experts.pdf" matches
+      // the same patterns as "Statement-health_experts.pdf".
+      const f = String(filename || '').toLowerCase().replace(/\s+/g, '_');
+      if (f.includes('medicare_statement_-the-')) return 'BSI'; // consolidated BSI book PDF
       if (f.includes('medicare_statement-the') || f.includes('medicare_statement_the')) return 'THE';
       if (f.includes('commission_statement_2737247')) return 'UnitedHealthcare';
       if (f.includes('statement-health_experts') || f.includes('statement_health_experts')) return 'BSI';
+      if (f.includes('health_experts-') || (f.includes('health_experts') && f.includes('statement'))) return 'BSI';
       if (f.includes('the_health_experts_insurance_statement') || f.includes('the_health_experst_insurance') || (f.includes('yahoska') && f.includes('katy'))) return 'NHP';
       if (f.includes('commission-statement') || f.includes('integrity') || f.includes('apl')) return 'APL';
       if (f.includes('commissions_ledger') || f.includes('solis')) return 'Solis';
@@ -4119,7 +4171,6 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       if (f.includes('commissiondata') || f.includes('humana')) return 'Humana';
       if (f.includes('devoted')) return 'Devoted';
       if (f.includes('aetna') || f.includes('producerstatement')) return 'Aetna';
-      if (f.includes('medicare_statement_-the-')) return 'THE';
       return 'Direct';
     };
     const defaultPayee = determinePayee(req.file.originalname);
@@ -4211,8 +4262,12 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       const ws = wb.Sheets[wb.SheetNames[0]];
       console.log('[UPLOAD] Workbook sheets:', wb.SheetNames);
       console.log('[UPLOAD] Starting parser detection chain...');
-      
-      if (isYourFMOXLSX(req.file.originalname)) {
+
+      // BSI → THE remittance CSV (e.g. "JULY - THE" / T.H.E_STATEMENTS) — Commission Statements tab
+      if (isTheRemittanceStatement(wb, req.file.originalname)) {
+        console.log('[UPLOAD] Using BSI→THE remittance statement parser');
+        records = parseTheRemittanceStatement(wb, req.file.originalname);
+      } else if (isYourFMOXLSX(req.file.originalname)) {
         console.log('[UPLOAD] Using YourFMO XLSX parser');
         records = parseYourFMOXLSXRows(wb);
       } else if (isUHCDirectFile(req.file.originalname)) {
@@ -4297,10 +4352,18 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
 
     {
       const fnLc = String(req.file.originalname || '').toLowerCase();
+      const fnNorm = fnLc.replace(/\s+/g, '_');
       const payeeLc = String(defaultPayee || '').toLowerCase();
       let inferredSource = 'direct_carrier';
-      if (payeeLc === 'bsi' || /statement-the|statement_-the|broker_society|bsi/.test(fnLc)) inferredSource = 'BSI';
-      else if (payeeLc === 'nhp' || /^the_health_experts_insurance_statement|nhp/.test(fnLc)) inferredSource = 'NHP';
+      // Use space-normalized filename so "Statement-health experts" → BSI, not direct_carrier.
+      if (
+        payeeLc === 'bsi' ||
+        /statement-the|statement_-the|broker_society|bsi|statement-health_experts|statement_health_experts/.test(fnNorm)
+      ) {
+        inferredSource = 'BSI';
+      } else if (payeeLc === 'nhp' || /the_health_experts_insurance_statement|nhp/.test(fnNorm)) {
+        inferredSource = 'NHP';
+      }
 
       // Build overrideSet for agent-direct pass-through detection (mirrors /backfill-business-rules logic)
       const overrideRowsUpload = await pool.query(`
@@ -4339,6 +4402,10 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         const isAcaPassThroughAgent = NO_SPLIT_AGENTS.some(a => agentLc.includes(a));
 
         const netCommission = parseFloat(r.commission) || 0;
+        const recordPayeeLc = String(r.payee || defaultPayee || '').toLowerCase().trim();
+        // BSI payee books store the FULL override pot in commission → split 50/50.
+        // THE remittance files (payee THE, source BSI) store THEI's half already.
+        const isBsiFullPot = recordPayeeLc === 'bsi';
 
         // Agent-direct rows: NB/Renewal/Chargeback for agents with a known Agency Override relationship
         const isAgentDirectRow = classification === 'new business' || classification === 'renewal' || classification === 'chargeback';
@@ -4364,7 +4431,8 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
           } else {
             theiShare = grossCommission; bsiShare = 0; producerPayable = 0;
           }
-        } else if (inferredSource === 'direct_carrier') {
+        } else if (inferredSource === 'direct_carrier' && recordPayeeLc !== 'bsi') {
+          // True direct-carrier pulls keep 100% THEI. Never treat payee=BSI this way.
           splitApplies = false;
           grossCommission = netCommission;
           theiShare = netCommission;
@@ -4390,17 +4458,25 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
           grossCommission = netCommission;
           producerPayable = 0;
           const alreadyDeductedU = deductedPoliciesUpload.has(r.policyNumber);
-          if (!alreadyDeductedU && grossCommission >= 10) {
-            subAgentOverride = 10;
-            theiShare = Math.round((grossCommission - 10) / 2 * 100) / 100;
-            bsiShare = Math.round((grossCommission - 10) / 2 * 100) / 100;
+          if (!alreadyDeductedU && Math.abs(grossCommission) >= 10) {
+            subAgentOverride = grossCommission < 0 ? -10 : 10;
+            theiShare = Math.round((grossCommission - subAgentOverride) / 2 * 100) / 100;
+            bsiShare = Math.round((grossCommission - subAgentOverride) / 2 * 100) / 100;
             deductedPoliciesUpload.add(r.policyNumber);
           } else {
             subAgentOverride = 0;
             theiShare = Math.round(grossCommission / 2 * 100) / 100;
             bsiShare = Math.round(grossCommission / 2 * 100) / 100;
           }
+        } else if (classification === 'agency override' && isBsiFullPot) {
+          // BSI book: statement amount is the FULL override pot → THEI/BSI 50/50
+          splitApplies = true;
+          grossCommission = netCommission;
+          theiShare = Math.round(netCommission * 0.5 * 100) / 100;
+          bsiShare = Math.round(netCommission * 0.5 * 100) / 100;
+          producerPayable = 0;
         } else {
+          // THE remittance half-model: amount is already THEI's half → mirror to BSI
           splitApplies = true;
           grossCommission = Math.round(netCommission * 2 * 100) / 100;
           theiShare = netCommission;
@@ -4949,7 +5025,8 @@ function parseHumanaDevotedBSIRows(wb, filename) {
 
     // Classification: Commission Type field is authoritative for Override; fyRaw handles New Business vs Renewal
     // Override check FIRST — prevents commission type from being inferred from enrollment type
-    const commissionTypeLower = commissionType ? commissionType.toLowerCase() : '';
+    const commissionType = String(row['Commission Type'] || '').trim();
+    const commissionTypeLower = commissionType.toLowerCase();
     let classification;
     if (commission < 0)                               classification = 'Chargeback';
     else if (commissionTypeLower.includes('override')) classification = 'Agency Override';
@@ -5048,6 +5125,9 @@ function parseBSICarrierStatementRows(wb, filename) {
       : commAction.includes('chargeback') ? 'Chargeback'
       : 'Agent Commission';
 
+    const memberStateRaw = String(row['Member State'] || row['State'] || '').trim().toUpperCase().split(/[-/\s]/)[0];
+    const memberState = /^[A-Z]{2}$/.test(memberStateRaw) ? memberStateRaw : null;
+
     records.push({
       agent: agentName,
       carrier: 'UnitedHealthcare',
@@ -5060,6 +5140,7 @@ function parseBSICarrierStatementRows(wb, filename) {
       period,
       policyNumber,
       payee: 'BSI',
+      memberState,
       raw: row
     });
   }
@@ -5153,6 +5234,8 @@ router.post('/upload-bsi-statement', requireAuth, upload.single('file'), async (
       }
     } else {
       // Excel / CSV — route to correct parser
+      // Carrier→BSI statements only (Humana/Devoted/Aetna/UHC carrier feeds).
+      // BSI→THE remittance CSVs ("JULY - THE" / T.H.E_STATEMENTS) go to Commission Statements.
       const wb = XLSX.readFile(req.file.path);
       if (isAetnaBSICSVFilename(origName)) {
         console.log('[BSI-UPLOAD] Matched Aetna BSI CSV parser for:', origName);
@@ -5167,6 +5250,9 @@ router.post('/upload-bsi-statement', requireAuth, upload.single('file'), async (
       } else if (isHumanaDevotedBSIFile(origName)) {
         console.log('[BSI-UPLOAD] Matched Humana/Devoted BSI parser for:', origName);
         records = parseHumanaDevotedBSIRows(wb, origName);
+      } else if (isBSIFile(origName) || /statement-health_experts|statement_health_experts/.test(nameLower)) {
+        console.log('[BSI-UPLOAD] Matched generic BSI rows parser for:', origName);
+        records = parseBSIRows(wb, origName);
       } else {
         // Dedicated BSI carrier statement parser (handles files where Agent = BSI, not THEI)
         records = parseBSICarrierStatementRows(wb, origName);
@@ -5177,6 +5263,11 @@ router.post('/upload-bsi-statement', requireAuth, upload.single('file'), async (
       try { fs.unlinkSync(req.file.path); } catch (e) {}
       return res.status(400).json({ error: 'No records found in BSI statement. Please verify the file format.' });
     }
+
+    // Alba/Lina only: remap house/NPN/name agent-production → Alba, then peel
+    // carrier×state override rates into producer_payable (Lina pay) + THEI/BSI shares.
+    // Agency Override / Held stay under Broker Society; other agents unchanged.
+    applyBsiBookAgentProduction(records);
 
     const commissionSum = records.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0);
     const carriers = [...new Set(records.map(r => r.carrier).filter(Boolean))];

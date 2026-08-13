@@ -70,7 +70,7 @@ export default function BSIStatementsUpload({ user }) {
       <div style={{ marginBottom: 24 }}>
         <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600 }}>BSI Statements Upload</h2>
         <p style={{ margin: '8px 0 0', color: 'var(--text-muted)', fontSize: 14 }}>
-          Upload BSI commission statements from carrier and agent Celeraro
+          Upload statements the carrier sends to BSI (Humana / UHC / Aetna / Devoted carrier feeds)
         </p>
       </div>
 

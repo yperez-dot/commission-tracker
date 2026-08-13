@@ -79,9 +79,12 @@ const AGENT_ALIASES = {
   'mejia, diana': 'Diana Mejia',
   'diana lucia mejia': 'Diana Mejia',
 
-  'hernandez, alba ritela': 'Alba Hernandez',
-  'hernandez, alba': 'Alba Hernandez',
-  'alba ritela hernandez': 'Alba Hernandez',
+  'hernandez, alba ritela': 'Lina Hernandez',
+  'hernandez, alba': 'Lina Hernandez',
+  'alba ritela hernandez': 'Lina Hernandez',
+  'alba hernandez': 'Lina Hernandez',
+  'hernandez, lina': 'Lina Hernandez',
+  'lina hernandez': 'Lina Hernandez',
 
   'payton, tyler duane duane': 'Tyler Payton',
   'payton, tyler duane': 'Tyler Payton',

@@ -783,10 +783,10 @@ router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, r
     const sources = { BSI: 0, NHP: 0, direct_carrier: 0, manual: 0 };
 
     for (const row of sel.rows) {
-      const fn = String(row.upload_name || '').toLowerCase();
+      const fn = String(row.upload_name || '').toLowerCase().replace(/\s+/g, '_');
       const payeeLc = String(row.payee || '').toLowerCase();
       let source = 'manual';
-      if (payeeLc === 'bsi' || /statement-the|statement_-the|broker_society|bsi/.test(fn)) source = 'BSI';
+      if (payeeLc === 'bsi' || /statement-the|statement_-the|broker_society|bsi|statement-health_experts|statement_health_experts/.test(fn)) source = 'BSI';
       else if (payeeLc === 'nhp' || /nhp|the_health_experts_insurance_statement/.test(fn)) source = 'NHP';
       else if (payeeLc) source = 'direct_carrier';
       sources[source] = (sources[source] || 0) + 1;
@@ -814,6 +814,7 @@ router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, r
       const isIntegrityPartners = INTEGRITY_AGENTS_LIST.some(n => agentLcB.includes(n));
       const isJendyPostCutoff = agentLcB.includes('jendy vanheyningen') && (row.payment_period || '') >= '202606';
       const isMarcoAgent = MARCO_AGENTS_LIST.some(n => agentLcB.includes(n)) && !isJendyPostCutoff;
+      const isBsiFullPot = payeeLc === 'bsi';
 
       if (isCommissionRow) {
         splitApplies = false;
@@ -833,7 +834,7 @@ router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, r
           bsiShare = 0;
           producerPayable = 0;
         }
-      } else if (source === 'direct_carrier') {
+      } else if (source === 'direct_carrier' && !isBsiFullPot) {
         splitApplies = false;
         grossCommission = netCommission;
         theiShare = netCommission;
@@ -861,17 +862,26 @@ router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, r
         grossCommission = netCommission;
         producerPayable = 0;
         const alreadyDeducted = deductedPolicies.has(row.policy_number);
-        if (!alreadyDeducted && grossCommission >= 10) {
-          subAgentOverride = 10;
-          theiShare = Math.round((grossCommission - 10) / 2 * 100) / 100;
-          bsiShare = Math.round((grossCommission - 10) / 2 * 100) / 100;
+        if (!alreadyDeducted && Math.abs(grossCommission) >= 10) {
+          subAgentOverride = grossCommission < 0 ? -10 : 10;
+          theiShare = Math.round((grossCommission - subAgentOverride) / 2 * 100) / 100;
+          bsiShare = Math.round((grossCommission - subAgentOverride) / 2 * 100) / 100;
           deductedPolicies.add(row.policy_number); // prevent double-deduction within same batch
         } else {
           subAgentOverride = 0;
           theiShare = Math.round(grossCommission / 2 * 100) / 100;
           bsiShare = Math.round(grossCommission / 2 * 100) / 100;
         }
+      } else if (classification === 'agency override' && isBsiFullPot) {
+        // BSI book: commission is the FULL override pot → THEI/BSI 50/50
+        if (source === 'direct_carrier') source = 'BSI';
+        splitApplies = true;
+        grossCommission = netCommission;
+        theiShare = Math.round(netCommission * 0.5 * 100) / 100;
+        bsiShare = Math.round(netCommission * 0.5 * 100) / 100;
+        producerPayable = 0;
       } else {
+        // THE remittance half-model: amount is already THEI's half → mirror to BSI
         splitApplies = true;
         grossCommission = Math.round(netCommission * 2 * 100) / 100;
         theiShare = netCommission;

@@ -3,6 +3,200 @@ const router = express.Router();
 const { getPool } = require('../db/database');
 const { requireAuth, requireAdmin } = require('./auth');
 
+async function ensurePayoutStatusTable(pool) {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS payroll_payout_status (
+      id SERIAL PRIMARY KEY,
+      agency_key TEXT NOT NULL DEFAULT 'thei',
+      payment_period TEXT NOT NULL,
+      agent_name TEXT NOT NULL,
+      is_paid BOOLEAN NOT NULL DEFAULT FALSE,
+      paid_date DATE,
+      amount NUMERIC(12, 2),
+      notes TEXT,
+      updated_by TEXT,
+      created_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW(),
+      UNIQUE (agency_key, payment_period, agent_name)
+    )
+  `);
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_payroll_payout_status_period
+      ON payroll_payout_status (agency_key, payment_period)
+  `);
+}
+
+function agencyKeyFromReq(req) {
+  const raw =
+    req.query.agency ||
+    req.body?.agency ||
+    req.headers['x-agency-override'] ||
+    req.user?.agency ||
+    'thei';
+  const s = String(raw || 'thei').toLowerCase();
+  if (s.includes('broker society') || s === 'bsi') return 'bsi';
+  return 'thei';
+}
+
+// ─── Shared Agent Payout paid/unpaid status ───────────────────────────────────
+
+/** GET /api/payroll/payout-status?period=202607 */
+router.get('/payout-status', requireAuth, async (req, res) => {
+  try {
+    const pool = getPool();
+    await ensurePayoutStatusTable(pool);
+    const period = String(req.query.period || '');
+    if (!period) return res.status(400).json({ error: 'period is required' });
+    const agencyKey = agencyKeyFromReq(req);
+    const result = await pool.query(
+      `SELECT id, agency_key, payment_period, agent_name, is_paid, paid_date,
+              amount, notes, updated_by, updated_at
+       FROM payroll_payout_status
+       WHERE agency_key = $1 AND payment_period = $2
+       ORDER BY agent_name`,
+      [agencyKey, period]
+    );
+    const paid = {};
+    const dates = {};
+    const amounts = {};
+    for (const row of result.rows) {
+      if (row.is_paid) {
+        paid[row.agent_name] = true;
+        dates[row.agent_name] = row.paid_date
+          ? String(row.paid_date).slice(0, 10)
+          : null;
+        amounts[row.agent_name] = row.amount != null ? Number(row.amount) : null;
+      }
+    }
+    res.json({
+      agencyKey,
+      period,
+      paid,
+      dates,
+      amounts,
+      rows: result.rows,
+    });
+  } catch (err) {
+    console.error('[payroll] payout-status GET', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * PUT /api/payroll/payout-status
+ * body: { period, agent, paid, amount?, paidDate?, notes?, agency? }
+ */
+router.put('/payout-status', requireAuth, async (req, res) => {
+  try {
+    const pool = getPool();
+    await ensurePayoutStatusTable(pool);
+    const period = String(req.body?.period || '');
+    const agent = String(req.body?.agent || '').trim();
+    const paid = !!req.body?.paid;
+    if (!period || !agent) {
+      return res.status(400).json({ error: 'period and agent are required' });
+    }
+    const agencyKey = agencyKeyFromReq(req);
+    const amount =
+      req.body?.amount != null && req.body.amount !== ''
+        ? Number(req.body.amount)
+        : null;
+    const paidDate = paid
+      ? String(req.body?.paidDate || new Date().toISOString().slice(0, 10)).slice(0, 10)
+      : null;
+    const updatedBy = req.user?.name || req.user?.email || null;
+    const notes = req.body?.notes != null ? String(req.body.notes) : null;
+
+    const result = await pool.query(
+      `INSERT INTO payroll_payout_status
+         (agency_key, payment_period, agent_name, is_paid, paid_date, amount, notes, updated_by, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+       ON CONFLICT (agency_key, payment_period, agent_name)
+       DO UPDATE SET
+         is_paid = EXCLUDED.is_paid,
+         paid_date = EXCLUDED.paid_date,
+         amount = COALESCE(EXCLUDED.amount, payroll_payout_status.amount),
+         notes = COALESCE(EXCLUDED.notes, payroll_payout_status.notes),
+         updated_by = EXCLUDED.updated_by,
+         updated_at = NOW()
+       RETURNING *`,
+      [agencyKey, period, agent, paid, paidDate, amount, notes, updatedBy]
+    );
+
+    res.json({ success: true, row: result.rows[0] });
+  } catch (err) {
+    console.error('[payroll] payout-status PUT', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** GET /api/payroll/payout-history?limit=200 — paid marks for History tab */
+router.get('/payout-history', requireAuth, async (req, res) => {
+  try {
+    const pool = getPool();
+    await ensurePayoutStatusTable(pool);
+    const agencyKey = agencyKeyFromReq(req);
+    const limit = Math.min(parseInt(req.query.limit, 10) || 200, 500);
+    const result = await pool.query(
+      `SELECT id, agency_key, payment_period, agent_name, is_paid, paid_date,
+              amount, notes, updated_by, updated_at
+       FROM payroll_payout_status
+       WHERE agency_key = $1 AND is_paid = TRUE
+       ORDER BY paid_date DESC NULLS LAST, updated_at DESC
+       LIMIT $2`,
+      [agencyKey, limit]
+    );
+    res.json({
+      agencyKey,
+      history: result.rows.map((r) => ({
+        id: r.id,
+        period: r.payment_period,
+        periodLabel: formatPeriodLabel(r.payment_period),
+        agent: r.agent_name,
+        amount: r.amount != null ? Number(r.amount) : 0,
+        date: r.paid_date ? String(r.paid_date).slice(0, 10) : null,
+        updatedBy: r.updated_by,
+      })),
+    });
+  } catch (err) {
+    console.error('[payroll] payout-history', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** DELETE /api/payroll/payout-status/:id — clear a paid mark (History delete) */
+router.delete('/payout-status/:id', requireAuth, async (req, res) => {
+  try {
+    const pool = getPool();
+    await ensurePayoutStatusTable(pool);
+    const agencyKey = agencyKeyFromReq(req);
+    const result = await pool.query(
+      `DELETE FROM payroll_payout_status
+       WHERE id = $1 AND agency_key = $2
+       RETURNING *`,
+      [req.params.id, agencyKey]
+    );
+    if (!result.rows.length) {
+      return res.status(404).json({ error: 'Status row not found' });
+    }
+    res.json({ success: true, deleted: result.rows[0] });
+  } catch (err) {
+    console.error('[payroll] payout-status DELETE', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+function formatPeriodLabel(p) {
+  if (!p) return p;
+  const s = String(p).trim();
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  if (/^\d{6}$/.test(s)) {
+    const m = parseInt(s.slice(4, 6), 10);
+    if (m >= 1 && m <= 12) return `${months[m - 1]} ${s.slice(0, 4)}`;
+  }
+  return s;
+}
+
 // GET /api/payroll - List all payroll payments
 router.get('/', requireAuth, async (req, res) => {
   try {
