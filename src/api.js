@@ -80,4 +80,44 @@ async function apiUpload(path, formData) {
   return res.json();
 }
 
-export { apiFetch, apiUpload, getToken, setToken, clearToken };
+async function apiDownload(path, fallbackFilename = 'download.bin') {
+  const token = getToken();
+  const switcherValue = window.__olicomm_agency_override !== undefined
+    ? window.__olicomm_agency_override
+    : (localStorage.getItem('olicomm_agency_view') || '');
+  const storedUser = JSON.parse(localStorage.getItem('he_user') || '{}');
+  const agencyOverride = switcherValue || storedUser.agency || '';
+
+  const res = await fetch(`${BASE}/api${path}`, {
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      'X-Agency-Override': agencyOverride,
+    },
+  });
+  if (res.status === 401) {
+    const hadToken = !!token;
+    clearToken();
+    if (hadToken) {
+      window.location.reload();
+      return;
+    }
+    throw new Error('Unauthorized');
+  }
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error || 'Download failed');
+  }
+  const blob = await res.blob();
+  const cd = res.headers.get('Content-Disposition') || '';
+  const match = cd.match(/filename="([^"]+)"/i);
+  const filename = match ? match[1] : fallbackFilename;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+  return { filename };
+}
+
+export { apiFetch, apiUpload, apiDownload, getToken, setToken, clearToken };

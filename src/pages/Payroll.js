@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { apiFetch } from '../api';
+import { apiFetch, apiDownload } from '../api';
 import LOAStatements from '../components/LOAStatements';
 import { formatDate } from '../utils/dateFormat';
 
@@ -114,11 +114,12 @@ function generateStatement(agent, records, periodLabel, isBSI) {
   downloadTextFile(filename, csv);
 }
 
-function PayoutRow({ p, isPaid, paidDate, onTogglePaid, onExport }) {
+function PayoutRow({ p, isPaid, paidDate, onTogglePaid, onExport, exportLabel }) {
   const [expanded, setExpanded] = useState(false);
   const posCount = p.records.filter((r) => recordAmount(r) > 0).length;
   const negCount = p.records.filter((r) => recordAmount(r) < 0).length;
   const negSum = p.records.filter((r) => recordAmount(r) < 0).reduce((s, r) => s + recordAmount(r), 0);
+  const isLina = p.agent === 'Lina Hernandez';
 
   return (
     <div style={{ borderBottom: '1px solid var(--border)' }}>
@@ -128,7 +129,7 @@ function PayoutRow({ p, isPaid, paidDate, onTogglePaid, onExport }) {
           alignItems: 'center',
           gap: 12,
           padding: '12px 14px',
-          background: isPaid ? 'rgba(80,160,80,0.06)' : 'transparent',
+          background: isPaid ? 'rgba(80,160,80,0.06)' : isLina ? 'rgba(59,130,246,0.04)' : 'transparent',
         }}
       >
         <button
@@ -175,7 +176,7 @@ function PayoutRow({ p, isPaid, paidDate, onTogglePaid, onExport }) {
             {expanded ? 'Hide' : 'Details'}
           </button>
           <button className="btn btn-primary" onClick={onExport} style={{ fontSize: 11, padding: '4px 12px' }}>
-            Statement
+            {exportLabel || 'Statement'}
           </button>
         </div>
       </div>
@@ -513,7 +514,25 @@ export default function Payroll({ user }) {
   const historyKey = `payroll_history_${(user.agency || 'thei').toLowerCase().replace(/[^a-z]/g, '_')}`;
   const [statusFilter, setStatusFilter] = useState('unpaid'); // unpaid | paid | all
   const [search, setSearch] = useState('');
+  const [linaBusy, setLinaBusy] = useState(false);
+  const [linaError, setLinaError] = useState('');
   const isBSI = (user.agency || '').toLowerCase().includes('broker society');
+
+  async function downloadLinaExcel(period) {
+    if (!period) return;
+    setLinaBusy(true);
+    setLinaError('');
+    try {
+      await apiDownload(
+        `/lina-statements/export?period=${encodeURIComponent(period)}`,
+        `Lina_Hernandez_Compensation_Statement_${period}.xlsx`
+      );
+    } catch (e) {
+      setLinaError(e.message || 'Failed to download Lina statement');
+    } finally {
+      setLinaBusy(false);
+    }
+  }
 
   useEffect(() => {
     apiFetch('/records/filters')
@@ -717,6 +736,7 @@ export default function Payroll({ user }) {
   const totalUnpaid = totalOwed - totalPaid;
   const paidCount = payouts.filter((p) => paidStatus[p.agent]).length;
   const unpaidCount = payouts.length - paidCount;
+  const linaPayout = payouts.find((p) => p.agent === 'Lina Hernandez');
 
   const tabStyle = (id) => ({
     padding: '8px 14px',
@@ -898,6 +918,39 @@ export default function Payroll({ user }) {
                   </div>
                 </div>
 
+                {linaPayout && selectedPeriod && selectedPeriod !== 'all' && (
+                  <div
+                    className="card"
+                    style={{
+                      marginBottom: 14,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 12,
+                      flexWrap: 'wrap',
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontSize: 13, fontWeight: 600 }}>Lina Hernandez — compensation statement</div>
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+                        {periodLabel} · {linaPayout.records.length} line
+                        {linaPayout.records.length !== 1 ? 's' : ''} · Balance {fmt(linaPayout.total)} · Excel detail
+                        report (same layout BSI used)
+                      </div>
+                      {linaError && (
+                        <div style={{ fontSize: 12, color: 'var(--red)', marginTop: 6 }}>{linaError}</div>
+                      )}
+                    </div>
+                    <button
+                      className="btn btn-primary"
+                      disabled={linaBusy}
+                      onClick={() => downloadLinaExcel(selectedPeriod)}
+                    >
+                      {linaBusy ? 'Preparing…' : 'Download Excel'}
+                    </button>
+                  </div>
+                )}
+
                 {totalUnpaid === 0 && payouts.length > 0 && (
                   <div
                     style={{
@@ -933,7 +986,7 @@ export default function Payroll({ user }) {
                       {filteredPayouts.length}
                     </span>
                     <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                      Check mark = paid · Statement downloads CSV
+                      Check mark = paid · Lina = Excel statement · others = CSV
                     </span>
                   </div>
                   {filteredPayouts.length === 0 ? (
@@ -955,7 +1008,14 @@ export default function Payroll({ user }) {
                         isPaid={!!paidStatus[p.agent]}
                         paidDate={paidDates[p.agent]}
                         onTogglePaid={togglePaid}
-                        onExport={() => generateStatement(p.agent, p.records, periodLabel, isBSI)}
+                        exportLabel={p.agent === 'Lina Hernandez' ? 'Excel' : 'Statement'}
+                        onExport={() => {
+                          if (p.agent === 'Lina Hernandez' && selectedPeriod && selectedPeriod !== 'all') {
+                            downloadLinaExcel(selectedPeriod);
+                          } else {
+                            generateStatement(p.agent, p.records, periodLabel, isBSI);
+                          }
+                        }}
                       />
                     ))
                   )}
