@@ -115,8 +115,8 @@ function eligibleStatusClause(alias = 'cr') {
  */
 async function fetchCandidateBatch(client, { limit, offset }) {
   // Exact deterministic crosswalk joins only.
-  // New_P2P / product signals come from production columns or raw_data — never fuzzy-matched.
-  // plan_year is derived from effective_date when a dedicated column is absent.
+  // policy_mbi_xwalk_cr_map stores production_record_id + new_p2p from the
+  // Humana BSI composite-key match (carrier+NPN+eff+state+normalized name).
   const sql = `
     SELECT
       cr.id                                    AS cr_id,
@@ -130,6 +130,7 @@ async function fetchCandidateBatch(client, { limit, offset }) {
       xwalk.id                                 AS xwalk_id,
       ap.id                                    AS ap_id,
       COALESCE(
+        NULLIF(xwalk.new_p2p, ''),
         NULLIF(ap.raw_data->>'New_P2P', ''),
         NULLIF(ap.raw_data->>'new_p2p', ''),
         NULLIF(ap.enrollment_type, '')
@@ -143,15 +144,16 @@ async function fetchCandidateBatch(client, { limit, offset }) {
       )                                        AS prod_product,
       ap.policy_type                           AS prod_policy_type,
       ap.raw_data                              AS prod_raw_data,
+      xwalk.mbi                                AS xwalk_mbi,
       (
         SELECT COUNT(*)::int
         FROM agency_production ap2
-        WHERE ap2.mbi = ap.mbi
-          AND ap.mbi IS NOT NULL
-          AND ap2.id <> ap.id
+        WHERE ap2.mbi = COALESCE(ap.mbi, xwalk.mbi)
+          AND COALESCE(ap.mbi, xwalk.mbi) IS NOT NULL
+          AND (ap.id IS NULL OR ap2.id <> ap.id)
           AND ap2.effective_date IS NOT NULL
-          AND ap.effective_date IS NOT NULL
-          AND ap2.effective_date < ap.effective_date
+          AND COALESCE(ap.effective_date::text, cr.effective_date::text) IS NOT NULL
+          AND ap2.effective_date::text < COALESCE(ap.effective_date::text, cr.effective_date::text)
       )                                        AS prior_enrollment_count,
       (
         SELECT COALESCE(
@@ -160,12 +162,12 @@ async function fetchCandidateBatch(client, { limit, offset }) {
           NULLIF(ap3.raw_data->>'Product', '')
         )
         FROM agency_production ap3
-        WHERE ap3.mbi = ap.mbi
-          AND ap.mbi IS NOT NULL
-          AND ap3.id <> ap.id
+        WHERE ap3.mbi = COALESCE(ap.mbi, xwalk.mbi)
+          AND COALESCE(ap.mbi, xwalk.mbi) IS NOT NULL
+          AND (ap.id IS NULL OR ap3.id <> ap.id)
           AND ap3.effective_date IS NOT NULL
-          AND ap.effective_date IS NOT NULL
-          AND ap3.effective_date < ap.effective_date
+          AND COALESCE(ap.effective_date::text, cr.effective_date::text) IS NOT NULL
+          AND ap3.effective_date::text < COALESCE(ap.effective_date::text, cr.effective_date::text)
         ORDER BY ap3.effective_date DESC NULLS LAST
         LIMIT 1
       )                                        AS prior_product
@@ -173,7 +175,7 @@ async function fetchCandidateBatch(client, { limit, offset }) {
     LEFT JOIN policy_mbi_xwalk_cr_map xwalk
            ON xwalk.commission_record_id = cr.id
     LEFT JOIN agency_production ap
-           ON ap.id = xwalk.agency_production_id
+           ON ap.id = xwalk.production_record_id
     WHERE ${scopeClause('cr')}
       AND ${eligibleStatusClause('cr')}
     ORDER BY cr.id
