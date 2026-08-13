@@ -531,10 +531,9 @@ function parseAetnaBSICSV(wb, filename) {
       else if (prodL.includes('ppo') || prodL.includes('mapd')) planType = 'Aetna MAPD';
 
       const eventType  = classifySalesEvent(salesEvent);
-      // ALL rows in this file are BSI agency override rows.
-      // Payee is always BSI (Broker Society Insurance). Alba being the writing agent
-      // does NOT make her rows agent commissions — Aetna pays her agent commission
-      // directly in a separate statement; it does not appear here.
+      // Aetna→BSI carrier feed (payee BSI). Writing-agent Alba/Lina rows are her
+      // agent production that BSI remits; upload attribution sets producer_payable.
+      // Agency-level override dollars appear under other BSI feeds / remittance.
       let classification;
       if (amount < 0 || eventType === 'skip') {
         classification = 'Chargeback';
@@ -1388,6 +1387,8 @@ const {
   isTheRemittanceStatement,
   parseTheRemittanceStatement,
 } = require('../src/theRemittanceStatement');
+
+const { applyBsiBookAgentProduction } = require('../src/bsiBookAttribution');
 
 // Extract period from NHP "Carrier-Statement Month" column (e.g., "Cigna - April 2026" → "202604")
 function extractPeriodFromStatementMonth(statementMonth) {
@@ -5022,7 +5023,8 @@ function parseHumanaDevotedBSIRows(wb, filename) {
 
     // Classification: Commission Type field is authoritative for Override; fyRaw handles New Business vs Renewal
     // Override check FIRST — prevents commission type from being inferred from enrollment type
-    const commissionTypeLower = commissionType ? commissionType.toLowerCase() : '';
+    const commissionType = String(row['Commission Type'] || '').trim();
+    const commissionTypeLower = commissionType.toLowerCase();
     let classification;
     if (commission < 0)                               classification = 'Chargeback';
     else if (commissionTypeLower.includes('override')) classification = 'Agency Override';
@@ -5255,6 +5257,11 @@ router.post('/upload-bsi-statement', requireAuth, upload.single('file'), async (
       try { fs.unlinkSync(req.file.path); } catch (e) {}
       return res.status(400).json({ error: 'No records found in BSI statement. Please verify the file format.' });
     }
+
+    // Attribute Alba/Lina book production: BSI-house writing agent (or Alba NPN /
+    // Alba name) NB/Renewal/Chargeback → Alba Hernandez + producer_payable.
+    // Agency Override / Held stay under Broker Society; other agents unchanged.
+    applyBsiBookAgentProduction(records);
 
     const commissionSum = records.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0);
     const carriers = [...new Set(records.map(r => r.carrier).filter(Boolean))];
