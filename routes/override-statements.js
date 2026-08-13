@@ -39,9 +39,22 @@ const SELECT_COLS = `
 
 async function fetchOverrideRows(pool, period, type) {
   const params = [];
-  // Override Statements are for THEI/BSI/Marco/Integrity only.
-  // Lina Hernandez is paid agent production via Agent Statements — never overrides.
-  let where = `WHERE classification ILIKE '%override%'`;
+  // THEI/BSI: Agency Override rows PLUS Alba rate-peeled agent-production shares.
+  // Marco/Integrity: Agency Override only.
+  // Lina's producer_payable itself is Agent Payouts / Lina Excel — not these statements.
+  const includeAlbaPeel =
+    type === STATEMENT_TYPES.THEI_OVERRIDE || type === STATEMENT_TYPES.BSI_OVERRIDE;
+  let where = includeAlbaPeel
+    ? `WHERE (
+         classification ILIKE '%override%'
+         OR (
+           (agent_name ILIKE '%alba%hernandez%' OR agent_name ILIKE '%lina%hernandez%' OR agent_name ILIKE '%alba%ritela%')
+           AND classification NOT ILIKE '%override%'
+           AND classification NOT ILIKE '%held%'
+           AND (COALESCE(thei_share,0) <> 0 OR COALESCE(bsi_share,0) <> 0)
+         )
+       )`
+    : `WHERE classification ILIKE '%override%'`;
   if (period && period !== 'all') {
     params.push(period);
     where += ` AND payment_period = $${params.length}`;
@@ -61,13 +74,13 @@ router.get('/types', requireAuth, (_req, res) => {
         id: STATEMENT_TYPES.THEI_OVERRIDE,
         label: 'THEI Overrides',
         amountField: 'thei_share',
-        description: 'THEI remittance view of Agency Override rows',
+        description: 'THEI 50% of Agency Override + Alba rate-peeled production shares',
       },
       {
         id: STATEMENT_TYPES.BSI_OVERRIDE,
         label: 'BSI Overrides',
         amountField: 'bsi_share',
-        description: 'BSI house share of Agency Override rows',
+        description: 'BSI 50% of Agency Override + Alba rate-peeled production shares',
       },
       {
         id: STATEMENT_TYPES.MARCO,

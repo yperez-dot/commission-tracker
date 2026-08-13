@@ -114,6 +114,34 @@ describe('overrideStatementBuilder', () => {
     expect(bundle.grandTotal).toBe(100);
   });
 
+  it('THEI/BSI statements include Alba rate-peeled production shares (not just Agency Override class)', () => {
+    const albaPeeled = {
+      id: 99,
+      agent_name: 'Alba Hernandez',
+      client_full_name: 'CLIENT PEEL',
+      policy_number: 'P99',
+      carrier: 'UnitedHealthcare',
+      payment_period: '202601',
+      classification: 'New Business',
+      commission: 323.5,
+      gross_commission: 323.5,
+      thei_share: 75,
+      bsi_share: 75,
+      producer_payable: 173.5,
+      sub_agent_override: 0,
+    };
+    const thei = classifyOverrideLine(albaPeeled, STATEMENT_TYPES.THEI_OVERRIDE);
+    expect(thei).not.toBeNull();
+    expect(thei.amount).toBe(75);
+    expect(thei.schedule).toBe('alba_rate_peel_thei_50');
+    const bsi = classifyOverrideLine(albaPeeled, STATEMENT_TYPES.BSI_OVERRIDE);
+    expect(bsi.amount).toBe(75);
+    expect(bsi.schedule).toBe('alba_rate_peel_bsi_50');
+    // Lina agent statement still uses producer_payable only
+    const alba = classifyOverrideLine(albaPeeled, STATEMENT_TYPES.ALBA);
+    expect(alba.amount).toBe(173.5);
+  });
+
   it('classifyOverrideLine returns null for non-override on THEI type', () => {
     expect(classifyOverrideLine(rows[3], STATEMENT_TYPES.THEI_OVERRIDE)).toBeNull();
   });

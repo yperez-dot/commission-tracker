@@ -75,14 +75,26 @@ function sharePct(amount, pot) {
  * Select amount + payee label for a row under a statement type.
  * Returns null if the row does not belong on that statement.
  */
+function isAlbaPeeledOverrideShare(row) {
+  // Alba-only: agent-production rows whose THEI/BSI shares came from the rate peel.
+  if (!isAlbaHernandez(row.agent_name)) return false;
+  if (isAgencyOverride(row.classification) || String(row.classification || '').toLowerCase().includes('held')) {
+    return false;
+  }
+  if (!isAlbaAgentCommission(row.classification)) return false;
+  return num(row.thei_share) !== 0 || num(row.bsi_share) !== 0;
+}
+
 function classifyOverrideLine(row, statementType) {
   const clsOverride = isAgencyOverride(row.classification);
+  const albaPeeled = isAlbaPeeledOverrideShare(row);
 
   switch (statementType) {
     case STATEMENT_TYPES.THEI_OVERRIDE: {
-      if (!clsOverride) return null;
+      if (!clsOverride && !albaPeeled) return null;
       const amount = num(row.thei_share);
       if (amount === 0 && num(row.commission) === 0) return null;
+      if (albaPeeled && amount === 0) return null;
       const pot = overridePot(row);
       return {
         payee: 'The Health Experts Insurance',
@@ -90,17 +102,20 @@ function classifyOverrideLine(row, statementType) {
         amount,
         pot,
         shareLabel: sharePct(amount, pot) || (isIntegrityAgent(row.agent_name) ? '25%' : '50%'),
-        schedule: isIntegrityAgent(row.agent_name)
-          ? 'integrity_thei_25'
-          : isMarcoAgent(row.agent_name, row.payment_period)
-            ? 'marco_residual_thei'
-            : 'standard_thei_50',
+        schedule: albaPeeled
+          ? 'alba_rate_peel_thei_50'
+          : isIntegrityAgent(row.agent_name)
+            ? 'integrity_thei_25'
+            : isMarcoAgent(row.agent_name, row.payment_period)
+              ? 'marco_residual_thei'
+              : 'standard_thei_50',
       };
     }
     case STATEMENT_TYPES.BSI_OVERRIDE: {
-      if (!clsOverride) return null;
+      if (!clsOverride && !albaPeeled) return null;
       const amount = num(row.bsi_share);
       if (amount === 0 && num(row.commission) === 0) return null;
+      if (albaPeeled && amount === 0) return null;
       const pot = overridePot(row);
       return {
         payee: 'Broker Society Insurance',
@@ -108,11 +123,13 @@ function classifyOverrideLine(row, statementType) {
         amount,
         pot,
         shareLabel: sharePct(amount, pot) || (isIntegrityAgent(row.agent_name) ? '25%' : '50%'),
-        schedule: isIntegrityAgent(row.agent_name)
-          ? 'integrity_bsi_25'
-          : isMarcoAgent(row.agent_name, row.payment_period)
-            ? 'marco_residual_bsi'
-            : 'standard_bsi_50',
+        schedule: albaPeeled
+          ? 'alba_rate_peel_bsi_50'
+          : isIntegrityAgent(row.agent_name)
+            ? 'integrity_bsi_25'
+            : isMarcoAgent(row.agent_name, row.payment_period)
+              ? 'marco_residual_bsi'
+              : 'standard_bsi_50',
       };
     }
     case STATEMENT_TYPES.MARCO: {

@@ -5123,6 +5123,9 @@ function parseBSICarrierStatementRows(wb, filename) {
       : commAction.includes('chargeback') ? 'Chargeback'
       : 'Agent Commission';
 
+    const memberStateRaw = String(row['Member State'] || row['State'] || '').trim().toUpperCase().split(/[-/\s]/)[0];
+    const memberState = /^[A-Z]{2}$/.test(memberStateRaw) ? memberStateRaw : null;
+
     records.push({
       agent: agentName,
       carrier: 'UnitedHealthcare',
@@ -5135,6 +5138,7 @@ function parseBSICarrierStatementRows(wb, filename) {
       period,
       policyNumber,
       payee: 'BSI',
+      memberState,
       raw: row
     });
   }
@@ -5258,8 +5262,8 @@ router.post('/upload-bsi-statement', requireAuth, upload.single('file'), async (
       return res.status(400).json({ error: 'No records found in BSI statement. Please verify the file format.' });
     }
 
-    // Attribute Alba/Lina book production: BSI-house writing agent (or Alba NPN /
-    // Alba name) NB/Renewal/Chargeback → Alba Hernandez + producer_payable.
+    // Alba/Lina only: remap house/NPN/name agent-production → Alba, then peel
+    // carrier×state override rates into producer_payable (Lina pay) + THEI/BSI shares.
     // Agency Override / Held stay under Broker Society; other agents unchanged.
     applyBsiBookAgentProduction(records);
 
