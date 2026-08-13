@@ -5,17 +5,17 @@ import Dashboard from './pages/Dashboard';
 import Upload from './pages/Upload';
 import AllData from './pages/AllData';
 import MissingRenewals from './pages/MissingRenewals';
-import Agents from './pages/Agents';
 import Reconciliation from './pages/Reconciliation';
 import BookOfBusiness from './pages/BookOfBusiness';
 import Payroll from './pages/Payroll';
-import Reports from './pages/Reports';
 import AdminUsers from './pages/AdminUsers';
 import MedicareProUpload from './pages/MedicareProUpload';
 import AgencyProductionUpload from './pages/AgencyProductionUpload';
 import AgencyProductionRecon from './pages/AgencyProductionRecon';
 import BSIStatementsUpload from './pages/BSIStatementsUpload';
 import './App.css';
+
+const REMOVED_PAGES = new Set(['reports', 'agents', 'fix-aetna', 'fixaetna']);
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -52,7 +52,11 @@ export default function App() {
       if (data?.user) {
         setUser(data.user);
         const saved = localStorage.getItem('he_page');
-        if (saved) setPage(saved);
+        if (saved && !REMOVED_PAGES.has(saved)) setPage(saved);
+        else if (saved && REMOVED_PAGES.has(saved)) {
+          localStorage.setItem('he_page', 'dashboard');
+          setPage('dashboard');
+        }
       }
     } catch {
       clearToken();
@@ -79,9 +83,10 @@ export default function App() {
   }
 
   function navigate(p, params = {}) {
-    setPage(p);
+    const next = REMOVED_PAGES.has(p) ? 'dashboard' : p;
+    setPage(next);
     setPageParams(params);
-    localStorage.setItem('he_page', p);
+    localStorage.setItem('he_page', next);
   }
 
   if (loading) return (
@@ -133,7 +138,6 @@ export default function App() {
         { id: 'payroll-history', label: 'Payment History' },
       ]
     },
-    { id: 'reports', label: 'Reports' },
     ...(user.role === 'admin' ? [
       { id: 'users', label: 'User Accounts' },
     ] : [])
@@ -162,8 +166,6 @@ export default function App() {
     'payroll-overrides': <Payroll key={`${agencyView}-overrides`} user={effectiveUser} initialTab="overrides" onNavigate={navigate} />,
     'payroll-loa': <Payroll key={`${agencyView}-loa`} user={effectiveUser} initialTab="loa" onNavigate={navigate} />,
     'payroll-history': <Payroll key={`${agencyView}-history`} user={effectiveUser} initialTab="history" onNavigate={navigate} />,
-    reports: <Reports key={agencyView} user={effectiveUser} />,
-    agents: <Agents key={agencyView} user={effectiveUser} />,
     users: <AdminUsers key={agencyView} user={effectiveUser} />
   };
 

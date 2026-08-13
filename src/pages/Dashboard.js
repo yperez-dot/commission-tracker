@@ -391,11 +391,6 @@ export default function Dashboard({ user, onNavigate }) {
                       <button onClick={() => { setQuickActionsOpen(false); onNavigate && onNavigate('alldata'); }} style={{width:'100%',textAlign:'left',background:'none',border:'none',padding:'8px 12px',cursor:'pointer',fontSize:13,color:C.text,borderRadius:6,display:'flex',alignItems:'center',gap:8}} onMouseEnter={e=>e.target.style.background=C.bgSubtle} onMouseLeave={e=>e.target.style.background='none'}>
                         <span>📊</span> View All Data
                       </button>
-                      {user.role === 'admin' && (
-                        <button onClick={() => { setQuickActionsOpen(false); onNavigate && onNavigate('reports'); }} style={{width:'100%',textAlign:'left',background:'none',border:'none',padding:'8px 12px',cursor:'pointer',fontSize:13,color:C.text,borderRadius:6,display:'flex',alignItems:'center',gap:8}} onMouseEnter={e=>e.target.style.background=C.bgSubtle} onMouseLeave={e=>e.target.style.background='none'}>
-                          <span>📈</span> Reports
-                        </button>
-                      )}
                     </div>
                   </div>
                 )}
