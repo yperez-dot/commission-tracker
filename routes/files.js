@@ -1585,6 +1585,8 @@ function parseNHPRows(wb, uploadPeriod) {
         
         // Christian Munoz & Horacio Mendieta special handling
         // Fixed rates on UHC/Doctors/Solis/HealthSun NEW BUSINESS only
+        // Gross NHP pots (see OVERRIDE_RATE_TABLE): Doctors 175, HealthSun 157.50,
+        // Solis 210/140, UHC honor 165 → these fixed cuts come off before 50/50.
         const agentLower = agent.toLowerCase();
         const carrierLower = carrier.toLowerCase();
         const isChristianOrHoracio = agentLower.includes('christian munoz') || agentLower.includes('horacio mendieta');
@@ -1594,10 +1596,10 @@ function parseNHPRows(wb, uploadPeriod) {
         if (isChristianOrHoracio && isSpecialCarrier && isNewBusiness && grossCommission > 0) {
           // Determine fixed rate
           let fixedRate = 0;
-          if (carrierLower.includes('unitedhealthcare') || carrierLower.includes('united healthcare')) fixedRate = 82.50;
-          else if (carrierLower.includes('doctors')) fixedRate = 50;
-          else if (carrierLower.includes('solis')) fixedRate = 62.50;
-          else if (carrierLower.includes('healthsun')) fixedRate = 52.50;
+          if (carrierLower.includes('unitedhealthcare') || carrierLower.includes('united healthcare')) fixedRate = 82.50; // half of $165 honor
+          else if (carrierLower.includes('doctors')) fixedRate = 50;       // from $175 pot
+          else if (carrierLower.includes('solis')) fixedRate = 62.50;      // from $210 Initial pot
+          else if (carrierLower.includes('healthsun')) fixedRate = 52.50;  // from $157.50 pot
           
           subAgentOverride = fixedRate;
           // After deducting sub-agent payment, split the remainder with BSI if eligible

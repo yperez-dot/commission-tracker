@@ -69,6 +69,9 @@ function normalizeRateCarrier(carrier) {
   if (c.includes('optimum')) return 'Optimum';
   if (c.includes('freedom')) return 'Freedom';
   if (c.includes('elevance') || c.includes('anthem')) return 'Elevance';
+  if (c.includes('doctors')) return 'Doctors';
+  if (c.includes('healthsun') || c.includes('health sun')) return 'HealthSun';
+  if (c.includes('solis')) return 'Solis';
   return String(carrier || '').trim();
 }
 

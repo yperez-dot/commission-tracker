@@ -1035,9 +1035,18 @@ describe('shouldProcessBSIOverrideRow()', () => {
 describe('OVERRIDE_RATE_TABLE — data integrity', () => {
   const carriers = Object.keys(OVERRIDE_RATE_TABLE);
 
-  it('contains entries for all eight expected carriers', () => {
-    const expected = ['UHC', 'Aetna', 'Humana', 'HealthSpring', 'Devoted', 'Optimum', 'Freedom', 'Elevance'];
+  it('contains entries for all expected carriers (BSI + NHP)', () => {
+    const expected = [
+      'UHC', 'Aetna', 'Humana', 'HealthSpring', 'Devoted', 'Optimum', 'Freedom', 'Elevance',
+      'Doctors', 'HealthSun', 'Solis',
+    ];
     expected.forEach((c) => expect(carriers).toContain(c));
+  });
+
+  it('NHP FL carriers: Doctors/HealthSun flat; Solis Initial≠Renewal', () => {
+    expect(OVERRIDE_RATE_TABLE.Doctors.National).toEqual({ Initial: 175, Renewal: 175 });
+    expect(OVERRIDE_RATE_TABLE.HealthSun.National).toEqual({ Initial: 157.5, Renewal: 157.5 });
+    expect(OVERRIDE_RATE_TABLE.Solis.National).toEqual({ Initial: 210, Renewal: 140 });
   });
 
   it('every non-null, non-certGap rate entry has both Initial and Renewal keys as numbers', () => {

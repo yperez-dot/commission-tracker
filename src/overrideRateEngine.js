@@ -174,6 +174,20 @@ const OVERRIDE_RATE_TABLE = {
     CT_SNP:    { Initial: 125, Renewal: 95, certGap: true },
     CA_SNP:    { Initial: 125, Renewal: 95, certGap: true },
   },
+
+  // ── NHP-consolidated FL carriers (NHP → THEI gross override pot) ──────────
+  // Confirmed Yahoska 2026-08-13. On NHP Excel these are Agency Override gross;
+  // post-9/1/2025 remainder splits 50/50 THEI/BSI after any sub-agent cut
+  // (Christian/Horacio NB: Doctors $50, HealthSun $52.50, Solis $62.50).
+  Doctors: {
+    National: { Initial: 175, Renewal: 175 }, // flat
+  },
+  HealthSun: {
+    National: { Initial: 157.5, Renewal: 157.5 }, // flat
+  },
+  Solis: {
+    National: { Initial: 210, Renewal: 140 },
+  },
 };
 
 // ---------------------------------------------------------------------------
