@@ -30,6 +30,8 @@ async function fetchOverrideRows(pool, period, type) {
   let where;
   if (type === STATEMENT_TYPES.ALBA) {
     // Alba is paid agent commissions only — exclude Agency Override remittance.
+    // Build from our commission_records (producer_payable), not from BSI→Alba
+    // payee PDFs (those are the OUTPUT format we will replicate, not an import feed).
     where = `WHERE agent_name ILIKE '%alba%hernandez%'
       AND COALESCE(producer_payable,0) <> 0
       AND LOWER(COALESCE(classification,'')) NOT LIKE '%override%'
@@ -40,40 +42,12 @@ async function fetchOverrideRows(pool, period, type) {
         OR LOWER(COALESCE(classification,'')) LIKE '%agent commission%'
         OR LOWER(TRIM(COALESCE(classification,''))) = 'commission'
       )`;
-    // When BSI→Alba payee compensation PDFs exist for a period, those are the
-    // settlement source of truth (carrier-feed producer_payable can differ).
-    if (period && period !== 'all') {
-      params.push(period);
-      where += ` AND payment_period = $${params.length}`;
-      const payee = await pool.query(
-        `SELECT 1 FROM commission_records
-         WHERE agent_name ILIKE '%alba%hernandez%'
-           AND source = 'BSI_PAYEE'
-           AND payment_period = $1
-         LIMIT 1`,
-        [period]
-      );
-      if (payee.rows.length) {
-        where += ` AND source = 'BSI_PAYEE'`;
-      }
-    } else {
-      // "all periods": per-period prefer BSI_PAYEE when that period has any.
-      where += ` AND (
-        source = 'BSI_PAYEE'
-        OR NOT EXISTS (
-          SELECT 1 FROM commission_records p
-          WHERE p.agent_name ILIKE '%alba%hernandez%'
-            AND p.source = 'BSI_PAYEE'
-            AND p.payment_period = commission_records.payment_period
-        )
-      )`;
-    }
   } else {
     where = `WHERE classification ILIKE '%override%'`;
-    if (period && period !== 'all') {
-      params.push(period);
-      where += ` AND payment_period = $${params.length}`;
-    }
+  }
+  if (period && period !== 'all') {
+    params.push(period);
+    where += ` AND payment_period = $${params.length}`;
   }
   const result = await pool.query(
     `SELECT ${SELECT_COLS} FROM commission_records ${where} ORDER BY payment_period, agent_name, id`,

@@ -1,8 +1,11 @@
 'use strict';
 
 /**
- * BSI → payee "Detailed Compensation Statement" PDFs
- * (e.g. Commission Statement issued to Alba Hernandez).
+ * BSI → Alba "Detailed Compensation Statement" PDF layout (EXAMPLE / TARGET OUTPUT).
+ *
+ * Yahoska shared sample PDFs of what BSI currently sends Alba. We do NOT import
+ * those as a monthly feed — they define the statement format THEI/OliComm should
+ * generate when taking over Alba's agent-commission payouts.
  *
  * Layout (pdf-parse):
  *   Date: MM/DD/YYYY
@@ -15,9 +18,12 @@
  *   ...
  *   Balance:$X,XXX.XX
  *
- * Writing agency is always BSI; the payee agent is not on each line —
- * pass agentName (default Alba Hernandez). Amounts are agent commissions
- * (producer_payable), not Agency Override.
+ * Writing agency on the sample is BSI; amounts are Alba's agent commissions
+ * (NB / Renewal / Chargeback) — not Agency Override.
+ *
+ * This module parses samples for format fixtures / reconciliation checks.
+ * Production Alba pay statements are built from commission_records
+ * (producer_payable) via overrideStatementBuilder (STATEMENT_TYPES.ALBA).
  */
 
 const MONTHS = {
