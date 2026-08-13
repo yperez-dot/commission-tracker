@@ -544,7 +544,12 @@ function HouseOverridesPanel() {
   );
 }
 
-export default function Payroll({ user }) {
+export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
+  const tab =
+    initialTab === 'overrides' || initialTab === 'loa' || initialTab === 'history'
+      ? initialTab
+      : 'payroll';
+
   const [periods, setPeriods] = useState([]);
   const [selectedPeriod, setSelectedPeriod] = useState('');
   const [payouts, setPayouts] = useState([]);
@@ -552,7 +557,6 @@ export default function Payroll({ user }) {
   const [loadError, setLoadError] = useState('');
   const [paidStatus, setPaidStatus] = useState({});
   const [paidDates, setPaidDates] = useState({});
-  const [tab, setTab] = useState('payroll');
   const [history, setHistory] = useState([]);
   const [statusFilter, setStatusFilter] = useState('unpaid'); // unpaid | paid | all
   const [search, setSearch] = useState('');
@@ -823,72 +827,32 @@ export default function Payroll({ user }) {
   const unpaidCount = payouts.length - paidCount;
   const linaPayout = payouts.find((p) => p.agent === 'Lina Hernandez');
 
-  const tabStyle = (id) => ({
-    padding: '8px 14px',
-    border: 'none',
-    background: 'none',
-    fontSize: 13,
-    cursor: 'pointer',
-    borderBottom: tab === id ? '2px solid var(--accent)' : '2px solid transparent',
-    color: tab === id ? 'var(--accent-dark)' : 'var(--text-muted)',
-    fontWeight: tab === id ? 600 : 400,
-    marginBottom: -1,
-  });
+  const pageMeta = {
+    payroll: {
+      title: 'Agent Payouts',
+      sub: 'Pay producers from production (ACA, Marco $10, Lina) — no agency overrides here',
+    },
+    overrides: {
+      title: 'House Statements',
+      sub: 'Export THEI / BSI / Marco / Integrity override statements by period',
+    },
+    loa: {
+      title: 'LOA Statements',
+      sub: 'Manual LOA compensation statements (e.g. Carolina Robles)',
+    },
+    history: {
+      title: 'Payment History',
+      sub: 'Shared record of agents marked paid',
+    },
+  }[tab] || { title: 'Payroll', sub: '' };
 
   return (
     <div>
       <div className="page-header">
-        <div className="page-title">Payroll</div>
-        <div className="page-sub">
-          Pay agents from production · house overrides separately · track what’s been paid
-        </div>
+        <div className="page-title">{pageMeta.title}</div>
+        <div className="page-sub">{pageMeta.sub}</div>
       </div>
       <div className="page-body">
-        <div style={{ display: 'flex', gap: 4, marginBottom: 16, borderBottom: '1px solid var(--border)', flexWrap: 'wrap' }}>
-          <button style={tabStyle('payroll')} onClick={() => setTab('payroll')}>
-            Agent Payouts
-            {unpaidCount > 0 && tab !== 'payroll' && (
-              <span
-                style={{
-                  background: 'var(--amber, #B88100)',
-                  color: '#fff',
-                  borderRadius: 99,
-                  fontSize: 10,
-                  padding: '1px 6px',
-                  marginLeft: 6,
-                  fontWeight: 600,
-                }}
-              >
-                {unpaidCount}
-              </span>
-            )}
-          </button>
-          <button style={tabStyle('overrides')} onClick={() => setTab('overrides')}>
-            House Overrides
-          </button>
-          <button style={tabStyle('loa')} onClick={() => setTab('loa')}>
-            LOA
-          </button>
-          <button style={tabStyle('history')} onClick={() => setTab('history')}>
-            History
-            {history.length > 0 && (
-              <span
-                style={{
-                  background: 'var(--accent)',
-                  color: 'var(--sidebar-bg)',
-                  borderRadius: 99,
-                  fontSize: 10,
-                  padding: '1px 6px',
-                  marginLeft: 6,
-                  fontWeight: 500,
-                }}
-              >
-                {history.length}
-              </span>
-            )}
-          </button>
-        </div>
-
         {tab === 'overrides' && <HouseOverridesPanel />}
         {tab === 'loa' && <LOAStatements />}
 
@@ -1149,8 +1113,8 @@ export default function Payroll({ user }) {
                               style={{ fontSize: 11, padding: '3px 10px' }}
                               onClick={() => {
                                 setSelectedPeriod(r.period);
-                                setTab('payroll');
                                 setStatusFilter('all');
+                                if (onNavigate) onNavigate('payroll-payouts', { period: r.period });
                               }}
                             >
                               View
