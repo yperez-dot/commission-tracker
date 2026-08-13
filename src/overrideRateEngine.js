@@ -368,6 +368,16 @@ function shouldProcessBSIOverrideRow(bsiRow, theStmtRowsByPolicy) {
   return { process: true };
 }
 
+const {
+  excelSerialToDate,
+  canonicalizeProductFamily,
+  sortedTokenKey,
+  ALLOWED_RECON_STATUSES,
+  classifyRow: classifyReconRow,
+  parseRawJson,
+  assertNoFinancialWrites,
+} = require('./reconHelpers');
+
 module.exports = {
   calculateAlbaOverrideSplit,
   shouldProcessBSIOverrideRow,
@@ -376,4 +386,12 @@ module.exports = {
   AETNA_FL_PLAN_CROSSWALK,
   resolveYearType,
   resolveAetnaStateGroup,
+  // Observe-only reconciliation helpers (re-exported for unit tests)
+  excelSerialToDate,
+  canonicalizeProductFamily,
+  sortedTokenKey,
+  ALLOWED_RECON_STATUSES,
+  classifyReconRow,
+  parseRawJson,
+  assertNoFinancialWrites,
 };

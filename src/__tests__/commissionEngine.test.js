@@ -1,22 +1,23 @@
 /**
  * Unit Tests — OliComm Commission Engine
  *
- * Target file: src/overrideRateEngine.js
+ * Target files:
+ *   - src/overrideRateEngine.js
+ *   - src/reconHelpers.js (observe-only reconciliation)
  *
- * Four test areas:
- *   1. Excel serial-date conversion         [PENDING — excelSerialToDate() not yet implemented]
- *   2. Product family canonicalization      [PENDING — canonicalizeProductFamily() not yet implemented]
- *   3. Composite key normalization          [PENDING — sortedTokenKey() not yet implemented]
- *   4. No financial output for unresolved   [LIVE    — calculateAlbaOverrideSplit()]
- *
- * Live helper tests (bonus, all functions exported from overrideRateEngine.js):
+ * Test areas:
+ *   1. Excel serial-date conversion
+ *   2. Product family canonicalization
+ *   3. Composite key normalization (sortedTokenKey)
+ *   4. No financial output for unresolved
  *   5. resolveYearType()
  *   6. resolveAetnaStateGroup()
  *   7. calculateAlbaOverrideSplit() — full split math (happy paths)
  *   8. shouldProcessBSIOverrideRow()
  *   9. OVERRIDE_RATE_TABLE data integrity
+ *  10. Reconciliation observe-only classification
  *
- * No DB mocking needed: overrideRateEngine.js is pure computation with no I/O.
+ * No DB mocking needed: helpers are pure computation with no I/O.
  */
 
 'use strict';
@@ -28,7 +29,21 @@ const {
   resolveAetnaStateGroup,
   OVERRIDE_RATE_TABLE,
   AETNA_FL_PLAN_CROSSWALK,
+  excelSerialToDate,
+  canonicalizeProductFamily,
+  sortedTokenKey,
+  ALLOWED_RECON_STATUSES,
+  classifyReconRow,
+  parseRawJson,
+  assertNoFinancialWrites,
 } = require('../overrideRateEngine');
+
+const {
+  STATUS,
+  GROUP,
+  buildObservationUpdate,
+  MANUAL_LOCK_STATUSES,
+} = require('../reconHelpers');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Internal helper: verify no financial output on a needsReview result
@@ -43,116 +58,140 @@ function expectNoFinancials(result) {
 
 // =============================================================================
 // 1. Excel serial-date conversion
-//
-// TODO: implement excelSerialToDate(serial) in overrideRateEngine.js (or a new
-//       src/utils/dateUtils.js) and export it.
-//
-//       Algorithm:
-//         - Excel epoch: Jan 1 1900 = serial 1
-//         - Formula: new Date(Date.UTC(1900, 0, 1) + (serial - 1) * 86400000)
-//         - Edge: Excel treats 1900 as a leap year; serial 60 is "Feb 29 1900"
-//           (a phantom date). Adjust: if serial >= 60, subtract 1 day.
-//         - Return { year, month, day } plain object (month is 1-indexed).
-//         - Return null for null, undefined, NaN, 0, or negative values.
 // =============================================================================
 describe('excelSerialToDate()', () => {
-  // TODO: export excelSerialToDate from overrideRateEngine.js (or dateUtils.js)
-  //   const { excelSerialToDate } = require('../overrideRateEngine');
-  //   or: const { excelSerialToDate } = require('../utils/dateUtils');
+  it('46023 → { year: 2026, month: 1, day: 1 }  (Jan 1 2026)', () => {
+    expect(excelSerialToDate(46023)).toEqual({ year: 2026, month: 1, day: 1 });
+  });
 
-  it.todo('46023 → { year: 2026, month: 1, day: 1 }  (Jan 1 2026)');
-  it.todo('45931 → { year: 2025, month: 11, day: 1 } (Nov 1 2025)');
-  it.todo('46174 → { year: 2026, month: 6, day: 1 }  (Jun 1 2026)');
-  it.todo('null → null');
-  it.todo('undefined → null');
-  it.todo('NaN → null');
-  it.todo('0 → null (invalid — Excel serial 0 is "Jan 0 1900", treated as absent)');
-  it.todo('negative number → null');
+  it('45931 → { year: 2025, month: 10, day: 1 } (Oct 1 2025)', () => {
+    // Serial 45931 is 2025-10-01 (not Nov). Nov 1 2025 is serial 45962.
+    expect(excelSerialToDate(45931)).toEqual({ year: 2025, month: 10, day: 1 });
+  });
+
+  it('45962 → { year: 2025, month: 11, day: 1 } (Nov 1 2025)', () => {
+    expect(excelSerialToDate(45962)).toEqual({ year: 2025, month: 11, day: 1 });
+  });
+
+  it('46174 → { year: 2026, month: 6, day: 1 }  (Jun 1 2026)', () => {
+    expect(excelSerialToDate(46174)).toEqual({ year: 2026, month: 6, day: 1 });
+  });
+
+  it('null → null', () => {
+    expect(excelSerialToDate(null)).toBeNull();
+  });
+
+  it('undefined → null', () => {
+    expect(excelSerialToDate(undefined)).toBeNull();
+  });
+
+  it('NaN → null', () => {
+    expect(excelSerialToDate(NaN)).toBeNull();
+  });
+
+  it('0 → null (invalid — Excel serial 0 is "Jan 0 1900", treated as absent)', () => {
+    expect(excelSerialToDate(0)).toBeNull();
+  });
+
+  it('negative number → null', () => {
+    expect(excelSerialToDate(-5)).toBeNull();
+  });
 });
 
 // =============================================================================
 // 2. Product family canonicalization
-//
-// TODO: implement canonicalizeProductFamily(product, productType) in
-//       overrideRateEngine.js and export it.
-//
-//       Input signals (from Humana BSI CSV observed values):
-//         product col:     "Medicare Advantage HMO" | "Medicare Advantage PPO" |
-//                          "MAPD" | "PDP" | "Med Supp Plan G"
-//         productType col: "Medicare Advantage" | "Prescription Drug" | ""
-//
-//       Rules (in priority order):
-//         - Both MA and PDP signals present → 'AMBIGUOUS'
-//         - Contains 'MA' / 'MAPD' / 'Medicare Advantage' (either field) → 'MA_MAPD'
-//         - Contains 'PDP' / 'Prescription Drug' (either field) → 'PDP'
-//         - Contains 'Med Supp' / 'Medigap' / 'Supplement' → 'MED_SUPP'
-//         - Null, undefined, or both empty → 'UNKNOWN'
-//         - Unrecognized combination → 'UNKNOWN'
 // =============================================================================
 describe('canonicalizeProductFamily()', () => {
-  // TODO: export canonicalizeProductFamily from overrideRateEngine.js
-  //   const { canonicalizeProductFamily } = require('../overrideRateEngine');
-
   // Real observed values from Humana BSI CSV ─────────────────────────────────
-  it.todo('("Medicare Advantage HMO", "Medicare Advantage") → "MA_MAPD"');
-  it.todo('("Medicare Advantage PPO", "Medicare Advantage") → "MA_MAPD"');
-  it.todo('("MAPD", "")                                     → "MA_MAPD"');
-  it.todo('("PDP", "Prescription Drug")                     → "PDP"');
-  it.todo('("PRESCRIPTION DRUG", "")                        → "PDP" (case-insensitive)');
+  it('("Medicare Advantage HMO", "Medicare Advantage") → "MA_MAPD"', () => {
+    expect(canonicalizeProductFamily('Medicare Advantage HMO', 'Medicare Advantage')).toBe('MA_MAPD');
+  });
+
+  it('("Medicare Advantage PPO", "Medicare Advantage") → "MA_MAPD"', () => {
+    expect(canonicalizeProductFamily('Medicare Advantage PPO', 'Medicare Advantage')).toBe('MA_MAPD');
+  });
+
+  it('("MAPD", "") → "MA_MAPD"', () => {
+    expect(canonicalizeProductFamily('MAPD', '')).toBe('MA_MAPD');
+  });
+
+  it('("Medicare Advantage with Prescription Drug", "") → "MA_MAPD" (before PDP detection)', () => {
+    expect(
+      canonicalizeProductFamily('Medicare Advantage with Prescription Drug', '')
+    ).toBe('MA_MAPD');
+  });
+
+  it('("PDP", "Prescription Drug") → "PDP"', () => {
+    expect(canonicalizeProductFamily('PDP', 'Prescription Drug')).toBe('PDP');
+  });
+
+  it('("PRESCRIPTION DRUG", "") → "PDP" (case-insensitive)', () => {
+    expect(canonicalizeProductFamily('PRESCRIPTION DRUG', '')).toBe('PDP');
+  });
 
   // Med Supp ─────────────────────────────────────────────────────────────────
-  // Accept either 'MED_SUPP' (if implemented) or 'UNKNOWN' (if not yet handled)
-  it.todo('("Med Supp Plan G", "") → "MED_SUPP" (or "UNKNOWN" if not yet implemented)');
+  it('("Med Supp Plan G", "") → "MED_SUPP"', () => {
+    expect(canonicalizeProductFamily('Med Supp Plan G', '')).toBe('MED_SUPP');
+  });
 
   // Edge / null cases ────────────────────────────────────────────────────────
-  it.todo('(null, null)                                      → "UNKNOWN"');
-  it.todo('("", "")                                          → "UNKNOWN"');
+  it('(null, null) → "UNKNOWN"', () => {
+    expect(canonicalizeProductFamily(null, null)).toBe('UNKNOWN');
+  });
+
+  it('("", "") → "UNKNOWN"', () => {
+    expect(canonicalizeProductFamily('', '')).toBe('UNKNOWN');
+  });
 
   // Ambiguous: both MA and PDP signals present ───────────────────────────────
-  it.todo('("Medicare Advantage HMO", "PDP") → "AMBIGUOUS" (conflicting signals)');
+  it('("Medicare Advantage HMO", "PDP") → "AMBIGUOUS" (conflicting signals)', () => {
+    expect(canonicalizeProductFamily('Medicare Advantage HMO', 'PDP')).toBe('AMBIGUOUS');
+  });
 });
 
 // =============================================================================
 // 3. Composite key normalization — crosswalk join key (sortedTokenKey)
-//
-// TODO: implement sortedTokenKey(name) in overrideRateEngine.js (or nameUtils.js)
-//       and export it.
-//
-//       Algorithm (mirrors the SQL crosswalk join used in OliComm dedup):
-//         1. Coerce to string; return '' for null/undefined
-//         2. Uppercase
-//         3. Remove punctuation (commas, periods, apostrophes, hyphens, etc.)
-//         4. Split on whitespace
-//         5. Drop tokens whose length === 1 (middle initials: "F", "A", etc.)
-//         6. Sort remaining tokens alphabetically
-//         7. Join without separator
-//
-//       "PABLO ROBLES" and "ROBLES, PABLO" must produce the same key.
-//       "CARLOS GARCIA BLANCO" and "GARCIA BLANCO, CARLOS A" must also match.
 // =============================================================================
 describe('sortedTokenKey() — composite crosswalk join key', () => {
-  // TODO: export sortedTokenKey from overrideRateEngine.js or nameUtils.js
-  //   const { sortedTokenKey } = require('../overrideRateEngine');
-
   // Basic two-token names ────────────────────────────────────────────────────
-  it.todo('"PABLO ROBLES"  → "PABLOROBLES"');
-  it.todo('"ROBLES, PABLO" → "PABLOROBLES" (comma format → identical key)');
+  it('"PABLO ROBLES"  → "PABLOROBLES"', () => {
+    expect(sortedTokenKey('PABLO ROBLES')).toBe('PABLOROBLES');
+  });
+
+  it('"ROBLES, PABLO" → "PABLOROBLES" (comma format → identical key)', () => {
+    expect(sortedTokenKey('ROBLES, PABLO')).toBe('PABLOROBLES');
+  });
 
   // Middle initial dropping ──────────────────────────────────────────────────
-  it.todo('"RAMON YNOA F"   → "RAMONYNOA" (single-char "F" dropped)');
-  it.todo('"YNOA, RAMON F"  → "RAMONYNOA" (comma + middle initial)');
+  it('"RAMON YNOA F"   → "RAMONYNOA" (single-char "F" dropped)', () => {
+    expect(sortedTokenKey('RAMON YNOA F')).toBe('RAMONYNOA');
+  });
+
+  it('"YNOA, RAMON F"  → "RAMONYNOA" (comma + middle initial)', () => {
+    expect(sortedTokenKey('YNOA, RAMON F')).toBe('RAMONYNOA');
+  });
 
   // Three-token compound surnames ────────────────────────────────────────────
-  // Tokens: ["CARLOS","GARCIA","BLANCO"] → sorted: ["BLANCO","CARLOS","GARCIA"]
-  // → "BLANCOCARLOSGARCIA"
-  it.todo('"CARLOS GARCIA BLANCO"      → "BLANCOCARLOSGARCIA"');
-  // "A" is dropped; tokens: ["GARCIA","BLANCO","CARLOS"] → sorted same → same key
-  it.todo('"GARCIA BLANCO, CARLOS A"   → "BLANCOCARLOSGARCIA" (matches above)');
+  it('"CARLOS GARCIA BLANCO" → "BLANCOCARLOSGARCIA"', () => {
+    expect(sortedTokenKey('CARLOS GARCIA BLANCO')).toBe('BLANCOCARLOSGARCIA');
+  });
+
+  it('"GARCIA BLANCO, CARLOS A" → "BLANCOCARLOSGARCIA" (matches above)', () => {
+    expect(sortedTokenKey('GARCIA BLANCO, CARLOS A')).toBe('BLANCOCARLOSGARCIA');
+  });
 
   // Edge cases ───────────────────────────────────────────────────────────────
-  it.todo('single-char-only input "A"  → "" (all tokens dropped)');
-  it.todo('null                        → ""');
-  it.todo('undefined                   → ""');
+  it('single-char-only input "A"  → "" (all tokens dropped)', () => {
+    expect(sortedTokenKey('A')).toBe('');
+  });
+
+  it('null → ""', () => {
+    expect(sortedTokenKey(null)).toBe('');
+  });
+
+  it('undefined → ""', () => {
+    expect(sortedTokenKey(undefined)).toBe('');
+  });
 });
 
 // =============================================================================
@@ -1068,6 +1107,272 @@ describe('OVERRIDE_RATE_TABLE — data integrity', () => {
     ];
     expectedPlanIds.forEach((id) => {
       expect(AETNA_FL_PLAN_CROSSWALK).toHaveProperty(id);
+    });
+  });
+});
+
+// =============================================================================
+// 10. Observe-only reconciliation classification
+// =============================================================================
+describe('reconciliation observe-only helpers', () => {
+  describe('ALLOWED_RECON_STATUSES', () => {
+    const required = [
+      'PROVISIONAL',
+      'SOURCE_NEW',
+      'SOURCE_P2P',
+      'LIKE_P2P_CANDIDATE',
+      'UNLIKE_P2P_CANDIDATE',
+      'P2P_NEEDS_HISTORY',
+      'RENEWAL_DATE_MISMATCH',
+      'RENEWAL_VS_NEW_PROD',
+      'NEEDS_CMS_PAYMENT_TYPE',
+      'CHARGEBACK_DEFER',
+      'SOURCE_CANCELLED',
+      'PENDING_NO_MATCH',
+      'EXCEPTION',
+      'FINAL',
+    ];
+
+    it('includes every required first-class state', () => {
+      required.forEach((s) => expect(ALLOWED_RECON_STATUSES).toContain(s));
+    });
+
+    it('does NOT include SEMANTIC_MISMATCH as a stored status', () => {
+      expect(ALLOWED_RECON_STATUSES).not.toContain('SEMANTIC_MISMATCH');
+      expect(GROUP.SEMANTIC_MISMATCH).toBe('SEMANTIC_MISMATCH');
+    });
+  });
+
+  describe('parseRawJson()', () => {
+    it('parses a JSON string safely', () => {
+      expect(parseRawJson('{"a":1}')).toEqual({ a: 1 });
+    });
+
+    it('returns object passthrough', () => {
+      expect(parseRawJson({ a: 2 })).toEqual({ a: 2 });
+    });
+
+    it('returns {} for invalid JSON / null / array', () => {
+      expect(parseRawJson('{bad')).toEqual({});
+      expect(parseRawJson(null)).toEqual({});
+      expect(parseRawJson('[1]')).toEqual({});
+    });
+  });
+
+  describe('RENEWAL_DATE_MISMATCH vs RENEWAL_VS_NEW_PROD', () => {
+    it('renewal + Effective Date != Original EffectiveDate → RENEWAL_DATE_MISMATCH', () => {
+      const result = classifyReconRow({
+        cr_id: 1,
+        ap_id: 10,
+        xwalk_id: 5,
+        commission_type: 'Renewal',
+        commission: 100,
+        prod_new_p2p: 'P2P',
+        prod_status: 'Active',
+        raw_data: {
+          'Effective Date': 46023, // 2026-01-01
+          'Original EffectiveDate': 45931, // 2025-10-01
+        },
+      });
+      expect(result.status).toBe(STATUS.RENEWAL_DATE_MISMATCH);
+      expect(result.group).toBe(GROUP.SEMANTIC_MISMATCH);
+    });
+
+    it('renewal + production New → RENEWAL_VS_NEW_PROD (distinct from date mismatch)', () => {
+      const result = classifyReconRow({
+        cr_id: 2,
+        ap_id: 11,
+        xwalk_id: 6,
+        commission_type: 'Renewal Year',
+        commission: 100,
+        prod_new_p2p: 'New',
+        prod_status: 'Active',
+        raw_data: {
+          'Effective Date': 46023,
+          'Original EffectiveDate': 46023, // dates match — not a date mismatch
+        },
+      });
+      expect(result.status).toBe(STATUS.RENEWAL_VS_NEW_PROD);
+      expect(result.group).toBe(GROUP.SEMANTIC_MISMATCH);
+    });
+
+    it('renewal + production New wins over date mismatch when both could apply', () => {
+      const result = classifyReconRow({
+        cr_id: 3,
+        ap_id: 12,
+        xwalk_id: 7,
+        commission_type: 'Renewal',
+        commission: 100,
+        prod_new_p2p: 'New',
+        prod_status: 'Active',
+        raw_data: {
+          'Effective Date': 46023,
+          'Original EffectiveDate': 45931,
+        },
+      });
+      expect(result.status).toBe(STATUS.RENEWAL_VS_NEW_PROD);
+      expect(result.status).not.toBe(STATUS.RENEWAL_DATE_MISMATCH);
+    });
+  });
+
+  describe('chargeback detection', () => {
+    it('negative commission → CHARGEBACK_DEFER', () => {
+      const result = classifyReconRow({
+        cr_id: 4,
+        ap_id: 13,
+        commission: -50,
+        cr_classification: 'Renewal',
+        prod_new_p2p: 'New',
+        prod_status: 'Active',
+      });
+      expect(result.status).toBe(STATUS.CHARGEBACK_DEFER);
+      expect(result.group).toBe(GROUP.CHARGEBACK);
+    });
+
+    it('classification Chargeback (case-insensitive) → CHARGEBACK_DEFER', () => {
+      const result = classifyReconRow({
+        cr_id: 5,
+        ap_id: 14,
+        commission: 50,
+        cr_classification: 'Chargeback',
+        prod_new_p2p: 'New',
+        prod_status: 'Active',
+      });
+      expect(result.status).toBe(STATUS.CHARGEBACK_DEFER);
+    });
+  });
+
+  describe('source-backed and unmatched states', () => {
+    it('matched New + Active → SOURCE_NEW with SOURCE_BACKED group', () => {
+      const result = classifyReconRow({
+        cr_id: 6,
+        ap_id: 15,
+        xwalk_id: 8,
+        commission: 100,
+        commission_type: 'First Year',
+        prod_new_p2p: 'New',
+        prod_status: 'Active',
+      });
+      expect(result.status).toBe(STATUS.SOURCE_NEW);
+      expect(result.group).toBe(GROUP.SOURCE_BACKED);
+    });
+
+    it('no crosswalk match → PENDING_NO_MATCH with UNMATCHED group', () => {
+      const result = classifyReconRow({
+        cr_id: 7,
+        commission: 100,
+        commission_type: 'First Year',
+      });
+      expect(result.status).toBe(STATUS.PENDING_NO_MATCH);
+      expect(result.group).toBe(GROUP.UNMATCHED);
+    });
+
+    it('P2P with no prior enrollment → P2P_NEEDS_HISTORY', () => {
+      const result = classifyReconRow({
+        cr_id: 8,
+        ap_id: 16,
+        xwalk_id: 9,
+        commission: 100,
+        commission_type: 'First Year',
+        prod_new_p2p: 'P2P',
+        prod_status: 'Active',
+        prior_enrollment_count: 0,
+        current_product: 'Medicare Advantage HMO',
+      });
+      expect(result.status).toBe(STATUS.P2P_NEEDS_HISTORY);
+    });
+
+    it('P2P with prior same family → LIKE_P2P_CANDIDATE', () => {
+      const result = classifyReconRow({
+        cr_id: 9,
+        ap_id: 17,
+        xwalk_id: 10,
+        commission: 100,
+        commission_type: 'First Year',
+        prod_new_p2p: 'P2P',
+        prod_status: 'Active',
+        prior_enrollment_count: 1,
+        current_product: 'Medicare Advantage HMO',
+        prior_product: 'MAPD',
+      });
+      expect(result.status).toBe(STATUS.LIKE_P2P_CANDIDATE);
+      expect(result.group).toBe(GROUP.SEMANTIC_MISMATCH);
+    });
+
+    it('P2P with prior different family → UNLIKE_P2P_CANDIDATE', () => {
+      const result = classifyReconRow({
+        cr_id: 10,
+        ap_id: 18,
+        xwalk_id: 11,
+        commission: 100,
+        commission_type: 'First Year',
+        prod_new_p2p: 'P2P',
+        prod_status: 'Active',
+        prior_enrollment_count: 1,
+        current_product: 'Medicare Advantage HMO',
+        prior_product: 'PDP',
+      });
+      expect(result.status).toBe(STATUS.UNLIKE_P2P_CANDIDATE);
+    });
+  });
+
+  describe('EXCEPTION / FINAL preservation', () => {
+    it('never overwrites EXCEPTION', () => {
+      const result = classifyReconRow({
+        cr_id: 11,
+        ap_id: 19,
+        reconciliation_status: STATUS.EXCEPTION,
+        commission: 100,
+        prod_new_p2p: 'New',
+        prod_status: 'Active',
+      });
+      expect(result.status).toBe(STATUS.EXCEPTION);
+      expect(result.write).toBe(false);
+      expect(MANUAL_LOCK_STATUSES.has(STATUS.EXCEPTION)).toBe(true);
+    });
+
+    it('never overwrites FINAL', () => {
+      const result = classifyReconRow({
+        cr_id: 12,
+        ap_id: 20,
+        reconciliation_status: STATUS.FINAL,
+        commission: -10,
+        cr_classification: 'Chargeback',
+      });
+      expect(result.status).toBe(STATUS.FINAL);
+      expect(result.write).toBe(false);
+    });
+  });
+
+  describe('no financial output/writes for unresolved states', () => {
+    it('buildObservationUpdate payload contains only observation metadata', () => {
+      const classification = classifyReconRow({
+        cr_id: 13,
+        commission: 100,
+        commission_type: 'Renewal',
+      });
+      expect(classification.status).toBe(STATUS.PENDING_NO_MATCH);
+      const payload = buildObservationUpdate(
+        { cr_id: 13, ap_id: null, prod_new_p2p: null },
+        classification
+      );
+      expect(payload).toEqual({
+        crId: '13',
+        status: STATUS.PENDING_NO_MATCH,
+        group: GROUP.UNMATCHED,
+        matchId: null,
+        newP2P: null,
+      });
+      expect(assertNoFinancialWrites(payload)).toBe(true);
+      expect(payload.thei_share).toBeUndefined();
+      expect(payload.bsi_share).toBeUndefined();
+      expect(payload.producer_payable).toBeUndefined();
+      expect(payload.gross_commission).toBeUndefined();
+      expect(payload.commission).toBeUndefined();
+    });
+
+    it('assertNoFinancialWrites throws if a financial field sneaks in', () => {
+      expect(() => assertNoFinancialWrites({ status: 'X', thei_share: 1 })).toThrow(/thei_share/);
     });
   });
 });
