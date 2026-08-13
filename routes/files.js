@@ -1308,7 +1308,7 @@ function parseBSIRows(wb, filename) {
       if (cell) rowVals.push(String(cell.v || '').toLowerCase());
     }
     const str = rowVals.join('|');
-    if (str.includes('agent') && str.includes('client') && str.includes('commission')) {
+    if (str.includes('agent') && str.includes('client') && (str.includes('commission') || str.includes('commision'))) {
       headerRow = r;
       break;
     }
@@ -1335,7 +1335,8 @@ function parseBSIRows(wb, filename) {
   const policyCol     = findCol(['policy', 'policynumber']);
   const clientCol     = findCol(['clientname', 'client', 'membername', 'member', 'insured']);
   const effDateCol    = findCol(['effectivedate', 'effective', 'effdate']);
-  const commissionCol = findCol(['commission', 'amount', 'comp']);
+  // BSI THE remittance CSVs often misspell the column as COMMISION
+  const commissionCol = findCol(['commission', 'commision', 'amount', 'comp']);
 
   for (const row of rows) {
     const agent = normalizeAgentName(String(agentCol ? row[agentCol] : '').trim());
@@ -1378,6 +1379,16 @@ function parseBSIRows(wb, filename) {
   }
   return records;
 }
+
+/**
+ * Detect BSI → THE remittance workbook (e.g. "JULY - THE" / T.H.E_STATEMENTS.csv).
+ * Implementation lives in src/theRemittanceStatement.js
+ */
+const {
+  isTheRemittanceStatement,
+  parseTheRemittanceStatement,
+} = require('../src/theRemittanceStatement');
+
 
 // Extract period from NHP "Carrier-Statement Month" column (e.g., "Cigna - April 2026" → "202604")
 function extractPeriodFromStatementMonth(statementMonth) {
@@ -5213,7 +5224,10 @@ router.post('/upload-bsi-statement', requireAuth, upload.single('file'), async (
     } else {
       // Excel / CSV — route to correct parser
       const wb = XLSX.readFile(req.file.path);
-      if (isAetnaBSICSVFilename(origName)) {
+      if (isTheRemittanceStatement(wb, origName)) {
+        console.log('[BSI-UPLOAD] Matched BSI→THE remittance statement parser for:', origName);
+        records = parseTheRemittanceStatement(wb, origName);
+      } else if (isAetnaBSICSVFilename(origName)) {
         console.log('[BSI-UPLOAD] Matched Aetna BSI CSV parser for:', origName);
         records = parseAetnaBSICSV(wb, origName);
       } else if (isAMLPortalExportFile(origName, wb)) {
@@ -5226,6 +5240,9 @@ router.post('/upload-bsi-statement', requireAuth, upload.single('file'), async (
       } else if (isHumanaDevotedBSIFile(origName)) {
         console.log('[BSI-UPLOAD] Matched Humana/Devoted BSI parser for:', origName);
         records = parseHumanaDevotedBSIRows(wb, origName);
+      } else if (isBSIFile(origName) || /statement-health_experts|statement_health_experts|t\.?h\.?e/.test(nameLower)) {
+        console.log('[BSI-UPLOAD] Matched generic BSI rows parser for:', origName);
+        records = parseBSIRows(wb, origName);
       } else {
         // Dedicated BSI carrier statement parser (handles files where Agent = BSI, not THEI)
         records = parseBSICarrierStatementRows(wb, origName);
