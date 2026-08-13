@@ -445,7 +445,7 @@ function HouseOverridesPanel() {
   return (
     <div>
       <div className="card" style={{ marginBottom: 14 }}>
-        <div className="card-title" style={{ fontSize: 15, marginBottom: 6 }}>House overrides</div>
+        <div className="card-title" style={{ fontSize: 15, marginBottom: 6 }}>House statements</div>
         <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14, lineHeight: 1.45 }}>
           THEI / BSI 50/50, Marco $10, and Integrity producer shares. Lina’s agent production is under{' '}
           <strong>Agent Payouts</strong> — not here.
