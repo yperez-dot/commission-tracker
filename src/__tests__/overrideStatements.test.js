@@ -89,6 +89,8 @@ describe('overrideStatementBuilder', () => {
     expect(bundle.statements).toHaveLength(1);
     expect(bundle.statements[0].payee).toBe('The Health Experts Insurance');
     expect(bundle.grandTotal).toBe(245); // 150+45+50
+    expect(bundle.statements[0].lines[0].share_label).toBe('50%');
+    expect(bundle.statements[0].lines[0].override_pot).toBe(300); // thei+bsi for first row
   });
 
   it('BSI override statement uses bsi_share', () => {
@@ -114,5 +116,57 @@ describe('overrideStatementBuilder', () => {
 
   it('classifyOverrideLine returns null for non-override on THEI type', () => {
     expect(classifyOverrideLine(rows[3], STATEMENT_TYPES.THEI_OVERRIDE)).toBeNull();
+  });
+
+  it('THEI and BSI payable amounts are equal on standard 50/50 rows', () => {
+    const thei = buildOverrideStatements([rows[0]], STATEMENT_TYPES.THEI_OVERRIDE, { period: '202601' });
+    const bsi = buildOverrideStatements([rows[0]], STATEMENT_TYPES.BSI_OVERRIDE, { period: '202601' });
+    expect(thei.grandTotal).toBe(bsi.grandTotal);
+    expect(thei.grandTotal).toBe(150);
+  });
+});
+
+describe('overrideSplitMath', () => {
+  const {
+    splitFullOverridePot,
+    splitTheRemittanceHalf,
+    normalizeFilename,
+    isBsiBookPayee,
+  } = require('../overrideSplitMath');
+
+  it('full pot splits 50/50', () => {
+    const s = splitFullOverridePot(82.5, { agentName: 'Alba Hernandez' });
+    expect(s.theiShare).toBe(41.25);
+    expect(s.bsiShare).toBe(41.25);
+    expect(s.grossCommission).toBe(82.5);
+  });
+
+  it('Marco takes $10 then 50/50', () => {
+    const s = splitFullOverridePot(100, { agentName: 'Kelly Carpenter', paymentPeriod: '202601' });
+    expect(s.subAgentOverride).toBe(10);
+    expect(s.theiShare).toBe(45);
+    expect(s.bsiShare).toBe(45);
+  });
+
+  it('Integrity is 50/25/25', () => {
+    const s = splitFullOverridePot(200, { agentName: 'Christian Munoz' });
+    expect(s.producerPayable).toBe(100);
+    expect(s.theiShare).toBe(50);
+    expect(s.bsiShare).toBe(50);
+  });
+
+  it('THE remittance half-model mirrors THEI half to BSI', () => {
+    const s = splitTheRemittanceHalf(60);
+    expect(s.theiShare).toBe(60);
+    expect(s.bsiShare).toBe(60);
+    expect(s.grossCommission).toBe(120);
+  });
+
+  it('normalizes spaced BSI filenames as BSI book', () => {
+    expect(normalizeFilename('Statement-health experts (4).pdf')).toBe(
+      'statement-health_experts_(4).pdf'
+    );
+    expect(isBsiBookPayee('BSI', 'Statement-health experts (4).pdf')).toBe(true);
+    expect(isBsiBookPayee('Direct', 'Statement-health experts (4).pdf')).toBe(true);
   });
 });

@@ -21,7 +21,7 @@ function requireAdmin(req, res, next) {
 
 const SELECT_COLS = `
   id, agent_name, client_full_name, policy_number, carrier, effective_date,
-  payment_period, classification, commission, thei_share, bsi_share,
+  payment_period, classification, commission, gross_commission, thei_share, bsi_share,
   producer_payable, sub_agent_override, payee, source
 `;
 

@@ -239,7 +239,8 @@ function OverrideStatementsPanel() {
           Override statements — BSI / THEI / Marco / Integrity
         </div>
         <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
-          Uses existing split columns only (thei_share, bsi_share, sub_agent_override, producer_payable). Does not change financials.
+          THEI and BSI are <strong>50/50</strong> of the override pot (Integrity 50/25/25; Marco $10 then 50/50).
+          Statements use thei_share / bsi_share / sub_agent_override / producer_payable — does not change financials.
         </div>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <div>
