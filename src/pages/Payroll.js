@@ -370,8 +370,7 @@ function HouseOverridesPanel() {
       setAutoLoaded(true);
       loadPreview();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ovPeriod, ovType, autoLoaded]);
+  }, [ovPeriod, ovType, autoLoaded]); // loadPreview intentionally omitted — one-shot auto load
 
   async function loadPreview() {
     if (!ovType || !ovPeriod) return;
@@ -633,8 +632,7 @@ export default function Payroll({ user }) {
 
   useEffect(() => {
     if (selectedPeriod) loadPayouts(selectedPeriod);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedPeriod, user.agency]);
+  }, [selectedPeriod, user.agency]); // loadPayouts intentionally omitted — reload on period/agency change
 
   async function loadPayouts(period) {
     if (!period) return;
