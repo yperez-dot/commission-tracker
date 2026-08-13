@@ -370,7 +370,7 @@ export default function Payroll({ user }) {
           const hasSubAgentOverride = parseFloat(r.sub_agent_override || 0) > 0;
           const producerPayable = parseFloat(r.producer_payable || 0);
           const isACAPayable = lob === 'ACA' && producerPayable !== 0;
-          const isAlba = r.agent_name === 'Alba Hernandez';
+          const isAlba = isAlbaName(r.agent_name);
           return ((isACAPayable || hasSubAgentOverride) || (isAlba && producerPayable !== 0)) && !isYourTeam(r.agent_name);
         });
       }
@@ -395,7 +395,7 @@ export default function Payroll({ user }) {
         // FIX: Show agent if they have ANY non-zero producer_payable (including chargeback-only agents)
         const isACAPayableCheck = (r.lob || '').toUpperCase() === 'ACA' && parseFloat(r.producer_payable || 0) !== 0;
         const hasSubAgentOverride = parseFloat(r.sub_agent_override || 0) > 0;
-        const isAlbaRow = r.agent_name === 'Alba Hernandez' && parseFloat(r.producer_payable || 0) !== 0;
+        const isAlbaRow = isAlbaName(r.agent_name) && parseFloat(r.producer_payable || 0) !== 0;
         if (isACAPayableCheck || hasSubAgentOverride || isAlbaRow) grouped[agent].hasPositivePayable = true;
       }
 
