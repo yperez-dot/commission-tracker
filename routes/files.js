@@ -1389,6 +1389,27 @@ const {
   parseTheRemittanceStatement,
 } = require('../src/theRemittanceStatement');
 
+const {
+  isBsiPayeeCompensationStatement,
+  parseBsiPayeeCompensationStatement,
+} = require('../src/bsiPayeeCompensationStatement');
+
+/** Peek a PDF and parse BSI→payee (Alba) Detailed Compensation Statements. */
+async function tryParseBsiPayeeCompensationPdf(filePath, filename) {
+  if (!pdfParse) return null;
+  if (!String(filename || '').toLowerCase().endsWith('.pdf')) return null;
+  try {
+    const data = await pdfParse(fs.readFileSync(filePath));
+    if (!isBsiPayeeCompensationStatement(data.text, filename)) return null;
+    // Filename "Lina" is BSI's label for Alba's pay statements.
+    const agentName = 'Alba Hernandez';
+    const parsed = parseBsiPayeeCompensationStatement(data.text, { filename, agentName });
+    return parsed.records;
+  } catch (err) {
+    console.error('[BSI-PAYEE-PDF] parse error:', err.message);
+    return null;
+  }
+}
 
 // Extract period from NHP "Carrier-Statement Month" column (e.g., "Cigna - April 2026" → "202604")
 function extractPeriodFromStatementMonth(statementMonth) {
@@ -4182,6 +4203,16 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
         try { fs.unlinkSync(req.file.path); } catch(e) {}
         return res.status(400).json({ error: 'No payable records found in MOO Excel statement.' });
       }
+    } else if (String(req.file.originalname || '').toLowerCase().endsWith('.pdf')) {
+      const payeeRecords = await tryParseBsiPayeeCompensationPdf(req.file.path, req.file.originalname);
+      if (payeeRecords && payeeRecords.length) {
+        console.log('[UPLOAD] Using BSI→payee compensation PDF parser:', payeeRecords.length, 'rows');
+        records = payeeRecords;
+      }
+    }
+
+    if (records) {
+      // already parsed above (MOO Excel or BSI payee PDF)
     } else if (isTHEStatementPDF(req.file.originalname)) {
       if (!pdfParse) {
         try { fs.unlinkSync(req.file.path); } catch(e) {}
