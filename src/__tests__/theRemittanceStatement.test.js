@@ -24,6 +24,13 @@ describe('theRemittanceStatement', () => {
     expect(periodFromTheRemittanceTitle('JULY 2025 - THE', 'x.csv')).toBe('202507');
   });
 
+  it('recognizes Spanish month titles (JUNIO / JULIO / MAYO)', () => {
+    expect(periodFromTheRemittanceTitle('JUNIO - THE HEALTH EXPERTS INSURANCE', 'x.csv', new Date('2026-08-13T00:00:00Z'))).toBe(
+      '202606'
+    );
+    expect(periodFromTheRemittanceTitle('MAYO - THE', 'x.csv', new Date('2026-08-13T00:00:00Z'))).toBe('202605');
+  });
+
   it('parses sample file with 50/50 remittance shares', () => {
     const wb = XLSX.readFile(samplePath);
     const records = parseTheRemittanceStatement(wb, 'T.H.E_STATEMENTS.csv');

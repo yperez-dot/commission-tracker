@@ -12,10 +12,18 @@ const { splitTheRemittanceHalf, round2 } = require('./overrideSplitMath');
 const { isIntegrityAgent } = require('./payeeSchedules');
 
 const MONTHS = {
-  january: '01', jan: '01', february: '02', feb: '02', march: '03', mar: '03',
-  april: '04', apr: '04', may: '05', june: '06', jun: '06', july: '07', jul: '07',
-  august: '08', aug: '08', september: '09', sep: '09', sept: '09',
-  october: '10', oct: '10', november: '11', nov: '11', december: '12', dec: '12',
+  january: '01', jan: '01', enero: '01',
+  february: '02', feb: '02', febrero: '02',
+  march: '03', mar: '03', marzo: '03',
+  april: '04', apr: '04', abril: '04',
+  may: '05', mayo: '05',
+  june: '06', jun: '06', junio: '06',
+  july: '07', jul: '07', julio: '07',
+  august: '08', aug: '08', agosto: '08',
+  september: '09', sep: '09', sept: '09', septiembre: '09',
+  october: '10', oct: '10', octubre: '10',
+  november: '11', nov: '11', noviembre: '11',
+  december: '12', dec: '12', diciembre: '12',
 };
 
 function periodFromTheRemittanceTitle(title, filename, now = new Date()) {
@@ -40,30 +48,45 @@ function periodFromTheRemittanceTitle(title, filename, now = new Date()) {
   return `${year}${month}`;
 }
 
+function isTheRemittanceSheetRows(rows) {
+  if (!rows || !rows.length) return false;
+  const title = String((rows[0] && rows[0][0]) || '').toUpperCase();
+  if (
+    /\bTHE\b/.test(title) &&
+    /(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC|JANUARY|FEBRUARY|MARCH|APRIL|JUNE|JULY|AUGUST|SEPTEMBER|OCTOBER|NOVEMBER|DECEMBER)/.test(title)
+  ) {
+    return true;
+  }
+  const header = (rows.find((r) => String(r[0] || '').toUpperCase() === 'AGENT') || []).map((c) =>
+    String(c || '').toUpperCase()
+  );
+  const joined = header.join('|');
+  return (
+    joined.includes('AGENT') &&
+    joined.includes('COMPANY') &&
+    joined.includes('CLIENT') &&
+    (joined.includes('COMMISION') || joined.includes('COMMISSION'))
+  );
+}
+
 function isTheRemittanceStatement(wb, filename) {
   const f = String(filename || '').toLowerCase().replace(/\s+/g, '_');
-  if (/t\.?h\.?e[_\s.-]*statement/.test(f) || /the_statements?/.test(f)) return true;
+  if (
+    /t\.?h\.?e[_\s.-]*statement/.test(f) ||
+    /the_statements?/.test(f) ||
+    /thei_statement_bsi/.test(f)
+  ) {
+    return true;
+  }
   try {
-    const ws = wb && wb.Sheets[wb.SheetNames[0]];
-    if (!ws || !ws['!ref']) return false;
-    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false, range: 0 });
-    const title = String((rows[0] && rows[0][0]) || '').toUpperCase();
-    if (
-      /\bTHE\b/.test(title) &&
-      /(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC|JANUARY|FEBRUARY|MARCH|APRIL|JUNE|JULY|AUGUST|SEPTEMBER|OCTOBER|NOVEMBER|DECEMBER)/.test(title)
-    ) {
-      return true;
+    if (!wb || !wb.SheetNames) return false;
+    for (const name of wb.SheetNames) {
+      const ws = wb.Sheets[name];
+      if (!ws || !ws['!ref']) continue;
+      const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: false, range: 0 });
+      if (isTheRemittanceSheetRows(rows)) return true;
     }
-    const header = (rows.find((r) => String(r[0] || '').toUpperCase() === 'AGENT') || []).map((c) =>
-      String(c || '').toUpperCase()
-    );
-    const joined = header.join('|');
-    return (
-      joined.includes('AGENT') &&
-      joined.includes('COMPANY') &&
-      joined.includes('CLIENT') &&
-      (joined.includes('COMMISION') || joined.includes('COMMISSION'))
-    );
+    return false;
   } catch (e) {
     return false;
   }
@@ -128,14 +151,31 @@ function derivePlanType(carrier, policyNumber) {
   return `${carrier} MAPD`;
 }
 
-function parseTheRemittanceStatement(wb, filename) {
+/**
+ * Parse one sheet of a remittance workbook.
+ * Period prefers title ("MAY - THE"), then sheet name, then filename.
+ */
+function parseTheRemittanceSheet(ws, filename, sheetName) {
   const records = [];
-  const ws = wb.Sheets[wb.SheetNames[0]];
   if (!ws || !ws['!ref']) return records;
 
   const rawRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true });
+  if (!isTheRemittanceSheetRows(rawRows.map((r) => (r || []).map((c) => (c == null ? '' : c))))) {
+    // Still try if sheet name looks like a month (MAY / JUNE / JULY)
+    if (!periodFromTheRemittanceTitle(sheetName || '', filename) || periodFromTheRemittanceTitle(sheetName || '', filename) === 'Unknown') {
+      const hasAgent = rawRows.some((r) => String(r[0] || '').toUpperCase().trim() === 'AGENT');
+      if (!hasAgent) return records;
+    }
+  }
+
   const title = String((rawRows[0] && rawRows[0][0]) || '');
-  const period = periodFromTheRemittanceTitle(title, filename);
+  let period = periodFromTheRemittanceTitle(title, filename);
+  if (!period || period === 'Unknown') {
+    period = periodFromTheRemittanceTitle(sheetName || '', filename);
+  }
+  if (!period || period === 'Unknown') {
+    period = periodFromTheRemittanceTitle('', filename);
+  }
 
   let headerIdx = rawRows.findIndex((r) => String(r[0] || '').toUpperCase().trim() === 'AGENT');
   if (headerIdx < 0) headerIdx = 1;
@@ -229,10 +269,25 @@ function parseTheRemittanceStatement(wb, filename) {
       splitApplies,
       subAgentOverride,
       lob: /humana|aetna|united|devoted/i.test(carrier) ? 'MA' : null,
-      raw: { agentRaw, company, policyNumber, clientRaw, amount, title },
+      sheetName: sheetName || null,
+      raw: { agentRaw, company, policyNumber, clientRaw, amount, title, sheetName },
     });
   }
 
+  return records;
+}
+
+/**
+ * Parse all sheets in a remittance workbook (May / June / July tabs, etc.).
+ */
+function parseTheRemittanceStatement(wb, filename) {
+  const records = [];
+  if (!wb || !wb.SheetNames) return records;
+  for (const sheetName of wb.SheetNames) {
+    const ws = wb.Sheets[sheetName];
+    const sheetRecords = parseTheRemittanceSheet(ws, filename, sheetName);
+    records.push(...sheetRecords);
+  }
   return records;
 }
 
@@ -240,4 +295,5 @@ module.exports = {
   isTheRemittanceStatement,
   periodFromTheRemittanceTitle,
   parseTheRemittanceStatement,
+  parseTheRemittanceSheet,
 };
