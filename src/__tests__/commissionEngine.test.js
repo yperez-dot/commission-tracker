@@ -1280,7 +1280,7 @@ describe('reconciliation observe-only helpers', () => {
       expect(result.group).toBe(GROUP.UNMATCHED);
     });
 
-    it('P2P with no prior enrollment → P2P_NEEDS_HISTORY', () => {
+    it('P2P with no prior enrollment → SOURCE_P2P (no pre-BSI book to chase)', () => {
       const result = classifyReconRow({
         cr_id: 8,
         ap_id: 16,
@@ -1291,6 +1291,23 @@ describe('reconciliation observe-only helpers', () => {
         prod_status: 'Active',
         prior_enrollment_count: 0,
         current_product: 'Medicare Advantage HMO',
+      });
+      expect(result.status).toBe(STATUS.SOURCE_P2P);
+      expect(result.group).toBe(GROUP.SOURCE_BACKED);
+    });
+
+    it('P2P with prior row but unknown product family → P2P_NEEDS_HISTORY', () => {
+      const result = classifyReconRow({
+        cr_id: 81,
+        ap_id: 161,
+        xwalk_id: 91,
+        commission: 100,
+        commission_type: 'First Year',
+        prod_new_p2p: 'P2P',
+        prod_status: 'Active Policy',
+        prior_enrollment_count: 1,
+        current_product: 'Medicare Advantage HMO',
+        prior_product: 'Something Obscure',
       });
       expect(result.status).toBe(STATUS.P2P_NEEDS_HISTORY);
     });

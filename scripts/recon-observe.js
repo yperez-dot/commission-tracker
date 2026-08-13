@@ -76,10 +76,26 @@ function parseArgs() {
     batchIdx !== -1 && args[batchIdx + 1]
       ? parseInt(args[batchIdx + 1], 10)
       : 500;
+  // Optional: reassess specific non-lock statuses already written (comma-separated).
+  // Supports: --reassess=P2P_NEEDS_HISTORY  OR  --reassess P2P_NEEDS_HISTORY
+  let reassessRaw = '';
+  const reassEq = args.find((a) => a.startsWith('--reassess='));
+  if (reassEq) {
+    reassessRaw = reassEq.slice('--reassess='.length);
+  } else {
+    const reassIdx = args.indexOf('--reassess');
+    if (reassIdx !== -1 && args[reassIdx + 1] && !args[reassIdx + 1].startsWith('--')) {
+      reassessRaw = args[reassIdx + 1];
+    }
+  }
+  const reassess = reassessRaw
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
 
   // Default is dry-run. Writes require --apply + review acknowledgement.
   const dryRun = !apply || dryRunFlag;
-  return { dryRun, apply, reviewed, batchSize };
+  return { dryRun, apply, reviewed, batchSize, reassess };
 }
 
 function scopeClause(alias = 'cr') {
@@ -92,13 +108,21 @@ function scopeClause(alias = 'cr') {
     .replace(/\$payee/g, `'${SCOPE.payee}'`);
 }
 
-function eligibleStatusClause(alias = 'cr') {
+function eligibleStatusClause(alias = 'cr', reassess = []) {
   // Assess NULL (not yet assessed) and PROVISIONAL only.
   // EXCEPTION / FINAL are never selected for write.
+  // --reassess=STATUS allows rewriting specific observe states (not locks).
+  const allowedReassess = reassess
+    .filter((s) => s && s !== 'EXCEPTION' && s !== 'FINAL')
+    .map((s) => `'${s.replace(/'/g, "''")}'`);
+  const reassessSql = allowedReassess.length
+    ? ` OR ${alias}.reconciliation_status IN (${allowedReassess.join(', ')})`
+    : '';
   return `
     (
       ${alias}.reconciliation_status IS NULL
       OR ${alias}.reconciliation_status = '${STATUS.PROVISIONAL}'
+      ${reassessSql}
     )
     AND COALESCE(${alias}.reconciliation_status, '') NOT IN ('${STATUS.EXCEPTION}', '${STATUS.FINAL}')
   `;
@@ -113,7 +137,7 @@ function eligibleStatusClause(alias = 'cr') {
  * FINANCIAL COLUMNS ARE READ-ONLY — commission/classification are selected
  * only for chargeback detection; they are never UPDATEd.
  */
-async function fetchCandidateBatch(client, { limit, offset }) {
+async function fetchCandidateBatch(client, { limit, offset, reassess = [] }) {
   // Exact deterministic crosswalk joins only.
   // policy_mbi_xwalk_cr_map stores production_record_id + new_p2p from the
   // Humana BSI composite-key match (carrier+NPN+eff+state+normalized name).
@@ -177,7 +201,7 @@ async function fetchCandidateBatch(client, { limit, offset }) {
     LEFT JOIN agency_production ap
            ON ap.id = xwalk.production_record_id
     WHERE ${scopeClause('cr')}
-      AND ${eligibleStatusClause('cr')}
+      AND ${eligibleStatusClause('cr', reassess)}
     ORDER BY cr.id
     LIMIT  $1
     OFFSET $2
@@ -205,36 +229,36 @@ function enrichRow(row) {
   };
 }
 
-async function countEligible(client) {
+async function countEligible(client, reassess = []) {
   const result = await client.query(`
     SELECT COUNT(*) AS n
     FROM commission_records cr
     WHERE ${scopeClause('cr')}
-      AND ${eligibleStatusClause('cr')}
+      AND ${eligibleStatusClause('cr', reassess)}
   `);
   return parseInt(result.rows[0].n, 10);
 }
 
-async function countMatchedEligible(client) {
+async function countMatchedEligible(client, reassess = []) {
   const result = await client.query(`
     SELECT COUNT(*) AS n
     FROM commission_records cr
     INNER JOIN policy_mbi_xwalk_cr_map xwalk
            ON xwalk.commission_record_id = cr.id
     WHERE ${scopeClause('cr')}
-      AND ${eligibleStatusClause('cr')}
+      AND ${eligibleStatusClause('cr', reassess)}
   `);
   return parseInt(result.rows[0].n, 10);
 }
 
-async function countUnmatchedEligible(client) {
+async function countUnmatchedEligible(client, reassess = []) {
   const result = await client.query(`
     SELECT COUNT(*) AS n
     FROM commission_records cr
     LEFT JOIN policy_mbi_xwalk_cr_map xwalk
            ON xwalk.commission_record_id = cr.id
     WHERE ${scopeClause('cr')}
-      AND ${eligibleStatusClause('cr')}
+      AND ${eligibleStatusClause('cr', reassess)}
       AND xwalk.id IS NULL
   `);
   return parseInt(result.rows[0].n, 10);
@@ -258,7 +282,7 @@ async function countManualLocksInScope(client) {
  * Write reconciliation observations only.
  * WHERE clause preserves EXCEPTION and FINAL and never touches financial columns.
  */
-async function writeUpdates(client, updates, now) {
+async function writeUpdates(client, updates, now, reassess = []) {
   if (updates.length === 0) return 0;
 
   const crIds = updates.map((u) => u.crId);
@@ -287,11 +311,7 @@ async function writeUpdates(client, updates, now) {
     ) AS v
     WHERE cr.id::text = v.cr_id
       AND ${scopeClause('cr')}
-      AND (
-        cr.reconciliation_status IS NULL
-        OR cr.reconciliation_status = 'PROVISIONAL'
-      )
-      AND COALESCE(cr.reconciliation_status, '') NOT IN ('EXCEPTION', 'FINAL')
+      AND ${eligibleStatusClause('cr', reassess)}
   `,
     [now, RECON_VERSION, crIds, statuses, groups, matchIds, newP2Ps]
   );
@@ -433,7 +453,7 @@ function printReport(summary, dryRun, elapsed) {
 // ---------------------------------------------------------------------------
 
 async function main() {
-  const { dryRun, apply, reviewed, batchSize } = parseArgs();
+  const { dryRun, apply, reviewed, batchSize, reassess } = parseArgs();
 
   if (apply && !reviewed) {
     console.error(
@@ -464,17 +484,19 @@ async function main() {
     `OliComm recon-observe.js ${RECON_VERSION} starting${writeMode ? ' (APPLY)' : ' (DRY RUN)'} …`
   );
   console.log(`Scope: carrier=${SCOPE.carrier} AND payee=${SCOPE.payee}`);
+  if (reassess.length) console.log(`Reassess statuses: ${reassess.join(', ')}`);
   console.log('FINANCIAL COLUMNS ARE READ-ONLY IN THIS SCRIPT.');
   console.log('EXCEPTION and FINAL rows are never overwritten.');
+  console.log('P2P with no in-book prior → SOURCE_P2P (BSI book starts ~Jul 2025; no prior years).');
 
   const client = await pool.connect();
   try {
-    summary.totalEligible = await countEligible(client);
-    summary.totalMatched = await countMatchedEligible(client);
-    summary.totalUnmatched = await countUnmatchedEligible(client);
+    summary.totalEligible = await countEligible(client, reassess);
+    summary.totalMatched = await countMatchedEligible(client, reassess);
+    summary.totalUnmatched = await countUnmatchedEligible(client, reassess);
     summary.manualLocks = await countManualLocksInScope(client);
 
-    console.log(`  ${summary.totalEligible} eligible Humana/BSI rows (NULL or PROVISIONAL).`);
+    console.log(`  ${summary.totalEligible} eligible Humana/BSI rows.`);
     console.log(`  ${summary.totalMatched} with crosswalk match.`);
     console.log(`  ${summary.totalUnmatched} with no crosswalk match → PENDING_NO_MATCH.`);
     console.log(
@@ -493,6 +515,7 @@ async function main() {
         const rows = await fetchCandidateBatch(client, {
           limit: batchSize,
           offset: writeMode ? 0 : offset,
+          reassess,
         });
         if (rows.length === 0) break;
 
@@ -504,7 +527,7 @@ async function main() {
         }
 
         if (writeMode && updates.length > 0) {
-          await writeUpdates(client, updates, new Date().toISOString());
+          await writeUpdates(client, updates, new Date().toISOString(), reassess);
         }
 
         processed += rows.length;

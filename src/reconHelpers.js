@@ -327,12 +327,19 @@ function extractCommissionDates(row) {
 
 /**
  * Derive P2P first-class status from prior enrollment product-family evidence.
- * prior_product_family / current_product_family should already be canonicalized.
+ *
+ * Business constraint: THEI↔BSI relationship starts ~July 2025 — there is no
+ * pre-BSI prior-year book to fetch. When agency_production has no earlier row
+ * for this MBI, treat as SOURCE_P2P (source-backed P2P without Like/Unlike),
+ * not an open history chase.
+ *
+ * P2P_NEEDS_HISTORY is reserved for: prior row exists but product family is
+ * UNKNOWN/AMBIGUOUS so Like vs Unlike cannot be decided.
  */
 function deriveP2PState(row) {
   const priorCount = parseInt(row.prior_enrollment_count, 10);
   if (!Number.isFinite(priorCount) || priorCount <= 0) {
-    return STATUS.P2P_NEEDS_HISTORY;
+    return STATUS.SOURCE_P2P;
   }
 
   const currentFamily = canonicalizeProductFamily(
@@ -463,21 +470,12 @@ function classifyRow(row) {
       return { status: STATUS.SOURCE_NEW, group: GROUP.SOURCE_BACKED, write: true };
     }
     if (isP2P) {
-      // Generic P2P with no conflicting commission tag — still source-backed.
-      // If prior history is absent, elevate to P2P_NEEDS_HISTORY when caller supplied counts.
+      // Generic P2P — use in-book prior rows only (BSI book starts ~Jul 2025).
+      // No earlier agency_production row → SOURCE_P2P, not an open history request.
       const priorCount = parseInt(row.prior_enrollment_count, 10);
-      if (Number.isFinite(priorCount) && priorCount <= 0) {
-        return {
-          status: STATUS.P2P_NEEDS_HISTORY,
-          group: GROUP.SEMANTIC_MISMATCH,
-          write: true,
-        };
-      }
-      if (Number.isFinite(priorCount) && priorCount > 0) {
+      if (Number.isFinite(priorCount)) {
         const status = deriveP2PState(row);
-        if (status !== STATUS.SOURCE_P2P) {
-          return { status, group: groupForStatus(status), write: true };
-        }
+        return { status, group: groupForStatus(status), write: true };
       }
       return { status: STATUS.SOURCE_P2P, group: GROUP.SOURCE_BACKED, write: true };
     }
