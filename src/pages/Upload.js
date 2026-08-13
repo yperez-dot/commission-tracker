@@ -229,7 +229,7 @@ export default function Upload({ user }) {
 
       <div className="page-header">
         <div className="page-title">Upload statements</div>
-        <div className="page-sub">Upload carrier statements — OliComm auto-detects columns for any format</div>
+        <div className="page-sub">Commission statements including BSI→THE remittance CSVs (T.H.E Statements / JULY - THE). Carrier→BSI feeds go under Uploads → BSI Statements.</div>
       </div>
       <div className="page-body">
 

@@ -4260,8 +4260,12 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       const ws = wb.Sheets[wb.SheetNames[0]];
       console.log('[UPLOAD] Workbook sheets:', wb.SheetNames);
       console.log('[UPLOAD] Starting parser detection chain...');
-      
-      if (isYourFMOXLSX(req.file.originalname)) {
+
+      // BSI → THE remittance CSV (e.g. "JULY - THE" / T.H.E_STATEMENTS) — Commission Statements tab
+      if (isTheRemittanceStatement(wb, req.file.originalname)) {
+        console.log('[UPLOAD] Using BSI→THE remittance statement parser');
+        records = parseTheRemittanceStatement(wb, req.file.originalname);
+      } else if (isYourFMOXLSX(req.file.originalname)) {
         console.log('[UPLOAD] Using YourFMO XLSX parser');
         records = parseYourFMOXLSXRows(wb);
       } else if (isUHCDirectFile(req.file.originalname)) {
@@ -5223,11 +5227,10 @@ router.post('/upload-bsi-statement', requireAuth, upload.single('file'), async (
       }
     } else {
       // Excel / CSV — route to correct parser
+      // Carrier→BSI statements only (Humana/Devoted/Aetna/UHC carrier feeds).
+      // BSI→THE remittance CSVs ("JULY - THE" / T.H.E_STATEMENTS) go to Commission Statements.
       const wb = XLSX.readFile(req.file.path);
-      if (isTheRemittanceStatement(wb, origName)) {
-        console.log('[BSI-UPLOAD] Matched BSI→THE remittance statement parser for:', origName);
-        records = parseTheRemittanceStatement(wb, origName);
-      } else if (isAetnaBSICSVFilename(origName)) {
+      if (isAetnaBSICSVFilename(origName)) {
         console.log('[BSI-UPLOAD] Matched Aetna BSI CSV parser for:', origName);
         records = parseAetnaBSICSV(wb, origName);
       } else if (isAMLPortalExportFile(origName, wb)) {
@@ -5240,7 +5243,7 @@ router.post('/upload-bsi-statement', requireAuth, upload.single('file'), async (
       } else if (isHumanaDevotedBSIFile(origName)) {
         console.log('[BSI-UPLOAD] Matched Humana/Devoted BSI parser for:', origName);
         records = parseHumanaDevotedBSIRows(wb, origName);
-      } else if (isBSIFile(origName) || /statement-health_experts|statement_health_experts|t\.?h\.?e/.test(nameLower)) {
+      } else if (isBSIFile(origName) || /statement-health_experts|statement_health_experts/.test(nameLower)) {
         console.log('[BSI-UPLOAD] Matched generic BSI rows parser for:', origName);
         records = parseBSIRows(wb, origName);
       } else {
