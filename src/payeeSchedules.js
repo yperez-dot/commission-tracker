@@ -38,7 +38,7 @@ const STATEMENT_TYPES = Object.freeze({
   MARCO: 'marco',
   /** Integrity Partners producer_payable (Chris / Horacio / CAM). */
   INTEGRITY: 'integrity',
-  /** Alba Hernandez agent payout (producer_payable). */
+  /** Lina agent production (builder helper) — paid via Agent Statements, not Override Statements. */
   ALBA: 'alba',
 });
 

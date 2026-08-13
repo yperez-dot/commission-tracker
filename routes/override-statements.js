@@ -27,28 +27,9 @@ const SELECT_COLS = `
 
 async function fetchOverrideRows(pool, period, type) {
   const params = [];
-  let where;
-  if (type === STATEMENT_TYPES.ALBA) {
-    // Alba is paid agent commissions only — exclude Agency Override remittance.
-    // Build from our commission_records (producer_payable), not from BSI→Alba
-    // payee PDFs (those are the OUTPUT format we will replicate, not an import feed).
-    where = `WHERE (
-        agent_name ILIKE '%alba%hernandez%'
-        OR agent_name ILIKE '%lina%hernandez%'
-        OR agent_name ILIKE '%alba%ritela%'
-      )
-      AND COALESCE(producer_payable,0) <> 0
-      AND LOWER(COALESCE(classification,'')) NOT LIKE '%override%'
-      AND (
-        LOWER(COALESCE(classification,'')) LIKE '%new business%'
-        OR LOWER(COALESCE(classification,'')) LIKE '%renewal%'
-        OR LOWER(COALESCE(classification,'')) LIKE '%chargeback%'
-        OR LOWER(COALESCE(classification,'')) LIKE '%agent commission%'
-        OR LOWER(TRIM(COALESCE(classification,''))) = 'commission'
-      )`;
-  } else {
-    where = `WHERE classification ILIKE '%override%'`;
-  }
+  // Override Statements are for THEI/BSI/Marco/Integrity only.
+  // Lina Hernandez is paid agent production via Agent Statements — never overrides.
+  let where = `WHERE classification ILIKE '%override%'`;
   if (period && period !== 'all') {
     params.push(period);
     where += ` AND payment_period = $${params.length}`;
@@ -88,12 +69,6 @@ router.get('/types', requireAuth, (_req, res) => {
         amountField: 'producer_payable',
         description: 'Integrity Partners 50% producer statements',
       },
-      {
-        id: STATEMENT_TYPES.ALBA,
-        label: 'Lina Hernandez',
-        amountField: 'producer_payable',
-        description: 'Lina (Alba) agent commissions only (NB / Renewal / Chargeback) — not Agency Override',
-      },
     ],
   });
 });
@@ -108,13 +83,7 @@ router.get('/periods', requireAuth, async (_req, res) => {
       WHERE payment_period IS NOT NULL
         AND payment_period <> ''
         AND payment_period <> 'Unknown'
-        AND (
-          classification ILIKE '%override%'
-          OR (
-            (agent_name ILIKE '%alba%hernandez%' OR agent_name ILIKE '%lina%hernandez%' OR agent_name ILIKE '%alba%ritela%')
-            AND COALESCE(producer_payable,0) <> 0
-          )
-        )
+        AND classification ILIKE '%override%'
       GROUP BY 1
       ORDER BY 1 DESC
     `);

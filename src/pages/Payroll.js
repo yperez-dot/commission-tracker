@@ -247,11 +247,11 @@ function OverrideStatementsPanel() {
     <div>
       <div className="card" style={{ marginBottom: 14, padding: '14px 16px' }}>
         <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8 }}>
-          Override statements — BSI / THEI / Marco / Integrity / Lina
+          Override statements — BSI / THEI / Marco / Integrity
         </div>
         <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
           THEI and BSI are <strong>50/50</strong> of the override pot (Integrity 50/25/25; Marco $10 then 50/50).
-          Lina Hernandez is paid <strong>agent commissions</strong> only (NB / Renewal / Chargeback) — Agency Override stays on THEI/BSI statements.
+          Lina Hernandez is paid on <strong>Agent Statements</strong> only (her agent production) — she does not receive overrides.
         </div>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <div>
@@ -373,20 +373,25 @@ export default function Payroll({ user }) {
         allRecs = allRecs.filter(r => {
           const classification = (r.classification || '').toLowerCase();
           const lob = (r.lob || '').toUpperCase();
-          const hasSubAgentOverride = parseFloat(r.sub_agent_override || 0) > 0;
           const producerPayable = parseFloat(r.producer_payable || 0);
-          const isACAPayable = lob === 'ACA' && producerPayable !== 0;
           const isAlba = isAlbaName(r.agent_name);
-          const isAlbaAgentComm =
-            isAlba &&
-            producerPayable !== 0 &&
-            !classification.includes('override') &&
-            (classification.includes('new business') ||
-              classification.includes('renewal') ||
-              classification.includes('chargeback') ||
-              classification.includes('agent commission') ||
-              classification === 'commission');
-          return ((isACAPayable || hasSubAgentOverride) || isAlbaAgentComm) && !isYourTeam(r.agent_name);
+
+          // Lina = agent production only (NB / Renewal / Chargeback). Never overrides.
+          if (isAlba) {
+            return (
+              producerPayable !== 0 &&
+              !classification.includes('override') &&
+              (classification.includes('new business') ||
+                classification.includes('renewal') ||
+                classification.includes('chargeback') ||
+                classification.includes('agent commission') ||
+                classification === 'commission')
+            );
+          }
+
+          const hasSubAgentOverride = parseFloat(r.sub_agent_override || 0) > 0;
+          const isACAPayable = lob === 'ACA' && producerPayable !== 0;
+          return (isACAPayable || hasSubAgentOverride) && !isYourTeam(r.agent_name);
         });
       }
 
@@ -515,6 +520,10 @@ export default function Payroll({ user }) {
         {tab==='payroll' && (
           <div>
             <div className="card" style={{ marginBottom:14, padding:'14px 16px' }}>
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 10, lineHeight: 1.45 }}>
+                Agent production payouts (ACA producer pay, Marco $10, and <strong>Lina Hernandez</strong> agent commissions).
+                Lina does not receive overrides — those stay on Override Statements (THEI/BSI).
+              </div>
               <div style={{ display:'flex', alignItems:'flex-end', gap:12, flexWrap:'wrap' }}>
                 <div>
                   <div className="form-label">Select month</div>
