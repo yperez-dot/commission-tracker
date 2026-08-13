@@ -511,12 +511,41 @@ export default function Payroll({ user }) {
   const [paidDates, setPaidDates] = useState({});
   const [tab, setTab] = useState('payroll');
   const [history, setHistory] = useState([]);
-  const historyKey = `payroll_history_${(user.agency || 'thei').toLowerCase().replace(/[^a-z]/g, '_')}`;
   const [statusFilter, setStatusFilter] = useState('unpaid'); // unpaid | paid | all
   const [search, setSearch] = useState('');
   const [linaBusy, setLinaBusy] = useState(false);
   const [linaError, setLinaError] = useState('');
+  const [statusBusy, setStatusBusy] = useState(false);
   const isBSI = (user.agency || '').toLowerCase().includes('broker society');
+  const agencyParam = encodeURIComponent(user.agency || 'thei');
+
+  async function loadPayoutHistory() {
+    try {
+      const data = await apiFetch(`/payroll/payout-history?limit=200&agency=${agencyParam}`);
+      setHistory(data.history || []);
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  async function loadPaidStatus(period) {
+    if (!period || period === 'all') {
+      setPaidStatus({});
+      setPaidDates({});
+      return;
+    }
+    try {
+      const data = await apiFetch(
+        `/payroll/payout-status?period=${encodeURIComponent(period)}&agency=${agencyParam}`
+      );
+      setPaidStatus(data.paid || {});
+      setPaidDates(data.dates || {});
+    } catch (e) {
+      console.error(e);
+      setPaidStatus({});
+      setPaidDates({});
+    }
+  }
 
   async function downloadLinaExcel(period) {
     if (!period) return;
@@ -555,8 +584,8 @@ export default function Payroll({ user }) {
         if (list[0]) setSelectedPeriod(list[0]);
       })
       .catch((e) => setLoadError(e.message || 'Failed to load periods'));
-    setHistory(JSON.parse(localStorage.getItem(historyKey) || '[]'));
-  }, [user.agency, historyKey]);
+    loadPayoutHistory();
+  }, [user.agency]);
 
   useEffect(() => {
     if (selectedPeriod) loadPayouts(selectedPeriod);
@@ -632,9 +661,7 @@ export default function Payroll({ user }) {
           .filter((p) => p.hasPositivePayable)
           .sort((a, b) => b.total - a.total)
       );
-      const saved = JSON.parse(localStorage.getItem(`payroll_period_${period}`) || '{}');
-      setPaidStatus(saved.paid || {});
-      setPaidDates(saved.dates || {});
+      await loadPaidStatus(period);
     } catch (e) {
       console.error(e);
       setLoadError(e.message || 'Failed to load payouts');
@@ -644,31 +671,47 @@ export default function Payroll({ user }) {
     }
   }
 
-  function togglePaid(agent) {
-    const newStatus = { ...paidStatus, [agent]: !paidStatus[agent] };
-    const newDates = { ...paidDates };
-    if (newStatus[agent]) {
-      newDates[agent] = new Date().toISOString().slice(0, 10);
-      const payout = payouts.find((p) => p.agent === agent);
-      const h = JSON.parse(localStorage.getItem(historyKey) || '[]');
-      h.unshift({
-        period: selectedPeriod,
-        periodLabel: formatPeriodLabel(selectedPeriod) || selectedPeriod,
-        agent,
-        amount: payout?.total || 0,
-        date: newDates[agent],
-      });
-      localStorage.setItem(historyKey, JSON.stringify(h.slice(0, 200)));
-      setHistory(h.slice(0, 200));
+  async function togglePaid(agent) {
+    if (!selectedPeriod || selectedPeriod === 'all' || statusBusy) return;
+    const makingPaid = !paidStatus[agent];
+    const payout = payouts.find((p) => p.agent === agent);
+    const paidDate = new Date().toISOString().slice(0, 10);
+    setStatusBusy(true);
+    // Optimistic UI
+    const prevPaid = { ...paidStatus };
+    const prevDates = { ...paidDates };
+    if (makingPaid) {
+      setPaidStatus({ ...paidStatus, [agent]: true });
+      setPaidDates({ ...paidDates, [agent]: paidDate });
     } else {
-      delete newDates[agent];
+      const nextPaid = { ...paidStatus };
+      const nextDates = { ...paidDates };
+      delete nextPaid[agent];
+      delete nextDates[agent];
+      setPaidStatus(nextPaid);
+      setPaidDates(nextDates);
     }
-    setPaidStatus(newStatus);
-    setPaidDates(newDates);
-    localStorage.setItem(
-      `payroll_period_${selectedPeriod}`,
-      JSON.stringify({ paid: newStatus, dates: newDates })
-    );
+    try {
+      await apiFetch(`/payroll/payout-status?agency=${agencyParam}`, {
+        method: 'PUT',
+        body: JSON.stringify({
+          period: selectedPeriod,
+          agent,
+          paid: makingPaid,
+          amount: payout?.total ?? null,
+          paidDate: makingPaid ? paidDate : null,
+          agency: user.agency || 'thei',
+        }),
+      });
+      await loadPayoutHistory();
+    } catch (e) {
+      console.error(e);
+      setPaidStatus(prevPaid);
+      setPaidDates(prevDates);
+      setLoadError(e.message || 'Failed to save paid status');
+    } finally {
+      setStatusBusy(false);
+    }
   }
 
   function exportAll() {
@@ -1030,7 +1073,7 @@ export default function Payroll({ user }) {
             <div style={{ padding: '10px 14px', borderBottom: '0.5px solid var(--border)', fontSize: 13, fontWeight: 500 }}>
               Payment history
               <span style={{ marginLeft: 8, fontWeight: 400, color: 'var(--text-muted)', fontSize: 11 }}>
-                Saved in this browser only
+                Shared team record (saved in database)
               </span>
             </div>
             {history.length === 0 ? (
@@ -1051,8 +1094,8 @@ export default function Payroll({ user }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {history.map((r, i) => (
-                      <tr key={i}>
+                    {history.map((r) => (
+                      <tr key={r.id || `${r.period}-${r.agent}-${r.date}`}>
                         <td style={{ fontSize: 12 }}>{r.periodLabel}</td>
                         <td style={{ fontWeight: 500 }}>{r.agent}</td>
                         <td style={{ fontWeight: 500, color: 'var(--green)' }}>{fmt(r.amount)}</td>
@@ -1073,20 +1116,16 @@ export default function Payroll({ user }) {
                             <button
                               className="btn btn-danger"
                               style={{ fontSize: 11, padding: '3px 10px' }}
-                              onClick={() => {
-                                const updated = history.filter((_, j) => j !== i);
-                                setHistory(updated);
-                                localStorage.setItem(historyKey, JSON.stringify(updated));
-                                const k = `payroll_period_${r.period}`;
-                                const sv = JSON.parse(localStorage.getItem(k) || '{}');
-                                if (sv.paid) {
-                                  delete sv.paid[r.agent];
-                                  delete sv.dates[r.agent];
-                                }
-                                localStorage.setItem(k, JSON.stringify(sv));
-                                if (selectedPeriod === r.period) {
-                                  setPaidStatus(sv.paid || {});
-                                  setPaidDates(sv.dates || {});
+                              onClick={async () => {
+                                if (!r.id) return;
+                                try {
+                                  await apiFetch(`/payroll/payout-status/${r.id}?agency=${agencyParam}`, {
+                                    method: 'DELETE',
+                                  });
+                                  await loadPayoutHistory();
+                                  if (selectedPeriod === r.period) await loadPaidStatus(r.period);
+                                } catch (e) {
+                                  setLoadError(e.message || 'Failed to delete paid mark');
                                 }
                               }}
                             >
