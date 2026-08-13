@@ -7,6 +7,13 @@ const fs = require('fs');
 const { getPool } = require('../db/database');
 const { requireAuth, requireAdmin } = require('./auth');
 const { normalizeAgentName } = require('./normalize');
+const {
+  buildMissingRenewalRows,
+  isTheiPrincipalAgent,
+  normName,
+  normCarrier,
+  normPeriod,
+} = require('../src/missingRenewalsLogic');
 const UPLOADS_DIR = path.join('/tmp', 'uploads');
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
@@ -790,7 +797,7 @@ router.put('/policy-status', requireAuth, async (req, res) => {
       DO UPDATE SET status = $4, notes = $5, termed_date = $6, updated_by = $7, updated_at = NOW()
     `, [client, carrier, agent, status, notes, termedDate || null, updated_by]);
     
-    // 2. If status is 'termed', cascade to book_of_business and commission_records
+    // 2. Cascade BOB / commission_records for terminal workflow statuses
     if (status === 'termed') {
       console.log('[BOB-API] Cascading TERMED status to BOB...');
       const bobResult = await dbClient.query(`
@@ -804,7 +811,6 @@ router.put('/policy-status', requireAuth, async (req, res) => {
       `, [client, carrier, agent, termedDate || null]);
       console.log('[BOB-API] BOB rows updated:', bobResult.rowCount);
       
-      // 3. Flag commission_records
       console.log('[BOB-API] Flagging commission_records as termed...');
       const recordsResult = await dbClient.query(`
         UPDATE commission_records
@@ -814,6 +820,29 @@ router.put('/policy-status', requireAuth, async (req, res) => {
           AND LOWER(TRIM(agent_name)) = LOWER(TRIM($3))
       `, [client, carrier, agent]);
       console.log('[BOB-API] Commission records updated:', recordsResult.rowCount);
+    } else if (status === 'plan_change') {
+      // Keep BOB roster in sync so Missing Renewals / BOB don't keep chasing
+      await dbClient.query(`
+        UPDATE book_of_business
+        SET status = 'plan_change',
+            resolution = 'plan_change',
+            updated_at = NOW()
+        WHERE LOWER(TRIM(client_full_name)) = LOWER(TRIM($1))
+          AND LOWER(TRIM(carrier)) = LOWER(TRIM($2))
+          AND LOWER(TRIM(agent_name)) = LOWER(TRIM($3))
+      `, [client, carrier, agent]);
+    } else if (status === 'active') {
+      // Clear chase / undo — restore BOB to active if it was plan_change only
+      await dbClient.query(`
+        UPDATE book_of_business
+        SET status = 'active',
+            resolution = NULL,
+            updated_at = NOW()
+        WHERE LOWER(TRIM(client_full_name)) = LOWER(TRIM($1))
+          AND LOWER(TRIM(carrier)) = LOWER(TRIM($2))
+          AND LOWER(TRIM(agent_name)) = LOWER(TRIM($3))
+          AND status = 'plan_change'
+      `, [client, carrier, agent]);
     }
     
     // Commit transaction - all 3 updates succeeded
@@ -829,6 +858,114 @@ router.put('/policy-status', requireAuth, async (req, res) => {
     res.status(500).json({ error: err.message });
   } finally {
     dbClient.release();
+  }
+});
+
+// ─── GET /api/bob/missing-renewals-check ───────────────────────────────────
+// Proper Missing Renewals engine: Yahoska/Katy active BOB × period commissions.
+// Replaces fragile client-side /records?limit=10000 matching.
+router.get('/missing-renewals-check', requireAuth, async (req, res) => {
+  try {
+    const pool = getPool();
+    const period = normPeriod(req.query.period);
+    if (!period) {
+      return res.status(400).json({ error: 'period required (YYYYMM)' });
+    }
+
+    const scope = String(req.query.scope || '').toLowerCase();
+
+    let bobResult;
+    if (req.user.role === 'agent') {
+      bobResult = await pool.query(
+        `SELECT * FROM book_of_business
+         WHERE status = 'active' AND agent_name ILIKE $1
+         ORDER BY agent_name, client_full_name`,
+        [`%${req.user.name}%`]
+      );
+    } else if (scope === 'all') {
+      bobResult = await pool.query(
+        `SELECT * FROM book_of_business WHERE status = 'active'
+         ORDER BY agent_name, client_full_name`
+      );
+    } else {
+      // Default: THEI principals only (Yahoska + Katy)
+      bobResult = await pool.query(
+        `SELECT * FROM book_of_business
+         WHERE status = 'active'
+           AND (
+             LOWER(agent_name) LIKE '%yahoska%'
+             OR LOWER(agent_name) LIKE '%katy%'
+             OR LOWER(agent_name) LIKE '%perez, yahoska%'
+             OR LOWER(agent_name) LIKE '%robles, katy%'
+           )
+         ORDER BY agent_name, client_full_name`
+      );
+    }
+
+    // Period commissions — no artificial 10k cap; filter in SQL
+    const recResult = await pool.query(
+      `SELECT id, client_full_name, carrier, agent_name, commission, classification,
+              lob, payment_period, effective_date
+       FROM commission_records
+       WHERE payment_period = $1
+          OR payment_period = $2
+          OR payment_period = $3`,
+      [
+        period,
+        `${period.slice(4, 6)}/${period.slice(0, 4)}`, // MM/YYYY
+        `${period.slice(4, 6)}/01/${period.slice(0, 4)}`, // MM/01/YYYY uncommon
+      ]
+    );
+
+    // Also catch alternate period formats via JS norm (safety net)
+    const periodRecords = recResult.rows.filter((r) => {
+      const n = normPeriod(r.payment_period);
+      return n === period;
+    });
+
+    const heldResult = await pool.query(`
+      SELECT cr.client_full_name, cr.carrier
+      FROM commission_records cr
+      JOIN uploads u ON cr.upload_id = u.id
+      WHERE u.category = 'bsi_statement'
+        AND cr.classification = 'Held'
+        AND (
+          cr.raw_data::jsonb->>'Hold Reason' ILIKE '%not licensed%'
+          OR cr.raw_data::jsonb->>'Hold Reason' ILIKE '%not appointed%'
+        )
+        AND cr.client_full_name IS NOT NULL
+    `);
+    const heldKeySet = new Set();
+    for (const h of heldResult.rows) {
+      heldKeySet.add(`${normName(h.client_full_name)}|${normCarrier(h.carrier)}`);
+    }
+
+    const psResult = await pool.query(
+      `SELECT client_full_name, carrier, agent_name, status, termed_date
+       FROM policy_status`
+    );
+    const policyStatusMap = {};
+    for (const ps of psResult.rows) {
+      const key = `${normName(ps.client_full_name)}|${normCarrier(ps.carrier)}|${normName(ps.agent_name)}`;
+      policyStatusMap[key] = ps;
+    }
+
+    const bobClients = bobResult.rows.filter((c) =>
+      scope === 'all' || req.user.role === 'agent' ? true : isTheiPrincipalAgent(c.agent_name)
+    );
+
+    const payload = buildMissingRenewalRows({
+      bobClients,
+      periodRecords,
+      period,
+      heldKeySet,
+      policyStatusMap,
+    });
+
+    res.json(payload);
+  } catch (err) {
+    console.error('[BOB] missing-renewals-check error:', err);
+    res.status(500).json({ error: err.message });
   }
 });
 

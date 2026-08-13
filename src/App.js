@@ -114,13 +114,13 @@ export default function App() {
     },
     { id: 'alldata', label: 'All Data' },
     { id: 'bob', label: 'Book of Business' },
-    { id: 'renewals', label: 'Missing Renewals' },
     ...(!isBSI ? [{
       id: 'reconciliation',
       label: 'Reconciliation',
       children: [
         { id: 'direct-recon', label: 'Our Sales' },
         { id: 'agency-production-recon', label: 'Agency Override Recon' },
+        { id: 'renewals', label: 'Missing Renewals' },
       ]
     }] : []),
     { id: 'payroll', label: 'Payroll' },
@@ -185,8 +185,8 @@ export default function App() {
         <nav className="sidebar-nav">
           {navItems.map(item => {
             if (item.children) {
-              const isExpanded = expandedMenus[item.id];
               const hasActiveChild = item.children.some(child => page === child.id);
+              const isExpanded = expandedMenus[item.id] || hasActiveChild;
               return (
                 <div key={item.id}>
                   <button

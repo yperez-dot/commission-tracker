@@ -205,6 +205,7 @@ export default function MissingRenewals({ user }) {
   const [termedDatePicker, setTermedDatePicker] = useState(null); // { rowKey, date }
   const [sortCol, setSortCol] = useState('isMissing'); // Default: sort by missing status
   const [sortDir, setSortDir] = useState('desc'); // Missing first
+  const [loadError, setLoadError] = useState('');
 
   // Toast notification helper
   function showToast(message, type = 'success') {
@@ -322,177 +323,27 @@ export default function MissingRenewals({ user }) {
     setRows([]);
     setCoverageWarning(null);
     setShowCoverageWarning(true);
+    setLoadError('');
     try {
-      const targetNorm = normPeriod(selectedPeriod);
-      const checkDate = periodToDate(selectedPeriod);
+      const targetNorm = normPeriod(selectedPeriod) || selectedPeriod;
 
-      // Check statement coverage
       try {
-        const coverage = await apiFetch(`/bob/coverage?period=${selectedPeriod}`);
+        const coverage = await apiFetch(`/bob/coverage?period=${encodeURIComponent(selectedPeriod)}`);
         setCoverageWarning(coverage);
       } catch (err) {
         console.error('Coverage check failed:', err);
       }
 
-      const bobData = await apiFetch('/bob?status=active');
-      // Filter to only Yahoska + Katy's BOB (THEI's own production).
-      // Per Yahoska 2026-05-12: 'We only check for mine and Katy's BOB.'
-      // Downline producers' renewals are BSI's responsibility, not ours.
-      const allBob = bobData || [];
-      const bobClients = allBob.filter(c => {
-        const a = String(c.agent_name || '').toLowerCase();
-        return a.includes('yahoska') || a.includes('katy')
-          || a.includes('perez, yahoska') || a.includes('robles, katy');
-      });
-
-      const allRecData = await apiFetch('/records?limit=10000');
-      
-      const allRecs = (allRecData.records || []).filter(r => {
-        if (!r.payment_period) return false;
-        if (r.payment_period === selectedPeriod) return true;
-        const n = normPeriod(r.payment_period);
-        return n && targetNorm && n === targetNorm;
-      });
-      
-      // Build full-name lookup: "normname|carrier" → records[]
-      // CRITICAL: Match on client_name|carrier ONLY - do NOT include effective_date
-      // Effective dates vary across different statement sources (BSI, NHP, direct carrier)
-      // and would cause false "missing" flags for the same client
-      const recMap = {};
-      for (const r of allRecs) {
-        const key = normName(r.client_full_name) + '|' + normCarrier(r.carrier);
-        if (!recMap[key]) recMap[key] = [];
-        recMap[key].push(r);
-      }
-
-      // Build last-name lookup for fuzzy fallback
-      const lastNameMap = {};
-      for (const r of allRecs) {
-        const parts = normName(r.client_full_name).split(' ').filter(p => p.length > 1);
-        if (!parts.length) continue;
-        // Index by last significant word
-        const lastKey = parts[parts.length - 1] + '|' + normCarrier(r.carrier);
-        if (!lastNameMap[lastKey]) lastNameMap[lastKey] = [];
-        lastNameMap[lastKey].push(r);
-        // Also index by first significant word (handles reversed names)
-        const firstKey = parts[0] + '|' + normCarrier(r.carrier);
-        if (!lastNameMap[firstKey]) lastNameMap[firstKey] = [];
-        lastNameMap[firstKey].push(r);
-      }
-
-      const built = [];
-
-      for (const client of bobClients) {
-        const nc = normCarrier(client.carrier);
-
-        const effDate = parseEffDate(client.effective_date);
-if (effDate && checkDate) {
-  const monthsDiff = (checkDate.getFullYear() - effDate.getFullYear()) * 12 
-    + (checkDate.getMonth() - effDate.getMonth());
-  if (monthsDiff < 12) continue;
-}
-
-        // Try all name variants for matching
-        const variants = nameVariants(client.client_full_name);
-        let matchedRecs = [];
-
-        // 1. Try exact variant match
-        for (const v of variants) {
-          const k = v + '|' + nc;
-          if (recMap[k] && recMap[k].length) {
-            matchedRecs = recMap[k];
-            break;
-          }
-        }
-
-        // 2. Try last-name/first-name fuzzy match
-        if (!matchedRecs.length) {
-          const normClient = normName(client.client_full_name);
-          const clientParts = normClient.split(' ').filter(p => p.length > 1);
-          for (const part of clientParts) {
-            const k = part + '|' + nc;
-            if (lastNameMap[k] && lastNameMap[k].length) {
-              matchedRecs = lastNameMap[k];
-              break;
-            }
-          }
-        }
-
-        const commission = matchedRecs.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0);
-
-        // Determine if missing:
-        // TRUE if: No records for this period AND last paid < check period
-        // FALSE if: Has records for this period OR last paid >= check period
-        const lastPeriodNorm = normPeriod(client.last_commission_date);
-        const isMissing = matchedRecs.length === 0 && (!lastPeriodNorm || lastPeriodNorm < targetNorm);
-
-        built.push({
-          client: client.client_full_name,
-          agent: client.agent_name || '—',
-          carrier: client.carrier,
-          effectiveDate: client.effective_date,
-          lastPaidPeriod: client.last_commission_date,
-          commission,
-          lastKnownCommission: parseFloat(client.last_commission_amount) || 0,
-          isMissing,
-          monthsMissing: client.months_missing || 0,
-          bobId: client.id,
-          records: matchedRecs,
-          lob: matchedRecs.length > 0 ? (matchedRecs[0].lob || '') : ''
-        });
-      }
-
-      // Held-licensing detection — must run before policyStatus so the flag is
-      // set before the row reaches the render. Best-effort: a fetch error suppresses
-      // the badge silently rather than breaking the page.
-      let heldKeySet = new Set();
-      try {
-        const heldData = await apiFetch('/records/held-licensing-keys');
-        for (const h of (heldData.keys || [])) {
-          heldKeySet.add(`${normName(h.client_full_name)}|${normCarrier(h.carrier)}`);
-        }
-      } catch (e) { console.warn('held-licensing-keys fetch failed:', e.message); }
-
-      for (const row of built) {
-        if (row.isMissing) {
-          if (heldKeySet.has(`${normName(row.client)}|${normCarrier(row.carrier)}`)) {
-            row.isHeld = true;
-            // isMissing stays true: row still surfaces under showMissingOnly
-            // and keeps its amber background. Only the badge changes.
-          }
-        }
-      }
-
-      // Fetch policy status for all clients
-      const policyStatusData = await apiFetch('/bob/policy-status');
-      const policyStatusMap = {};
-      if (policyStatusData && policyStatusData.length) {
-        for (const ps of policyStatusData) {
-          const key = `${normName(ps.client_full_name)}|${normCarrier(ps.carrier)}|${normName(ps.agent_name)}`;
-          policyStatusMap[key] = ps; // Store full object, not just status
-        }
-      }
-
-      // Add policy status to built rows
-      for (const row of built) {
-        const key = `${normName(row.client)}|${normCarrier(row.carrier)}|${normName(row.agent)}`;
-        const psData = policyStatusMap[key];
-        row.policyStatus = psData?.status || null;
-        row.termedDate = psData?.termed_date || null;
-      }
-
-      built.sort((a, b) => {
-        if (a.isMissing !== b.isMissing) return a.isMissing ? -1 : 1;
-        if (a.isMissing && b.isMissing) {
-          // Within Missing: highest months missing first (most urgent)
-          if (a.monthsMissing !== b.monthsMissing) return b.monthsMissing - a.monthsMissing;
-        }
-        return a.agent.localeCompare(b.agent) || a.client.localeCompare(b.client);
-      });
-
-      setRows(built);
-    } catch(e) { console.error(e); }
-    finally { setLoading(false); }
+      const data = await apiFetch(
+        `/bob/missing-renewals-check?period=${encodeURIComponent(targetNorm)}`
+      );
+      setRows(data.rows || []);
+    } catch (e) {
+      console.error(e);
+      setLoadError(e.message || 'Missing renewals check failed');
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function openClient(row) {
@@ -500,16 +351,18 @@ if (effDate && checkDate) {
     setClientLoading(true);
     setClientRecords([]);
     try {
-      const data = await apiFetch(`/records?limit=200`);
+      // Pull a large window then filter — payment history spans many periods
+      const data = await apiFetch(`/records?search=${encodeURIComponent(row.client)}&limit=500`);
       const recs = (data.records || []).filter(r => {
         const normClient = normName(row.client);
         const normRecord = normName(r.client_full_name);
         if (normCarrier(r.carrier) !== normCarrier(row.carrier)) return false;
         if (normClient === normRecord) return true;
-        // Check any variant
         return nameVariants(row.client).some(v => v === normRecord) ||
                nameVariants(r.client_full_name).some(v => v === normClient);
       });
+      // Newest period first
+      recs.sort((a, b) => String(b.payment_period || '').localeCompare(String(a.payment_period || '')));
       setClientRecords(recs);
     } catch(e) { console.error(e); }
     finally { setClientLoading(false); }
@@ -584,9 +437,10 @@ if (effDate && checkDate) {
       (!filterCarrier || r.carrier === filterCarrier) &&
       (!filterLOB || r.lob === filterLOB) &&
       (!filterClient || r.client.toLowerCase().includes(filterClient.toLowerCase())) &&
-      !grayedRows.has(rowKey) && // Hide grayed rows (pending termed)
-      r.policyStatus !== 'plan_change' && // Hide plan_change clients (same as termed)
-      r.policyStatus !== 'ignore' // Hide ignored clients (permanent)
+      !grayedRows.has(rowKey) &&
+      r.policyStatus !== 'plan_change' &&
+      r.policyStatus !== 'ignore' &&
+      r.policyStatus !== 'termed'
     );
   });
 
@@ -707,9 +561,15 @@ if (effDate && checkDate) {
 
       <div className="page-header">
         <div className="page-title">Missing Renewals</div>
-        <div className="page-sub">Compare your Book of Business against any month's commission statements</div>
+        <div className="page-sub">Yahoska &amp; Katy BOB vs statement month — unpaid renewals, held licensing, chase / term actions</div>
       </div>
       <div className="page-body">
+
+        {loadError && (
+          <div style={{ background:'#FEF2F2', border:'1px solid #FECACA', color:'#991B1B', padding:'10px 14px', borderRadius:8, marginBottom:12, fontSize:13 }}>
+            {loadError}
+          </div>
+        )}
 
         <div style={{ display:'flex',alignItems:'flex-end',gap:10,flexWrap:'wrap',marginBottom:14,background:'var(--bg)',padding:'12px 14px',borderRadius:8,border:'0.5px solid var(--border)' }}>
           <div>
@@ -981,8 +841,10 @@ if (effDate && checkDate) {
                               <option value="termed">🔴 Termed</option>
                               <option value="chase">🟠 Chase Payment</option>
                               <option value="plan_change">🔄 Plan Change</option>
-                              <option value="ignore">⚫ Ignore this month</option>
-                              <option value="clear">✅ Clear Chase</option>
+                              <option value="ignore">⚫ Ignore (hide permanently)</option>
+                              {r.policyStatus === 'chase' && (
+                                <option value="clear">✅ Clear Chase</option>
+                              )}
                             </select>
                           )}
                         </td>
