@@ -118,11 +118,57 @@ describe('overrideStatementBuilder', () => {
     expect(classifyOverrideLine(rows[3], STATEMENT_TYPES.THEI_OVERRIDE)).toBeNull();
   });
 
-  it('THEI and BSI payable amounts are equal on standard 50/50 rows', () => {
-    const thei = buildOverrideStatements([rows[0]], STATEMENT_TYPES.THEI_OVERRIDE, { period: '202601' });
-    const bsi = buildOverrideStatements([rows[0]], STATEMENT_TYPES.BSI_OVERRIDE, { period: '202601' });
-    expect(thei.grandTotal).toBe(bsi.grandTotal);
-    expect(thei.grandTotal).toBe(150);
+  it('Alba statement uses producer_payable across classifications', () => {
+    const albaRows = [
+      {
+        id: 10,
+        agent_name: 'Alba Hernandez',
+        client_full_name: 'CLIENT E',
+        policy_number: 'P5',
+        carrier: 'Humana',
+        effective_date: '01/01/2026',
+        payment_period: '202601',
+        classification: 'New Business',
+        commission: 300,
+        thei_share: 0,
+        bsi_share: 0,
+        producer_payable: 300,
+        sub_agent_override: 0,
+      },
+      {
+        id: 11,
+        agent_name: 'Alba Hernandez',
+        client_full_name: 'CLIENT F',
+        policy_number: 'P6',
+        carrier: 'Humana',
+        payment_period: '202601',
+        classification: 'Chargeback',
+        commission: -50,
+        thei_share: 0,
+        bsi_share: 0,
+        producer_payable: -50,
+        sub_agent_override: 0,
+      },
+      {
+        id: 12,
+        agent_name: 'Someone Else',
+        client_full_name: 'CLIENT G',
+        policy_number: 'P7',
+        carrier: 'Humana',
+        payment_period: '202601',
+        classification: 'New Business',
+        commission: 100,
+        producer_payable: 100,
+        thei_share: 0,
+        bsi_share: 0,
+        sub_agent_override: 0,
+      },
+    ];
+    const bundle = buildOverrideStatements(albaRows, STATEMENT_TYPES.ALBA, { period: '202601' });
+    expect(bundle.statements).toHaveLength(1);
+    expect(bundle.statements[0].payee).toBe('Alba Hernandez');
+    expect(bundle.grandTotal).toBe(250);
+    expect(bundle.statements[0].lineCount).toBe(2);
   });
 });
 

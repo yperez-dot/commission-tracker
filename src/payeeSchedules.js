@@ -38,6 +38,8 @@ const STATEMENT_TYPES = Object.freeze({
   MARCO: 'marco',
   /** Integrity Partners producer_payable (Chris / Horacio / CAM). */
   INTEGRITY: 'integrity',
+  /** Alba Hernandez agent payout (producer_payable). */
+  ALBA: 'alba',
 });
 
 function normName(name) {
@@ -58,6 +60,11 @@ function isMarcoAgent(agentName, paymentPeriod) {
   return true;
 }
 
+function isAlbaHernandez(agentName) {
+  const n = normName(agentName);
+  return n.includes('alba') && n.includes('hernandez');
+}
+
 function isAgencyOverride(classification) {
   return String(classification || '').toLowerCase().includes('override');
 }
@@ -69,6 +76,7 @@ module.exports = {
   STATEMENT_TYPES,
   isIntegrityAgent,
   isMarcoAgent,
+  isAlbaHernandez,
   isAgencyOverride,
   normName,
 };

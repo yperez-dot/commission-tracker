@@ -15,6 +15,11 @@ function isYourTeam(name) {
   return YOUR_TEAM.some(t => String(name || '').toLowerCase().includes(t));
 }
 
+function isAlbaName(name) {
+  const n = String(name || '').toLowerCase();
+  return n.includes('alba') && n.includes('hernandez');
+}
+
 function formatPeriodLabel(p) {
   if (!p) return p;
   const s = String(p).trim();
@@ -236,11 +241,11 @@ function OverrideStatementsPanel() {
     <div>
       <div className="card" style={{ marginBottom: 14, padding: '14px 16px' }}>
         <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 8 }}>
-          Override statements — BSI / THEI / Marco / Integrity
+          Override statements — BSI / THEI / Marco / Integrity / Alba
         </div>
         <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
           THEI and BSI are <strong>50/50</strong> of the override pot (Integrity 50/25/25; Marco $10 then 50/50).
-          Statements use thei_share / bsi_share / sub_agent_override / producer_payable — does not change financials.
+          Alba uses <strong>producer_payable</strong> (her agent payout). Does not change financials.
         </div>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <div>

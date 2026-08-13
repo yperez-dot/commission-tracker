@@ -25,9 +25,15 @@ const SELECT_COLS = `
   producer_payable, sub_agent_override, payee, source
 `;
 
-async function fetchOverrideRows(pool, period) {
+async function fetchOverrideRows(pool, period, type) {
   const params = [];
-  let where = `WHERE classification ILIKE '%override%'`;
+  let where;
+  if (type === STATEMENT_TYPES.ALBA) {
+    // Alba agent statement: all classifications with producer_payable
+    where = `WHERE agent_name ILIKE '%alba%hernandez%' AND COALESCE(producer_payable,0) <> 0`;
+  } else {
+    where = `WHERE classification ILIKE '%override%'`;
+  }
   if (period && period !== 'all') {
     params.push(period);
     where += ` AND payment_period = $${params.length}`;
@@ -67,6 +73,12 @@ router.get('/types', requireAuth, (_req, res) => {
         amountField: 'producer_payable',
         description: 'Integrity Partners 50% producer statements',
       },
+      {
+        id: STATEMENT_TYPES.ALBA,
+        label: 'Alba Hernandez',
+        amountField: 'producer_payable',
+        description: 'Alba agent payout statement (producer_payable)',
+      },
     ],
   });
 });
@@ -78,10 +90,13 @@ router.get('/periods', requireAuth, async (_req, res) => {
     const result = await pool.query(`
       SELECT payment_period AS period, COUNT(*)::int AS override_rows
       FROM commission_records
-      WHERE classification ILIKE '%override%'
-        AND payment_period IS NOT NULL
+      WHERE payment_period IS NOT NULL
         AND payment_period <> ''
         AND payment_period <> 'Unknown'
+        AND (
+          classification ILIKE '%override%'
+          OR (agent_name ILIKE '%alba%hernandez%' AND COALESCE(producer_payable,0) <> 0)
+        )
       GROUP BY 1
       ORDER BY 1 DESC
     `);
@@ -104,7 +119,7 @@ router.get('/preview', requireAuth, async (req, res) => {
       return res.status(400).json({ error: `Invalid type. Use one of: ${Object.values(STATEMENT_TYPES).join(', ')}` });
     }
     const pool = getPool();
-    const rows = await fetchOverrideRows(pool, period);
+    const rows = await fetchOverrideRows(pool, period, type);
     const bundle = buildOverrideStatements(rows, type, { period });
     res.json({
       type: bundle.type,
@@ -138,7 +153,7 @@ router.get('/export', requireAuth, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: `Invalid type. Use one of: ${Object.values(STATEMENT_TYPES).join(', ')}` });
     }
     const pool = getPool();
-    const rows = await fetchOverrideRows(pool, period);
+    const rows = await fetchOverrideRows(pool, period, type);
     const bundle = buildOverrideStatements(rows, type, { period });
 
     let csv;
@@ -178,7 +193,7 @@ router.get('/export-all', requireAuth, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: `Invalid type` });
     }
     const pool = getPool();
-    const rows = await fetchOverrideRows(pool, period);
+    const rows = await fetchOverrideRows(pool, period, type);
     const bundle = buildOverrideStatements(rows, type, { period });
     res.json({
       type: bundle.type,
