@@ -143,7 +143,7 @@ input, select, textarea { font-family: inherit; font-size: 15px; }
 .kpi-value { font-size: 28px; font-weight: 500; line-height: 1; color: var(--text); }
 .kpi-value.green { color: var(--green); }
 .kpi-value.blue { color: var(--accent-dark); }
-.kpi-value.red { color: var(--red); }
+.kpi-value.amber { color: var(--amber); }
 
 /* ─── Tables ─────────────────────────────────────────────────── */
 .table-wrap { overflow-x: auto; }

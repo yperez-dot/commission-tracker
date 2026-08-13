@@ -12,6 +12,18 @@ const {
   filenameFor,
 } = require('../src/overrideStatementBuilder');
 
+/** Override Statements tab — Lina/agent production is Agent Payouts only. */
+const OVERRIDE_UI_TYPES = [
+  STATEMENT_TYPES.THEI_OVERRIDE,
+  STATEMENT_TYPES.BSI_OVERRIDE,
+  STATEMENT_TYPES.MARCO,
+  STATEMENT_TYPES.INTEGRITY,
+];
+
+function isValidOverrideType(type) {
+  return OVERRIDE_UI_TYPES.includes(type);
+}
+
 function requireAdmin(req, res, next) {
   if (!req.user || req.user.role !== 'admin') {
     return res.status(403).json({ error: 'Admin only' });
@@ -102,8 +114,8 @@ router.get('/preview', requireAuth, async (req, res) => {
   try {
     const type = String(req.query.type || '');
     const period = String(req.query.period || 'all');
-    if (!Object.values(STATEMENT_TYPES).includes(type)) {
-      return res.status(400).json({ error: `Invalid type. Use one of: ${Object.values(STATEMENT_TYPES).join(', ')}` });
+    if (!isValidOverrideType(type)) {
+      return res.status(400).json({ error: `Invalid type. Use one of: ${OVERRIDE_UI_TYPES.join(', ')}` });
     }
     const pool = getPool();
     const rows = await fetchOverrideRows(pool, period, type);
@@ -118,6 +130,14 @@ router.get('/preview', requireAuth, async (req, res) => {
         payee: s.payee,
         lineCount: s.lineCount,
         total: s.total,
+        lines: (s.lines || []).map((l) => ({
+          policy_number: l.policy_number,
+          client_full_name: l.client_full_name,
+          carrier: l.carrier,
+          classification: l.classification,
+          writing_agent: l.writing_agent,
+          amount: l.amount,
+        })),
       })),
     });
   } catch (err) {
@@ -136,8 +156,8 @@ router.get('/export', requireAuth, requireAdmin, async (req, res) => {
     const type = String(req.query.type || '');
     const period = String(req.query.period || 'all');
     const payee = req.query.payee ? String(req.query.payee) : null;
-    if (!Object.values(STATEMENT_TYPES).includes(type)) {
-      return res.status(400).json({ error: `Invalid type. Use one of: ${Object.values(STATEMENT_TYPES).join(', ')}` });
+    if (!isValidOverrideType(type)) {
+      return res.status(400).json({ error: `Invalid type. Use one of: ${OVERRIDE_UI_TYPES.join(', ')}` });
     }
     const pool = getPool();
     const rows = await fetchOverrideRows(pool, period, type);
@@ -176,8 +196,8 @@ router.get('/export-all', requireAuth, requireAdmin, async (req, res) => {
   try {
     const type = String(req.query.type || '');
     const period = String(req.query.period || 'all');
-    if (!Object.values(STATEMENT_TYPES).includes(type)) {
-      return res.status(400).json({ error: `Invalid type` });
+    if (!isValidOverrideType(type)) {
+      return res.status(400).json({ error: `Invalid type. Use one of: ${OVERRIDE_UI_TYPES.join(', ')}` });
     }
     const pool = getPool();
     const rows = await fetchOverrideRows(pool, period, type);

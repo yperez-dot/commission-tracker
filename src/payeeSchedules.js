@@ -70,7 +70,7 @@ function isAlbaHernandez(agentName) {
   return n.includes('alba') || n.includes('lina') || n.includes('ritela');
 }
 
-/** Classifications THEI/BSI pays Alba/Lina as agent commission (not agency override). */
+/** Classifications paid to Lina as agent production (never Agency Override). */
 function isAlbaAgentCommission(classification) {
   const c = String(classification || '').toLowerCase();
   if (c.includes('override')) return false;
