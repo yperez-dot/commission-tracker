@@ -24,6 +24,8 @@ function formatReportDate(d = new Date()) {
 
 function titleFor(type) {
   if (type === STATEMENT_TYPES.BSI_OVERRIDE) return 'BSI Override Statement';
+  if (type === STATEMENT_TYPES.THEI_NHP) return 'THEI House Statement — NHP Sales';
+  if (type === STATEMENT_TYPES.THEI_BSI) return 'THEI House Statement — BSI Remittance';
   if (type === STATEMENT_TYPES.MARCO) return 'Marco (IRS Swan) Override Statement';
   if (type === STATEMENT_TYPES.INTEGRITY) return 'Integrity Partners Producer Statement';
   return 'THEI Override Statement';
@@ -32,6 +34,12 @@ function titleFor(type) {
 function noteFor(type) {
   if (type === STATEMENT_TYPES.BSI_OVERRIDE) {
     return 'BSI 50% of Agency Override pot + Alba rate-peeled production shares. Not agent commissions.';
+  }
+  if (type === STATEMENT_TYPES.THEI_NHP) {
+    return 'THEI share of NHP agency statement sales / overrides only. Direct-carrier and BSI remittance are on the BSI remittance report.';
+  }
+  if (type === STATEMENT_TYPES.THEI_BSI) {
+    return 'THEI share of what BSI pays us (BSI remittance / BSI payee feeds). NHP sales are on the NHP report.';
   }
   if (type === STATEMENT_TYPES.MARCO) {
     return '$10 per policy agency peel (IRS Swan / Marco) across downline. Not an agent commission.';
@@ -225,7 +233,11 @@ function filenameForOverrideExcel(bundle, payee) {
   const who =
     bundle.type === STATEMENT_TYPES.BSI_OVERRIDE
       ? 'BSI'
-      : bundle.type === STATEMENT_TYPES.THEI_OVERRIDE
+      : bundle.type === STATEMENT_TYPES.THEI_NHP
+        ? 'THEI_NHP'
+        : bundle.type === STATEMENT_TYPES.THEI_BSI
+          ? 'THEI_BSI_Remittance'
+          : bundle.type === STATEMENT_TYPES.THEI_OVERRIDE
         ? 'THEI'
         : bundle.type === STATEMENT_TYPES.MARCO
           ? 'Marco'

@@ -68,6 +68,8 @@ function downloadBase64File(filename, base64, mime) {
 function filenameForHouseExcel(type, period, payee) {
   const periodPart = period && period !== 'all' ? period : 'ALL';
   if (type === 'bsi_override') return `BSI_Override_Statement_${periodPart}.xlsx`;
+  if (type === 'thei_nhp') return `THEI_NHP_Statement_${periodPart}.xlsx`;
+  if (type === 'thei_bsi') return `THEI_BSI_Remittance_Statement_${periodPart}.xlsx`;
   if (type === 'thei_override') return `THEI_Override_Statement_${periodPart}.xlsx`;
   if (type === 'marco') return `Marco_Override_Statement_${periodPart}.xlsx`;
   const who = String(payee || 'Override').replace(/\s+/g, '_').replace(/[^A-Za-z0-9_\-]/g, '');
@@ -356,7 +358,7 @@ function OverridePayeeRow({ s, onExport, exportLabel = 'Statement' }) {
 function HouseOverridesPanel() {
   const [ovTypes, setOvTypes] = useState([]);
   const [ovPeriods, setOvPeriods] = useState([]);
-  const [ovType, setOvType] = useState('thei_override');
+  const [ovType, setOvType] = useState('thei_nhp');
   const [ovPeriod, setOvPeriod] = useState('');
   const [preview, setPreview] = useState(null);
   const [ovLoading, setOvLoading] = useState(false);
@@ -463,7 +465,7 @@ function HouseOverridesPanel() {
       <div className="card" style={{ marginBottom: 14 }}>
         <div className="card-title" style={{ fontSize: 15, marginBottom: 6 }}>House statements</div>
         <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14, lineHeight: 1.45 }}>
-          THEI / BSI 50/50, Marco (IRS Swan) $10 agency peel, and Integrity / CAM / Chris producer shares.
+          THEI NHP sales and THEI BSI remittance are separate reports. Marco (IRS Swan) $10 agency peel, and Integrity / CAM / Chris producer shares.
           Lina’s agent production is under <strong>Agent Payouts</strong> — not here.
         </div>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
@@ -855,7 +857,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
     },
     overrides: {
       title: 'House Statements',
-      sub: 'THEI / BSI overrides, Marco (IRS Swan) $10 agency peel, Integrity / CAM / Chris',
+      sub: 'THEI NHP vs BSI remittance, Marco (IRS Swan) $10 agency peel, Integrity / CAM / Chris',
     },
     loa: {
       title: 'LOA Statements',

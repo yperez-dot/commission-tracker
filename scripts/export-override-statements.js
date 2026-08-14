@@ -9,7 +9,7 @@
  *   DATABASE_URL=... node scripts/export-override-statements.js --type=marco --period=202601 --out=./out
  *   DATABASE_URL=... node scripts/export-override-statements.js --type=all --period=202601 --out=./out
  *
- * Types: thei_override | bsi_override | marco | integrity | all
+ * Types: thei_nhp | thei_bsi | thei_override | bsi_override | marco | integrity | all
  * Dry by default writes CSVs under --out (default: ./override-statements-out).
  */
 

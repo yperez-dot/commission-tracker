@@ -78,6 +78,26 @@ describe('overrideExcelStatement', () => {
     expect(ws.getRow(12).getCell(5).value).toBe('01-01-2026');
   });
 
+  it('names NHP vs BSI remittance THEI workbooks separately', () => {
+    const nhpRows = rows.map((r) => ({ ...r, source: 'NHP' }));
+    const nhpBundle = buildOverrideStatements(nhpRows, STATEMENT_TYPES.THEI_NHP, {
+      period: '202601',
+    });
+    expect(titleFor(nhpBundle.type)).toMatch(/NHP/i);
+    expect(filenameForOverrideExcel(nhpBundle, 'The Health Experts Insurance')).toBe(
+      'THEI_NHP_Override_Statement_202601.xlsx'
+    );
+
+    const bsiRows = rows.map((r) => ({ ...r, source: 'BSI' }));
+    const bsiBundle = buildOverrideStatements(bsiRows, STATEMENT_TYPES.THEI_BSI, {
+      period: '202601',
+    });
+    expect(titleFor(bsiBundle.type)).toMatch(/BSI Remittance/i);
+    expect(filenameForOverrideExcel(bsiBundle, 'The Health Experts Insurance')).toBe(
+      'THEI_BSI_Remittance_Override_Statement_202601.xlsx'
+    );
+  });
+
   it('builds Marco and Integrity Excel with effective dates', async () => {
     const marcoBundle = buildOverrideStatements(rows, STATEMENT_TYPES.MARCO, {
       period: '202607',

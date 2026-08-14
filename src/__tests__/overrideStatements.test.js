@@ -95,6 +95,22 @@ describe('overrideStatementBuilder', () => {
     expect(bundle.statements[0].lines[0].override_pot).toBe(300); // thei+bsi for first row
   });
 
+  it('THEI NHP statement includes only NHP source rows', () => {
+    const sourced = [
+      { ...rows[0], source: 'NHP', thei_share: 80, bsi_share: 80 },
+      { ...rows[1], id: 21, source: 'BSI', thei_share: 45, bsi_share: 45 },
+      { ...rows[2], id: 22, source: 'direct_carrier', thei_share: 50, bsi_share: 50 },
+    ];
+    const nhp = buildOverrideStatements(sourced, STATEMENT_TYPES.THEI_NHP, { period: '202601' });
+    expect(nhp.grandTotal).toBe(80);
+    expect(nhp.statements[0].lineCount).toBe(1);
+    const bsi = buildOverrideStatements(sourced, STATEMENT_TYPES.THEI_BSI, { period: '202601' });
+    expect(bsi.grandTotal).toBe(45);
+    expect(bsi.statements[0].lineCount).toBe(1);
+    expect(classifyOverrideLine(sourced[2], STATEMENT_TYPES.THEI_NHP)).toBeNull();
+    expect(classifyOverrideLine(sourced[2], STATEMENT_TYPES.THEI_BSI)).toBeNull();
+  });
+
   it('BSI override statement uses bsi_share', () => {
     const bundle = buildOverrideStatements(rows, STATEMENT_TYPES.BSI_OVERRIDE, { period: '202601' });
     expect(bundle.grandTotal).toBe(245);
