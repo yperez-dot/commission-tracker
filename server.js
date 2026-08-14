@@ -55,6 +55,7 @@ app.use('/api/bob', require('./routes/bob'));
 const { router: planChangesRouter } = require('./routes/planChanges');
 app.use('/api/plan-changes', planChangesRouter);
 app.use('/api/payroll', require('./routes/payroll'));
+app.use('/api/pass-through', require('./routes/pass-through').router);
 app.use('/api/agent-statements', require('./routes/agent_statements'));
 app.use('/api/sales-tracker', require('./routes/sales-tracker'));
 app.use('/api/medicarepro', require('./routes/medicarepro'));
