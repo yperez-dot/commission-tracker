@@ -8,6 +8,7 @@ import {
   UPLOAD_PAGE_BY_DEST,
 } from '../utils/uploadDestination';
 import { setPendingUpload, takePendingUpload } from '../utils/pendingUpload';
+import { UploadPageShell, UploadDropZone, UploadAlert, UploadHistoryCard } from '../components/UploadPageLayout';
 
 export default function BSIStatementsUpload({ user, onNavigate }) {
   const [uploads, setUploads] = useState([]);
@@ -34,7 +35,6 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
   useEffect(() => {
     const pending = takePendingUpload();
     if (pending) queueFile(pending);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function queueFile(file) {
@@ -68,13 +68,6 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
     }
   }
 
-  function onDrop(e) {
-    e.preventDefault();
-    setDragOver(false);
-    const file = e.dataTransfer.files[0];
-    if (file) queueFile(file);
-  }
-
   async function deleteUpload(id) {
     if (!window.confirm('Delete this BSI statement upload?')) return;
     setDeletingId(id);
@@ -89,7 +82,7 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
   }
 
   return (
-    <div style={{ padding: 20, maxWidth: 1400, margin: '0 auto' }}>
+    <div>
       {routeConfirm && (
         <UploadRouteConfirm
           filename={routeConfirm.file?.name}
@@ -115,84 +108,35 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
         />
       )}
 
-      <div style={{ marginBottom: 24 }}>
-        <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600 }}>BSI Statements</h2>
-        <p style={{ margin: '8px 0 0', color: 'var(--text-muted)', fontSize: 14 }}>
-          Carrier→BSI feeds (Humana / UHC / Aetna / Devoted). BSI→THE remittance belongs under Commission Statements.
-        </p>
-      </div>
-
-      <div
-        onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={onDrop}
-        style={{
-          border: dragOver ? '2px dashed var(--accent)' : '2px dashed var(--border)',
-          borderRadius: 8,
-          padding: 40,
-          textAlign: 'center',
-          background: dragOver ? 'var(--bg-secondary)' : 'var(--bg)',
-          marginBottom: 24,
-          cursor: 'pointer'
-        }}
-        onClick={() => document.getElementById('bsi-file-input').click()}
+      <UploadPageShell
+        title="BSI Statements"
+        subtitle="Carrier→BSI feeds (Humana / UHC / Aetna / Devoted). BSI→THE remittance belongs under Commission Statements."
       >
-        <input
-          id="bsi-file-input"
-          type="file"
+        <UploadDropZone
+          dragOver={dragOver}
+          setDragOver={setDragOver}
+          onDropFiles={(files) => { if (files[0]) queueFile(files[0]); }}
+          uploading={uploading}
+          dropTitle="Drop BSI statement here"
+          dropHint="Supports .xlsx, .xls, .csv, .pdf"
           accept=".xlsx,.xls,.csv,.pdf"
-          style={{ display: 'none' }}
-          onChange={e => {
-            const f = e.target.files[0];
-            if (f) queueFile(f);
-            e.target.value = '';
-          }}
+          inputId="bsi-file-input"
         />
-        <div style={{ fontSize: 16, marginBottom: 8 }}>
-          {uploading ? 'Uploading...' : 'Drop BSI statement here or click to browse'}
-        </div>
-        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-          Supported formats: Excel (.xlsx, .xls), CSV, PDF
-        </div>
-      </div>
 
-      {uploadResult && (
-        <div style={{
-          padding: 16,
-          background: 'var(--bg-secondary)',
-          border: '1px solid var(--border)',
-          borderRadius: 8,
-          marginBottom: 24
-        }}>
-          <div style={{ fontWeight: 600, marginBottom: 8 }}>Upload complete</div>
-          <div style={{ fontSize: 14, color: 'var(--text-muted)' }}>
+        {error && <UploadAlert>{error}</UploadAlert>}
+
+        {uploadResult && (
+          <UploadAlert kind="success" title="Upload complete">
             File: {uploadResult.filename}
-          </div>
-          {(uploadResult.rowCount != null || uploadResult.recordsImported != null) && (
-            <div style={{ fontSize: 14, color: 'var(--text-muted)', marginTop: 4 }}>
-              Records imported: {uploadResult.rowCount ?? uploadResult.recordsImported}
-            </div>
-          )}
-        </div>
-      )}
+            {(uploadResult.rowCount != null || uploadResult.recordsImported != null) && (
+              <div style={{ marginTop: 4 }}>
+                Records imported: {uploadResult.rowCount ?? uploadResult.recordsImported}
+              </div>
+            )}
+          </UploadAlert>
+        )}
 
-      {error && (
-        <div style={{
-          padding: 16,
-          background: '#fee',
-          border: '1px solid #fcc',
-          borderRadius: 8,
-          marginBottom: 24,
-          color: '#c00'
-        }}>
-          {error}
-        </div>
-      )}
-
-      <div>
-        <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>
-          Uploaded BSI Statements ({uploads.length})
-        </h3>
+        <UploadHistoryCard title={`Uploaded BSI Statements (${uploads.length})`}>
 
         {uploads.length === 0 ? (
           <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
@@ -319,7 +263,8 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
             </table>
           </div>
         )}
-      </div>
+        </UploadHistoryCard>
+      </UploadPageShell>
     </div>
   );
 }
