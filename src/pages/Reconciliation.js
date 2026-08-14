@@ -723,7 +723,7 @@ export default function Reconciliation({ user }) {
                   onChange={e => setShowDirectAgentsOnly(e.target.checked)}
                   style={{cursor:'pointer'}}
                 />
-                <span>Direct agents only (Yahoska & Katy)</span>
+                <span>Direct agents only (Yahoska, Katy & Carolina)</span>
               </label>
               <button className="btn btn-secondary" onClick={exportToCSV} disabled={loading}>
                 📥 Export CSV
