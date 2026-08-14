@@ -18,6 +18,16 @@ import './App.css';
 
 const REMOVED_PAGES = new Set(['reports', 'agents', 'fix-aetna', 'fixaetna']);
 
+const THEI_ONLY_PAGES = new Set([
+  'medicarepro-upload',
+  'agency-production-upload',
+  'agency-production-recon',
+  'direct-recon',
+  'renewals',
+  'pass-through-chargebacks',
+  'reconciliation',
+]);
+
 export default function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -68,6 +78,17 @@ export default function App() {
 
   useEffect(() => { checkAuth(); }, [checkAuth]);
 
+  const isBSI = agencyView.toLowerCase().includes('broker society');
+
+  useEffect(() => {
+    if (!user) return;
+    if (isBSI && THEI_ONLY_PAGES.has(page)) {
+      setPage('dashboard');
+      setPageParams({});
+      localStorage.setItem('he_page', 'dashboard');
+    }
+  }, [isBSI, page, user]);
+
   function handleLogin(token, userData) {
     setToken(token);
     localStorage.setItem('he_user', JSON.stringify(userData));
@@ -103,26 +124,6 @@ export default function App() {
   );
 
   if (!user) return <Login onLogin={handleLogin} />;
-
-  const isBSI = agencyView.toLowerCase().includes('broker society');
-
-  const THEI_ONLY_PAGES = new Set([
-    'medicarepro-upload',
-    'agency-production-upload',
-    'agency-production-recon',
-    'direct-recon',
-    'renewals',
-    'pass-through-chargebacks',
-    'reconciliation',
-  ]);
-
-  useEffect(() => {
-    if (isBSI && THEI_ONLY_PAGES.has(page)) {
-      setPage('dashboard');
-      setPageParams({});
-      localStorage.setItem('he_page', 'dashboard');
-    }
-  }, [isBSI, page]);
 
   const uploadChildren = [
     { id: 'upload', label: 'Commission Statements' },
