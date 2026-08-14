@@ -2,9 +2,11 @@
 
 const {
   THEI_DIRECT_AGENTS,
+  THEI_EXCLUDED_FROM_DIRECT,
   DASHBOARD_PRINCIPAL_AGENTS,
   DASHBOARD_MY_AGENTS,
   isTheiDirectAgent,
+  isTheiExcludedFromDirect,
   isTheiHouseWritingName,
   isTheiPrincipalAgent,
 } = require('../theiPrincipalAgents');
@@ -47,5 +49,19 @@ describe('theiPrincipalAgents', () => {
     expect(isTheiPrincipalAgent('Katy Robles')).toBe(true);
     expect(isTheiPrincipalAgent('Carolina Robles')).toBe(false);
     expect(isTheiPrincipalAgent('Alan Elchami')).toBe(false);
+  });
+
+  it('Alan Elchami is excluded from direct/principal filters', () => {
+    expect(THEI_EXCLUDED_FROM_DIRECT).toContain('Alan Elchami');
+    expect(isTheiExcludedFromDirect('Alan Elchami')).toBe(true);
+    expect(isTheiExcludedFromDirect('Eidi Alan')).toBe(true);
+    expect(isTheiDirectAgent('Alan Elchami')).toBe(false);
+    expect(isTheiDirectAgent('Eidi Alan')).toBe(false);
+    expect(DASHBOARD_PRINCIPAL_AGENTS).not.toContain('Alan Elchami');
+  });
+
+  it('house writing still matches for Yahoska UHC after Alan exclusion', () => {
+    expect(isTheiDirectAgent('The Health Experts Insurance')).toBe(true);
+    expect(isTheiDirectAgent('The Health Experts')).toBe(true);
   });
 });

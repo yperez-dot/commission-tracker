@@ -6,6 +6,10 @@
  * Direct agents (Sales Recon, dashboard agent view): Yahoska, Katy, Carolina,
  * plus THEI house writing name (UHC statements often post as agency, not personal).
  * Missing Renewals BOB scope stays Yahoska + Katy only (ops rule).
+ *
+ * Alan Elchami (Eidi Alan): pre–writing-name-change UHC posted on Yahoska's writer /
+ * house name — his production, not Yahoska's. Tag those rows as `Alan Elchami` in DB;
+ * names here are excluded from direct/principal filters even if logic changes later.
  */
 
 /** Carrier-commission Medicare writers on THEI house (Sales Recon direct-agents filter). */
@@ -32,6 +36,15 @@ const DASHBOARD_PRINCIPAL_AGENTS = Object.freeze([
   THEI_HOUSE_AGENT,
 ]);
 
+/**
+ * Downline whose production must never roll into direct/principal views
+ * (paid separately; may have posted under house writing before UHC name change).
+ */
+const THEI_EXCLUDED_FROM_DIRECT = Object.freeze([
+  'Alan Elchami',
+  'Eidi Alan',
+]);
+
 /** Admin dashboard sidebar agent filter (principals + common downline). */
 const DASHBOARD_MY_AGENTS = Object.freeze([
   ...THEI_DIRECT_AGENTS,
@@ -46,6 +59,18 @@ function normalizeAgentKey(name) {
   return String(name || '').toLowerCase().trim();
 }
 
+/** Known downline excluded from direct/principal production (see module header). */
+function isTheiExcludedFromDirect(agentName) {
+  const n = normalizeAgentKey(agentName);
+  if (!n) return false;
+  return THEI_EXCLUDED_FROM_DIRECT.some((canonical) => {
+    const c = canonical.toLowerCase();
+    if (n.includes(c) || c.includes(n)) return true;
+    const tokens = c.split(/\s+/).filter(Boolean);
+    return tokens.length >= 2 && tokens.every((t) => n.includes(t));
+  });
+}
+
 /** UHC (and some carrier feeds): writing agent = THEI house, not a person's name. */
 function isTheiHouseWritingName(agentName) {
   const n = normalizeAgentKey(agentName);
@@ -55,6 +80,7 @@ function isTheiHouseWritingName(agentName) {
 
 /** Sales Recon / dashboard: direct writers + THEI house UHC writing. */
 function isTheiDirectAgent(agentName) {
+  if (isTheiExcludedFromDirect(agentName)) return false;
   if (isTheiHouseWritingName(agentName)) return true;
   const n = normalizeAgentKey(agentName);
   if (!n) return false;
@@ -88,9 +114,11 @@ function directAgentsLabel() {
 module.exports = {
   THEI_DIRECT_AGENTS,
   THEI_HOUSE_AGENT,
+  THEI_EXCLUDED_FROM_DIRECT,
   DASHBOARD_PRINCIPAL_AGENTS,
   DASHBOARD_MY_AGENTS,
   isTheiDirectAgent,
+  isTheiExcludedFromDirect,
   isTheiHouseWritingName,
   isTheiPrincipalAgent,
   directAgentsLabel,
