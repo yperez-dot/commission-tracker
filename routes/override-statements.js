@@ -11,6 +11,7 @@ const {
   summaryToCsv,
   filenameFor,
 } = require('../src/overrideStatementBuilder');
+const { isTheiHouseType } = require('../src/payeeSchedules');
 const {
   buildOverrideExcelWorkbook,
   filenameForOverrideExcel,
@@ -18,7 +19,8 @@ const {
 
 /** Override Statements tab — Lina/agent production is Agent Payouts only. */
 const OVERRIDE_UI_TYPES = [
-  STATEMENT_TYPES.THEI_OVERRIDE,
+  STATEMENT_TYPES.THEI_NHP,
+  STATEMENT_TYPES.THEI_BSI,
   STATEMENT_TYPES.BSI_OVERRIDE,
   STATEMENT_TYPES.MARCO,
   STATEMENT_TYPES.INTEGRITY,
@@ -46,8 +48,7 @@ async function fetchOverrideRows(pool, period, type) {
   // THEI/BSI: Agency Override rows PLUS Alba rate-peeled agent-production shares.
   // Marco/Integrity: Agency Override only.
   // Lina's producer_payable itself is Agent Payouts / Lina Excel — not these statements.
-  const includeAlbaPeel =
-    type === STATEMENT_TYPES.THEI_OVERRIDE || type === STATEMENT_TYPES.BSI_OVERRIDE;
+  const includeAlbaPeel = isTheiHouseType(type) || type === STATEMENT_TYPES.BSI_OVERRIDE;
   let where = includeAlbaPeel
     ? `WHERE (
          classification ILIKE '%override%'
@@ -87,10 +88,17 @@ router.get('/types', requireAuth, (_req, res) => {
   res.json({
     types: [
       {
-        id: STATEMENT_TYPES.THEI_OVERRIDE,
-        label: 'THEI Overrides',
+        id: STATEMENT_TYPES.THEI_NHP,
+        label: 'THEI — NHP sales',
         amountField: 'thei_share',
-        description: 'THEI 50% of Agency Override + Alba rate-peeled production shares',
+        description: 'THEI share of NHP agency statement sales only',
+        exportFormat: 'xlsx',
+      },
+      {
+        id: STATEMENT_TYPES.THEI_BSI,
+        label: 'THEI — BSI remittance',
+        amountField: 'thei_share',
+        description: 'THEI share of what BSI pays us (BSI remittance)',
         exportFormat: 'xlsx',
       },
       {
@@ -316,7 +324,7 @@ router.get('/export-all-types', requireAuth, requireAdmin, async (req, res) => {
     const period = String(req.query.period || 'all');
     const pool = getPool();
     // THEI/BSI fetch is a superset (Agency Override + Alba rate-peel). Marco/Integrity ignore extra rows.
-    const rows = await fetchOverrideRows(pool, period, STATEMENT_TYPES.THEI_OVERRIDE);
+    const rows = await fetchOverrideRows(pool, period, STATEMENT_TYPES.THEI_NHP);
     const files = [];
     const typeSummaries = [];
 

@@ -4,7 +4,9 @@
  * Override statement builder — assemble payee statements from commission_records.
  *
  * Statement types (see payeeSchedules.STATEMENT_TYPES):
- *   thei_override  → amount = thei_share (50% of override pot on standard BSI rows)
+ *   thei_override  → amount = thei_share (combined NHP + BSI; scripts)
+ *   thei_nhp       → THEI house, NHP sales only
+ *   thei_bsi       → THEI house, BSI remittance only (what BSI pays us)
  *   bsi_override   → amount = bsi_share  (50% of override pot on standard BSI rows)
  *   marco          → amount = sub_agent_override on Marco-schedule agents
  *   integrity      → amount = producer_payable on Integrity agents
@@ -19,6 +21,8 @@ const {
   isAlbaHernandez,
   isAlbaAgentCommission,
   isAgencyOverride,
+  isNhpSource,
+  isBsiRemitSource,
   ALBA_DISPLAY_NAME,
 } = require('./payeeSchedules');
 const { formatEffectiveDate } = require('./effectiveDateFormat');
@@ -86,31 +90,44 @@ function isAlbaPeeledOverrideShare(row) {
   return num(row.thei_share) !== 0 || num(row.bsi_share) !== 0;
 }
 
+function classifyTheiShareLine(row) {
+  const clsOverride = isAgencyOverride(row.classification);
+  const albaPeeled = isAlbaPeeledOverrideShare(row);
+  if (!clsOverride && !albaPeeled) return null;
+  const amount = num(row.thei_share);
+  if (amount === 0 && num(row.commission) === 0) return null;
+  if (albaPeeled && amount === 0) return null;
+  const pot = overridePot(row);
+  return {
+    payee: 'The Health Experts Insurance',
+    amountField: 'thei_share',
+    amount,
+    pot,
+    shareLabel: sharePct(amount, pot) || (isIntegrityAgent(row.agent_name) ? '25%' : '50%'),
+    schedule: albaPeeled
+      ? 'alba_rate_peel_thei_50'
+      : isIntegrityAgent(row.agent_name)
+        ? 'integrity_thei_25'
+        : isMarcoAgent(row.agent_name, row.payment_period)
+          ? 'marco_residual_thei'
+          : 'standard_thei_50',
+  };
+}
+
 function classifyOverrideLine(row, statementType) {
   const clsOverride = isAgencyOverride(row.classification);
   const albaPeeled = isAlbaPeeledOverrideShare(row);
 
   switch (statementType) {
-    case STATEMENT_TYPES.THEI_OVERRIDE: {
-      if (!clsOverride && !albaPeeled) return null;
-      const amount = num(row.thei_share);
-      if (amount === 0 && num(row.commission) === 0) return null;
-      if (albaPeeled && amount === 0) return null;
-      const pot = overridePot(row);
-      return {
-        payee: 'The Health Experts Insurance',
-        amountField: 'thei_share',
-        amount,
-        pot,
-        shareLabel: sharePct(amount, pot) || (isIntegrityAgent(row.agent_name) ? '25%' : '50%'),
-        schedule: albaPeeled
-          ? 'alba_rate_peel_thei_50'
-          : isIntegrityAgent(row.agent_name)
-            ? 'integrity_thei_25'
-            : isMarcoAgent(row.agent_name, row.payment_period)
-              ? 'marco_residual_thei'
-              : 'standard_thei_50',
-      };
+    case STATEMENT_TYPES.THEI_OVERRIDE:
+      return classifyTheiShareLine(row);
+    case STATEMENT_TYPES.THEI_NHP: {
+      if (!isNhpSource(row.source)) return null;
+      return classifyTheiShareLine(row);
+    }
+    case STATEMENT_TYPES.THEI_BSI: {
+      if (!isBsiRemitSource(row.source)) return null;
+      return classifyTheiShareLine(row);
     }
     case STATEMENT_TYPES.BSI_OVERRIDE: {
       if (!clsOverride && !albaPeeled) return null;
@@ -332,8 +349,12 @@ function statementToCsv(bundle, payeeStatement) {
         ? 'Integrity Partners Producer Statement (50%)'
         : bundle.type === STATEMENT_TYPES.ALBA
           ? 'Lina Hernandez Agent Commission Statement'
-        : bundle.type === STATEMENT_TYPES.BSI_OVERRIDE
+      : bundle.type === STATEMENT_TYPES.BSI_OVERRIDE
           ? 'BSI Override Statement (50% of override pot)'
+          : bundle.type === STATEMENT_TYPES.THEI_NHP
+            ? 'THEI House Statement — NHP sales only'
+            : bundle.type === STATEMENT_TYPES.THEI_BSI
+              ? 'THEI House Statement — BSI remittance (what BSI pays us)'
           : 'THEI Override Statement (50% of override pot)';
 
   const splitNote =
