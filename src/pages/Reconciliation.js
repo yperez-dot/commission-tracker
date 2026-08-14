@@ -386,15 +386,22 @@ export default function Reconciliation({ user }) {
     loadData();
   }, []);
 
-  // Direct agents who get carrier commissions (Yahoska + Katy)
-  const directAgents = ['Yahoska Perez', 'Katy Robles'];
+  // Direct agents who get carrier commissions (Yahoska, Katy, Carolina)
+  const directAgents = ['Yahoska Perez', 'Katy Robles', 'Carolina Robles'];
   
   // Filter sales by direct agents if toggle is on
   let filteredSales = sales;
   if (showDirectAgentsOnly) {
     filteredSales = sales.filter(sale => {
-      const agentName = sale.agent_name || sale.agent || '';
-      return directAgents.some(da => agentName.includes(da) || da.includes(agentName));
+      const agentName = (sale.agent_name || sale.agent || '').toLowerCase();
+      if (!agentName) return false;
+      return directAgents.some(da => {
+        const d = da.toLowerCase();
+        if (agentName.includes(d) || d.includes(agentName)) return true;
+        // e.g. "Carolina Andrea Robles" ↔ "Carolina Robles"
+        const tokens = d.split(/\s+/).filter(Boolean);
+        return tokens.length >= 2 && tokens.every(t => agentName.includes(t));
+      });
     });
   }
   
