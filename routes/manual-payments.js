@@ -2,6 +2,9 @@ const express = require('express');
 const router = express.Router();
 const path = require('path');
 const fs = require('fs');
+const { requireAuth } = require('./auth');
+
+router.use(requireAuth);
 
 // Simple JSON file storage for manual payments
 const STORAGE_FILE = path.join(__dirname, '../data/manual-payments.json');
