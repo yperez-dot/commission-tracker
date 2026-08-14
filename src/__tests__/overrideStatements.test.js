@@ -4,6 +4,8 @@ const {
   STATEMENT_TYPES,
   buildOverrideStatements,
   classifyOverrideLine,
+  statementToCsv,
+  formatEffectiveDate,
 } = require('../overrideStatementBuilder');
 const { isMarcoAgent, isIntegrityAgent, isAlbaHernandez } = require('../payeeSchedules');
 
@@ -112,6 +114,23 @@ describe('overrideStatementBuilder', () => {
     expect(bundle.statements).toHaveLength(1);
     expect(bundle.statements[0].payee).toBe('Christian Munoz');
     expect(bundle.grandTotal).toBe(100);
+  });
+
+  it('formats effective dates on statement lines and CSV', () => {
+    const bundle = buildOverrideStatements(rows, STATEMENT_TYPES.THEI_OVERRIDE, { period: '202601' });
+    expect(bundle.statements[0].lines[0].effective_date).toBe('01/01/2026');
+    const csv = statementToCsv(bundle, bundle.statements[0]);
+    expect(csv).toMatch(/"Effective"/);
+    expect(csv).toMatch(/"01-01-2026"/);
+  });
+
+  it('formatEffectiveDate normalizes ISO, slash, and Date values', () => {
+    expect(formatEffectiveDate('2026-07-01')).toBe('07-01-2026');
+    expect(formatEffectiveDate('2026-07-01T00:00:00.000Z')).toBe('07-01-2026');
+    expect(formatEffectiveDate('01/15/2026')).toBe('01-15-2026');
+    expect(formatEffectiveDate('7-1-2026')).toBe('07-01-2026');
+    expect(formatEffectiveDate(new Date(Date.UTC(2026, 6, 1)))).toBe('07-01-2026');
+    expect(formatEffectiveDate('')).toBe('');
   });
 
   it('THEI/BSI statements include Alba rate-peeled production shares (not just Agency Override class)', () => {
