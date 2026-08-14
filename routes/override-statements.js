@@ -24,11 +24,6 @@ const OVERRIDE_UI_TYPES = [
   STATEMENT_TYPES.INTEGRITY,
 ];
 
-const EXCEL_TYPES = new Set([
-  STATEMENT_TYPES.THEI_OVERRIDE,
-  STATEMENT_TYPES.BSI_OVERRIDE,
-]);
-
 function isValidOverrideType(type) {
   return OVERRIDE_UI_TYPES.includes(type);
 }
@@ -110,14 +105,14 @@ router.get('/types', requireAuth, (_req, res) => {
         label: 'Marco (IRS Swan)',
         amountField: 'sub_agent_override',
         description: '$10/policy agency peel (IRS Swan / Marco) across downline — not an agent payout',
-        exportFormat: 'csv',
+        exportFormat: 'xlsx',
       },
       {
         id: STATEMENT_TYPES.INTEGRITY,
         label: 'Chris / CAM / Integrity',
         amountField: 'producer_payable',
         description: 'Integrity Partners 50% producer statements (agency schedule)',
-        exportFormat: 'csv',
+        exportFormat: 'xlsx',
       },
     ],
   });
@@ -164,7 +159,7 @@ router.get('/preview', requireAuth, async (req, res) => {
       periodLabel: bundle.periodLabel,
       statementCount: bundle.statementCount,
       grandTotal: bundle.grandTotal,
-      exportFormat: EXCEL_TYPES.has(type) ? 'xlsx' : 'csv',
+      exportFormat: 'xlsx',
       statements: bundle.statements.map((s) => ({
         payee: s.payee,
         lineCount: s.lineCount,
@@ -175,6 +170,8 @@ router.get('/preview', requireAuth, async (req, res) => {
           carrier: l.carrier,
           classification: l.classification,
           writing_agent: l.writing_agent,
+          effective_date: l.effective_date,
+          payment_period: l.payment_period,
           amount: l.amount,
         })),
       })),
@@ -187,16 +184,16 @@ router.get('/preview', requireAuth, async (req, res) => {
 
 /**
  * GET /api/override-statements/export-xlsx?type=thei_override&period=202601&payee=...
- * Excel download for THEI / BSI override statements (Lina-quality template).
+ * Excel download for all House Statement types (THEI / BSI / Marco / Integrity).
  */
 router.get('/export-xlsx', requireAuth, requireAdmin, async (req, res) => {
   try {
     const type = String(req.query.type || '');
     const period = String(req.query.period || 'all');
     const payee = req.query.payee ? String(req.query.payee) : null;
-    if (!EXCEL_TYPES.has(type)) {
+    if (!isValidOverrideType(type)) {
       return res.status(400).json({
-        error: 'Excel export is for thei_override / bsi_override. Use /export for CSV types.',
+        error: `Excel export is for: ${OVERRIDE_UI_TYPES.join(', ')}`,
       });
     }
     const pool = getPool();
@@ -225,7 +222,7 @@ router.get('/export-xlsx', requireAuth, requireAdmin, async (req, res) => {
 
 /**
  * GET /api/override-statements/export?type=marco&period=202601&payee=Marco
- * CSV download (Marco / Integrity). THEI/BSI with payee redirect to Excel.
+ * CSV download (kept for CLI / backups). UI House Statements use Excel.
  */
 router.get('/export', requireAuth, requireAdmin, async (req, res) => {
   try {
@@ -267,7 +264,7 @@ router.get('/export', requireAuth, requireAdmin, async (req, res) => {
 
 /**
  * GET /api/override-statements/export-all?type=integrity&period=202601
- * Returns JSON with each payee's CSV (or xlsxBase64 for THEI/BSI).
+ * Returns JSON with each payee's Excel (xlsxBase64) plus a CSV summary.
  */
 router.get('/export-all', requireAuth, requireAdmin, async (req, res) => {
   try {
@@ -279,26 +276,19 @@ router.get('/export-all', requireAuth, requireAdmin, async (req, res) => {
     const pool = getPool();
     const rows = await fetchOverrideRows(pool, period, type);
     const bundle = buildOverrideStatements(rows, type, { period });
-    const wantExcel = EXCEL_TYPES.has(type);
 
     const files = [];
     for (const s of bundle.statements) {
-      const entry = {
+      const wb = await buildOverrideExcelWorkbook(bundle, s);
+      const buffer = await wb.xlsx.writeBuffer();
+      files.push({
         payee: s.payee,
-        filename: wantExcel
-          ? filenameForOverrideExcel(bundle, s.payee)
-          : filenameFor(bundle, s.payee),
+        filename: filenameForOverrideExcel(bundle, s.payee),
         total: s.total,
         lineCount: s.lineCount,
-        format: wantExcel ? 'xlsx' : 'csv',
-        csv: wantExcel ? undefined : statementToCsv(bundle, s),
-      };
-      if (wantExcel) {
-        const wb = await buildOverrideExcelWorkbook(bundle, s);
-        const buffer = await wb.xlsx.writeBuffer();
-        entry.xlsxBase64 = Buffer.from(buffer).toString('base64');
-      }
-      files.push(entry);
+        format: 'xlsx',
+        xlsxBase64: Buffer.from(buffer).toString('base64'),
+      });
     }
 
     res.json({
@@ -306,13 +296,75 @@ router.get('/export-all', requireAuth, requireAdmin, async (req, res) => {
       period: bundle.period,
       periodLabel: bundle.periodLabel,
       grandTotal: bundle.grandTotal,
-      exportFormat: wantExcel ? 'xlsx' : 'csv',
+      exportFormat: 'xlsx',
       files,
       summaryFilename: filenameFor(bundle, 'SUMMARY'),
       summaryCsv: summaryToCsv(bundle),
     });
   } catch (err) {
     console.error('[override-statements] export-all', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * GET /api/override-statements/export-all-types?period=202607
+ * Excel for every House Statement type (THEI, BSI, Marco, Integrity) in one period.
+ */
+router.get('/export-all-types', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const period = String(req.query.period || 'all');
+    const pool = getPool();
+    // THEI/BSI fetch is a superset (Agency Override + Alba rate-peel). Marco/Integrity ignore extra rows.
+    const rows = await fetchOverrideRows(pool, period, STATEMENT_TYPES.THEI_OVERRIDE);
+    const files = [];
+    const typeSummaries = [];
+
+    for (const type of OVERRIDE_UI_TYPES) {
+      const bundle = buildOverrideStatements(rows, type, { period });
+      typeSummaries.push({
+        type: bundle.type,
+        periodLabel: bundle.periodLabel,
+        statementCount: bundle.statementCount,
+        grandTotal: bundle.grandTotal,
+      });
+      for (const s of bundle.statements) {
+        const wb = await buildOverrideExcelWorkbook(bundle, s);
+        const buffer = await wb.xlsx.writeBuffer();
+        files.push({
+          type: bundle.type,
+          payee: s.payee,
+          filename: filenameForOverrideExcel(bundle, s.payee),
+          total: s.total,
+          lineCount: s.lineCount,
+          format: 'xlsx',
+          xlsxBase64: Buffer.from(buffer).toString('base64'),
+        });
+      }
+    }
+
+    const summaryLines = [
+      '"OliComm House Statements — all types"',
+      `"Period: ${typeSummaries[0] ? typeSummaries[0].periodLabel : period}"`,
+      '',
+      '"Type","Payee","Lines","Net Total"',
+    ];
+    for (const f of files) {
+      summaryLines.push(
+        `"${f.type}","${String(f.payee).replace(/"/g, '""')}",${f.lineCount},"$${Number(f.total || 0).toFixed(2)}"`
+      );
+    }
+
+    res.json({
+      period,
+      periodLabel: typeSummaries[0] ? typeSummaries[0].periodLabel : period,
+      types: typeSummaries,
+      files,
+      summaryFilename: `house_statements_all_types_${period === 'all' ? 'ALL' : period}.csv`,
+      summaryCsv: summaryLines.join('\n'),
+    });
+  } catch (err) {
+    console.error('[override-statements] export-all-types', err);
     res.status(500).json({ error: err.message });
   }
 });
