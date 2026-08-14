@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../api';
 import { formatDate as formatDateUtil } from '../utils/dateFormat';
+import { THEI_DIRECT_AGENTS, isTheiDirectAgent, directAgentsLabel } from '../theiPrincipalAgents';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -386,22 +387,12 @@ export default function Reconciliation({ user }) {
     loadData();
   }, []);
 
-  // Direct agents who get carrier commissions (Yahoska, Katy, Carolina)
-  const directAgents = ['Yahoska Perez', 'Katy Robles', 'Carolina Robles'];
-  
-  // Filter sales by direct agents if toggle is on
+  // Filter sales by direct agents if toggle is on (shared list: Yahoska, Katy, Carolina)
   let filteredSales = sales;
   if (showDirectAgentsOnly) {
-    filteredSales = sales.filter(sale => {
-      const agentName = (sale.agent_name || sale.agent || '').toLowerCase();
-      if (!agentName) return false;
-      return directAgents.some(da => {
-        const d = da.toLowerCase();
-        if (agentName.includes(d) || d.includes(agentName)) return true;
-        // e.g. "Carolina Andrea Robles" ↔ "Carolina Robles"
-        const tokens = d.split(/\s+/).filter(Boolean);
-        return tokens.length >= 2 && tokens.every(t => agentName.includes(t));
-      });
+    filteredSales = sales.filter((sale) => {
+      const agentName = sale.agent_name || sale.agent || '';
+      return isTheiDirectAgent(agentName);
     });
   }
   
@@ -723,7 +714,7 @@ export default function Reconciliation({ user }) {
                   onChange={e => setShowDirectAgentsOnly(e.target.checked)}
                   style={{cursor:'pointer'}}
                 />
-                <span>Direct agents only (Yahoska, Katy & Carolina)</span>
+                <span>Direct agents only ({directAgentsLabel()})</span>
               </label>
               <button className="btn btn-secondary" onClick={exportToCSV} disabled={loading}>
                 📥 Export CSV

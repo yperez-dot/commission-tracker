@@ -1,5 +1,7 @@
 'use strict';
 
+const { isTheiPrincipalAgent } = require('./theiPrincipalAgents');
+
 /**
  * Shared Missing Renewals matching + row build logic (server-side).
  * BOB (Yahoska/Katy active) × commission_records for one statement month.
@@ -283,16 +285,6 @@ function buildMissingRenewalRows({
       paid: built.filter((r) => !r.isMissing).length,
     },
   };
-}
-
-function isTheiPrincipalAgent(agentName) {
-  const a = String(agentName || '').toLowerCase();
-  return (
-    a.includes('yahoska') ||
-    a.includes('katy') ||
-    a.includes('perez, yahoska') ||
-    a.includes('robles, katy')
-  );
 }
 
 module.exports = {

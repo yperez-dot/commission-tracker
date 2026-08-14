@@ -1,6 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiFetch } from '../api';
 import { formatCarrier } from '../utils/formatCarrier';
+import {
+  DASHBOARD_MY_AGENTS,
+  DASHBOARD_PRINCIPAL_AGENTS,
+  THEI_DIRECT_AGENTS,
+} from '../theiPrincipalAgents';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -12,11 +17,6 @@ function fmtK(n) {
   return '$' + num.toFixed(0);
 }
 
-const MY_AGENTS = [
-  'Gina Berenguer','Jill Taylor','Katy Robles','Osmary Orozco',
-  'Sabri Perez','The Health Experts Insurance','Yahoska Perez',
-];
-const PRINCIPAL_AGENTS = ['Yahoska Perez', 'Katy Robles', 'The Health Experts Insurance'];
 const CLASSIFICATION_TYPES = ['New Business','Renewal','Agent Commission','Agency Override','Chargeback','HRA/Bonus'];
 
 const C = {
@@ -303,7 +303,7 @@ export default function Dashboard({ user, onNavigate }) {
     const p = new URLSearchParams();
     // In agent mode, force filter to principals only
     const agentsToUse = viewMode === 'agent'
-      ? PRINCIPAL_AGENTS.filter(a => allFilters.agents.includes(a))
+      ? DASHBOARD_PRINCIPAL_AGENTS.filter(a => allFilters.agents.includes(a))
       : selAgents;
     if (agentsToUse.length) p.set('agents', agentsToUse.join(','));
     if (selCarriers.length) p.set('carriers', selCarriers.join(','));
@@ -372,7 +372,7 @@ export default function Dashboard({ user, onNavigate }) {
   function drillDown(overrides={}) {
     if (!onNavigate) return;
     const agentOverride = viewMode === 'agent'
-      ? (overrides.agent || PRINCIPAL_AGENTS[0])
+      ? (overrides.agent || DASHBOARD_PRINCIPAL_AGENTS[0])
       : (overrides.agent||(selAgents.length===1?selAgents[0]:''));
     onNavigate('alldata', {
       agent: agentOverride,
@@ -398,7 +398,7 @@ export default function Dashboard({ user, onNavigate }) {
   const seenLabels = new Set();
   (allFilters.periods||[]).forEach(p => { const l=formatPeriod(p); if(l&&!seenLabels.has(l)){seenLabels.add(l);cleanPeriods.push(p);} });
 
-  const agentList = user.role==='admin'?MY_AGENTS.filter(a=>allFilters.agents.includes(a)):[user.name];
+  const agentList = user.role==='admin'?DASHBOARD_MY_AGENTS.filter(a=>allFilters.agents.includes(a)):[user.name];
   const hasFilters = selAgents.length||selCarriers.length||selPeriods.length||selTypes.length||selPlanTypes.length||selLOBs.length;
   const totalFiltersActive = [selAgents,selCarriers,selPeriods,selTypes,selPlanTypes,selLOBs].reduce((s,a)=>s+a.length,0);
   const netSales = kpi?.agents?.reduce((s,a)=>s+a.net_sales,0)||0;
@@ -446,7 +446,7 @@ export default function Dashboard({ user, onNavigate }) {
             ) : (
               <div style={{ background: C.accentLight, borderRadius: 6, padding: '8px 10px', marginBottom: 12, fontSize: 11, color: C.accentDark, lineHeight: 1.45, border: '0.5px solid #E8D9B8' }}>
                 <div style={{ fontWeight: 600, marginBottom: 4 }}>Principal agents</div>
-                Yahoska Perez, Katy Robles, THEI house — sidebar agent filter disabled in this view.
+                {THEI_DIRECT_AGENTS.join(', ')}, THEI house (incl. UHC agency writing) — sidebar agent filter disabled in this view.
               </div>
             )}
             <FilterGroup title="Plan Type" items={allFilters.planTypes||[]} selected={selPlanTypes} onToggle={item=>toggle(selPlanTypes,setSelPlanTypes,item)} onSelectAll={items=>setSelPlanTypes([...items])} onClearAll={()=>setSelPlanTypes([])}/>
