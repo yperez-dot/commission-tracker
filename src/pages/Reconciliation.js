@@ -321,16 +321,33 @@ function DepositTimeline({ deposits }) {
 }
 
 function ExpectedCell({ meta, amount }) {
+  const kind = meta?.kind;
+  if (kind === 'med_supp') {
+    return (
+      <td style={{ textAlign: 'right', fontSize: 12, color: 'var(--text-muted)' }}>
+        —
+        <div style={{ fontSize: 10, marginTop: 2, lineHeight: 1.35 }}>Med Supp (table TBD)</div>
+      </td>
+    );
+  }
+  if (kind === 'pdp') {
+    return (
+      <td style={{ textAlign: 'right', fontSize: 12, color: 'var(--text-muted)' }}>
+        —
+        <div style={{ fontSize: 10, marginTop: 2, lineHeight: 1.35 }}>PDP (no MA $347)</div>
+      </td>
+    );
+  }
   const prorated = meta?.prorated;
   return (
     <td style={{ textAlign: 'right', fontSize: 12, color: 'var(--text-muted)' }}>
       {fmt(amount)}
       <div style={{ fontSize: 10, marginTop: 2, lineHeight: 1.35 }}>
         {prorated
-          ? `Prorated ${meta.remainingMonths}/12 mo`
+          ? `MA prorated ${meta.remainingMonths}/12 mo`
           : meta?.kind === 'renewal'
-            ? 'Renewal floor'
-            : 'Full year (Jan)'}
+            ? 'MA renewal floor'
+            : 'MA full year (Jan)'}
       </div>
     </td>
   );
@@ -465,7 +482,9 @@ export default function Reconciliation({ user }) {
     const expect = expectedSaleCommission(sale);
     const expected = expect.amount;
     const actualNet = commission
-      ? (commission.isManual ? expected : (commission.netCommission ?? parseFloat(commission.commission || 0)))
+      ? (commission.isManual
+          ? (expected != null ? expected : (commission.netCommission || 0))
+          : (commission.netCommission ?? parseFloat(commission.commission || 0)))
       : 0;
     const deposits = commission?.isManual
       ? []
@@ -484,7 +503,7 @@ export default function Reconciliation({ user }) {
       expectedMeta: expect,
       monthsSinceEnrollment: months,
       actualCommission: actualNet,
-      difference: actualNet - expected,
+      difference: expected != null ? actualNet - expected : 0,
       deposits,
       paymentStatus,
     };
@@ -742,7 +761,7 @@ export default function Reconciliation({ user }) {
     <div>
       <div className="page-header">
         <div className="page-title">Sales Reconciliation</div>
-        <div className="page-sub">MedicarePro vs carrier commissions. Expected is calendar-prorated new business (July ≠ $347 full year). Partial = split deposits vs that prorated amount.</div>
+        <div className="page-sub">Medicare Advantage expected is calendar-prorated ($347 full year). Medicare Supplement uses a different table — not $347 — pending your compensation schedule.</div>
       </div>
       <div className="page-body">
 

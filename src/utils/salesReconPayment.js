@@ -29,13 +29,52 @@ export function remainingCalendarMonths(effectiveDate) {
 }
 
 /**
+ * Product family for a MedicarePro sale.
+ * MA/MAPD uses the $347 calendar-prorated NB schedule.
+ * Med Supp / PDP do not — those tables are separate.
+ */
+export function detectSaleProductFamily(sale) {
+  const s = `${sale?.policy_type || ''} ${sale?.plan_name || ''} ${sale?.product || ''} ${sale?.lob || ''}`.toLowerCase();
+  if (/med\s*supp|medigap|supplement/.test(s)) return 'MED_SUPP';
+  if (/mapd|medicare\s+advantage|(^|\s)ma(\s|$)/.test(s)) return 'MA_MAPD';
+  if (/\bpdp\b|prescription\s+drug/.test(s)) return 'PDP';
+  return 'UNKNOWN';
+}
+
+/**
  * Expected agent commission for a MedicarePro sale.
- * New business is calendar-prorated: July = 6/12 of $347, not $347.
- * Renewals use the monthly floor ($347/12).
+ * Medicare Advantage NB: calendar-prorated $347 (July = 6/12, not $347).
+ * Med Supp: no expected until the supplement compensation table is wired.
  */
 export function expectedSaleCommission(sale) {
+  const family = detectSaleProductFamily(sale);
   const blob = `${sale?.policy_type || ''} ${sale?.transaction_type || ''} ${sale?.sale_type || ''}`.toLowerCase();
   const renewal = blob.includes('renewal');
+
+  if (family === 'MED_SUPP') {
+    return {
+      amount: null,
+      remainingMonths: remainingCalendarMonths(sale?.effective_date),
+      fullYear: null,
+      prorated: false,
+      kind: 'med_supp',
+      family,
+      note: 'Med Supp schedule TBD — not $347 MA',
+    };
+  }
+
+  if (family === 'PDP') {
+    return {
+      amount: null,
+      remainingMonths: remainingCalendarMonths(sale?.effective_date),
+      fullYear: null,
+      prorated: false,
+      kind: 'pdp',
+      family,
+      note: 'PDP schedule not applied',
+    };
+  }
+
   const remaining = remainingCalendarMonths(sale?.effective_date);
   const months = renewal ? 1 : remaining;
   const amount = round2((FULL_YEAR_NB * months) / 12);
@@ -45,6 +84,8 @@ export function expectedSaleCommission(sale) {
     fullYear: FULL_YEAR_NB,
     prorated: !renewal && remaining < 12,
     kind: renewal ? 'renewal' : 'new_business',
+    family: family === 'UNKNOWN' ? 'MA_MAPD' : family,
+    note: null,
   };
 }
 
@@ -83,18 +124,19 @@ export function resolveSalePaymentStatus({ expected, actualNet, isManual, fullYe
     return { id: 'manual', label: 'Marked paid' };
   }
 
-  const exp = parseFloat(expected) || 0;
   const act = parseFloat(actualNet) || 0;
-  const cap = parseFloat(fullYear) || FULL_YEAR_NB;
+  const hasSchedule = expected != null && expected !== '' && Number.isFinite(parseFloat(expected));
 
   if (act <= 0) {
     return { id: 'unpaid', label: 'Unpaid' };
   }
 
-  if (exp <= 0) {
-    return { id: 'paid', label: act > 0 ? 'Paid' : 'Unpaid' };
+  if (!hasSchedule) {
+    return { id: 'paid', label: 'Received' };
   }
 
+  const exp = parseFloat(expected);
+  const cap = parseFloat(fullYear) || FULL_YEAR_NB;
   const remaining = round2(exp - act);
   if (remaining > PAYMENT_TOLERANCE) {
     return { id: 'partial', label: 'Partial', remaining };

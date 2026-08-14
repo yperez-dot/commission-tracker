@@ -30,7 +30,23 @@ describe('salesReconPayment', () => {
     expect(tl[1].amount).toBe(292);
   });
 
-  test('calendar-prorated NB: July is 6/12 of $347, not $347', () => {
+  test('Med Supp does not use the $347 MA schedule', () => {
+    const ms = expectedSaleCommission({
+      effective_date: '2026-07-01',
+      policy_type: 'Medicare Supplement',
+    });
+    expect(ms.kind).toBe('med_supp');
+    expect(ms.amount).toBeNull();
+    expect(resolveSalePaymentStatus({ expected: ms.amount, actualNet: 55 }).id).toBe('paid');
+    expect(resolveSalePaymentStatus({ expected: ms.amount, actualNet: 55 }).label).toBe('Received');
+  });
+
+  test('MA July still prorates $347', () => {
+    const ma = expectedSaleCommission({
+      effective_date: '2026-07-01',
+      policy_type: 'Medicare Advantage',
+    });
+    expect(ma.amount).toBe(173.5);
     const jul = expectedSaleCommission({ effective_date: '2026-07-01' });
     expect(jul.amount).toBe(173.5);
     expect(jul.remainingMonths).toBe(6);
