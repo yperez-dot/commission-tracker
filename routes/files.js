@@ -9,6 +9,8 @@ const { getPool } = require('../db/database');
 const { requireAuth, requireAdmin } = require('./auth');
 const { normalizeAgentName } = require('./normalize');
 const { detectPlanChanges } = require('./planChanges');
+const { resolvePassThroughLiableAgent } = require('../src/writerPassThroughAgents');
+const { ensurePassThroughSchema } = require('./pass-through');
 let pdfParse;
 try { pdfParse = require('pdf-parse'); } catch(e) { console.log('pdf-parse not installed'); }
 
@@ -4568,8 +4570,14 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS statement_month TEXT`); } catch(e) {}
     try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS members INTEGER DEFAULT 0`); } catch(e) {}
     try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS anomaly BOOLEAN DEFAULT false`); } catch(e) {}
+    await ensurePassThroughSchema(pool);
 
     for (const r of records) {
+      const liableAgent = resolvePassThroughLiableAgent({
+        agentName: r.agent,
+        clientName: r.client,
+        commission: r.commission,
+      });
       await pool.query(
         `INSERT INTO commission_records (
            upload_id, agent_name, carrier, plan_type, client_full_name, effective_date,
@@ -4577,7 +4585,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
            raw_data,
            source, policy_written_date, gross_commission, thei_share, bsi_share,
            producer_payable, split_applies, lob, sub_agent_override, statement_month, members,
-           anomaly, member_state
+           anomaly, member_state, liable_agent
          )
          VALUES (
            $1,$2,$3,$4,$5,$6,
@@ -4585,7 +4593,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
            $14,
            $15,$16,$17,$18,$19,
            $20,$21,$22,$23,$24,$25,
-           $26,$27
+           $26,$27,$28
          )`,
         [
           uploadId, r.agent, r.carrier, r.planType || '', r.client, r.effectiveDate,
@@ -4612,6 +4620,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
           r.members || 0,
           r.anomaly === true,
           r.memberState || null,
+          liableAgent,
         ]
       );
     }
@@ -5289,9 +5298,15 @@ router.post('/upload-bsi-statement', requireAuth, upload.single('file'), async (
     try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS statement_month TEXT`); } catch(e) {}
     try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS members INTEGER DEFAULT 0`); } catch(e) {}
     try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS anomaly BOOLEAN DEFAULT false`); } catch(e) {}
+    await ensurePassThroughSchema(pool);
 
     // Insert records into commission_records
     for (const r of records) {
+      const liableAgent = resolvePassThroughLiableAgent({
+        agentName: r.agent,
+        clientName: r.client,
+        commission: r.commission,
+      });
       await pool.query(
         `INSERT INTO commission_records (
            upload_id, agent_name, carrier, plan_type, client_full_name, effective_date,
@@ -5299,7 +5314,7 @@ router.post('/upload-bsi-statement', requireAuth, upload.single('file'), async (
            raw_data,
            source, policy_written_date, gross_commission, thei_share, bsi_share,
            producer_payable, split_applies, lob, sub_agent_override, statement_month, members,
-           anomaly, member_state
+           anomaly, member_state, liable_agent
          )
          VALUES (
            $1,$2,$3,$4,$5,$6,
@@ -5307,7 +5322,7 @@ router.post('/upload-bsi-statement', requireAuth, upload.single('file'), async (
            $14,
            $15,$16,$17,$18,$19,
            $20,$21,$22,$23,$24,$25,
-           $26,$27
+           $26,$27,$28
          )`,
         [
           uploadId, r.agent, r.carrier, r.planType || '', r.client, r.effectiveDate,
@@ -5334,6 +5349,7 @@ router.post('/upload-bsi-statement', requireAuth, upload.single('file'), async (
           r.members || 0,
           r.anomaly === true,
           r.memberState || null,
+          liableAgent,
         ]
       );
     }

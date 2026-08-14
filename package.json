@@ -5,7 +5,7 @@
   "scripts": {
     "start": "node server.js",
     "build": "react-scripts build",
-    "test": "react-scripts test --watchAll=false --testPathPattern='commissionEngine|overrideStatements|theRemittance|bsiPayee|linaCompensation|bsiBookAttribution|overrideExcel|missingRenewalsLogic|uploadDestination'"
+    "test": "react-scripts test --watchAll=false --testPathPattern='commissionEngine|overrideStatements|theRemittance|bsiPayee|linaCompensation|bsiBookAttribution|overrideExcel|missingRenewalsLogic|uploadDestination|writerPassThroughAgents'"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.20.1",

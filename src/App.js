@@ -13,6 +13,7 @@ import MedicareProUpload from './pages/MedicareProUpload';
 import AgencyProductionUpload from './pages/AgencyProductionUpload';
 import AgencyProductionRecon from './pages/AgencyProductionRecon';
 import BSIStatementsUpload from './pages/BSIStatementsUpload';
+import PassThroughChargebacks from './pages/PassThroughChargebacks';
 import './App.css';
 
 const REMOVED_PAGES = new Set(['reports', 'agents', 'fix-aetna', 'fixaetna']);
@@ -111,6 +112,7 @@ export default function App() {
     'agency-production-recon',
     'direct-recon',
     'renewals',
+    'pass-through-chargebacks',
     'reconciliation',
   ]);
 
@@ -147,6 +149,7 @@ export default function App() {
         { id: 'direct-recon', label: 'Sales Reconciliation' },
         { id: 'agency-production-recon', label: 'Agency Override Recon' },
         { id: 'renewals', label: 'Missing Renewals' },
+        { id: 'pass-through-chargebacks', label: 'Writer Chargebacks' },
       ]
     }] : []),
     {
@@ -182,6 +185,7 @@ export default function App() {
     renewals: <MissingRenewals key={agencyView} user={effectiveUser} />,
     reconciliation: <Reconciliation key={agencyView} user={effectiveUser} />,
     'direct-recon': <Reconciliation key={agencyView} user={effectiveUser} />,
+    'pass-through-chargebacks': <PassThroughChargebacks key={agencyView} user={effectiveUser} />,
     payroll: <Payroll key={agencyView} user={effectiveUser} initialTab="payroll" onNavigate={navigate} />,
     'payroll-payouts': <Payroll key={`${agencyView}-payouts`} user={effectiveUser} initialTab="payroll" onNavigate={navigate} />,
     'payroll-overrides': <Payroll key={`${agencyView}-overrides`} user={effectiveUser} initialTab="overrides" onNavigate={navigate} />,
