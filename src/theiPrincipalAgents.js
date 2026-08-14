@@ -7,9 +7,11 @@
  * plus THEI house writing name (UHC statements often post as agency, not personal).
  * Missing Renewals BOB scope stays Yahoska + Katy only (ops rule).
  *
- * Alan Elchami (Eidi Alan): pre–writing-name-change UHC posted on Yahoska's writer /
- * house name — his production, not Yahoska's. Tag those rows as `Alan Elchami` in DB;
- * names here are excluded from direct/principal filters even if logic changes later.
+ * Alan Elchami (Eidi Alan): before the UHC writing-name change, a fixed set of
+ * clients (Katy’s audit list — see update-only-22-alan.js) posted on Yahoska’s
+ * writer / house name. That was his production, not Yahoska’s; he no longer
+ * uses that writer. Tag those rows as `Alan Elchami` in DB; agent names here
+ * are excluded from direct/principal filters even if logic changes later.
  */
 
 /** Carrier-commission Medicare writers on THEI house (Sales Recon direct-agents filter). */
