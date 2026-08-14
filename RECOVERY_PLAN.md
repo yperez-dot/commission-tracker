@@ -73,7 +73,6 @@
 
 ### **4. Shared Utility (eb37e1b) - MEDIUM RISK**
 **What it does:** Create reusable matching logic
-**Files:** New file (src/utils/reconMatching.js)
 **Risk:** Medium - not used yet, but adds new code
 **Test:** Backend starts, no new errors
 
@@ -180,7 +179,6 @@ git push origin main
 git cherry-pick eb37e1b
 
 # Test locally
-node --check src/utils/reconMatching.js
 
 git push origin main
 
