@@ -3,6 +3,51 @@
 /** Within $1 = paid in full (carrier rounding). */
 export const PAYMENT_TOLERANCE = 1.0;
 
+/** Full-year Medicare NB rate used in Sales Recon (Jan effective). Mid-year is prorated. */
+export const FULL_YEAR_NB = 347;
+
+function round2(n) {
+  return Math.round(n * 100) / 100;
+}
+
+/** Parse effective date → calendar month 1–12. */
+export function parseEffectiveMonth(effectiveDate) {
+  if (!effectiveDate) return null;
+  const s = String(effectiveDate).trim();
+  const iso = s.match(/^(\d{4})-(\d{2})/);
+  if (iso) return parseInt(iso[2], 10);
+  const mdY = s.match(/^(\d{1,2})[-/](\d{1,2})[-/](\d{4})/);
+  if (mdY) return parseInt(mdY[1], 10);
+  return null;
+}
+
+/** Remaining months in the calendar year from effective month (Jan=12 … Dec=1). */
+export function remainingCalendarMonths(effectiveDate) {
+  const m = parseEffectiveMonth(effectiveDate);
+  if (!m || m < 1 || m > 12) return 12;
+  return 13 - m;
+}
+
+/**
+ * Expected agent commission for a MedicarePro sale.
+ * New business is calendar-prorated: July = 6/12 of $347, not $347.
+ * Renewals use the monthly floor ($347/12).
+ */
+export function expectedSaleCommission(sale) {
+  const blob = `${sale?.policy_type || ''} ${sale?.transaction_type || ''} ${sale?.sale_type || ''}`.toLowerCase();
+  const renewal = blob.includes('renewal');
+  const remaining = remainingCalendarMonths(sale?.effective_date);
+  const months = renewal ? 1 : remaining;
+  const amount = round2((FULL_YEAR_NB * months) / 12);
+  return {
+    amount,
+    remainingMonths: months,
+    fullYear: FULL_YEAR_NB,
+    prorated: !renewal && remaining < 12,
+    kind: renewal ? 'renewal' : 'new_business',
+  };
+}
+
 export function isSaleCommissionRow(record) {
   const c = String(record?.classification || '').toLowerCase();
   if (c.includes('override')) return false;
@@ -33,13 +78,14 @@ export function buildDepositTimeline(matches, { saleSideOnly = true } = {}) {
 /**
  * @returns {{ id: 'unpaid'|'partial'|'paid'|'overpaid'|'manual'|'reversed', label: string, remaining?: number }}
  */
-export function resolveSalePaymentStatus({ expected, actualNet, isManual }) {
+export function resolveSalePaymentStatus({ expected, actualNet, isManual, fullYear = FULL_YEAR_NB }) {
   if (isManual) {
     return { id: 'manual', label: 'Marked paid' };
   }
 
   const exp = parseFloat(expected) || 0;
   const act = parseFloat(actualNet) || 0;
+  const cap = parseFloat(fullYear) || FULL_YEAR_NB;
 
   if (act <= 0) {
     return { id: 'unpaid', label: 'Unpaid' };
@@ -49,15 +95,13 @@ export function resolveSalePaymentStatus({ expected, actualNet, isManual }) {
     return { id: 'paid', label: act > 0 ? 'Paid' : 'Unpaid' };
   }
 
-  const remaining = exp - act;
+  const remaining = round2(exp - act);
   if (remaining > PAYMENT_TOLERANCE) {
     return { id: 'partial', label: 'Partial', remaining };
   }
-  if (act > exp + PAYMENT_TOLERANCE) {
+  // Met prorated expected. Amounts between prorated and full-year $347 are paid, not overpaid.
+  if (act > cap + PAYMENT_TOLERANCE) {
     return { id: 'overpaid', label: 'Overpaid' };
-  }
-  if (Math.abs(act) < PAYMENT_TOLERANCE && act !== 0) {
-    return { id: 'reversed', label: 'Net zero' };
   }
   return { id: 'paid', label: 'Paid in full' };
 }

@@ -3,6 +3,7 @@
 const {
   PAYMENT_TOLERANCE,
   buildDepositTimeline,
+  expectedSaleCommission,
   resolveSalePaymentStatus,
   sumCommissionNet,
   groupClientDeposits,
@@ -29,7 +30,29 @@ describe('salesReconPayment', () => {
     expect(tl[1].amount).toBe(292);
   });
 
-  test('resolveSalePaymentStatus partial vs paid in full', () => {
+  test('calendar-prorated NB: July is 6/12 of $347, not $347', () => {
+    const jul = expectedSaleCommission({ effective_date: '2026-07-01' });
+    expect(jul.amount).toBe(173.5);
+    expect(jul.remainingMonths).toBe(6);
+    expect(jul.prorated).toBe(true);
+    expect(expectedSaleCommission({ effective_date: '2026-01-01' }).amount).toBe(347);
+    expect(expectedSaleCommission({ effective_date: '2026-12-01' }).amount).toBe(28.92);
+  });
+
+  test('July $55 is partial vs prorated $173.50 — not vs $347', () => {
+    const expected = expectedSaleCommission({ effective_date: '2026-07-01' }).amount;
+    const st = resolveSalePaymentStatus({ expected, actualNet: 55, fullYear: 347 });
+    expect(st.id).toBe('partial');
+    expect(st.remaining).toBeCloseTo(118.5, 1);
+  });
+
+  test('July paid at prorated amount is paid in full (not short vs $347)', () => {
+    const expected = expectedSaleCommission({ effective_date: '2026-07-01' }).amount;
+    expect(resolveSalePaymentStatus({ expected, actualNet: 173.5, fullYear: 347 }).id).toBe('paid');
+    expect(resolveSalePaymentStatus({ expected, actualNet: 347, fullYear: 347 }).id).toBe('paid');
+  });
+
+  test('resolveSalePaymentStatus generic unpaid/partial/paid', () => {
     expect(resolveSalePaymentStatus({ expected: 347, actualNet: 0 }).id).toBe('unpaid');
     expect(resolveSalePaymentStatus({ expected: 347, actualNet: 55 }).id).toBe('partial');
     expect(resolveSalePaymentStatus({ expected: 347, actualNet: 55 }).remaining).toBeCloseTo(292, 0);

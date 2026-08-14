@@ -3,6 +3,7 @@ import { apiFetch } from '../api';
 import { formatDate as formatDateUtil } from '../utils/dateFormat';
 import {
   buildDepositTimeline,
+  expectedSaleCommission,
   resolveSalePaymentStatus,
   sumCommissionNet,
 } from '../utils/salesReconPayment';
@@ -221,19 +222,6 @@ function monthsSinceEnrollment(effectiveDate, paymentPeriod) {
   }
 }
 
-// Calculate expected commission based on declining schedule
-// Medicare Advantage: $347 initial, declines $28.92/month, floors at $28.92 renewal
-function expectedCommission(months) {
-  const initial = 347;
-  const decline = 28.92;
-  const floor = 28.92; // renewal rate
-  
-  if (months === 0) return initial; // Month 0 = enrollment month
-  
-  const calculated = initial - (months * decline);
-  return Math.max(calculated, floor);
-}
-
 // Find ALL matching commissions for a sale and return net amount
 // Period-agnostic: If commission exists for client + carrier, count as Paid
 // Returns object with all matches and net commission (e.g., Karl Brown: 6 records = +$352.47 net)
@@ -329,6 +317,22 @@ function DepositTimeline({ deposits }) {
         </div>
       ))}
     </div>
+  );
+}
+
+function ExpectedCell({ meta, amount }) {
+  const prorated = meta?.prorated;
+  return (
+    <td style={{ textAlign: 'right', fontSize: 12, color: 'var(--text-muted)' }}>
+      {fmt(amount)}
+      <div style={{ fontSize: 10, marginTop: 2, lineHeight: 1.35 }}>
+        {prorated
+          ? `Prorated ${meta.remainingMonths}/12 mo`
+          : meta?.kind === 'renewal'
+            ? 'Renewal floor'
+            : 'Full year (Jan)'}
+      </div>
+    </td>
   );
 }
 
@@ -458,7 +462,8 @@ export default function Reconciliation({ user }) {
 
     const period = commission?.payment_period || new Date().toISOString().slice(0, 7).replace('-', '');
     const months = monthsSinceEnrollment(sale.effective_date, period);
-    const expected = expectedCommission(months);
+    const expect = expectedSaleCommission(sale);
+    const expected = expect.amount;
     const actualNet = commission
       ? (commission.isManual ? expected : (commission.netCommission ?? parseFloat(commission.commission || 0)))
       : 0;
@@ -469,12 +474,14 @@ export default function Reconciliation({ user }) {
       expected,
       actualNet,
       isManual: !!commission?.isManual,
+      fullYear: expect.fullYear,
     });
 
     return {
       sale,
       commission,
       expectedCommission: expected,
+      expectedMeta: expect,
       monthsSinceEnrollment: months,
       actualCommission: actualNet,
       difference: actualNet - expected,
@@ -651,8 +658,8 @@ export default function Reconciliation({ user }) {
     // Build CSV
     const headers = [
       'Agent', 'Client', 'Carrier', 'Policy Type', 'Effective Date', 'BOB Status',
-      'Payment Status', 'Months Since Enrollment', 'Expected', 'Actual (net)', 'Remaining',
-      'Deposit Count', 'Deposits',
+      'Payment Status', 'Expected (prorated NB)', 'Full-year $347', 'Prorated months',
+      'Actual (net)', 'Remaining vs prorated', 'Deposit Count', 'Deposits',
     ];
     const rows = dataToExport.map(m => {
       const agentName = m.sale.agent_name || m.sale.agent || '—';
@@ -662,8 +669,9 @@ export default function Reconciliation({ user }) {
       const effectiveDate = m.sale.effective_date ? formatDate(m.sale.effective_date) : '—';
       const bobStatus = resolveStatus(m.sale);
       const payStatus = m.paymentStatus?.label || '—';
-      const monthsSince = m.monthsSinceEnrollment || 0;
       const expected = (m.expectedCommission || 0).toFixed(2);
+      const fullYear = (m.expectedMeta?.fullYear || 347).toFixed(2);
+      const months = m.expectedMeta?.remainingMonths ?? '';
       const actual = (m.actualCommission || 0).toFixed(2);
       const remaining = Math.max(0, (m.expectedCommission || 0) - (m.actualCommission || 0)).toFixed(2);
       const depositCount = m.deposits?.length || 0;
@@ -671,7 +679,7 @@ export default function Reconciliation({ user }) {
 
       return [
         agentName, clientName, carrier, policyType, effectiveDate, bobStatus,
-        payStatus, monthsSince, expected, actual, remaining, depositCount, deposits,
+        payStatus, expected, fullYear, months, actual, remaining, depositCount, deposits,
       ].map(val => `"${String(val).replace(/"/g, '""')}"`).join(',');
     });
     
@@ -734,7 +742,7 @@ export default function Reconciliation({ user }) {
     <div>
       <div className="page-header">
         <div className="page-title">Sales Reconciliation</div>
-        <div className="page-sub">MedicarePro sales vs carrier commissions — tracks split deposits (partial vs paid in full)</div>
+        <div className="page-sub">MedicarePro vs carrier commissions. Expected is calendar-prorated new business (July ≠ $347 full year). Partial = split deposits vs that prorated amount.</div>
       </div>
       <div className="page-body">
 
@@ -889,7 +897,7 @@ export default function Reconciliation({ user }) {
                             <td style={{fontSize:12, color:'var(--text-muted)'}}>
                               {formatDate(m.sale.effective_date)}
                             </td>
-                            <td style={{textAlign:'right', fontSize:12}}>{fmt(m.expectedCommission)}</td>
+                            <ExpectedCell meta={m.expectedMeta} amount={m.expectedCommission} />
                             <td>
                               <span className={`badge ${resolveStatus(m.sale) === 'Deceased' || resolveStatus(m.sale) === 'Termed' ? 'badge-red' : 'badge-amber'}`}>
                                 {resolveStatus(m.sale)}
@@ -944,9 +952,7 @@ export default function Reconciliation({ user }) {
                             <td style={{fontWeight:500}}>{m.sale.client_name}</td>
                             <td>{m.sale.agent_name || m.sale.agent || '—'}</td>
                             <td style={{fontSize:12}}>{m.sale.carrier}</td>
-                            <td style={{textAlign:'right', fontSize:12, color:'var(--text-muted)'}}>
-                              {fmt(m.expectedCommission)}
-                            </td>
+                            <ExpectedCell meta={m.expectedMeta} amount={m.expectedCommission} />
                             <td style={{textAlign:'right', fontWeight:600, color:'#854D0E'}}>
                               {fmt(m.actualCommission)}
                               {m.deposits.length > 1 && (
@@ -1007,10 +1013,7 @@ export default function Reconciliation({ user }) {
                             <td style={{fontSize:12, color:'var(--text-muted)'}}>
                               {formatDate(m.sale.effective_date)}
                             </td>
-                            <td style={{textAlign:'right', fontSize:12, color:'var(--text-muted)'}}>
-                              {fmt(m.expectedCommission)}
-                              <div style={{fontSize:10, marginTop:2}}>Month {m.monthsSinceEnrollment}</div>
-                            </td>
+                            <ExpectedCell meta={m.expectedMeta} amount={m.expectedCommission} />
                             <td style={{textAlign:'right', fontWeight:600, color: m.actualCommission >= m.expectedCommission ? 'var(--green)' : 'var(--text)'}}>
                               {m.commission?.isManual ? 'Manual' : fmt(m.actualCommission)}
                             </td>
