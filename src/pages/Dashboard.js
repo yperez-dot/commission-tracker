@@ -160,6 +160,32 @@ function FilterGroup({ title, items, selected, onToggle, onSelectAll, onClearAll
   );
 }
 
+function lobCardMetrics(lobData, lobName, viewMode) {
+  const isACA = lobName === 'ACA';
+  if (isACA && viewMode === 'agency') {
+    return {
+      amount: parseFloat(lobData.thei_total || 0),
+      count: parseInt(lobData.override_count ?? lobData.count ?? 0, 10),
+    };
+  }
+  if (isACA && viewMode === 'agent') {
+    return {
+      amount: parseFloat(lobData.agent_payable || 0),
+      count: parseInt(lobData.count || 0, 10),
+    };
+  }
+  if (viewMode === 'agency') {
+    return {
+      amount: parseFloat(lobData.thei_total || lobData.total || 0),
+      count: parseInt(lobData.count || 0, 10),
+    };
+  }
+  return {
+    amount: parseFloat(lobData.agent_payable || lobData.total || 0),
+    count: parseInt(lobData.count || 0, 10),
+  };
+}
+
 export default function Dashboard({ user, onNavigate }) {
   const agencyView = user.agency || '';
   const [summary, setSummary] = useState(null);
@@ -408,11 +434,9 @@ export default function Dashboard({ user, onNavigate }) {
                 combined[displayName] = { displayName, lobCodes: [], total: 0, count: 0 };
               }
               combined[displayName].lobCodes.push(lobName);
-              // Agent view: use thei_total for all LOBs (personal production flows through thei_total)
-              // Agency view: use thei_total for non-ACA, agent_payable for ACA overrides
-              const amount = parseFloat(lobData.thei_total || 0);
+              const { amount, count } = lobCardMetrics(lobData, lobName, viewMode);
               combined[displayName].total += amount;
-              combined[displayName].count += parseInt(lobData.count || 0);
+              combined[displayName].count += count;
             });
 
             const cards = Object.values(combined).filter(cardData => {
@@ -460,7 +484,12 @@ export default function Dashboard({ user, onNavigate }) {
                         {loading ? '—' : fmt(cardData.total)}
                       </div>
                       <div style={{fontSize:11,color:C.textMuted}}>
-                        {cardData.count.toLocaleString()} {isACA ? 'agency policies' : 'policies'}
+                        {cardData.count.toLocaleString()}{' '}
+                        {isACA && viewMode === 'agency'
+                          ? 'override lines'
+                          : isACA
+                            ? 'agent policies'
+                            : 'policies'}
                       </div>
                     </div>
                   );

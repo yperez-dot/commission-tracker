@@ -31,6 +31,9 @@ function agencyFilter(req, alias) {
   return col + " NOT IN ('Mutual of Omaha', 'United of Omaha', 'Fidelity Life', 'Instabrain', 'F&G', 'Fidelity & Guaranty', 'American Amicable', 'Transamerica', 'Ethos', 'American Home Life', 'National Life Group')";
 }
 
+/** Agency dashboard: drop NHP commission-column ACA rows (agent pass-through). Keep override column. */
+const AGENCY_ACA_AGENT_EXCLUDE = `NOT (lob = 'ACA' AND COALESCE(producer_payable, 0) <> 0 AND COALESCE(thei_share, 0) = 0)`;
+
 // Smart Matching v2 helpers — deterministic keys only, no fuzzy/Levenshtein.
 
 // normalizeNameKey: accent-strip + uppercase + token-sort.
@@ -233,9 +236,9 @@ router.get('/summary', requireAuth, async (req, res) => {
     if (planTypes) { const list = planTypes.split(',').map(p=>p.trim()).filter(Boolean); if (list.length) { where.push(`COALESCE(plan_type,'') = ANY($${idx++})`); params.push(list); } }
     if (lobs) { const list = lobs.split(',').map(l=>l.trim()).filter(Boolean); if (list.length) { where.push(`lob = ANY($${idx++})`); params.push(list); } }
 
-    // Agency view: exclude ACA Agent Commissions. Agent view: include everything.
+    // Agency view: ACA house override only (NHP override column). Agent view: include pass-through.
     if (view !== 'agent') {
-      where.push(`NOT (lob = 'ACA' AND classification ILIKE '%agent commission%')`);
+      where.push(AGENCY_ACA_AGENT_EXCLUDE);
     }
 
     const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
@@ -248,7 +251,7 @@ router.get('/summary', requireAuth, async (req, res) => {
       pool.query(`SELECT agent_name, SUM(commission) as total, COUNT(*) as count FROM commission_records ${wc} GROUP BY agent_name ORDER BY total DESC`, params),
       pool.query(`SELECT carrier, SUM(commission) as total, COUNT(*) as count FROM commission_records ${wc} GROUP BY carrier ORDER BY total DESC`, params),
       pool.query(`SELECT payment_period as period, SUM(commission) as total, COUNT(*) as count, ABS(SUM(CASE WHEN commission < 0 THEN commission ELSE 0 END)) as chargebacks FROM commission_records ${wc} GROUP BY payment_period ORDER BY payment_period ASC`, params),
-      pool.query(`SELECT lob, SUM(commission) as total, SUM(COALESCE(producer_payable,0)) as agent_payable, SUM(COALESCE(thei_share,0)) as thei_total, COUNT(*) as count FROM commission_records ${wc} GROUP BY lob ORDER BY lob`, params),
+      pool.query(`SELECT lob, SUM(commission) as total, SUM(COALESCE(producer_payable,0)) as agent_payable, SUM(COALESCE(thei_share,0)) as thei_total, COUNT(*) as count, COUNT(*) FILTER (WHERE COALESCE(thei_share, 0) <> 0) as override_count FROM commission_records ${wc} GROUP BY lob ORDER BY lob`, params),
     ]);
 
     res.json({
@@ -284,9 +287,9 @@ router.get('/kpi', requireAuth, async (req, res) => {
     if (planTypes) { const list = planTypes.split(',').map(p=>p.trim()).filter(Boolean); if (list.length) { where.push(`COALESCE(plan_type,'') = ANY($${idx++})`); params.push(list); } }
     if (lobs) { const list = lobs.split(',').map(l=>l.trim()).filter(Boolean); if (list.length) { where.push(`lob = ANY($${idx++})`); params.push(list); } }
 
-    // Agency view: exclude ACA Agent Commissions. Agent view: include everything.
+    // Agency view: ACA house override only (NHP override column). Agent view: include pass-through.
     if (view !== 'agent') {
-      where.push(`NOT (lob = 'ACA' AND classification ILIKE '%agent commission%')`);
+      where.push(AGENCY_ACA_AGENT_EXCLUDE);
     }
 
     const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
