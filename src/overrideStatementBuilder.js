@@ -21,6 +21,7 @@ const {
   isAgencyOverride,
   ALBA_DISPLAY_NAME,
 } = require('./payeeSchedules');
+const { formatEffectiveDate } = require('./effectiveDateFormat');
 
 function num(v) {
   const n = parseFloat(v);
@@ -285,6 +286,7 @@ function buildTheiBsiBreakdown(rows, opts = {}) {
       client_full_name: row.client_full_name,
       policy_number: row.policy_number,
       carrier: row.carrier,
+      effective_date: row.effective_date,
       payment_period: row.payment_period,
       override_pot: pot,
       thei_share: thei,
@@ -372,7 +374,7 @@ function statementToCsv(bundle, payeeStatement) {
         l.client_full_name,
         l.carrier,
         l.writing_agent,
-        l.effective_date,
+        formatEffectiveDate(l.effective_date),
         l.payment_period,
         l.classification,
         fmtMoney(l.override_pot),
@@ -392,7 +394,7 @@ function statementToCsv(bundle, payeeStatement) {
           l.client_full_name,
           l.carrier,
           l.writing_agent,
-          l.effective_date,
+          formatEffectiveDate(l.effective_date),
           l.payment_period,
           l.classification,
           fmtMoney(l.override_pot),
@@ -431,6 +433,7 @@ function breakdownToCsv(bundle) {
       'Client',
       'Carrier',
       'Writing Agent',
+      'Effective',
       'Period',
       'Override Pot',
       'THEI Share',
@@ -448,6 +451,7 @@ function breakdownToCsv(bundle) {
         l.client_full_name,
         l.carrier,
         l.agent_name,
+        formatEffectiveDate(l.effective_date),
         l.payment_period,
         fmtMoney(l.override_pot),
         fmtMoney(l.thei_share),
@@ -493,4 +497,5 @@ module.exports = {
   filenameFor,
   formatPeriodLabel,
   overridePot,
+  formatEffectiveDate,
 };

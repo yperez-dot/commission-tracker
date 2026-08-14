@@ -65,6 +65,15 @@ function downloadBase64File(filename, base64, mime) {
   URL.revokeObjectURL(url);
 }
 
+function filenameForHouseExcel(type, period, payee) {
+  const periodPart = period && period !== 'all' ? period : 'ALL';
+  if (type === 'bsi_override') return `BSI_Override_Statement_${periodPart}.xlsx`;
+  if (type === 'thei_override') return `THEI_Override_Statement_${periodPart}.xlsx`;
+  if (type === 'marco') return `Marco_Override_Statement_${periodPart}.xlsx`;
+  const who = String(payee || 'Override').replace(/\s+/g, '_').replace(/[^A-Za-z0-9_\-]/g, '');
+  return `${who}_Override_Statement_${periodPart}.xlsx`;
+}
+
 function chipStyle(active) {
   return {
     padding: '6px 12px',
@@ -296,7 +305,7 @@ function OverridePayeeRow({ s, onExport, exportLabel = 'Statement' }) {
           <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
             <thead>
               <tr>
-                {['Policy #', 'Client', 'Carrier', 'Writing agent', 'Type', 'Amount'].map((h) => (
+                {['Policy #', 'Client', 'Carrier', 'Writing agent', 'Effective', 'Type', 'Amount'].map((h) => (
                   <th
                     key={h}
                     style={{
@@ -320,6 +329,9 @@ function OverridePayeeRow({ s, onExport, exportLabel = 'Statement' }) {
                   <td style={{ padding: '6px 8px' }}>{l.client_full_name}</td>
                   <td style={{ padding: '6px 8px', color: 'var(--text-muted)', fontSize: 11 }}>{l.carrier}</td>
                   <td style={{ padding: '6px 8px', color: 'var(--text-muted)', fontSize: 11 }}>{l.writing_agent}</td>
+                  <td style={{ padding: '6px 8px', color: 'var(--text-muted)', fontSize: 11 }}>
+                    {formatDate(l.effective_date)}
+                  </td>
                   <td style={{ padding: '6px 8px', color: 'var(--text-muted)', fontSize: 11 }}>{l.classification}</td>
                   <td
                     style={{
@@ -389,27 +401,39 @@ function HouseOverridesPanel() {
     }
   }
 
-  const useExcel = ovType === 'thei_override' || ovType === 'bsi_override';
-
   async function exportAll() {
     if (!ovType || !ovPeriod) return;
     setOvLoading(true);
     setOvError('');
     try {
-      if (useExcel) {
-        const data = await apiFetch(
-          `/override-statements/export-all?type=${encodeURIComponent(ovType)}&period=${encodeURIComponent(ovPeriod)}`
-        );
-        for (const f of data.files || []) {
-          if (f.xlsxBase64) downloadBase64File(f.filename, f.xlsxBase64);
-        }
-        if (data.summaryCsv) downloadTextFile(data.summaryFilename || 'summary.csv', data.summaryCsv);
-      } else {
-        const data = await apiFetch(
-          `/override-statements/export-all?type=${encodeURIComponent(ovType)}&period=${encodeURIComponent(ovPeriod)}`
-        );
-        if (data.summaryCsv) downloadTextFile(data.summaryFilename || 'summary.csv', data.summaryCsv);
-        for (const f of data.files || []) downloadTextFile(f.filename, f.csv);
+      const data = await apiFetch(
+        `/override-statements/export-all?type=${encodeURIComponent(ovType)}&period=${encodeURIComponent(ovPeriod)}`
+      );
+      for (const f of data.files || []) {
+        if (f.xlsxBase64) downloadBase64File(f.filename, f.xlsxBase64);
+      }
+      if (data.summaryCsv) downloadTextFile(data.summaryFilename || 'summary.csv', data.summaryCsv);
+    } catch (e) {
+      setOvError(e.message || 'Export failed');
+    } finally {
+      setOvLoading(false);
+    }
+  }
+
+  async function exportAllTypes() {
+    if (!ovPeriod) return;
+    setOvLoading(true);
+    setOvError('');
+    try {
+      const data = await apiFetch(
+        `/override-statements/export-all-types?period=${encodeURIComponent(ovPeriod)}`
+      );
+      for (const f of data.files || []) {
+        if (f.xlsxBase64) downloadBase64File(f.filename, f.xlsxBase64);
+      }
+      if (data.summaryCsv) downloadTextFile(data.summaryFilename || 'house_summary.csv', data.summaryCsv);
+      if (!(data.files || []).length) {
+        setOvError('No house statement lines for this period');
       }
     } catch (e) {
       setOvError(e.message || 'Export failed');
@@ -420,23 +444,15 @@ function HouseOverridesPanel() {
 
   async function exportOne(payee) {
     try {
-      if (useExcel) {
-        const qs = new URLSearchParams({
-          type: ovType,
-          period: ovPeriod,
-          payee,
-        });
-        await apiDownload(
-          `/override-statements/export-xlsx?${qs.toString()}`,
-          `${ovType === 'bsi_override' ? 'BSI' : 'THEI'}_Override_Statement_${ovPeriod}.xlsx`
-        );
-        return;
-      }
-      const data = await apiFetch(
-        `/override-statements/export-all?type=${encodeURIComponent(ovType)}&period=${encodeURIComponent(ovPeriod)}`
+      const qs = new URLSearchParams({
+        type: ovType,
+        period: ovPeriod,
+        payee,
+      });
+      await apiDownload(
+        `/override-statements/export-xlsx?${qs.toString()}`,
+        filenameForHouseExcel(ovType, ovPeriod, payee)
       );
-      const file = (data.files || []).find((f) => f.payee === payee);
-      if (file) downloadTextFile(file.filename, file.csv);
     } catch (e) {
       setOvError(e.message || 'Export failed');
     }
@@ -499,7 +515,12 @@ function HouseOverridesPanel() {
           </button>
           {preview && (
             <button className="btn" onClick={exportAll} disabled={ovLoading}>
-              {useExcel ? 'Export all Excel' : 'Export all CSVs'}
+              Export all Excel
+            </button>
+          )}
+          {ovPeriod && (
+            <button className="btn" onClick={exportAllTypes} disabled={ovLoading}>
+              Export all types
             </button>
           )}
         </div>
@@ -533,7 +554,7 @@ function HouseOverridesPanel() {
               <OverridePayeeRow
                 key={s.payee}
                 s={s}
-                exportLabel={useExcel ? 'Excel' : 'CSV'}
+                exportLabel="Excel"
                 onExport={() => exportOne(s.payee)}
               />
             ))
