@@ -208,6 +208,15 @@ async function initSchema() {
       CREATE INDEX IF NOT EXISTS idx_records_split ON commission_records(split_applies);
       CREATE INDEX IF NOT EXISTS idx_records_policy_date ON commission_records(policy_written_date);
 
+      -- Writer pass-through: downline agents on Yahoska's UHC number (Alan, Sabri, …)
+      ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS liable_agent TEXT;
+      ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS pass_through_collected BOOLEAN DEFAULT FALSE;
+      ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS pass_through_collected_at TIMESTAMPTZ;
+      ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS pass_through_notes TEXT;
+      CREATE INDEX IF NOT EXISTS idx_records_liable_agent
+        ON commission_records (liable_agent)
+        WHERE liable_agent IS NOT NULL;
+
       -- Migration 2026-07-01: Manual override status for Agency Override Recon
       -- Allows Yahoska to manually pin a row's status (paid/chase_bsi/request_audit/pending)
       -- when the system-matched status is wrong or needs annotation.
