@@ -200,7 +200,7 @@ export default function AgencyProductionUpload() {
   return (
     <div>
       <div className="page-header">
-        <div className="page-title">📊 Upload Agency Production</div>
+        <div className="page-title">Agency Production Upload</div>
         <div className="page-sub">Import Hector's monthly production reports (Humana, UHC, Aetna, etc.)</div>
       </div>
 

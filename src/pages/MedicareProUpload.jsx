@@ -153,7 +153,7 @@ export default function MedicareProUpload() {
   return (
     <div>
       <div className="page-header">
-        <div className="page-title">📊 Upload MedicarePro Sales</div>
+        <div className="page-title">MedicarePro Sales</div>
         <div className="page-sub">Import your monthly client list from MedicarePro</div>
       </div>
 

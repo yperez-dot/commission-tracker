@@ -1,18 +1,25 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiFetch, apiUpload } from '../api';
 import { formatDateTime } from '../utils/dateFormat';
+import UploadRouteConfirm from '../components/UploadRouteConfirm';
+import {
+  detectUploadDestination,
+  destinationMatchesTab,
+  UPLOAD_PAGE_BY_DEST,
+} from '../utils/uploadDestination';
+import { setPendingUpload, takePendingUpload } from '../utils/pendingUpload';
 
-export default function BSIStatementsUpload({ user }) {
+export default function BSIStatementsUpload({ user, onNavigate }) {
   const [uploads, setUploads] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState(null);
   const [error, setError] = useState('');
   const [dragOver, setDragOver] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
+  const [routeConfirm, setRouteConfirm] = useState(null);
 
   const loadUploads = useCallback(async () => {
     try {
-      // Filter to only BSI Statement uploads
       const data = await apiFetch('/files/uploads?category=bsi_statement');
       setUploads(data || []);
     } catch (e) {
@@ -24,17 +31,33 @@ export default function BSIStatementsUpload({ user }) {
     loadUploads();
   }, [loadUploads]);
 
+  useEffect(() => {
+    const pending = takePendingUpload();
+    if (pending) queueFile(pending);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function queueFile(file) {
+    if (!file) return;
+    const detected = detectUploadDestination(file.name);
+    if (!destinationMatchesTab(detected.id, 'bsi_statement') && detected.confidence !== 'low') {
+      setRouteConfirm({ file, detected });
+      return;
+    }
+    handleFile(file);
+  }
+
   async function handleFile(file) {
     if (!file) return;
     setUploading(true);
     setError('');
     setUploadResult(null);
-    
+
     try {
       const fd = new FormData();
       fd.append('file', file);
-      fd.append('category', 'bsi_statement'); // Mark as BSI statement
-      
+      fd.append('category', 'bsi_statement');
+
       const result = await apiUpload('/files/upload-bsi-statement', fd);
       setUploadResult(result);
       loadUploads();
@@ -49,7 +72,7 @@ export default function BSIStatementsUpload({ user }) {
     e.preventDefault();
     setDragOver(false);
     const file = e.dataTransfer.files[0];
-    if (file) handleFile(file);
+    if (file) queueFile(file);
   }
 
   async function deleteUpload(id) {
@@ -67,14 +90,38 @@ export default function BSIStatementsUpload({ user }) {
 
   return (
     <div style={{ padding: 20, maxWidth: 1400, margin: '0 auto' }}>
+      {routeConfirm && (
+        <UploadRouteConfirm
+          filename={routeConfirm.file?.name}
+          detected={routeConfirm.detected}
+          currentLabel="BSI Statements"
+          onUseSuggested={() => {
+            const { file, detected } = routeConfirm;
+            setRouteConfirm(null);
+            const pageId = UPLOAD_PAGE_BY_DEST[detected.id];
+            if (pageId && onNavigate) {
+              setPendingUpload(file);
+              onNavigate(pageId);
+            } else {
+              handleFile(file);
+            }
+          }}
+          onStayHere={() => {
+            const { file } = routeConfirm;
+            setRouteConfirm(null);
+            handleFile(file);
+          }}
+          onCancel={() => setRouteConfirm(null)}
+        />
+      )}
+
       <div style={{ marginBottom: 24 }}>
-        <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600 }}>BSI Statements Upload</h2>
+        <h2 style={{ margin: 0, fontSize: 20, fontWeight: 600 }}>BSI Statements</h2>
         <p style={{ margin: '8px 0 0', color: 'var(--text-muted)', fontSize: 14 }}>
-          Upload statements the carrier sends to BSI (Humana / UHC / Aetna / Devoted carrier feeds)
+          Carrier→BSI feeds (Humana / UHC / Aetna / Devoted). BSI→THE remittance belongs under Commission Statements.
         </p>
       </div>
 
-      {/* Upload Box */}
       <div
         onDragOver={e => { e.preventDefault(); setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
@@ -95,17 +142,20 @@ export default function BSIStatementsUpload({ user }) {
           type="file"
           accept=".xlsx,.xls,.csv,.pdf"
           style={{ display: 'none' }}
-          onChange={e => handleFile(e.target.files[0])}
+          onChange={e => {
+            const f = e.target.files[0];
+            if (f) queueFile(f);
+            e.target.value = '';
+          }}
         />
         <div style={{ fontSize: 16, marginBottom: 8 }}>
-          📄 {uploading ? 'Uploading...' : 'Drop BSI statement here or click to browse'}
+          {uploading ? 'Uploading...' : 'Drop BSI statement here or click to browse'}
         </div>
         <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
           Supported formats: Excel (.xlsx, .xls), CSV, PDF
         </div>
       </div>
 
-      {/* Upload Result */}
       {uploadResult && (
         <div style={{
           padding: 16,
@@ -114,7 +164,7 @@ export default function BSIStatementsUpload({ user }) {
           borderRadius: 8,
           marginBottom: 24
         }}>
-          <div style={{ fontWeight: 600, marginBottom: 8 }}>✅ Upload Complete</div>
+          <div style={{ fontWeight: 600, marginBottom: 8 }}>Upload complete</div>
           <div style={{ fontSize: 14, color: 'var(--text-muted)' }}>
             File: {uploadResult.filename}
           </div>
@@ -126,7 +176,6 @@ export default function BSIStatementsUpload({ user }) {
         </div>
       )}
 
-      {/* Error */}
       {error && (
         <div style={{
           padding: 16,
@@ -136,11 +185,10 @@ export default function BSIStatementsUpload({ user }) {
           marginBottom: 24,
           color: '#c00'
         }}>
-          ❌ {error}
+          {error}
         </div>
       )}
 
-      {/* Uploads List */}
       <div>
         <h3 style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>
           Uploaded BSI Statements ({uploads.length})
@@ -213,8 +261,8 @@ export default function BSIStatementsUpload({ user }) {
                                       </tr>
                                     </thead>
                                     <tbody>
-                                      ${records.map((r,i) => `
-                                        <tr style="border-bottom:1px solid #eee;${i%2===0?'background:#fafafa;':''}">
+                                      ${records.map((r, idx) => `
+                                        <tr style="border-bottom:1px solid #eee;${idx%2===0?'background:#fafafa;':''}">
                                           <td style="padding:7px 8px;">${r.agent_name||'\u2014'}</td>
                                           <td style="padding:7px 8px;">${r.client_full_name||'\u2014'}</td>
                                           <td style="padding:7px 8px;">${r.carrier||'\u2014'}</td>
@@ -231,7 +279,7 @@ export default function BSIStatementsUpload({ user }) {
                               </div>
                             `;
                             document.body.appendChild(modal);
-                            modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
+                            modal.onclick = (ev) => { if (ev.target === modal) modal.remove(); };
                           } catch (err) {
                             alert('Error loading records: ' + err.message);
                           }
@@ -241,7 +289,7 @@ export default function BSIStatementsUpload({ user }) {
                         onMouseOut={e => e.currentTarget.style.borderBottom='1px dashed currentColor'}
                         title="Click to view records"
                       >
-                        📄 {u.original_name}
+                        {u.original_name}
                       </a>
                     </td>
                     <td style={{ padding: 12, fontSize: 14, color: 'var(--text-muted)' }}>
