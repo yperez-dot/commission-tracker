@@ -447,8 +447,8 @@ function HouseOverridesPanel() {
       <div className="card" style={{ marginBottom: 14 }}>
         <div className="card-title" style={{ fontSize: 15, marginBottom: 6 }}>House statements</div>
         <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14, lineHeight: 1.45 }}>
-          THEI / BSI 50/50, Marco $10, and Integrity producer shares. Lina’s agent production is under{' '}
-          <strong>Agent Payouts</strong> — not here.
+          THEI / BSI 50/50, Marco (IRS Swan) $10 agency peel, and Integrity / CAM / Chris producer shares.
+          Lina’s agent production is under <strong>Agent Payouts</strong> — not here.
         </div>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <div>
@@ -676,7 +676,8 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
 
           const hasSubAgentOverride = parseFloat(r.sub_agent_override || 0) > 0;
           const isACAPayable = lob === 'ACA' && producerPayable !== 0;
-          return (isACAPayable || hasSubAgentOverride) && !isYourTeam(r.agent_name);
+          // Marco $10 is an agency (IRS Swan) house peel — House Statements only, not Agent Payouts
+          return isACAPayable && !isYourTeam(r.agent_name) && !hasSubAgentOverride;
         });
       }
 
@@ -694,12 +695,11 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
 
         const classification = (r.classification || '').toLowerCase();
         const isACAPayableCheck = (r.lob || '').toUpperCase() === 'ACA' && parseFloat(r.producer_payable || 0) !== 0;
-        const hasSubAgentOverride = parseFloat(r.sub_agent_override || 0) > 0;
         const isAlbaRow =
           isAlbaName(r.agent_name) &&
           parseFloat(r.producer_payable || 0) !== 0 &&
           !classification.includes('override');
-        if (isACAPayableCheck || hasSubAgentOverride || isAlbaRow) grouped[agent].hasPositivePayable = true;
+        if (isACAPayableCheck || isAlbaRow) grouped[agent].hasPositivePayable = true;
       }
 
       setPayouts(
@@ -830,11 +830,11 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
   const pageMeta = {
     payroll: {
       title: 'Agent Payouts',
-      sub: 'Pay producers from production (ACA, Marco $10, Lina) — no agency overrides here',
+      sub: 'Pay producers from production (ACA + Lina) — agency peels (Marco / Integrity) are under House Statements',
     },
     overrides: {
       title: 'House Statements',
-      sub: 'Export THEI / BSI / Marco / Integrity override statements by period',
+      sub: 'THEI / BSI overrides, Marco (IRS Swan) $10 agency peel, Integrity / CAM / Chris',
     },
     loa: {
       title: 'LOA Statements',
@@ -860,8 +860,9 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
           <div>
             <div className="card" style={{ marginBottom: 14 }}>
               <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12, lineHeight: 1.45 }}>
-                Agent production only — ACA producer pay, Marco $10, and <strong>Lina Hernandez</strong> (NB /
-                Renewal / Chargeback). No agency overrides on this tab.
+                Agent production only — ACA producer pay (100% pass-through) and{' '}
+                <strong>Lina Hernandez</strong> (NB / Renewal / Chargeback). Marco (IRS Swan) and Integrity /
+                CAM are under <strong>House Statements</strong>.
               </div>
               <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
                 <div>
