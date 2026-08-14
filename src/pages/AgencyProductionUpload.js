@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch, getToken } from '../api';
+import { UploadPageShell, UploadDropZone, UploadAlert, UploadHistoryCard } from '../components/UploadPageLayout';
 
 export default function AgencyProductionUpload() {
   const [files, setFiles] = useState([]);
@@ -50,7 +51,7 @@ export default function AgencyProductionUpload() {
       setSuccess(null);
       setUploadResults([]);
     } else {
-      setError('❌ Only Excel files (.xlsx or .xls) are allowed');
+      setError('Only Excel files (.xlsx or .xls) are allowed');
     }
   }
   
@@ -63,7 +64,7 @@ export default function AgencyProductionUpload() {
 
   async function handleUpload() {
     if (files.length === 0) {
-      setError('❌ Please select at least one file');
+      setError('Please select at least one file');
       return;
     }
     setLoading(true);
@@ -143,11 +144,11 @@ export default function AgencyProductionUpload() {
     const failCount = results.filter(r => !r.success).length;
     
     if (successCount > 0) {
-      setSuccess(`✅ ${successCount} file(s) uploaded successfully${failCount > 0 ? `, ${failCount} failed` : ''}`);
+      setSuccess(`${successCount} file(s) uploaded successfully${failCount > 0 ? `, ${failCount} failed` : ''}`);
       setFiles([]);
       await loadUploadHistory();
     } else {
-      setError(`❌ All ${failCount} file(s) failed to upload`);
+      setError(`All ${failCount} file(s) failed to upload`);
     }
     
     setLoading(false);
@@ -155,7 +156,7 @@ export default function AgencyProductionUpload() {
 
   async function handleDeleteUpload(upload) {
     const confirmDelete = window.confirm(
-      `⚠️ Delete this upload?\n\nFile: ${upload.filename}\nCarrier: ${upload.carrier}\nRecords: ${upload.record_count}\n\nThis will permanently delete this upload and all its production records.\n\nThis cannot be undone.`
+      `Delete this upload?\n\nFile: ${upload.filename}\nCarrier: ${upload.carrier}\nRecords: ${upload.record_count}\n\nThis will permanently delete this upload and all its production records.\n\nThis cannot be undone.`
     );
     
     if (!confirmDelete) return;
@@ -165,82 +166,38 @@ export default function AgencyProductionUpload() {
         method: 'DELETE'
       });
       
-      alert(`✅ Deleted ${result.carrier} upload\n\n${result.deleted_production} production records deleted`);
+      alert(`Deleted ${result.carrier} upload\n\n${result.deleted_production} production records deleted`);
       
       // Reload history
       await loadUploadHistory();
     } catch (err) {
-      alert(`❌ Error deleting upload: ${err.message}`);
+      alert(`Error deleting upload: ${err.message}`);
     }
-  }
-
-  function handleDragOver(e) {
-    e.preventDefault();
-    setDragOver(true);
-  }
-
-  function handleDragLeave() {
-    setDragOver(false);
-  }
-
-  function handleDrop(e) {
-    e.preventDefault();
-    setDragOver(false);
-    const droppedFiles = Array.from(e.dataTransfer.files);
-    if (droppedFiles.length > 0) {
-      handleFileSelect(droppedFiles);
-    }
-  }
-
-  function handleCardClick() {
-    // Trigger the hidden file input when clicking the card
-    document.getElementById('agency-file-input').click();
   }
 
   return (
-    <div>
-      <div className="page-header">
-        <div className="page-title">Agency Production Upload</div>
-        <div className="page-sub">Import Hector's monthly production reports (Humana, UHC, Aetna, etc.)</div>
-      </div>
-
-      <div className="page-body">
-        <div
-          className="card"
-          style={{
-            border: dragOver ? '2px dashed var(--blue)' : '2px dashed var(--border)',
-            background: dragOver ? 'var(--blue-light)' : 'transparent',
-            padding: '40px',
-            textAlign: 'center',
-            cursor: 'pointer',
-            transition: 'all 0.2s'
-          }}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-          onClick={handleCardClick}
-        >
-          <div style={{ fontSize: 48, marginBottom: 12 }}>📁</div>
-          <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>
-            Drag & drop your agency production Excel files here
-          </div>
-          <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 20 }}>
-            Or click anywhere to select files (multiple files supported)
-          </div>
-          <input
-            id="agency-file-input"
-            type="file"
-            accept=".xlsx,.xls"
-            multiple
-            onChange={(e) => e.target.files.length > 0 && handleFileSelect(Array.from(e.target.files))}
-            style={{ display: 'none' }}
-          />
-        </div>
+    <UploadPageShell
+      title="Agency Production"
+      subtitle="Hector's monthly production reports (Humana, UHC, Aetna, etc.) for Agency Override Recon."
+    >
+        <UploadDropZone
+          dragOver={dragOver}
+          setDragOver={setDragOver}
+          onDropFiles={(files) => handleFileSelect(files)}
+          uploading={loading}
+          dropTitle="Drop agency production Excel here"
+          dropHint="Excel (.xlsx, .xls) — multiple files supported"
+          accept=".xlsx,.xls"
+          multiple
+          inputId="agency-file-input"
+          processingLabel="Uploading..."
+          processingHint="Parsing production reports"
+        />
 
         {files.length > 0 && (
           <div className="card" style={{ marginTop: 20 }}>
             <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <span>📄 Selected Files ({files.length})</span>
+              <span>Selected files ({files.length})</span>
               <button
                 className="btn btn-sm"
                 onClick={handleUpload}
@@ -295,7 +252,7 @@ export default function AgencyProductionUpload() {
                 fontSize: '12px',
                 color: result.success ? (result.inserted === 0 ? 'var(--yellow-dark, #92400e)' : 'var(--green-dark)') : 'var(--red-dark)'
               }}>
-                <div style={{ fontWeight: 600 }}>{result.success ? (result.inserted === 0 ? '⚠️' : '✅') : '❌'} {result.file}</div>
+                <div style={{ fontWeight: 600 }}>{result.success ? (result.inserted === 0 ? 'No new rows' : 'Uploaded') : 'Failed'} — {result.file}</div>
                 <div style={{ marginTop: '4px', opacity: 0.8 }}>{result.message}</div>
                 {result.success && result.inserted === 0 && (result.skipped_inactive > 0 || result.skipped_duplicate > 0 || result.skipped_missing_data > 0) && (
                   <div style={{ marginTop: '4px', fontSize: '11px', opacity: 0.9 }}>
@@ -308,32 +265,25 @@ export default function AgencyProductionUpload() {
         )}
 
         {error && !uploadResults.length && (
-          <div className="card" style={{ marginTop: 20, background: 'var(--red-light)', border: '1px solid var(--red)', color: 'var(--red-dark)' }}>
-            {error}
-          </div>
+          <UploadAlert>{error}</UploadAlert>
         )}
 
         {success && !uploadResults.length && (
-          <div className="card" style={{ marginTop: 20, background: 'var(--green-light)', border: '1px solid var(--green)', color: 'var(--green-dark)', fontWeight: 500 }}>
-            {success}
-          </div>
+          <UploadAlert kind="success">{success}</UploadAlert>
         )}
 
 
 
-        <div style={{ marginTop: 30, padding: 16, background: 'var(--blue-light)', borderRadius: 6, borderLeft: '4px solid var(--blue)', color: 'var(--blue-dark)', fontSize: 13, lineHeight: 1.6 }}>
-          <div style={{ fontWeight: 600, marginBottom: 8 }}>💡 What is this for?</div>
+        <div className="card" style={{ marginBottom: 16, fontSize: 13, lineHeight: 1.6, color: 'var(--text-muted)' }}>
+          <div style={{ fontWeight: 600, marginBottom: 8, color: 'var(--text)' }}>What this is for</div>
           <ul style={{ paddingLeft: 20, margin: 0 }}>
-            <li><strong>Hector sends you monthly production reports</strong> (one per carrier: Humana, UHC, Aetna, etc.)</li>
-            <li>These show <strong>ALL agency production</strong> - including agents you don't manage</li>
-            <li>Upload them here to verify <strong>BSI/NHP override payments</strong> are correct</li>
-            <li>The system will compare production vs. overrides and flag discrepancies</li>
+            <li>Hector sends monthly production reports (one per carrier)</li>
+            <li>Upload them here to verify BSI/NHP override payments</li>
+            <li>Agency Override Recon compares production vs overrides</li>
           </ul>
         </div>
 
-        {/* Upload History */}
-        <div className="card" style={{ marginTop: 30 }}>
-          <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>📋 Upload History</div>
+        <UploadHistoryCard title="Upload history">
           {loadingHistory ? (
             <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-muted)' }}>Loading history...</div>
           ) : uploadHistory.length === 0 ? (
@@ -425,7 +375,7 @@ export default function AgencyProductionUpload() {
                           onMouseOut={(e) => e.target.style.borderBottom = '1px dashed var(--blue)'}
                           title="Click to view uploaded records"
                         >
-                          📄 {upload.filename}
+                          {upload.filename}
                         </a>
                       </td>
                       <td>
@@ -456,7 +406,7 @@ export default function AgencyProductionUpload() {
                           onClick={() => handleDeleteUpload(upload)}
                           style={{ background: 'var(--red)', color: 'white', fontSize: 11, padding: '4px 10px' }}
                         >
-                          🗑️ Delete
+                          Delete
                         </button>
                       </td>
                     </tr>
@@ -465,8 +415,7 @@ export default function AgencyProductionUpload() {
               </table>
             </div>
           )}
-        </div>
-      </div>
-    </div>
+        </UploadHistoryCard>
+    </UploadPageShell>
   );
 }

@@ -126,7 +126,7 @@ export default function App() {
     { id: 'upload', label: 'Commission Statements' },
     ...(!isBSI ? [
       { id: 'medicarepro-upload', label: 'MedicarePro Sales' },
-      { id: 'agency-production-upload', label: 'Agency Production Upload' },
+      { id: 'agency-production-upload', label: 'Agency Production' },
     ] : []),
     { id: 'bsi-statements-upload', label: 'BSI Statements' },
   ];
