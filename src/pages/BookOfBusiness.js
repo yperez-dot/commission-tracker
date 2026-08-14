@@ -74,6 +74,7 @@ function MultiSelect({ label, options, selected, onChange }) {
 }
 
 export default function BookOfBusiness({ user }) {
+  const isAdmin = user?.role === 'admin';
   const [summary, setSummary] = useState(null);
   const [clients, setClients] = useState([]);
   const [allClients, setAllClients] = useState([]); // Full unfiltered list for tab counts
@@ -98,6 +99,10 @@ export default function BookOfBusiness({ user }) {
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const [termedDatePicker, setTermedDatePicker] = useState(null); // { client, date }
+
+  useEffect(() => {
+    if (tab === 'setup' && !isAdmin) setTab('all');
+  }, [tab, isAdmin]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -447,7 +452,9 @@ export default function BookOfBusiness({ user }) {
           <button style={tabStyle('all')} onClick={()=>{setTab('all');setFilterStatus('active');}}>All active ({summary?.totalActive||0})</button>
           <button style={tabStyle('termed')} onClick={()=>{setTab('termed');setFilterStatus('termed');}}>Termed / Deceased ({termedCount})</button>
           <button style={tabStyle('carriers')} onClick={()=>setTab('carriers')}>By carrier</button>
-          <button style={tabStyle('setup')} onClick={()=>setTab('setup')}>Setup & tools</button>
+          {isAdmin && (
+            <button style={tabStyle('setup')} onClick={()=>setTab('setup')}>Setup & tools</button>
+          )}
         </div>
 
         {(tab==='all' || tab==='termed') && (
@@ -625,7 +632,7 @@ export default function BookOfBusiness({ user }) {
           </div>
         )}
 
-        {tab==='setup' && (
+        {tab==='setup' && isAdmin && (
           <div>
             <div className="card" style={{marginBottom:14}}>
               <div className="card-title">Run monthly renewal check</div>

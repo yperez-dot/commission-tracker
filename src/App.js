@@ -105,17 +105,38 @@ export default function App() {
 
   const isBSI = agencyView.toLowerCase().includes('broker society');
 
+  const THEI_ONLY_PAGES = new Set([
+    'medicarepro-upload',
+    'agency-production-upload',
+    'agency-production-recon',
+    'direct-recon',
+    'renewals',
+    'reconciliation',
+  ]);
+
+  useEffect(() => {
+    if (isBSI && THEI_ONLY_PAGES.has(page)) {
+      setPage('dashboard');
+      setPageParams({});
+      localStorage.setItem('he_page', 'dashboard');
+    }
+  }, [isBSI, page]);
+
+  const uploadChildren = [
+    { id: 'upload', label: 'Commission Statements' },
+    ...(!isBSI ? [
+      { id: 'medicarepro-upload', label: 'MedicarePro Sales' },
+      { id: 'agency-production-upload', label: 'Agency Production Upload' },
+    ] : []),
+    { id: 'bsi-statements-upload', label: 'BSI Statements' },
+  ];
+
   const navItems = [
     { id: 'dashboard', label: 'Dashboard' },
-    { 
-      id: 'uploads', 
+    {
+      id: 'uploads',
       label: 'Uploads',
-      children: [
-        { id: 'upload', label: 'Commission Statements' },
-        { id: 'medicarepro-upload', label: 'MedicarePro Sales' },
-        { id: 'agency-production-upload', label: 'Agency Production' },
-        { id: 'bsi-statements-upload', label: 'BSI Statements' },
-      ]
+      children: uploadChildren,
     },
     { id: 'alldata', label: 'All Data' },
     { id: 'bob', label: 'Book of Business' },
@@ -123,7 +144,7 @@ export default function App() {
       id: 'reconciliation',
       label: 'Reconciliation',
       children: [
-        { id: 'direct-recon', label: 'Our Sales' },
+        { id: 'direct-recon', label: 'Sales Reconciliation' },
         { id: 'agency-production-recon', label: 'Agency Override Recon' },
         { id: 'renewals', label: 'Missing Renewals' },
       ]
@@ -151,10 +172,10 @@ export default function App() {
   // triggering all useEffect data fetches with the new agency header
   const pages = {
     dashboard: <Dashboard key={agencyView} user={effectiveUser} onNavigate={navigate} />,
-    upload: <Upload key={agencyView} user={effectiveUser} />,
-    'medicarepro-upload': <MedicareProUpload key={agencyView} user={effectiveUser} />,
-    'agency-production-upload': <AgencyProductionUpload key={agencyView} user={effectiveUser} />,
-    'bsi-statements-upload': <BSIStatementsUpload key={agencyView} user={effectiveUser} />,
+    upload: <Upload key={agencyView} user={effectiveUser} onNavigate={navigate} />,
+    'medicarepro-upload': <MedicareProUpload key={agencyView} user={effectiveUser} onNavigate={navigate} />,
+    'agency-production-upload': <AgencyProductionUpload key={agencyView} user={effectiveUser} onNavigate={navigate} />,
+    'bsi-statements-upload': <BSIStatementsUpload key={agencyView} user={effectiveUser} onNavigate={navigate} />,
     'agency-production-recon': <AgencyProductionRecon key={agencyView} user={effectiveUser} />,
     alldata: <AllData key={agencyView} user={effectiveUser} initialFilters={pageParams} />,
     bob: <BookOfBusiness key={agencyView} user={effectiveUser} />,

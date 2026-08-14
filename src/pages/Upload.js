@@ -1,12 +1,19 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiFetch, apiUpload } from '../api';
 import { formatDate, formatDateTime } from '../utils/dateFormat';
+import UploadRouteConfirm from '../components/UploadRouteConfirm';
+import {
+  detectUploadDestination,
+  destinationMatchesTab,
+  UPLOAD_PAGE_BY_DEST,
+} from '../utils/uploadDestination';
+import { setPendingUpload, takePendingUpload } from '../utils/pendingUpload';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-export default function Upload({ user }) {
+export default function Upload({ user, onNavigate }) {
   const [uploads, setUploads] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState(null);
@@ -26,6 +33,7 @@ export default function Upload({ user }) {
   const [duplicateModal, setDuplicateModal] = useState(null);
   const [selectedDuplicates, setSelectedDuplicates] = useState(new Set());
   const [expandedDuplicate, setExpandedDuplicate] = useState(null);
+  const [routeConfirm, setRouteConfirm] = useState(null); // { file, detected }
 
   const loadUploads = useCallback(async () => {
     try {
@@ -35,6 +43,22 @@ export default function Upload({ user }) {
   }, []);
 
   useEffect(() => { loadUploads(); }, [loadUploads]);
+
+  useEffect(() => {
+    const pending = takePendingUpload();
+    if (pending) queueFile(pending);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function queueFile(file) {
+    if (!file) return;
+    const detected = detectUploadDestination(file.name);
+    if (!destinationMatchesTab(detected.id, 'commission_statement') && detected.confidence !== 'low') {
+      setRouteConfirm({ file, detected });
+      return;
+    }
+    handleFile(file);
+  }
 
   async function handleFile(file, skipDuplicates = false, selectedDupes = []) {
     if (!file) return;
@@ -54,16 +78,14 @@ export default function Upload({ user }) {
       
       // Handle 409 duplicate warning
       if (result.status === 409 && result.duplicateWarning) {
-        console.log('🔍 409 Response Data:', result); // ← DEBUG: Check if sourceType is present
-        console.log('🔍 sourceType value:', result.sourceType); // ← DEBUG: Explicit check
         setDuplicateModal({
           file,
-          sourceType: result.sourceType || 'other', // 'statement' or 'other'
+          sourceType: result.sourceType || 'other',
           duplicateCount: result.duplicateCount,
           totalCount: result.totalCount,
           duplicates: result.duplicates || []
         });
-        setSelectedDuplicates(new Set()); // Start with none selected
+        setSelectedDuplicates(new Set());
         setUploading(false);
         return;
       }
@@ -125,12 +147,11 @@ export default function Upload({ user }) {
     finally { setViewLoading(false); }
   }
 
-  // ← FIX: was missing async
-  async function handleDrop(e) {
+  function handleDrop(e) {
     e.preventDefault();
     setDragOver(false);
     const files = Array.from(e.dataTransfer.files);
-    for (const file of files) { await handleFile(file); }
+    for (const file of files) queueFile(file);
   }
 
   const totalRecords = uploads.reduce((s, u) => s + (u.row_count || 0), 0);
@@ -227,9 +248,34 @@ export default function Upload({ user }) {
         </div>
       )}
 
+      {routeConfirm && (
+        <UploadRouteConfirm
+          filename={routeConfirm.file?.name}
+          detected={routeConfirm.detected}
+          currentLabel="Commission Statements"
+          onUseSuggested={() => {
+            const { file, detected } = routeConfirm;
+            setRouteConfirm(null);
+            const pageId = UPLOAD_PAGE_BY_DEST[detected.id];
+            if (pageId && onNavigate) {
+              setPendingUpload(file);
+              onNavigate(pageId);
+            } else {
+              handleFile(file);
+            }
+          }}
+          onStayHere={() => {
+            const { file } = routeConfirm;
+            setRouteConfirm(null);
+            handleFile(file);
+          }}
+          onCancel={() => setRouteConfirm(null)}
+        />
+      )}
+
       <div className="page-header">
-        <div className="page-title">Upload statements</div>
-        <div className="page-sub">Commission statements including BSI→THE remittance CSVs (T.H.E Statements / JULY - THE). Carrier→BSI feeds go under Uploads → BSI Statements.</div>
+        <div className="page-title">Commission Statements</div>
+        <div className="page-sub">Direct carrier statements and BSI→THE remittance CSVs. Carrier→BSI feeds belong under Uploads → BSI Statements.</div>
       </div>
       <div className="page-body">
 
@@ -246,21 +292,19 @@ export default function Upload({ user }) {
           }}>
             {uploading ? (
               <div>
-                <div style={{ fontSize: 32, marginBottom: 8 }}>⏳</div>
                 <div style={{ fontSize: 14, fontWeight: 600 }}>Processing file...</div>
-                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>AI is detecting columns and parsing records</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>Detecting columns and parsing records</div>
               </div>
             ) : (
               <div>
-                <div style={{ fontSize: 32, marginBottom: 8 }}>📂</div>
-                <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Drop carrier statement here</div>
+                <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Drop commission statement here</div>
                 <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>Supports .xlsx, .xls, .csv, .pdf — any carrier format</div>
                 <label style={{ background: 'var(--blue)', color: '#fff', borderRadius: 6, padding: '8px 20px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
                   Choose file
                   <input type="file" accept=".xlsx,.xls,.csv,.pdf" multiple style={{ display: 'none' }}
-                    onChange={async e => {
+                    onChange={e => {
                       const files = Array.from(e.target.files);
-                      for (const f of files) { await handleFile(f); }
+                      for (const f of files) queueFile(f);
                       e.target.value = '';
                     }} />
                 </label>
