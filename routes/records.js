@@ -55,8 +55,6 @@ function normalizeAgentKey(name) {
 }
 
 // normalizeCarrierKey: carrier-family normalization.
-// TODO(Commit 8): extract to shared module — currently duplicated in src/utils/reconMatching.js.
-// Keep both files in sync until then.
 function normalizeCarrierKey(carrier) {
   if (!carrier) return '';
   const c = carrier.toLowerCase().trim();

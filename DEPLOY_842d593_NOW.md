@@ -14,7 +14,6 @@
 3. ✅ Sales Recon limit 50k + chargebacks included
 4. ✅ Type-aware netting (separate override_net and sale_net)
 5. ✅ Agency Override Recon fix (dedup + netting + BOB status)
-6. ✅ Shared utility (reconMatching.js)
 
 **PLUS:**
 7. ✅ Correct require path fix (no crash)
