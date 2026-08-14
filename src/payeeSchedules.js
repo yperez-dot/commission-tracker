@@ -34,9 +34,9 @@ const STATEMENT_TYPES = Object.freeze({
   THEI_OVERRIDE: 'thei_override',
   /** BSI's share of Agency Override rows (house / residual view). */
   BSI_OVERRIDE: 'bsi_override',
-  /** Marco $10 sub_agent_override rollup across Marco downline. */
+  /** Marco $10 sub_agent_override rollup — IRS Swan agency peel (display name Marco), not an agent. */
   MARCO: 'marco',
-  /** Integrity Partners producer_payable (Chris / Horacio / CAM). */
+  /** Integrity Partners producer_payable (Chris / Horacio / CAM) — agency schedule. */
   INTEGRITY: 'integrity',
   /** Lina agent production (builder helper) — paid via Agent Statements, not Override Statements. */
   ALBA: 'alba',
