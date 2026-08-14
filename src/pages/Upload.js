@@ -48,7 +48,6 @@ export default function Upload({ user, onNavigate }) {
   useEffect(() => {
     const pending = takePendingUpload();
     if (pending) queueFile(pending);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function queueFile(file) {
