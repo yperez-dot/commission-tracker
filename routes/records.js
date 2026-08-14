@@ -651,16 +651,29 @@ router.get('/agency-summary', requireAuth, requireAdmin, async (req, res) => {
     const pool = getPool();
     const period = req.query.period;
     const year = req.query.year;
+    const periods = req.query.periods;
 
-    const whereParts = [];
+    const whereParts = [AGENCY_ACA_AGENT_EXCLUDE];
     const params = [];
-    if (period) {
+    let idx = 1;
+
+    const af = agencyFilter(req, null);
+    if (af) whereParts.push(af);
+
+    if (periods) {
+      const list = String(periods).split(',').map((p) => p.trim()).filter(Boolean);
+      if (list.length) {
+        whereParts.push(`payment_period = ANY($${idx++})`);
+        params.push(list);
+      }
+    } else if (period) {
+      whereParts.push(`payment_period = $${idx++}`);
       params.push(period);
-      whereParts.push(`payment_period = $${params.length}`);
     } else if (year) {
+      whereParts.push(`payment_period LIKE $${idx++}`);
       params.push(`${year}%`);
-      whereParts.push(`payment_period LIKE $${params.length}`);
     }
+
     const whereClause = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
 
     const result = await pool.query(
@@ -696,8 +709,13 @@ router.get('/agency-summary', requireAuth, requireAdmin, async (req, res) => {
       grandCount += parseInt(r.record_count, 10);
     }
 
+    const periodLabel =
+      (periods && String(periods).split(',').filter(Boolean).length > 1)
+        ? `${String(periods).split(',')[0]}–${String(periods).split(',').slice(-1)[0]}`
+        : period || (year ? `${year}*` : 'all-time');
+
     res.json({
-      period_filter: period || (year ? `${year}*` : 'all-time'),
+      period_filter: periodLabel,
       sources,
       totals: {
         gross: Math.round(grandGross * 100) / 100,
