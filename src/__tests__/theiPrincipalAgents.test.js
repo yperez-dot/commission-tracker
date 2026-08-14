@@ -5,6 +5,7 @@ const {
   DASHBOARD_PRINCIPAL_AGENTS,
   DASHBOARD_MY_AGENTS,
   isTheiDirectAgent,
+  isTheiHouseWritingName,
   isTheiPrincipalAgent,
 } = require('../theiPrincipalAgents');
 
@@ -31,6 +32,14 @@ describe('theiPrincipalAgents', () => {
     expect(isTheiDirectAgent('Carolina Andrea Robles')).toBe(true);
     expect(isTheiDirectAgent('Yahoska G Perez')).toBe(true);
     expect(isTheiDirectAgent('Gina Berenguer')).toBe(false);
+  });
+
+  it('isTheiDirectAgent includes THEI house UHC writing names', () => {
+    expect(isTheiHouseWritingName('The Health Experts Insurance')).toBe(true);
+    expect(isTheiHouseWritingName('The Health Experts')).toBe(true);
+    expect(isTheiHouseWritingName('Health Experts')).toBe(true);
+    expect(isTheiDirectAgent('The Health Experts Insurance')).toBe(true);
+    expect(isTheiDirectAgent('Health Experts')).toBe(true);
   });
 
   it('isTheiPrincipalAgent is Yahoska + Katy only (missing renewals BOB)', () => {

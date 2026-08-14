@@ -446,7 +446,7 @@ export default function Dashboard({ user, onNavigate }) {
             ) : (
               <div style={{ background: C.accentLight, borderRadius: 6, padding: '8px 10px', marginBottom: 12, fontSize: 11, color: C.accentDark, lineHeight: 1.45, border: '0.5px solid #E8D9B8' }}>
                 <div style={{ fontWeight: 600, marginBottom: 4 }}>Principal agents</div>
-                {THEI_DIRECT_AGENTS.join(', ')}, THEI house — sidebar agent filter disabled in this view.
+                {THEI_DIRECT_AGENTS.join(', ')}, THEI house (incl. UHC agency writing) — sidebar agent filter disabled in this view.
               </div>
             )}
             <FilterGroup title="Plan Type" items={allFilters.planTypes||[]} selected={selPlanTypes} onToggle={item=>toggle(selPlanTypes,setSelPlanTypes,item)} onSelectAll={items=>setSelPlanTypes([...items])} onClearAll={()=>setSelPlanTypes([])}/>

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../api';
 import { formatDate as formatDateUtil } from '../utils/dateFormat';
-import { THEI_DIRECT_AGENTS, isTheiDirectAgent } from '../theiPrincipalAgents';
+import { THEI_DIRECT_AGENTS, isTheiDirectAgent, directAgentsLabel } from '../theiPrincipalAgents';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -714,7 +714,7 @@ export default function Reconciliation({ user }) {
                   onChange={e => setShowDirectAgentsOnly(e.target.checked)}
                   style={{cursor:'pointer'}}
                 />
-                <span>Direct agents only ({THEI_DIRECT_AGENTS.map((n) => n.split(' ')[0]).join(', ')})</span>
+                <span>Direct agents only ({directAgentsLabel()})</span>
               </label>
               <button className="btn btn-secondary" onClick={exportToCSV} disabled={loading}>
                 📥 Export CSV

@@ -3,7 +3,8 @@
 /**
  * THEI principal / direct Medicare agents — single source of truth.
  *
- * Direct agents (Sales Recon, dashboard agent view): Yahoska, Katy, Carolina.
+ * Direct agents (Sales Recon, dashboard agent view): Yahoska, Katy, Carolina,
+ * plus THEI house writing name (UHC statements often post as agency, not personal).
  * Missing Renewals BOB scope stays Yahoska + Katy only (ops rule).
  */
 
@@ -16,6 +17,14 @@ const THEI_DIRECT_AGENTS = Object.freeze([
 
 /** House/agency production payee in commission_records. */
 const THEI_HOUSE_AGENT = 'The Health Experts Insurance';
+
+/** UHC / carrier writing-agent strings that map to THEI house (see routes/files.js isAgencyName). */
+const THEI_HOUSE_WRITING_KEYS = Object.freeze([
+  'the health experts insurance',
+  'the health experts',
+  'health experts insurance',
+  'health experts',
+]);
 
 /** Dashboard Agent view — principal production (direct writers + house). */
 const DASHBOARD_PRINCIPAL_AGENTS = Object.freeze([
@@ -37,8 +46,16 @@ function normalizeAgentKey(name) {
   return String(name || '').toLowerCase().trim();
 }
 
-/** Sales Recon / dashboard: Yahoska, Katy, Carolina (+ name variants). */
+/** UHC (and some carrier feeds): writing agent = THEI house, not a person's name. */
+function isTheiHouseWritingName(agentName) {
+  const n = normalizeAgentKey(agentName);
+  if (!n) return false;
+  return THEI_HOUSE_WRITING_KEYS.some((key) => n.includes(key));
+}
+
+/** Sales Recon / dashboard: direct writers + THEI house UHC writing. */
 function isTheiDirectAgent(agentName) {
+  if (isTheiHouseWritingName(agentName)) return true;
   const n = normalizeAgentKey(agentName);
   if (!n) return false;
   return THEI_DIRECT_AGENTS.some((canonical) => {
@@ -64,7 +81,8 @@ function isTheiPrincipalAgent(agentName) {
 }
 
 function directAgentsLabel() {
-  return THEI_DIRECT_AGENTS.map((n) => n.split(' ')[0]).join(', ');
+  const names = THEI_DIRECT_AGENTS.map((n) => n.split(' ')[0]).join(', ');
+  return `${names} + THEI house (UHC writing)`;
 }
 
 module.exports = {
@@ -73,6 +91,7 @@ module.exports = {
   DASHBOARD_PRINCIPAL_AGENTS,
   DASHBOARD_MY_AGENTS,
   isTheiDirectAgent,
+  isTheiHouseWritingName,
   isTheiPrincipalAgent,
   directAgentsLabel,
 };
