@@ -60,37 +60,101 @@ function normalizeAgentKey(name) {
 
 // normalizeCarrierKey imported from src/matchingNormalize (Omaha carve-out)
 
+/** Shared WHERE builder for /records list filters (payment + by-client). */
+function buildRecordListFilters(req) {
+  const {
+    agent, agents, carrier, carriers, period, periods, classification, classifications,
+    lob, lobs, planType, payee, search, upload_id, upload_category, exclude_upload_category,
+    amountSign,
+  } = req.query;
+  const where = [];
+  const params = [];
+  let idx = 1;
+
+  if (req.user.role === 'agent') {
+    where.push(`cr.agent_name ILIKE $${idx++}`);
+    params.push(`%${req.user.name}%`);
+  } else if (req.user.role === 'admin') {
+    const af = agencyFilter(req, 'cr');
+    if (af) where.push(af);
+  }
+  if (agents) {
+    const list = agents.split(',').map((a) => a.trim()).filter(Boolean);
+    if (list.length) { where.push(`cr.agent_name = ANY($${idx++})`); params.push(list); }
+  } else if (agent) {
+    where.push(`cr.agent_name = $${idx++}`);
+    params.push(agent);
+  }
+  if (carriers) {
+    const list = carriers.split(',').map((c) => c.trim()).filter(Boolean);
+    if (list.length) { where.push(`cr.carrier = ANY($${idx++})`); params.push(list); }
+  } else if (carrier) {
+    where.push(`cr.carrier = $${idx++}`);
+    params.push(carrier);
+  }
+  if (periods) {
+    const list = periods.split(',').map((p) => p.trim()).filter(Boolean);
+    if (list.length) { where.push(`cr.payment_period = ANY($${idx++})`); params.push(list); }
+  } else if (period) {
+    where.push(`cr.payment_period = $${idx++}`);
+    params.push(period);
+  }
+  if (classifications) {
+    const list = classifications.split(',').map((c) => c.trim()).filter(Boolean);
+    if (list.length) { where.push(`cr.classification = ANY($${idx++})`); params.push(list); }
+  } else if (classification) {
+    where.push(`cr.classification = $${idx++}`);
+    params.push(classification);
+  }
+  if (lobs) {
+    const list = lobs.split(',').map((l) => l.trim()).filter(Boolean);
+    if (list.length) { where.push(`cr.lob = ANY($${idx++})`); params.push(list); }
+  } else if (lob) {
+    where.push(`cr.lob = $${idx++}`);
+    params.push(lob);
+  }
+  if (planType) { where.push(`COALESCE(cr.plan_type,'') = $${idx++}`); params.push(planType); }
+  if (upload_id) { where.push(`cr.upload_id = $${idx++}`); params.push(parseInt(upload_id, 10)); }
+  if (upload_category) { where.push(`u.category = $${idx++}`); params.push(upload_category); }
+  if (exclude_upload_category) {
+    where.push(`(u.category IS NULL OR u.category != $${idx++})`);
+    params.push(exclude_upload_category);
+  }
+  if (payee) { where.push(`cr.payee = $${idx++}`); params.push(payee); }
+  if (amountSign === 'negative') where.push('cr.commission < 0');
+  else if (amountSign === 'positive') where.push('cr.commission >= 0');
+  if (search) {
+    where.push(`(cr.client_full_name ILIKE $${idx} OR cr.agent_name ILIKE $${idx} OR cr.carrier ILIKE $${idx})`);
+    params.push(`%${search}%`);
+    idx += 1;
+  }
+
+  const needsUploadJoin = Boolean(upload_category || exclude_upload_category);
+  return { where, params, idx, needsUploadJoin };
+}
+
+const IS_TERMED_SQL = `CASE WHEN
+  EXISTS (
+    SELECT 1 FROM policy_status ps
+    WHERE LOWER(TRIM(cr.client_full_name)) = LOWER(TRIM(ps.client_full_name))
+      AND LOWER(TRIM(cr.carrier)) = LOWER(TRIM(ps.carrier))
+      AND LOWER(TRIM(cr.agent_name)) = LOWER(TRIM(ps.agent_name))
+      AND ps.status = 'termed'
+  ) OR EXISTS (
+    SELECT 1 FROM book_of_business bob
+    WHERE LOWER(TRIM(cr.client_full_name)) = LOWER(TRIM(bob.client_full_name))
+      AND LOWER(TRIM(cr.carrier)) = LOWER(TRIM(bob.carrier))
+      AND LOWER(TRIM(cr.agent_name)) = LOWER(TRIM(bob.agent_name))
+      AND bob.status = 'termed'
+  )
+THEN true ELSE false END`;
+
 router.get('/', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
-    const { agent, agents, carrier, carriers, period, periods, classification, classifications, lob, lobs, planType, payee, search, upload_id, upload_category, exclude_upload_category, amountSign, sortCol, sortDir = 'asc', limit = 100, offset = 0 } = req.query;
-    let where = [], params = [], idx = 1;
-
-    if (req.user.role === 'agent') {
-      where.push(`cr.agent_name ILIKE $${idx++}`); params.push(`%${req.user.name}%`);
-    } else if (req.user.role === 'admin') {
-      const af = agencyFilter(req, 'cr');
-      if (af) { where.push(af); }
-    }
-    if (agents) { const list = agents.split(',').map(a=>a.trim()).filter(Boolean); if (list.length) { where.push(`cr.agent_name = ANY($${idx++})`); params.push(list); } }
-    else if (agent) { where.push(`cr.agent_name = $${idx++}`); params.push(agent); }
-    if (carriers) { const list = carriers.split(',').map(c=>c.trim()).filter(Boolean); if (list.length) { where.push(`cr.carrier = ANY($${idx++})`); params.push(list); } }
-    else if (carrier) { where.push(`cr.carrier = $${idx++}`); params.push(carrier); }
-    if (periods) { const list = periods.split(',').map(p=>p.trim()).filter(Boolean); if (list.length) { where.push(`cr.payment_period = ANY($${idx++})`); params.push(list); } }
-    else if (period) { where.push(`cr.payment_period = $${idx++}`); params.push(period); }
-    if (classifications) { const list = classifications.split(',').map(c=>c.trim()).filter(Boolean); if (list.length) { where.push(`cr.classification = ANY($${idx++})`); params.push(list); } }
-    else if (classification) { where.push(`cr.classification = $${idx++}`); params.push(classification); }
-    if (lobs) { const list = lobs.split(',').map(l=>l.trim()).filter(Boolean); if (list.length) { where.push(`cr.lob = ANY($${idx++})`); params.push(list); } }
-    else if (lob) { where.push(`cr.lob = $${idx++}`); params.push(lob); }
-    if (planType) { where.push(`COALESCE(cr.plan_type,'') = $${idx++}`); params.push(planType); }
-    if (upload_id) { where.push(`cr.upload_id = $${idx++}`); params.push(parseInt(upload_id)); }
-    if (upload_category) { where.push(`u.category = $${idx++}`); params.push(upload_category); }
-    if (exclude_upload_category) { where.push(`(u.category IS NULL OR u.category != $${idx++})`); params.push(exclude_upload_category); }
-    if (payee) { where.push(`cr.payee = $${idx++}`); params.push(payee); }
-    if (amountSign === 'negative') { where.push('cr.commission < 0'); }
-    else if (amountSign === 'positive') { where.push('cr.commission >= 0'); }
-    if (search) { where.push(`(cr.client_full_name ILIKE $${idx} OR cr.agent_name ILIKE $${idx} OR cr.carrier ILIKE $${idx})`); params.push(`%${search}%`); idx++; }
-
+    const { sortCol, sortDir = 'asc', limit = 100, offset = 0 } = req.query;
+    const { where, params, idx: startIdx, needsUploadJoin } = buildRecordListFilters(req);
+    let idx = startIdx;
     const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
 
     // Build ORDER BY clause - validate sortCol to prevent SQL injection
@@ -127,38 +191,92 @@ router.get('/', requireAuth, async (req, res) => {
         cr.lob, cr.gross_commission, cr.thei_share, cr.bsi_share,
         cr.producer_payable, cr.sub_agent_override,
         cr.members, cr.statement_month,
-        CASE WHEN
-          EXISTS (
-            SELECT 1 FROM policy_status ps
-            WHERE LOWER(TRIM(cr.client_full_name)) = LOWER(TRIM(ps.client_full_name))
-              AND LOWER(TRIM(cr.carrier)) = LOWER(TRIM(ps.carrier))
-              AND LOWER(TRIM(cr.agent_name)) = LOWER(TRIM(ps.agent_name))
-              AND ps.status = 'termed'
-          ) OR EXISTS (
-            SELECT 1 FROM book_of_business bob
-            WHERE LOWER(TRIM(cr.client_full_name)) = LOWER(TRIM(bob.client_full_name))
-              AND LOWER(TRIM(cr.carrier)) = LOWER(TRIM(bob.carrier))
-              AND LOWER(TRIM(cr.agent_name)) = LOWER(TRIM(bob.agent_name))
-              AND bob.status = 'termed'
-          )
-        THEN true ELSE false END as is_termed
+        ${IS_TERMED_SQL} as is_termed
        FROM commission_records cr 
        LEFT JOIN uploads u ON cr.upload_id = u.id
        ${wc} ${orderBy} LIMIT $${idx++} OFFSET $${idx++}`,
-      [...params, parseInt(limit), parseInt(offset)]
+      [...params, parseInt(limit, 10), parseInt(offset, 10)]
     );
 
-    // Count query needs the uploads join when upload_category/exclude_upload_category filters are active
-    const needsUploadJoin = (upload_category || exclude_upload_category)
-      ? ' LEFT JOIN uploads u ON cr.upload_id = u.id'
-      : '';
+    const uploadJoin = needsUploadJoin ? ' LEFT JOIN uploads u ON cr.upload_id = u.id' : '';
     const total = await pool.query(
-      `SELECT COUNT(*) as count FROM commission_records cr${needsUploadJoin} ${wc}`,
+      `SELECT COUNT(*) as count FROM commission_records cr${uploadJoin} ${wc}`,
       params
     );
 
-    res.json({ records: records.rows, total: parseInt(total.rows[0].count) });
+    res.json({ records: records.rows, total: parseInt(total.rows[0].count, 10) });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─── GET /by-client — one row per client+carrier (All Data "client file" list)
+router.get('/by-client', requireAuth, async (req, res) => {
+  try {
+    const pool = getPool();
+    const { sortCol, sortDir = 'asc', limit = 100, offset = 0, hideTermed } = req.query;
+    const { where, params, idx: startIdx, needsUploadJoin } = buildRecordListFilters(req);
+    let idx = startIdx;
+    const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
+    const uploadJoin = ' LEFT JOIN uploads u ON cr.upload_id = u.id';
+
+    const validCols = {
+      client_full_name: 'client_full_name',
+      carrier: 'carrier',
+      agent_name: 'agent_name',
+      payment_count: 'payment_count',
+      commission_total: 'commission_total',
+      latest_period: 'latest_period',
+      first_period: 'first_period',
+      policy_number: 'policy_number',
+      lob: 'lob',
+    };
+    const orderCol = sortCol && validCols[sortCol] ? validCols[sortCol] : 'client_full_name';
+    const orderDir = String(sortDir).toLowerCase() === 'desc' ? 'DESC' : 'ASC';
+
+    const grouped = await pool.query(
+      `SELECT * FROM (
+         SELECT
+           MAX(cr.client_full_name) AS client_full_name,
+           MAX(cr.carrier) AS carrier,
+           COUNT(*)::int AS payment_count,
+           COALESCE(SUM(cr.commission), 0)::float AS commission_total,
+           COALESCE(SUM(cr.producer_payable), 0)::float AS producer_payable_total,
+           MAX(cr.payment_period) AS latest_period,
+           MIN(cr.payment_period) AS first_period,
+           (ARRAY_AGG(cr.agent_name ORDER BY cr.payment_period DESC NULLS LAST, cr.id DESC))[1] AS agent_name,
+           (ARRAY_AGG(cr.policy_number ORDER BY cr.payment_period DESC NULLS LAST, cr.id DESC))[1] AS policy_number,
+           (ARRAY_AGG(cr.lob ORDER BY cr.payment_period DESC NULLS LAST, cr.id DESC))[1] AS lob,
+           BOOL_OR(${IS_TERMED_SQL}) AS is_termed
+         FROM commission_records cr
+         ${uploadJoin}
+         ${wc}
+         GROUP BY LOWER(TRIM(cr.client_full_name)), LOWER(TRIM(cr.carrier))
+       ) g
+       ${hideTermed === 'true' || hideTermed === '1' ? 'WHERE g.is_termed IS NOT TRUE' : ''}
+       ORDER BY ${orderCol} ${orderDir}, client_full_name ASC
+       LIMIT $${idx++} OFFSET $${idx++}`,
+      [...params, parseInt(limit, 10), parseInt(offset, 10)]
+    );
+
+    const countResult = await pool.query(
+      `SELECT COUNT(*)::int AS count FROM (
+         SELECT 1
+         FROM commission_records cr
+         ${uploadJoin}
+         ${wc}
+         GROUP BY LOWER(TRIM(cr.client_full_name)), LOWER(TRIM(cr.carrier))
+         ${hideTermed === 'true' || hideTermed === '1' ? `HAVING BOOL_OR(${IS_TERMED_SQL}) IS NOT TRUE` : ''}
+       ) g`,
+      params
+    );
+
+    res.json({
+      clients: grouped.rows,
+      total: countResult.rows[0]?.count || 0,
+    });
+  } catch (err) {
+    console.error('by-client error:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ─── GET /client-history — commission trend for one client (All Data drill-down)

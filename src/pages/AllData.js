@@ -143,6 +143,8 @@ export default function AllData({ user, initialFilters = {} }) {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [hideTermed, setHideTermed] = useState(false);
+  const [listMode, setListMode] = useState('clients'); // clients | payments
+  const [clients, setClients] = useState([]);
   const PAGE_SIZE = 100;
   const [policyModal, setPolicyModal] = useState(null);
   const [editRecord, setEditRecord] = useState(null);
@@ -181,52 +183,80 @@ export default function AllData({ user, initialFilters = {} }) {
     initialFilters.amountSign,
   ]);
 
+  function buildListParams(offset = 0) {
+    const params = new URLSearchParams({ limit: PAGE_SIZE, offset });
+    if (selAgents.length === 1) params.set('agent', selAgents[0]);
+    if (selCarriers.length === 1) params.set('carrier', selCarriers[0]);
+    if (selPeriods.length === 1) params.set('period', selPeriods[0]);
+    if (selTypes.length === 1) params.set('classification', selTypes[0]);
+    if (selAgents.length > 1) params.set('agents', selAgents.join(','));
+    if (selCarriers.length > 1) params.set('carriers', selCarriers.join(','));
+    if (selPeriods.length > 1) params.set('periods', selPeriods.join(','));
+    if (selTypes.length > 1) params.set('classifications', selTypes.join(','));
+    if (selPayees.length === 1) params.set('payee', selPayees[0]);
+    if (selLOB.length === 1) params.set('lob', selLOB[0]);
+    if (selLOB.length > 1) params.set('lobs', selLOB.join(','));
+    if (amountSign === 'negative' || amountSign === 'positive') params.set('amountSign', amountSign);
+    if (uploadFilter?.id) params.set('upload_id', String(uploadFilter.id));
+    if (search.trim()) params.set('search', search.trim());
+    if (sortCol) params.set('sortCol', sortCol);
+    if (sortDir) params.set('sortDir', sortDir);
+    return params;
+  }
+
   const loadRecords = useCallback(async (offset = 0) => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({ limit: PAGE_SIZE, offset });
-      if (selAgents.length === 1) params.set('agent', selAgents[0]);
-      if (selCarriers.length === 1) params.set('carrier', selCarriers[0]);
-      if (selPeriods.length === 1) params.set('period', selPeriods[0]);
-      if (selTypes.length === 1) params.set('classification', selTypes[0]);
-      if (selAgents.length > 1) params.set('agents', selAgents.join(','));
-      if (selCarriers.length > 1) params.set('carriers', selCarriers.join(','));
-      if (selPeriods.length > 1) params.set('periods', selPeriods.join(','));
-      if (selTypes.length > 1) params.set('classifications', selTypes.join(','));
-      if (selPayees.length === 1) params.set('payee', selPayees[0]);
-      if (selLOB.length === 1) params.set('lob', selLOB[0]);
-      if (selLOB.length > 1) params.set('lobs', selLOB.join(','));
-      if (amountSign === 'negative' || amountSign === 'positive') params.set('amountSign', amountSign);
-      if (uploadFilter?.id) params.set('upload_id', String(uploadFilter.id));
-      if (search.trim()) params.set('search', search.trim());
-      if (sortCol) params.set('sortCol', sortCol);
-      if (sortDir) params.set('sortDir', sortDir);
+      const params = buildListParams(offset);
       const data = await apiFetch(`/records?${params}`);
       let filteredRecords = data.records || [];
-      // Client-side filter for termed clients if checkbox is checked
       if (hideTermed) {
         filteredRecords = filteredRecords.filter(r => !r.is_termed);
       }
-      // Deduplicate by ID before setting state (fixes 2x display bug)
       const uniqueRecords = filteredRecords.filter((record, index, self) =>
         index === self.findIndex(r => r.id === record.id)
       );
       setRecords(uniqueRecords);
+      setClients([]);
       setTotal(data.total || 0);
       setSelected(new Set());
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- buildListParams reads current filter state
   }, [selAgents, selCarriers, selPeriods, selTypes, selPayees, selLOB, amountSign, search, sortCol, sortDir, hideTermed, uploadFilter, user.agency]);
 
-  useEffect(() => { 
-    setPage(0); 
-    loadRecords(0); 
-  }, [selAgents, selCarriers, selPeriods, selTypes, selPayees, selLOB, amountSign, search, sortCol, sortDir, hideTermed, uploadFilter, user.agency]);  // loadRecords intentionally omitted to prevent double-trigger
+  const loadClients = useCallback(async (offset = 0) => {
+    setLoading(true);
+    try {
+      const params = buildListParams(offset);
+      if (hideTermed) params.set('hideTermed', 'true');
+      // Client list sorts use different columns; map payment-only sorts away
+      const clientSortOk = ['client_full_name', 'carrier', 'agent_name', 'payment_count', 'commission_total', 'latest_period', 'first_period', 'policy_number', 'lob'];
+      if (sortCol && !clientSortOk.includes(sortCol)) {
+        params.delete('sortCol');
+        params.set('sortCol', 'client_full_name');
+      }
+      const data = await apiFetch(`/records/by-client?${params}`);
+      setClients(data.clients || []);
+      setRecords([]);
+      setTotal(data.total || 0);
+      setSelected(new Set());
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selAgents, selCarriers, selPeriods, selTypes, selPayees, selLOB, amountSign, search, sortCol, sortDir, hideTermed, uploadFilter, user.agency]);
+
+  useEffect(() => {
+    setPage(0);
+    if (listMode === 'clients') loadClients(0);
+    else loadRecords(0);
+  }, [selAgents, selCarriers, selPeriods, selTypes, selPayees, selLOB, amountSign, search, sortCol, sortDir, hideTermed, uploadFilter, user.agency, listMode]);  // load* intentionally omitted
 
   function handlePage(dir) {
     const next = page + dir;
     setPage(next);
-    loadRecords(next * PAGE_SIZE);
+    if (listMode === 'clients') loadClients(next * PAGE_SIZE);
+    else loadRecords(next * PAGE_SIZE);
   }
 
   function clearAll() {
@@ -305,8 +335,11 @@ export default function AllData({ user, initialFilters = {} }) {
     setPage(0); // Reset to first page when sorting
   }
 
-  const grandTotal = records.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0);
+  const grandTotal = listMode === 'clients'
+    ? clients.reduce((s, r) => s + (parseFloat(r.commission_total) || 0), 0)
+    : records.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0);
   const hasFilters = selAgents.length || selCarriers.length || selPeriods.length || selTypes.length || selPayees.length || selLOB.length || amountSign || search.trim() || uploadFilter;
+  const tableEmpty = listMode === 'clients' ? clients.length === 0 : records.length === 0;
 
   async function exportCSV() {
     try {
@@ -630,7 +663,7 @@ export default function AllData({ user, initialFilters = {} }) {
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12, gap: 12 }}>
               <div>
                 <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 4 }}>
-                  Commission history
+                  Client file
                 </div>
                 <div style={{ fontSize: 17, fontWeight: 600 }}>{clientHistory.client_full_name}</div>
                 <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
@@ -742,7 +775,7 @@ export default function AllData({ user, initialFilters = {} }) {
 
       <div className="page-header">
         <div className="page-title">All Data</div>
-        <div className="page-sub">All commission records across all carriers and periods · click an amount to see its source report</div>
+        <div className="page-sub">One row per client · open their file for payment history · switch to By payment for every digests row</div>
       </div>
       <div className="page-body">
 
@@ -807,9 +840,31 @@ export default function AllData({ user, initialFilters = {} }) {
               Reset all
             </button>
           )}
-          <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 4 }}>{total.toLocaleString()} records</span>
+          <div style={{ display: 'flex', border: '0.5px solid var(--border)', borderRadius: 6, overflow: 'hidden' }}>
+            {[
+              { id: 'clients', label: 'By client' },
+              { id: 'payments', label: 'By payment' },
+            ].map((opt) => (
+              <button
+                key={opt.id}
+                type="button"
+                onClick={() => { setListMode(opt.id); setPage(0); setSortCol(''); }}
+                style={{
+                  padding: '6px 12px', border: 'none', fontSize: 12, cursor: 'pointer',
+                  background: listMode === opt.id ? 'var(--accent)' : 'var(--bg)',
+                  color: listMode === opt.id ? 'var(--sidebar-bg)' : 'var(--text)',
+                  fontWeight: listMode === opt.id ? 600 : 400,
+                }}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 4 }}>
+            {total.toLocaleString()} {listMode === 'clients' ? 'clients' : 'records'}
+          </span>
           <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
-            <button className="btn" onClick={exportCSV} disabled={!records.length} style={{ fontSize: 12 }}>↓ Export All</button>
+            <button className="btn" onClick={exportCSV} disabled={listMode === 'payments' ? !records.length : !clients.length} style={{ fontSize: 12 }}>↓ Export All</button>
             {user.role === 'admin' && selected.size > 0 && (
               <button onClick={() => setConfirmDelete('selected')} className="btn btn-danger" style={{ fontSize: 12 }}>
                 Delete {selected.size} selected
@@ -863,12 +918,116 @@ export default function AllData({ user, initialFilters = {} }) {
         <div className="card" style={{ padding: 0 }}>
           {loading ? (
             <div className="empty-state"><div className="empty-title" style={{ color: 'var(--text-muted)' }}>Loading...</div></div>
-          ) : records.length === 0 ? (
+          ) : tableEmpty ? (
             <div className="empty-state">
               <div className="empty-icon">📋</div>
-              <div className="empty-title">No records found</div>
+              <div className="empty-title">No {listMode === 'clients' ? 'clients' : 'records'} found</div>
               <div className="empty-sub">Try adjusting your filters</div>
             </div>
+          ) : listMode === 'clients' ? (
+            <>
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      {[
+                        { col: 'client_full_name', label: 'Client' },
+                        { col: 'carrier', label: 'Carrier' },
+                        { col: 'agent_name', label: 'Agent' },
+                        { col: 'policy_number', label: 'Policy #' },
+                        { col: 'lob', label: 'LOB' },
+                        { col: 'payment_count', label: 'Pays' },
+                        { col: 'first_period', label: 'First' },
+                        { col: 'latest_period', label: 'Latest' },
+                        { col: 'commission_total', label: 'Total' },
+                      ].map(({ col, label }) => {
+                        const isActive = sortCol === col;
+                        return (
+                          <th key={col} onClick={() => handleSort(col)} style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}>
+                            {label} {isActive ? (sortDir === 'asc' ? '↑' : '↓') : <span style={{ opacity: 0.3 }}>↕</span>}
+                          </th>
+                        );
+                      })}
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {clients.map((c, i) => (
+                      <tr key={`${c.client_full_name}|${c.carrier}`}>
+                        <td style={{ color: 'var(--text-muted)', fontSize: 12 }}>{page * PAGE_SIZE + i + 1}</td>
+                        <td style={{ fontSize: 13 }}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setClientHistorySameAgent(false);
+                              loadClientHistory(c, false);
+                            }}
+                            title="Open client file"
+                            style={{
+                              background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                              color: 'var(--accent-dark)', fontWeight: 600, fontSize: 13, textDecoration: 'underline',
+                              textAlign: 'left',
+                            }}
+                          >
+                            {c.client_full_name}
+                          </button>
+                          {c.is_termed && (
+                            <span style={{
+                              marginLeft: 6, padding: '2px 6px', borderRadius: 4,
+                              background: '#E5E7EB', color: '#6B7280', fontSize: 10, fontWeight: 500, textTransform: 'uppercase',
+                            }}>
+                              Termed
+                            </span>
+                          )}
+                        </td>
+                        <td style={{ fontSize: 13, fontWeight: 500 }}>{formatCarrier(c.carrier)}</td>
+                        <td style={{ fontSize: 13 }}>{c.agent_name || '—'}</td>
+                        <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{c.policy_number || '—'}</td>
+                        <td style={{ fontSize: 11, fontWeight: 500, color: c.lob === 'ACA' ? 'var(--amber)' : 'var(--text-muted)' }}>{c.lob || '—'}</td>
+                        <td style={{ fontSize: 13, fontWeight: 500 }}>{c.payment_count}</td>
+                        <td style={{ fontSize: 12 }}>{formatPeriodLabel(c.first_period)}</td>
+                        <td style={{ fontSize: 12 }}>{formatPeriodLabel(c.latest_period)}</td>
+                        <td style={{ fontWeight: 600, color: parseFloat(c.commission_total) < 0 ? 'var(--red)' : 'var(--green)' }}>
+                          {fmt(c.commission_total)}
+                        </td>
+                        <td>
+                          <button
+                            type="button"
+                            className="btn"
+                            onClick={() => {
+                              setClientHistorySameAgent(false);
+                              loadClientHistory(c, false);
+                            }}
+                            style={{ fontSize: 11, padding: '4px 10px' }}
+                          >
+                            Open file
+                          </button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ background: 'var(--bg-subtle)', fontWeight: 500 }}>
+                      <td colSpan={6} style={{ padding: '10px 12px', fontSize: 13 }}>Page total ({clients.length} clients)</td>
+                      <td style={{ padding: '10px 12px', fontSize: 13 }}>{clients.reduce((s, c) => s + (c.payment_count || 0), 0)}</td>
+                      <td colSpan={2}></td>
+                      <td style={{ padding: '10px 12px', fontSize: 13, color: grandTotal < 0 ? 'var(--red)' : 'var(--green)' }}>{fmt(grandTotal)}</td>
+                      <td></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+              {total > PAGE_SIZE && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 14px', borderTop: '0.5px solid var(--border)', fontSize: 13 }}>
+                  <span style={{ color: 'var(--text-muted)' }}>Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, total)} of {total.toLocaleString()}</span>
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button className="btn" onClick={() => handlePage(-1)} disabled={page === 0}>← Prev</button>
+                    <button className="btn" onClick={() => handlePage(1)} disabled={(page + 1) * PAGE_SIZE >= total}>Next →</button>
+                  </div>
+                </div>
+              )}
+            </>
           ) : (
             <>
               <div className="table-wrap">
@@ -913,7 +1072,7 @@ export default function AllData({ user, initialFilters = {} }) {
                               <button
                                 type="button"
                                 onClick={() => loadClientHistory(r)}
-                                title="View commission history"
+                                title="Open client file"
                                 style={{
                                   background: 'none', border: 'none', padding: 0, cursor: 'pointer',
                                   color: 'var(--accent-dark)', fontWeight: 500, fontSize: 13, textDecoration: 'underline',
