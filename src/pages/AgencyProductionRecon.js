@@ -1254,7 +1254,7 @@ export default function AgencyProductionRecon() {
                 planchange: 'Client changed plans; original override may not apply.',
                 plandenied: 'Application denied by the carrier; no override expected.',
                 chase:      'Override being actively chased or disputed with BSI.',
-                cancelled:  'Cancelled / disenrolled, or override chargeback when the member left.',
+                cancelled:  'Cancelled / disenrolled, override chargeback, or No Pay Expected (not chasing).',
                 paid:       'Override commission paid — including earlier paid rows when a later chargeback clawed it back.',
               };
               const text = subtitles[tab];
@@ -1472,7 +1472,7 @@ export default function AgencyProductionRecon() {
           <ul style={{ paddingLeft: 20, margin: 0 }}>
             <li><strong>Missing:</strong> In production with no open override (includes came-back-after-chargeback)</li>
             <li><strong>Plan Change:</strong> Client changed plans (may or may not have override)</li>
-            <li><strong>Cancelled:</strong> Cancelled / disenrolled, or override chargeback when they left</li>
+            <li><strong>Cancelled:</strong> Cancelled / disenrolled, chargeback when they left, or manually set No Pay Expected</li>
             <li><strong>Paid:</strong> Override paid in statements (history kept even if later charged back)</li>
             <li><strong>Same person can appear in more than one tab</strong> (e.g. Paid → Cancelled chargeback → Missing again)</li>
           </ul>
