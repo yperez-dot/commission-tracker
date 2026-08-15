@@ -4,6 +4,7 @@ const { getPool } = require('../db/database');
 const { requireAuth } = require('./auth');
 const { normalizeAllRecords, normalizeAgentName } = require('./normalize');
 const { normalizeCarrierKey } = require('../src/matchingNormalize.cjs');
+const { clientNameKey, clientNameKeySql } = require('../src/clientNameKey');
 function requireAdmin(req, res, next) {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
   next();
@@ -45,10 +46,7 @@ const AGENCY_ACA_AGENT_EXCLUDE = `NOT (lob = 'ACA' AND COALESCE(producer_payable
 // Known edge case: solo-initial first names ("A Smith") collapse to just the surname;
 // acceptable risk — not present in Medicare commission statement data.
 function normalizeNameKey(name) {
-  if (!name) return '';
-  const noAccents = name.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  const clean = noAccents.toUpperCase().replace(/[^A-Z0-9\s]/g, ' ');
-  return clean.split(/\s+/).filter(t => t.length > 1).sort().join('|');
+  return clientNameKey(name);
 }
 
 // normalizeAgentKey: alias resolution (from normalize.js) then token-sort.
@@ -249,10 +247,15 @@ router.get('/by-client', requireAuth, async (req, res) => {
     const orderCol = sortCol && validCols[sortCol] ? validCols[sortCol] : 'client_full_name';
     const orderDir = String(sortDir).toLowerCase() === 'desc' ? 'DESC' : 'ASC';
 
+    const nameKeyExpr = clientNameKeySql('cr');
     const grouped = await pool.query(
       `SELECT * FROM (
          SELECT
-           MAX(cr.client_full_name) AS client_full_name,
+           (ARRAY_AGG(cr.client_full_name ORDER BY
+             CASE WHEN cr.client_full_name ~ '[a-z]' THEN 0 ELSE 1 END,
+             cr.payment_period DESC NULLS LAST,
+             cr.id DESC
+           ))[1] AS client_full_name,
            MAX(cr.carrier) AS carrier,
            COUNT(*)::int AS payment_count,
            COALESCE(SUM(cr.commission), 0)::float AS commission_total,
@@ -261,12 +264,16 @@ router.get('/by-client', requireAuth, async (req, res) => {
            MIN(cr.payment_period) AS first_period,
            (ARRAY_AGG(cr.agent_name ORDER BY cr.payment_period DESC NULLS LAST, cr.id DESC))[1] AS agent_name,
            (ARRAY_AGG(cr.policy_number ORDER BY cr.payment_period DESC NULLS LAST, cr.id DESC))[1] AS policy_number,
-           (ARRAY_AGG(cr.lob ORDER BY cr.payment_period DESC NULLS LAST, cr.id DESC))[1] AS lob,
+           (ARRAY_AGG(cr.lob ORDER BY
+             CASE WHEN NULLIF(TRIM(COALESCE(cr.lob, '')), '') IS NULL THEN 1 ELSE 0 END,
+             cr.payment_period DESC NULLS LAST,
+             cr.id DESC
+           ))[1] AS lob,
            BOOL_OR(${IS_TERMED_SQL}) AS is_termed
          FROM commission_records cr
          ${uploadJoin}
          ${wc}
-         GROUP BY LOWER(TRIM(cr.client_full_name)), LOWER(TRIM(cr.carrier))
+         GROUP BY ${nameKeyExpr}, LOWER(TRIM(cr.carrier))
        ) g
        ${hideTermed === 'true' || hideTermed === '1' ? 'WHERE g.is_termed IS NOT TRUE' : ''}
        ORDER BY ${orderCol} ${orderDir}, client_full_name ASC
@@ -280,7 +287,7 @@ router.get('/by-client', requireAuth, async (req, res) => {
          FROM commission_records cr
          ${uploadJoin}
          ${wc}
-         GROUP BY LOWER(TRIM(cr.client_full_name)), LOWER(TRIM(cr.carrier))
+         GROUP BY ${nameKeyExpr}, LOWER(TRIM(cr.carrier))
          ${hideTermed === 'true' || hideTermed === '1' ? `HAVING BOOL_OR(${IS_TERMED_SQL}) IS NOT TRUE` : ''}
        ) g`,
       params
@@ -306,10 +313,10 @@ router.get('/client-history', requireAuth, async (req, res) => {
     }
 
     const where = [
-      `LOWER(TRIM(cr.client_full_name)) = LOWER(TRIM($1))`,
+      `${clientNameKeySql('cr')} = $1`,
       `LOWER(TRIM(cr.carrier)) = LOWER(TRIM($2))`,
     ];
-    const params = [client, carrier];
+    const params = [clientNameKey(client), carrier];
     let idx = 3;
 
     if (agent) {

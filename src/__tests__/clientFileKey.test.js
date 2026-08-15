@@ -1,22 +1,21 @@
 'use strict';
 
-/**
- * All Data client-file grouping key (matches /records/by-client GROUP BY).
- */
-function clientFileKey(clientName, carrier) {
-  return `${String(clientName || '').toLowerCase().trim()}|${String(carrier || '').toLowerCase().trim()}`;
-}
+const { clientNameKey, clientFileGroupKey } = require('../clientNameKey');
 
-describe('clientFileKey', () => {
-  test('groups same client+carrier ignoring case/space', () => {
-    expect(clientFileKey('RONALDO BALBOA', 'Devoted')).toBe(clientFileKey('ronaldo balboa ', ' devoted'));
-  });
-
-  test('keeps different carriers separate', () => {
-    expect(clientFileKey('RICARDO BALBOA', 'Oscar Health')).not.toBe(
-      clientFileKey('RICARDO BALBOA', 'Devoted')
+describe('clientNameKey', () => {
+  test('merges Last, First and First Last formats', () => {
+    expect(clientNameKey('CAMBAS DE RIVAS, MILAGROS')).toBe(
+      clientNameKey('Milagros Cambas De Rivas')
     );
   });
-});
 
-module.exports = { clientFileKey };
+  test('clientFileGroupKey keeps carriers separate', () => {
+    expect(clientFileGroupKey('Milagros Cambas De Rivas', 'Aetna')).not.toBe(
+      clientFileGroupKey('Milagros Cambas De Rivas', 'Devoted')
+    );
+  });
+
+  test('ignores case and extra punctuation', () => {
+    expect(clientNameKey('RONALDO BALBOA')).toBe(clientNameKey('ronaldo balboa'));
+  });
+});
