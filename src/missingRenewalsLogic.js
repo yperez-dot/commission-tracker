@@ -216,6 +216,7 @@ function buildMissingRenewalRows({
       lob: paidRecs[0]?.lob || heldRecs[0]?.lob || '',
       policyStatus: psData?.status || null,
       termedDate: psData?.termed_date || null,
+      policyNotes: psData?.notes || null,
       matchCount: matchedRecs.length,
     });
   }
