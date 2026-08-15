@@ -4,6 +4,7 @@ import {
   detectUploadDestination,
   destinationMatchesTab,
   UPLOAD_PAGE_BY_DEST,
+  uploadCategoryLabel,
 } from '../utils/uploadDestination';
 
 describe('uploadDestination', () => {
@@ -66,5 +67,13 @@ describe('uploadDestination', () => {
     expect(UPLOAD_PAGE_BY_DEST.commission_statement).toBe('upload');
     expect(UPLOAD_PAGE_BY_DEST.bsi_statement).toBe('bsi-statements-upload');
     expect(UPLOAD_PAGE_BY_DEST.agent_payout).toBe('agent-payout-uploads');
+  });
+
+  test('uploadCategoryLabel maps DB category to Uploads tab name', () => {
+    expect(uploadCategoryLabel('bsi_statement')).toBe('BSI Statements');
+    expect(uploadCategoryLabel('agent_payout')).toBe('Agent Payout Uploads');
+    expect(uploadCategoryLabel('commission_statement')).toBe('Commission Statements');
+    expect(uploadCategoryLabel(null)).toBe('Commission Statements');
+    expect(uploadCategoryLabel('')).toBe('Commission Statements');
   });
 });

@@ -122,7 +122,8 @@ router.get('/', requireAuth, async (req, res) => {
         cr.client_full_name, cr.effective_date, cr.premium, cr.commission,
         cr.classification, cr.payment_period, cr.policy_number, cr.created_at,
         cr.upload_id, cr.payee, cr.source, COALESCE(cr.mga, '') as mga,
-        cr.raw_data, u.original_name as upload_name,
+        cr.raw_data, u.original_name as upload_name, u.category as upload_category,
+        u.uploaded_at as upload_uploaded_at,
         cr.lob, cr.gross_commission, cr.thei_share, cr.bsi_share,
         cr.producer_payable, cr.sub_agent_override,
         cr.members, cr.statement_month,
@@ -170,31 +171,35 @@ router.get('/client-history', requireAuth, async (req, res) => {
     }
 
     const where = [
-      `LOWER(TRIM(client_full_name)) = LOWER(TRIM($1))`,
-      `LOWER(TRIM(carrier)) = LOWER(TRIM($2))`,
+      `LOWER(TRIM(cr.client_full_name)) = LOWER(TRIM($1))`,
+      `LOWER(TRIM(cr.carrier)) = LOWER(TRIM($2))`,
     ];
     const params = [client, carrier];
     let idx = 3;
 
     if (agent) {
-      where.push(`LOWER(TRIM(agent_name)) = LOWER(TRIM($${idx++}))`);
+      where.push(`LOWER(TRIM(cr.agent_name)) = LOWER(TRIM($${idx++}))`);
       params.push(agent);
     }
 
     if (req.user.role === 'agent') {
-      where.push(`agent_name ILIKE $${idx++}`);
+      where.push(`cr.agent_name ILIKE $${idx++}`);
       params.push(`%${req.user.name}%`);
     } else if (req.user.role === 'admin') {
-      const af = agencyFilter(req, null);
+      const af = agencyFilter(req, 'cr');
       if (af) where.push(af);
     }
 
     const result = await pool.query(
-      `SELECT id, payment_period, classification, commission, producer_payable,
-              thei_share, bsi_share, policy_number, effective_date, lob, agent_name, carrier
-       FROM commission_records
+      `SELECT cr.id, cr.payment_period, cr.classification, cr.commission, cr.producer_payable,
+              cr.thei_share, cr.bsi_share, cr.policy_number, cr.effective_date, cr.lob,
+              cr.agent_name, cr.carrier, cr.source, cr.upload_id,
+              u.original_name AS upload_name, u.category AS upload_category,
+              u.uploaded_at AS upload_uploaded_at
+       FROM commission_records cr
+       LEFT JOIN uploads u ON u.id = cr.upload_id
        WHERE ${where.join(' AND ')}
-       ORDER BY payment_period ASC NULLS LAST, id ASC`,
+       ORDER BY cr.payment_period ASC NULLS LAST, cr.id ASC`,
       params
     );
 

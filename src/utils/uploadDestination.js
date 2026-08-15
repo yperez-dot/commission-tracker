@@ -206,6 +206,15 @@ export const UPLOAD_PAGE_BY_DEST = {
   agency_production: 'agency-production-upload',
 };
 
+/** Human label for an uploads.category value (All Data source-report audit). */
+export function uploadCategoryLabel(category) {
+  const c = String(category || '').toLowerCase().trim();
+  if (c === 'bsi_statement') return 'BSI Statements';
+  if (c === 'agent_payout') return 'Agent Payout Uploads';
+  if (c === 'commission_statement' || !c) return 'Commission Statements';
+  return c;
+}
+
 export function destinationMatchesTab(detectedId, currentTabId) {
   if (!detectedId || detectedId === 'unknown') return true;
   if (currentTabId === 'commission_statement') return detectedId === 'commission_statement';
