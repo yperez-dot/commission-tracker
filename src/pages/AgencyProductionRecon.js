@@ -3,6 +3,8 @@ import { apiFetch } from '../api';
 import { formatCarrier } from '../utils/formatCarrier';
 import { formatDate as formatDateUtil } from '../utils/dateFormat';
 import { normName, normalizeCarrier, carriersMatch } from '../matchingNormalize';
+import { fetchAllPages, truncationMessage } from '../fetchAllPages';
+import TruncationBanner from '../components/TruncationBanner';
 
 // Version: 2026-08-15 — shared matchingNormalize (Omaha ≠ UHC, empty-carrier safe)
 
@@ -301,6 +303,7 @@ export default function AgencyProductionRecon() {
   const [selectedOverride, setSelectedOverride] = useState(null);
   const [selectedProduction, setSelectedProduction] = useState(null);
   const [overrideSaving, setOverrideSaving] = useState(null); // id of row currently saving
+  const [truncationWarning, setTruncationWarning] = useState(null);
 
   useEffect(() => {
     loadData();
@@ -331,14 +334,20 @@ export default function AgencyProductionRecon() {
   async function loadData() {
     setLoading(true);
     setError(null);
+    setTruncationWarning(null);
     try {
-      // Load agency production (Hector's reports)
-      const prodData = await apiFetch('/agency-production?limit=5000');
-      setProduction(prodData.production || []);
+      const prodPage = await fetchAllPages('/agency-production', {
+        itemsKey: 'production',
+        pageSize: 5000,
+      }, apiFetch);
+      setProduction(prodPage.items || []);
 
-      // Load BSI→THEI override statements (EXCLUDE carrier→BSI statement uploads)
-      const overrideData = await apiFetch('/records?limit=5000&exclude_upload_category=bsi_statement');
-      const overrideStatements = (overrideData.records || []).filter(r => {
+      const overridePage = await fetchAllPages(
+        '/records?exclude_upload_category=bsi_statement',
+        { pageSize: 5000 },
+        apiFetch
+      );
+      const overrideStatements = (overridePage.items || []).filter(r => {
         const classification = r.classification?.toLowerCase() || '';
         const payee = r.payee?.toUpperCase() || '';
         const source = r.source?.toUpperCase() || '';
@@ -352,9 +361,18 @@ export default function AgencyProductionRecon() {
       });
       setOverrides(overrideStatements);
 
-      // Load Carrier→BSI records (only from bsi_statement uploads)
-      const carrierData = await apiFetch('/records?limit=5000&upload_category=bsi_statement');
-      setCarrierBSIRecords(carrierData.records || []);
+      const carrierPage = await fetchAllPages(
+        '/records?upload_category=bsi_statement',
+        { pageSize: 5000 },
+        apiFetch
+      );
+      setCarrierBSIRecords(carrierPage.items || []);
+
+      setTruncationWarning(truncationMessage([
+        prodPage.warning ? `Agency production: ${prodPage.warning}` : null,
+        overridePage.warning ? `Override statements: ${overridePage.warning}` : null,
+        carrierPage.warning ? `Carrier→BSI: ${carrierPage.warning}` : null,
+      ]));
 
       // Build set of uploaded carrier+period keys so we know what's been uploaded
       const bsiUploadsData = await apiFetch('/files/uploads?category=bsi_statement');
@@ -890,9 +908,11 @@ export default function AgencyProductionRecon() {
 
         {error && (
           <div className="card" style={{ marginTop: 20, background: 'var(--red-light)', border: '1px solid var(--red)', padding: 16 }}>
-            ❌ {error}
+            {error}
           </div>
         )}
+
+        <TruncationBanner message={truncationWarning} />
 
         {!loading && (
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>

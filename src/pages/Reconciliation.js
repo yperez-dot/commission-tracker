@@ -3,6 +3,8 @@ import { apiFetch } from '../api';
 import { formatDate as formatDateUtil } from '../utils/dateFormat';
 import { THEI_DIRECT_AGENTS, isTheiDirectAgent, directAgentsLabel } from '../theiPrincipalAgents';
 import { normName, normalizeCarrier, carriersMatch } from '../matchingNormalize';
+import { fetchAllPages, truncationMessage } from '../fetchAllPages';
+import TruncationBanner from '../components/TruncationBanner';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -284,18 +286,23 @@ export default function Reconciliation({ user }) {
   const [sortDirection, setSortDirection] = useState('asc');
   const [searchTerm, setSearchTerm] = useState('');
   const [showDirectAgentsOnly, setShowDirectAgentsOnly] = useState(true);  // Default to direct agents only
+  const [truncationWarning, setTruncationWarning] = useState(null);
 
   async function loadData() {
     setLoading(true);
     setError(null);
+    setTruncationWarning(null);
     console.log('Loading MedicarePro sales...');
     try {
-      // Fetch sales from MedicarePro upload endpoint
-      const salesData = await apiFetch('/medicarepro');
-      console.log('MedicarePro API response:', salesData);
-      
+      // Fetch sales from MedicarePro upload endpoint (page through limit)
+      const salesPage = await fetchAllPages('/medicarepro', {
+        itemsKey: 'sales',
+        pageSize: 10000,
+      }, apiFetch);
+      const rawSales = salesPage.items || [];
+      console.log('MedicarePro sales loaded:', rawSales.length, 'total', salesPage.total);
+
       // Deduplicate sales by client + policy + date (Fix #6b)
-      const rawSales = salesData.sales || [];
       const uniqueSales = Array.from(
         new Map(
           rawSales.map(sale => [
@@ -304,24 +311,24 @@ export default function Reconciliation({ user }) {
           ])
         ).values()
       );
-      
+
       if (rawSales.length !== uniqueSales.length) {
-        console.log(`✅ Sales deduplication: ${rawSales.length} → ${uniqueSales.length} (removed ${rawSales.length - uniqueSales.length} duplicates)`);
+        console.log(`Sales deduplication: ${rawSales.length} → ${uniqueSales.length} (removed ${rawSales.length - uniqueSales.length} duplicates)`);
       }
-      
+
       setSales(uniqueSales);
-      
+
       // Fetch commissions from OliComm (ALL records - need complete dataset for matching)
       console.log('Loading commission records...');
-      const commData = await apiFetch('/records?limit=50000');  // Increased from 100 to 50000
-      console.log('Commission response:', commData);
-      
-      // Include ALL records (even chargebacks with negative amounts)
-      // Need full picture to net: Karl Brown has +$318.09 New Business AND -$347 chargeback
-      const allCommissions = commData.records || [];
-      console.log(`✅ Loaded ${allCommissions.length} commission records (including chargebacks)`);
-      setCommissions(allCommissions);
-      
+      const commPage = await fetchAllPages('/records', { pageSize: 5000 }, apiFetch);
+      console.log(`Loaded ${commPage.fetched} commission records (total ${commPage.total})`);
+      setCommissions(commPage.items || []);
+
+      setTruncationWarning(truncationMessage([
+        salesPage.warning ? `Sales: ${salesPage.warning}` : null,
+        commPage.warning ? `Commissions: ${commPage.warning}` : null,
+      ]));
+
       // Fetch manual payments (optional - may not exist yet)
       try {
         console.log('Loading manual payments...');
@@ -685,9 +692,11 @@ export default function Reconciliation({ user }) {
 
         {error && (
           <div className="card" style={{marginBottom:14, background:'var(--red-light)', border:'1px solid var(--red)'}}>
-            <div style={{color:'var(--red-dark)', fontWeight:500}}>❌ Error: {error}</div>
+            <div style={{color:'var(--red-dark)', fontWeight:500}}>Error: {error}</div>
           </div>
         )}
+
+        <TruncationBanner message={truncationWarning} />
 
         {loading ? (
           <div className="card">
