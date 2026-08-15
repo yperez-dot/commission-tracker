@@ -237,7 +237,7 @@ function excelDateToISO(excelDate) {
 }
 
 // POST /api/agency-production/upload
-router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
+router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No file provided' });
@@ -743,7 +743,7 @@ router.delete('/upload/:id', requireAuth, requireAdmin, async (req, res) => {
 // PATCH /api/agency-production/:id/override - Set or clear manual override status
 // Body: { status: 'paid' | 'chase_bsi' | 'request_audit' | 'pending' | null }
 // null clears the override and restores system-matched status
-router.patch('/:id/override', requireAuth, async (req, res) => {
+router.patch('/:id/override', requireAuth, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
     const { status } = req.body;

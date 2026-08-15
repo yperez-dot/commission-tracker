@@ -1,6 +1,8 @@
+
+if (!process.env.DATABASE_URL) { console.error('DATABASE_URL required'); process.exit(1); }
 const { Pool } = require('pg');
 
-const DATABASE_URL = 'postgresql://postgres:LyahRMtjzhkPkaPpXtgysioPUBUVPAOi@metro.proxy.rlwy.net:24676/railway';
+const DATABASE_URL = process.env.DATABASE_URL;
 
 async function fixAgentNames() {
   const pool = new Pool({ connectionString: DATABASE_URL });

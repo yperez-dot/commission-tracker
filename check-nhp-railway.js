@@ -1,12 +1,14 @@
+
+if (!(process.env.DATABASE_URL || (process.env.PGHOST && process.env.PGPASSWORD))) { console.error('DATABASE_URL or PGHOST+PGPASSWORD required'); process.exit(1); }
 const { Pool } = require('pg');
 
 // Railway PostgreSQL connection
 const pool = new Pool({
-  host: 'metro.proxy.rlwy.net',
-  port: 24676,
+  host: process.env.PGHOST,
+  port: parseInt(process.env.PGPORT || '5432', 10),
   database: 'railway',
   user: 'postgres',
-  password: 'bQWjONLUdLHPCAKBZTZXPNNqjAUQEjbQ',
+  password: process.env.PGPASSWORD || '',
   ssl: { rejectUnauthorized: false }
 });
 

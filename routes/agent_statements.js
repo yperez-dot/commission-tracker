@@ -98,7 +98,7 @@ router.get('/summary', requireAuth, async (req, res) => {
 });
 
 // POST /api/agent-statements - Create new statement record
-router.post('/', requireAuth, async (req, res) => {
+router.post('/', requireAuth, requireAdmin, async (req, res) => {
   try {
     const pool = getPool();
     const {
@@ -148,7 +148,7 @@ router.post('/', requireAuth, async (req, res) => {
 });
 
 // PATCH /api/agent-statements/:id - Update statement record
-router.patch('/:id', requireAuth, async (req, res) => {
+router.patch('/:id', requireAuth, requireAdmin, async (req, res) => {
   try {
     const pool = getPool();
     const {

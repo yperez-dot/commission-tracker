@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 'use strict';
+if (!process.env.DATABASE_URL) { console.error('DATABASE_URL required'); process.exit(1); }
+
 
 /**
  * Import a BSI→THE remittance CSV into Commission Statements.
@@ -31,8 +33,7 @@ const UPLOAD_NAME =
 
 const pool = new Pool({
   connectionString:
-    process.env.DATABASE_URL ||
-    'postgresql://postgres:HzFAKESECRET_a3b4c5d6e7f8g9h0i1j2@caboose.proxy.rlwy.net:21534/railway',
+    process.env.DATABASE_URL,
   ssl: { rejectUnauthorized: false },
 });
 

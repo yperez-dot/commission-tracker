@@ -6,9 +6,29 @@ const { getPool } = require('../db/database');
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) { console.error('FATAL: JWT_SECRET env var not set'); process.exit(1); }
 
+// Simple in-memory login rate limit (per IP+email)
+const loginAttempts = new Map();
+const LOGIN_WINDOW_MS = 15 * 60 * 1000;
+const LOGIN_MAX_ATTEMPTS = 10;
+
+function checkLoginRateLimit(key) {
+  const now = Date.now();
+  let entry = loginAttempts.get(key);
+  if (!entry || now - entry.start > LOGIN_WINDOW_MS) {
+    entry = { start: now, count: 0 };
+    loginAttempts.set(key, entry);
+  }
+  entry.count += 1;
+  return entry.count <= LOGIN_MAX_ATTEMPTS;
+}
+
 router.post('/login', async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ error: 'Email and password required' });
+  const rateKey = `${req.ip || 'unknown'}:${String(email).toLowerCase().trim()}`;
+  if (!checkLoginRateLimit(rateKey)) {
+    return res.status(429).json({ error: 'Too many login attempts. Try again later.' });
+  }
   try {
     const pool = getPool();
     const result = await pool.query('SELECT * FROM users WHERE email = $1', [email.toLowerCase().trim()]);
@@ -16,6 +36,7 @@ router.post('/login', async (req, res) => {
     if (!user) return res.status(401).json({ error: 'Invalid credentials' });
     const valid = bcrypt.compareSync(password, user.password_hash);
     if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
+    loginAttempts.delete(rateKey);
     const token = jwt.sign(
       { id: user.id, name: user.name, email: user.email, role: user.role, agency: user.agency || '' },
       JWT_SECRET,
@@ -48,6 +69,7 @@ router.get('/users', requireAuth, requireAdmin, async (req, res) => {
 router.post('/users', requireAuth, requireAdmin, async (req, res) => {
   const { name, email, password, role, agency } = req.body;
   if (!name || !email || !password) return res.status(400).json({ error: 'Name, email, password required' });
+  if (String(password).length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
   try {
     const pool = getPool();
     await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS agency TEXT DEFAULT ''`).catch(() => {});
@@ -78,6 +100,7 @@ router.delete('/users/:id', requireAuth, requireAdmin, async (req, res) => {
 router.patch('/users/:id/password', requireAuth, requireAdmin, async (req, res) => {
   const { password } = req.body;
   if (!password) return res.status(400).json({ error: 'Password required' });
+  if (String(password).length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
   try {
     const pool = getPool();
     const hash = bcrypt.hashSync(password, 10);
