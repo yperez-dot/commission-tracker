@@ -208,9 +208,37 @@ async function parseAgentViewCommissionReportPDF(filePath, filename, pdfParse) {
   return parseAgentViewCommissionReportText(data.text, filename || require('path').basename(filePath));
 }
 
+function looksLikeAgentViewText(text) {
+  const t = String(text || '');
+  return /AgentView\s+Commission\s+Report/i.test(t)
+    || (/CNHIC/i.test(t) && /Earnings\s*Paid/i.test(t) && /\d{2}Y\d+/i.test(t));
+}
+
+/**
+ * Filename match OR PDF content sniff (portal downloads sometimes rename the file).
+ * Returns null when this is clearly not an AgentView PDF.
+ */
+async function tryParseAgentViewUpload(filePath, filename, pdfParseFn) {
+  const nameHit = isAgentViewCommissionReport(filename);
+  const isPdf = /\.pdf$/i.test(String(filename || ''));
+  if (!nameHit && !isPdf) return null;
+  if (!pdfParseFn) return nameHit ? [] : null;
+  try {
+    const fs = require('fs');
+    const data = await pdfParseFn(fs.readFileSync(filePath));
+    if (!nameHit && !looksLikeAgentViewText(data.text)) return null;
+    return parseAgentViewCommissionReportText(data.text, filename);
+  } catch (err) {
+    console.error('[AGENTVIEW] parse failed:', err.message);
+    return nameHit ? [] : null;
+  }
+}
+
 module.exports = {
   isAgentViewCommissionReport,
+  looksLikeAgentViewText,
   parseAgentViewCommissionReportText,
   parseAgentViewCommissionReportPDF,
+  tryParseAgentViewUpload,
   toTitleCaseName,
 };
