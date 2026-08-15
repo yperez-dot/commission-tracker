@@ -515,7 +515,7 @@ function HouseOverridesPanel() {
       <div className="card" style={{ marginBottom: 14 }}>
         <div className="card-title" style={{ fontSize: 15, marginBottom: 6 }}>House statements</div>
         <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14, lineHeight: 1.45 }}>
-          THEI NHP sales and THEI BSI remittance are separate reports. Marco (Swan) $10 agency peel, and Integrity / CAM / Chris producer shares.
+          THEI NHP sales (includes Oscar + all ACA) and THEI BSI remittance (Medicare only) are separate reports. Marco (Swan) $10 agency peel, and Integrity / CAM / Chris producer shares.
           Lina’s agent production is under <strong>Agent Payouts</strong> — not here.
           {' '}NHP periods are <strong>payment cycles</strong> (deposit/statement batch), not coverage month — e.g. May 30 vs Jun 15 are separate. Rename files with the cycle date when possible (`…_2026-06-15.xlsx`).
         </div>
