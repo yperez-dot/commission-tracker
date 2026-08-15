@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiFetch } from '../api';
 import { formatCarrier } from '../utils/formatCarrier';
+import { lobCardMetrics } from '../lobCardMetrics';
 import {
   DASHBOARD_MY_AGENTS,
   DASHBOARD_PRINCIPAL_AGENTS,
@@ -236,32 +237,6 @@ function HouseSplitWidget({ data, loading, bookLabel }) {
       </div>
     </div>
   );
-}
-
-function lobCardMetrics(lobData, lobName, viewMode) {
-  const isACA = lobName === 'ACA';
-  if (isACA && viewMode === 'agency') {
-    return {
-      amount: parseFloat(lobData.thei_total || 0),
-      count: parseInt(lobData.override_count ?? lobData.count ?? 0, 10),
-    };
-  }
-  if (isACA && viewMode === 'agent') {
-    return {
-      amount: parseFloat(lobData.agent_payable || 0),
-      count: parseInt(lobData.count || 0, 10),
-    };
-  }
-  if (viewMode === 'agency') {
-    return {
-      amount: parseFloat(lobData.thei_total || lobData.total || 0),
-      count: parseInt(lobData.count || 0, 10),
-    };
-  }
-  return {
-    amount: parseFloat(lobData.agent_payable || lobData.total || 0),
-    count: parseInt(lobData.count || 0, 10),
-  };
 }
 
 export default function Dashboard({ user, onNavigate }) {
