@@ -1,0 +1,20 @@
+{
+  "name": "OliComm Commission Tracker",
+  "user": "ubuntu",
+  "install": "bash .cursor/install.sh",
+  "start": "bash .cursor/start.sh",
+  "terminals": [
+    {
+      "name": "backend",
+      "command": "bash .cursor/run-backend.sh"
+    },
+    {
+      "name": "frontend",
+      "command": "bash .cursor/run-frontend.sh"
+    }
+  ],
+  "ports": [
+    { "name": "frontend", "port": 3000 },
+    { "name": "api", "port": 3001 }
+  ]
+}
