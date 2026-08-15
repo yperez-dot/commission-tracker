@@ -14,6 +14,11 @@ const { collapseInternalDuplicates } = require('../src/uploadBatchDedupe');
 const { resolvePassThroughLiableAgent } = require('../src/writerPassThroughAgents');
 const { ensurePassThroughSchema } = require('./pass-through');
 const { safeUploadFilename, isAllowedUploadName } = require('./uploadSafe');
+const {
+  isAgentViewCommissionReport,
+  parseAgentViewCommissionReportPDF,
+  tryParseAgentViewUpload,
+} = require('../src/agentViewCommissionReport');
 let pdfParse;
 try { pdfParse = require('pdf-parse'); } catch(e) { console.log('pdf-parse not installed'); }
 
@@ -296,6 +301,95 @@ function isSolisFile(filename) {
   const f = filename.toLowerCase().replace(/['\s()]/g, '_');
   if (isDoctorsFile(filename)) return false;
   return f.includes('commissions_ledger') || f.includes('solis');
+}
+
+function isHealthSpringFile(filename) {
+  const f = filename.toLowerCase().replace(/[\s().]/g, '_');
+  return f.includes('healthspring') || f.includes('healthspting') || f.includes('health_spring');
+}
+
+function isHealthSpringWb(wb) {
+  if (!wb || !wb.Sheets || !wb.SheetNames) return false;
+  const hasSummary = wb.SheetNames.some(s => s.toLowerCase() === 'summary');
+  const hasDetail = wb.SheetNames.some(s => s.toLowerCase() === 'detail');
+  if (!hasSummary || !hasDetail) return false;
+  const summaryName = wb.SheetNames.find(s => s.toLowerCase() === 'summary');
+  const ws = wb.Sheets[summaryName];
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+  return rows.length > 0 && String(rows[0][0] || '').toLowerCase().includes('healthsping');
+}
+
+function parseHealthSpringRows(wb, filename) {
+  const records = [];
+  try {
+    const sheetsToProcess = ['Detail', 'Legacy'].filter(s => wb.SheetNames.includes(s));
+    for (const sheetName of sheetsToProcess) {
+      const ws = wb.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
+      for (const row of rows) {
+        const paymentType = String(row['Payment Type'] || '').trim();
+        const paymentDesc = String(row['Payment Description'] || '').trim();
+        const writingBrokerName = String(row['Writing Broker Name'] || '').trim();
+        const memberName = String(row['Member Name'] || '').trim();
+        const memberId = row['Member ID'];
+        const mbi = String(row['Medicare Beneficiary Identifier (MBI)'] || '').trim();
+        const payPeriod = row['Pay Period'];
+        const paymentAmount = parseFloat(row['Payment Amount']) || 0;
+        const effectiveDateRaw = row['Original Effective Date'] || row['Effective Date'];
+        const planTypeRaw = String(row['Plan Type'] || '').trim();
+        if (!memberName || paymentAmount === 0) continue;
+        // Period from Pay Period
+        let period = '';
+        if (payPeriod instanceof Date) {
+          period = `${payPeriod.getFullYear()}${String(payPeriod.getMonth()+1).padStart(2,'0')}`;
+        } else if (typeof payPeriod === 'number' && payPeriod > 40000) {
+          const d = new Date((payPeriod - 25569) * 86400 * 1000);
+          period = `${d.getUTCFullYear()}${String(d.getUTCMonth()+1).padStart(2,'0')}`;
+        }
+        // Classification
+        const ptLower = paymentType.toLowerCase();
+        const pdLower = paymentDesc.toLowerCase();
+        let classification;
+        if (paymentAmount < 0 || ptLower.includes('disenroll')) {
+          classification = 'Chargeback';
+        } else if (pdLower === 'service fee') {
+          classification = 'Agency Override';
+        } else if (ptLower.includes('initial') || ptLower.includes('new')) {
+          classification = 'New Business';
+        } else if (ptLower.includes('renewal') || ptLower === 'legacy') {
+          classification = 'Renewal';
+        } else {
+          classification = 'Agent Commission';
+        }
+        // Plan type
+        const ptRaw = planTypeRaw.toUpperCase();
+        let planType = 'HealthSpring Med Adv';
+        if (ptRaw.includes('PDP')) planType = 'HealthSpring PDP';
+        // Normalize member ID (can be numeric)
+        const policyNumber = typeof memberId === 'number'
+          ? String(Math.round(memberId))
+          : String(memberId || mbi || '').trim();
+        records.push({
+          agent: normalizeAgentName(writingBrokerName) || 'The Health Experts Insurance',
+          carrier: 'HealthSpring',
+          planType,
+          client: memberName,
+          effectiveDate: formatDate(effectiveDateRaw),
+          premium: 0,
+          commission: paymentAmount,
+          classification,
+          period,
+          policyNumber: policyNumber || mbi,
+          payee: 'HealthSpring',
+          raw: row
+        });
+      }
+    }
+    console.log(`[HEALTHSPRING] Parsed ${records.length} records, total $${records.reduce((s,r)=>s+r.commission,0).toFixed(2)}`);
+  } catch (err) {
+    console.error('[HEALTHSPRING] Parser error:', err.message);
+  }
+  return records;
 }
 
 function isHealthSunFile(filename) {
@@ -4081,13 +4175,39 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
       if (f.includes('commissiondata') || f.includes('humana')) return 'Humana';
       if (f.includes('devoted')) return 'Devoted';
       if (f.includes('aetna') || f.includes('producerstatement')) return 'Aetna';
+      if (f.includes('agentview') || f.includes('agentcommissionreport') || f.includes('cnhic')) return 'Direct';
       return 'Direct';
     };
     const defaultPayee = determinePayee(req.file.originalname);
 
     let records;
 
-    if (isMOOExcel(req.file.originalname)) {
+    // AgentView CNHIC / HealthSpring — filename OR PDF text sniff
+    {
+      const agentViewRows = await tryParseAgentViewUpload(
+        req.file.path,
+        req.file.originalname,
+        pdfParse
+      );
+      if (agentViewRows) {
+        console.log('[UPLOAD] Using AgentView CNHIC Commission Report PDF parser');
+        if (!pdfParse) {
+          try { fs.unlinkSync(req.file.path); } catch(e) {}
+          return res.status(500).json({ error: 'PDF parsing not available on server.' });
+        }
+        records = agentViewRows;
+        if (!records.length) {
+          try { fs.unlinkSync(req.file.path); } catch(e) {}
+          return res.status(400).json({
+            error: 'No earnings rows found in AgentView Commission Report. Confirm CNHIC/HealthSpring Med Supp earnings are on the PDF.',
+          });
+        }
+      }
+    }
+
+    if (records) {
+      // already parsed (AgentView)
+    } else if (isMOOExcel(req.file.originalname)) {
       const wb = XLSX.readFile(req.file.path);
       records = parseMOOExcelRows(wb, req.file.originalname);
       if (!records.length) {
@@ -4249,6 +4369,9 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
           try { fs.unlinkSync(req.file.path); } catch(e) {}
           return res.status(400).json({ error: 'No records found in AML portal export. Verify this is a Contracts/CommissionDetails CSV.' });
         }
+      } else if (isHealthSpringFile(req.file.originalname) || isHealthSpringWb(wb)) {
+        console.log('[ROUTING] Matched HealthSpring parser for:', req.file.originalname);
+        records = parseHealthSpringRows(wb, req.file.originalname);
       } else if (isAetnaFile(req.file.originalname)) {
         console.log('[ROUTING] Matched generic Aetna parser for:', req.file.originalname);
         records = parseAetnaRows(wb, req.file.originalname);
