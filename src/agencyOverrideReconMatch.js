@@ -50,6 +50,83 @@ export function isOverridePaid(overrideMatch) {
   return net > 0;
 }
 
+function wrapSingleOverride(row) {
+  const amt = Math.round((parseFloat(row.commission) || 0) * 100) / 100;
+  return {
+    ...row,
+    commission: amt,
+    commission_amount: amt,
+    allMatches: [row],
+    matchCount: 1,
+    override_net: amt,
+    hasChargeback: amt < 0,
+  };
+}
+
+/**
+ * Expand one production row into lifecycle history rows so recon buckets
+ * show the full story: Paid (+override), Cancelled (chargeback/left),
+ * and Missing again when she returns with no open override.
+ */
+export function expandOverrideLifecycle(production, overrides) {
+  const prodId = production?.id != null ? String(production.id) : 'unknown';
+  const bundled = findOverrideMatch(production, overrides);
+
+  if (!bundled) {
+    return [
+      {
+        production,
+        override: null,
+        lifecycle: 'missing',
+        categoryHint: 'missing',
+        rowKey: `prod-${prodId}-missing`,
+        isHistory: false,
+      },
+    ];
+  }
+
+  const rows = [];
+  const all = bundled.allMatches || [];
+
+  all.forEach((row, idx) => {
+    const amt = parseFloat(row.commission) || 0;
+    const idPart = row.id != null ? String(row.id) : String(idx);
+    if (amt > 0) {
+      rows.push({
+        production,
+        override: wrapSingleOverride(row),
+        lifecycle: 'paid',
+        categoryHint: 'paid',
+        rowKey: `prod-${prodId}-paid-${idPart}`,
+        isHistory: true,
+      });
+    } else if (amt < 0) {
+      rows.push({
+        production,
+        override: wrapSingleOverride(row),
+        lifecycle: 'chargeback',
+        categoryHint: 'cancelled',
+        rowKey: `prod-${prodId}-chargeback-${idPart}`,
+        isHistory: true,
+      });
+    }
+  });
+
+  // Return / clawed-back: still in production but no open paid override.
+  if (!isOverridePaid(bundled)) {
+    rows.push({
+      production,
+      override: bundled,
+      lifecycle: 'missing',
+      categoryHint: 'missing',
+      rowKey: `prod-${prodId}-missing`,
+      isHistory: false,
+    });
+  }
+
+  return rows;
+}
+
 /**
  * Aetna returnee-safe active check.
  * If Enroll_Status is Active / Future Active, keep even when Exit/Term still

@@ -49,13 +49,83 @@ function isOverridePaid(overrideMatch) {
   return net > 0;
 }
 
+function wrapSingleOverride(row) {
+  const amt = Math.round((parseFloat(row.commission) || 0) * 100) / 100;
+  return {
+    ...row,
+    commission: amt,
+    commission_amount: amt,
+    allMatches: [row],
+    matchCount: 1,
+    override_net: amt,
+    hasChargeback: amt < 0,
+  };
+}
+
+function expandOverrideLifecycle(production, overrides) {
+  const prodId = production?.id != null ? String(production.id) : 'unknown';
+  const bundled = findOverrideMatch(production, overrides);
+
+  if (!bundled) {
+    return [
+      {
+        production,
+        override: null,
+        lifecycle: 'missing',
+        categoryHint: 'missing',
+        rowKey: `prod-${prodId}-missing`,
+        isHistory: false,
+      },
+    ];
+  }
+
+  const rows = [];
+  const all = bundled.allMatches || [];
+
+  all.forEach((row, idx) => {
+    const amt = parseFloat(row.commission) || 0;
+    const idPart = row.id != null ? String(row.id) : String(idx);
+    if (amt > 0) {
+      rows.push({
+        production,
+        override: wrapSingleOverride(row),
+        lifecycle: 'paid',
+        categoryHint: 'paid',
+        rowKey: `prod-${prodId}-paid-${idPart}`,
+        isHistory: true,
+      });
+    } else if (amt < 0) {
+      rows.push({
+        production,
+        override: wrapSingleOverride(row),
+        lifecycle: 'chargeback',
+        categoryHint: 'cancelled',
+        rowKey: `prod-${prodId}-chargeback-${idPart}`,
+        isHistory: true,
+      });
+    }
+  });
+
+  if (!isOverridePaid(bundled)) {
+    rows.push({
+      production,
+      override: bundled,
+      lifecycle: 'missing',
+      categoryHint: 'missing',
+      rowKey: `prod-${prodId}-missing`,
+      isHistory: false,
+    });
+  }
+
+  return rows;
+}
+
 function isAetnaActivePolicy(row) {
   const str = (v) => String(v == null ? '' : v);
   const enrollStatus = str(row.Enroll_Status || row.enroll_status || row.status).trim().toUpperCase();
   const exitStatus = str(row.Exit_Status || row.exit_status).trim().toUpperCase();
   const termStatus = str(row.Term_Status || row.term_status).trim().toUpperCase();
 
-  // Current enroll wins over stale exit/term from a prior leave (returnees).
   if (enrollStatus.includes('CANCEL')) return false;
   if (enrollStatus.includes('ACTIVE') || enrollStatus.includes('FUTURE')) return true;
   if (exitStatus.includes('VOLUNTARY') || exitStatus.includes('CANCEL')) return false;
@@ -66,5 +136,6 @@ function isAetnaActivePolicy(row) {
 module.exports = {
   findOverrideMatch,
   isOverridePaid,
+  expandOverrideLifecycle,
   isAetnaActivePolicy,
 };

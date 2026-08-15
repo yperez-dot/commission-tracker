@@ -3,7 +3,7 @@ import { apiFetch } from '../api';
 import { formatCarrier } from '../utils/formatCarrier';
 import { formatDate as formatDateUtil } from '../utils/dateFormat';
 import { normName, normalizeCarrier, carriersMatch } from '../matchingNormalize';
-import { findOverrideMatch, isOverridePaid } from '../agencyOverrideReconMatch';
+import { findOverrideMatch, isOverridePaid, expandOverrideLifecycle } from '../agencyOverrideReconMatch';
 import { fetchAllPages, truncationMessage } from '../fetchAllPages';
 import TruncationBanner from '../components/TruncationBanner';
 
@@ -234,6 +234,9 @@ function _findHeldRecord(prod, carrierRecords) {
 }
 
 function _getThreeWayStatus(m) {
+  // Lifecycle history rows: paid override / chargeback-left / current gap
+  if (m.lifecycle === 'paid') return 'paid';
+  if (m.lifecycle === 'chargeback') return 'chargeback';
   if (m.production.manual_override_status) return m.production.manual_override_status;
   if (isOverridePaid(m.override)) return 'paid';
   // Bug 2: non-payable production status — checked AFTER l2 paid, so a cancelled app
@@ -254,6 +257,7 @@ function _getThreeWayStatus(m) {
 }
 
 function _getCategory(m) {
+  if (m.categoryHint) return m.categoryHint;
   if (isOverridePaid(m.override)) return 'paid';
   const status = m.production.status?.toLowerCase() || '';
   if (status.includes('plan denied') || status.includes('plan_denied') || status.includes('denied')) return 'plandenied';
@@ -371,19 +375,28 @@ export default function AgencyProductionRecon() {
   }
 
   // ─── Memoized computations ─────────────────────────────────────────────────
-  // matches: O(n×m) fuzzy matching — only rerun when source data changes
+  // matches: expand each production row into paid / chargeback / missing history
   const matches = useMemo(() => {
     const bsiKeysList = [...bsiUploadedKeys];
-    return production.map(prod => {
-      const override = findOverrideMatch(prod, overrides);
+    const rows = [];
+    for (const prod of production) {
       const carrierBSI = _findCarrierBSIMatch(prod, carrierBSIRecords);
       const heldRecord = _findHeldRecord(prod, carrierBSIRecords);
       const prodCarrier = normalizeCarrier(prod.carrier || '');
       const prodPeriod = prod.payment_period || prod.effective_date?.substring(0,7)?.replace('-','') || '';
       const carrierUploaded = bsiUploadedKeys.has(`${prodCarrier}|${prodPeriod}`) ||
         bsiKeysList.some(k => k.startsWith(`${prodCarrier}|`));
-      return { production: prod, override, carrierBSI, heldRecord, carrierUploaded };
-    });
+      const lifecycleRows = expandOverrideLifecycle(prod, overrides);
+      for (const life of lifecycleRows) {
+        rows.push({
+          ...life,
+          carrierBSI: life.isHistory ? null : carrierBSI,
+          heldRecord: life.isHistory ? null : heldRecord,
+          carrierUploaded: life.isHistory ? false : carrierUploaded,
+        });
+      }
+    }
+    return rows;
   }, [production, overrides, carrierBSIRecords, bsiUploadedKeys]);
 
   // Aliases so JSX can call the stable outer functions by their original names
@@ -824,17 +837,18 @@ export default function AgencyProductionRecon() {
                 <div className="form-label" style={{ marginBottom: 6 }}>Override Status</div>
                 <MultiSelect
                   label="Status"
-                  options={['paid','chase_bsi','request_audit','held_licensing','no_pay_expected','pending']}
+                  options={['paid','chargeback','chase_bsi','request_audit','held_licensing','no_pay_expected','pending']}
                   selected={filterOverrideStatus}
                   onChange={setFilterOverrideStatus}
                   formatOption={v => ({
                     paid: '🟢 Paid',
+                    chargeback: '↩️ Chargeback',
                     chase_bsi: '🔴 Chase BSI',
                     request_audit: '🟡 Request Audit',
                     held_licensing: '🔒 Held – Licensing',
                     no_pay_expected: '⛔ No Pay Expected',
                     pending: '⚪ Pending'
-                  })[v] || v}
+                  }[v] || v)}
                 />
               </div>
             </div>
@@ -914,11 +928,11 @@ export default function AgencyProductionRecon() {
                 Chase ({(filtered.chase || []).length})
               </button>
               <button style={tabStyle('cancelled')} onClick={() => setTab('cancelled')}
-                title="Application cancelled or member terminated; no override expected">
+                title="Cancelled / disenrolled / override chargeback (left the plan)">
                 Cancelled ({(filtered.cancelled || []).length})
               </button>
               <button style={tabStyle('paid')} onClick={() => setTab('paid')}
-                title="BSI→THEI override commission confirmed in uploaded statements">
+                title="Override commission paid (includes historical paid before a later chargeback)">
                 Paid ({(filtered.paid || []).length})
               </button>
               <button style={tabStyle('all')} onClick={() => setTab('all')}
@@ -929,12 +943,12 @@ export default function AgencyProductionRecon() {
             {/* One-line subtitle per tab */}
             {tab !== 'all' && (() => {
               const subtitles = {
-                missing:    'No BSI→THEI override found — includes unpaid carrier amounts and rows with no carrier data yet.',
+                missing:    'No open BSI→THEI override — includes returns after chargeback and rows with no carrier data yet.',
                 planchange: 'Client changed plans; original override may not apply.',
                 plandenied: 'Application denied by the carrier; no override expected.',
                 chase:      'Override being actively chased or disputed with BSI.',
-                cancelled:  'Application cancelled or member terminated; no override expected.',
-                paid:       'BSI→THEI override commission confirmed in uploaded statements.',
+                cancelled:  'Cancelled / disenrolled, or override chargeback when the member left.',
+                paid:       'Override commission paid — including earlier paid rows when a later chargeback clawed it back.',
               };
               const text = subtitles[tab];
               return text ? (
@@ -991,7 +1005,7 @@ export default function AgencyProductionRecon() {
                       </tr>
                     </thead>
                     <tbody>
-                      {displayData.map((m, idx) => {
+                      {displayData.map((m) => {
                         const twStatus = getThreeWayStatus(m);
                         const tdBase = { padding: '8px 10px', fontSize: 12, verticalAlign: 'top',
                           wordWrap: 'break-word', overflowWrap: 'break-word', whiteSpace: 'normal',
@@ -1002,6 +1016,7 @@ export default function AgencyProductionRecon() {
                         const statusBadge = () => {
                           const badge = (() => {
                             if (twStatus === 'paid')          return <span style={{ background:'#D4EDDA',color:'#155724',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>🟢 Paid</span>;
+                            if (twStatus === 'chargeback')    return <span style={{ background:'#F8D7DA',color:'#721C24',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>↩️ Chargeback</span>;
                             if (twStatus === 'chase_bsi')     return <span style={{ background:'#F8D7DA',color:'#721C24',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>🔴 Chase BSI</span>;
                             if (twStatus === 'request_audit') return <span style={{ background:'#FFF3CD',color:'#856404',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>🟡 Request Audit</span>;
                             if (twStatus === 'held_licensing') {
@@ -1035,19 +1050,35 @@ export default function AgencyProductionRecon() {
                           return (
                             <span style={{ display:'inline-flex',alignItems:'center',gap:4,flexWrap:'wrap',justifyContent:'center' }}>
                               {badge}
-                              {isManual && (
+                              {isManual && !m.isHistory && (
                                 <span title={`Manually set${m.production.manual_override_by ? ' by ' + m.production.manual_override_by : ''}`}
                                   style={{ fontSize:10,color:'var(--text-muted)',background:'var(--bg-subtle)',
                                     border:'1px solid var(--border)',borderRadius:3,padding:'1px 4px',
                                     lineHeight:1.3,whiteSpace:'nowrap' }}
                                 >✏️ manual</span>
                               )}
+                              {m.lifecycle === 'paid' && m.isHistory && (
+                                <span style={{ fontSize:10,color:'var(--text-muted)' }}>history</span>
+                              )}
                             </span>
                           );
                         };
 
+                        const overrideAmt = m.override
+                          ? (m.override.override_net != null
+                              ? m.override.override_net
+                              : (m.override.commission || m.override.commission_amount || 0))
+                          : null;
+                        const overrideColor = overrideAmt == null
+                          ? undefined
+                          : overrideAmt > 0
+                            ? 'var(--green)'
+                            : overrideAmt < 0
+                              ? 'var(--red)'
+                              : 'var(--amber)';
+
                         return (
-                          <tr key={idx}>
+                          <tr key={m.rowKey || `${m.production.id}-${m.lifecycle || 'row'}`}>
                             <td style={tdBase}>{m.production.agent_name || '—'}</td>
                             <td style={{ ...tdBase, fontWeight: 500 }}>
                               <a href="#" onClick={e => { e.preventDefault(); setSelectedProduction(m.production); }}
@@ -1063,18 +1094,35 @@ export default function AgencyProductionRecon() {
                             </td>
                             <td style={{ ...tdBase, textAlign: 'right' }}>
                               {m.override
-                                ? <span style={{ color: (m.override.override_net > 0) ? 'var(--green)' : 'var(--amber)', fontWeight:600 }} title={m.override.matchCount > 1 ? m.override.matchCount + ' rows netted' : undefined}>{fmt(m.override.override_net != null ? m.override.override_net : (m.override.commission || m.override.commission_amount || 0))}{m.override.matchCount > 1 ? ' (' + m.override.matchCount + ')' : ''}</span>
+                                ? <span
+                                    style={{ color: overrideColor, fontWeight:600 }}
+                                    title={
+                                      m.lifecycle === 'chargeback'
+                                        ? (m.override.payment_period || m.override.source || 'Chargeback')
+                                        : m.override.matchCount > 1
+                                          ? m.override.matchCount + ' rows netted'
+                                          : (m.override.payment_period || m.override.source || undefined)
+                                    }
+                                  >
+                                    {fmt(overrideAmt)}
+                                    {m.override.matchCount > 1 ? ' (' + m.override.matchCount + ')' : ''}
+                                  </span>
                                 : <span style={{ color:'var(--red)',fontSize:11 }}>—</span>}
                             </td>
                             <td style={{ ...tdAccent, textAlign: 'right' }}>
-                              {m.carrierBSI
-                                ? <span style={{ color:'var(--green)',fontWeight:600 }}>{fmt(m.carrierBSI.commission || 0)}</span>
-                                : m.carrierUploaded
-                                  ? <span style={{ color:'var(--text-muted)',fontSize:11 }}>—</span>
-                                  : <span style={{ color:'var(--text-muted)',fontSize:10,fontStyle:'italic' }}>not uploaded</span>}
+                              {m.isHistory
+                                ? <span style={{ color:'var(--text-muted)',fontSize:11 }}>—</span>
+                                : m.carrierBSI
+                                  ? <span style={{ color:'var(--green)',fontWeight:600 }}>{fmt(m.carrierBSI.commission || 0)}</span>
+                                  : m.carrierUploaded
+                                    ? <span style={{ color:'var(--text-muted)',fontSize:11 }}>—</span>
+                                    : <span style={{ color:'var(--text-muted)',fontSize:10,fontStyle:'italic' }}>not uploaded</span>}
                             </td>
                             <td style={{ ...tdAccent, textAlign: 'center' }}>{statusBadge()}</td>
                             <td style={{ ...tdBase, textAlign: 'center' }}>
+                              {m.isHistory ? (
+                                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>—</span>
+                              ) : (
                               <select
                                 value={m.production.manual_override_status || ''}
                                 disabled={overrideSaving === m.production.id}
@@ -1102,6 +1150,7 @@ export default function AgencyProductionRecon() {
                                 <option value="no_pay_expected">⛔ No Pay Expected</option>
                                 <option value="pending">⚪ Pending</option>
                               </select>
+                              )}
                             </td>
                           </tr>
                         );
@@ -1123,10 +1172,11 @@ export default function AgencyProductionRecon() {
           </ul>
           <div style={{ fontWeight: 600, marginTop: 12, marginBottom: 8 }}>Status Categories:</div>
           <ul style={{ paddingLeft: 20, margin: 0 }}>
-            <li><strong>Missing:</strong> Sales exist in production but no override commission found</li>
+            <li><strong>Missing:</strong> In production with no open override (includes came-back-after-chargeback)</li>
             <li><strong>Plan Change:</strong> Client changed plans (may or may not have override)</li>
-            <li><strong>Cancelled:</strong> Application cancelled, denied, or disenrolled</li>
-            <li><strong>Paid:</strong> Override commission found in statements</li>
+            <li><strong>Cancelled:</strong> Cancelled / disenrolled, or override chargeback when they left</li>
+            <li><strong>Paid:</strong> Override paid in statements (history kept even if later charged back)</li>
+            <li><strong>Same person can appear in more than one tab</strong> (e.g. Paid → Cancelled chargeback → Missing again)</li>
           </ul>
         </div>
       </div>

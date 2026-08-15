@@ -68,4 +68,32 @@ describe('agencyOverrideReconMatch', () => {
     expect(match.override_net).toBe(0);
     expect(isOverridePaid(match)).toBe(false);
   });
+
+  test('lifecycle expands paid + chargeback + missing for returnee', () => {
+    const { expandOverrideLifecycle } = require('../agencyOverrideReconMatch.cjs');
+    const prod = { id: 42, client_name: 'Milagros Cambas De Rivas', carrier: 'Aetna' };
+    const overrides = [
+      { id: 1, client_full_name: 'Milagros Cambas De Rivas', carrier: 'Aetna', commission: 80 },
+      { id: 2, client_full_name: 'Milagros Cambas De Rivas', carrier: 'Aetna', commission: -80 },
+    ];
+    const rows = expandOverrideLifecycle(prod, overrides);
+    expect(rows.map((r) => r.lifecycle).sort()).toEqual(['chargeback', 'missing', 'paid']);
+    expect(rows.find((r) => r.lifecycle === 'paid').override.override_net).toBe(80);
+    expect(rows.find((r) => r.lifecycle === 'chargeback').override.override_net).toBe(-80);
+    expect(rows.find((r) => r.lifecycle === 'missing').override.override_net).toBe(0);
+    expect(rows.find((r) => r.lifecycle === 'paid').categoryHint).toBe('paid');
+    expect(rows.find((r) => r.lifecycle === 'chargeback').categoryHint).toBe('cancelled');
+    expect(rows.find((r) => r.lifecycle === 'missing').categoryHint).toBe('missing');
+  });
+
+  test('lifecycle currently-paid does not also emit Missing', () => {
+    const { expandOverrideLifecycle } = require('../agencyOverrideReconMatch.cjs');
+    const prod = { id: 7, client_name: 'Jane Doe', carrier: 'Aetna' };
+    const overrides = [
+      { id: 9, client_full_name: 'Jane Doe', carrier: 'Aetna', commission: 150 },
+    ];
+    const rows = expandOverrideLifecycle(prod, overrides);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].lifecycle).toBe('paid');
+  });
 });
