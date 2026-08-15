@@ -41,16 +41,27 @@ export function detectUploadDestination(filename) {
     };
   }
 
-  // Hector agency production
+  // Hector / carrier agency production (before BSI — "Aetna Production" is not a BSI feed)
   if (
     f.includes('agency_production') ||
     f.includes('agency-production') ||
-    (f.includes('hector') && (f.includes('production') || f.includes('override')))
+    (f.includes('hector') && (f.includes('production') || f.includes('override'))) ||
+    (f.includes('production') &&
+      (f.includes('brokers_society') ||
+        f.includes('broker_society') ||
+        f.includes('aetna') ||
+        f.includes('humana') ||
+        f.includes('uhc') ||
+        f.includes('united') ||
+        f.includes('devoted') ||
+        f.includes('anthem') ||
+        f.includes('freedom') ||
+        f.includes('healthspring')))
   ) {
     return {
       id: 'agency_production',
       label: 'Agency Production',
-      reason: 'Filename looks like Hector agency production',
+      reason: 'Filename looks like carrier / Hector agency production',
       confidence: 'high',
     };
   }

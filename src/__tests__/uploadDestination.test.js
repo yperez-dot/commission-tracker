@@ -26,6 +26,10 @@ describe('uploadDestination', () => {
   test('routes MedicarePro and Agency Production', () => {
     expect(detectUploadDestination('MedicarePro_Sales_Export.xlsx').id).toBe('medicarepro');
     expect(detectUploadDestination('Hector_Agency_Production.xlsx').id).toBe('agency_production');
+    expect(detectUploadDestination('AETNA PRODUCTION 8.5.26.xlsx').id).toBe('agency_production');
+    expect(detectUploadDestination('Aetna_Production_01.26.26_-_Brokers_Society.xlsx').id).toBe(
+      'agency_production'
+    );
   });
 
   test('routes NHP agency statements to Commission Statements', () => {

@@ -3,6 +3,7 @@ import { apiFetch } from '../api';
 import { formatCarrier } from '../utils/formatCarrier';
 import { formatDate as formatDateUtil } from '../utils/dateFormat';
 import { normName, normalizeCarrier, carriersMatch } from '../matchingNormalize';
+import { findOverrideMatch, isOverridePaid } from '../agencyOverrideReconMatch';
 import { fetchAllPages, truncationMessage } from '../fetchAllPages';
 import TruncationBanner from '../components/TruncationBanner';
 
@@ -182,31 +183,8 @@ function parseEffectiveDate(dateStr) {
   }
 }
 
-// Match agency production to override commissions using normName() fuzzy matching
-// Same logic as "Our Sales" and "Missing Renewals" for consistency
-function findOverrideMatch(production, overrides) {
-  const prodClientNorm = normName(production.client_name);
-  const prodCarrier = normalizeCarrier(production.carrier);
-  
-  // Try exact match first (client + carrier)
-  for (const override of overrides) {
-    const overrideClientNorm = normName(override.client_full_name);
-    const overrideCarrier = normalizeCarrier(override.carrier);
-    
-    // Client name match using normName() (handles "LAST FIRST" vs "FIRST LAST")
-    const clientMatch = prodClientNorm === overrideClientNorm;
-    
-    // Carrier match (exact canonical — empty never matches)
-    const carrierMatch = carriersMatch(prodCarrier, overrideCarrier);
-    
-    // Match if client + carrier match (period-agnostic, like Our Sales)
-    if (clientMatch && carrierMatch) {
-      return override;
-    }
-  }
-  
-  return null;
-}
+// Match agency production to override commissions (netted — see agencyOverrideReconMatch.js)
+// findOverrideMatch imported from shared module
 
 // Pure helpers — defined outside component so useMemo deps stay stable
 function _findCarrierBSIMatch(prod, carrierRecords) {
@@ -257,13 +235,13 @@ function _findHeldRecord(prod, carrierRecords) {
 
 function _getThreeWayStatus(m) {
   if (m.production.manual_override_status) return m.production.manual_override_status;
-  if (m.override) return 'paid';
+  if (isOverridePaid(m.override)) return 'paid';
   // Bug 2: non-payable production status — checked AFTER l2 paid, so a cancelled app
   // that actually received a commission still surfaces as paid (not silently suppressed)
   const prodStatus = (m.production.status || '').toUpperCase().trim();
   if (['WITHDRAWN', 'IN PROGRESS', 'CANCELLED', 'DENIED'].includes(prodStatus)) return 'no_pay_expected';
   const carrierAmt = m.carrierBSI ? parseFloat(m.carrierBSI.commission || 0) : null;
-  if (m.carrierBSI && carrierAmt > 0 && !m.override) return 'chase_bsi';
+  if (m.carrierBSI && carrierAmt > 0 && !isOverridePaid(m.override)) return 'chase_bsi';
   // Bug 1a: Carrier→BSI match found but $0 — check if it's a licensing hold
   if (m.carrierBSI && carrierAmt === 0) {
     if (_isLicensingHold(m.carrierBSI)) return 'held_licensing';
@@ -276,7 +254,7 @@ function _getThreeWayStatus(m) {
 }
 
 function _getCategory(m) {
-  if (m.override) return 'paid';
+  if (isOverridePaid(m.override)) return 'paid';
   const status = m.production.status?.toLowerCase() || '';
   if (status.includes('plan denied') || status.includes('plan_denied') || status.includes('denied')) return 'plandenied';
   if (status.includes('plan change') || status.includes('plan_change')) return 'planchange';
@@ -351,8 +329,10 @@ export default function AgencyProductionRecon() {
         const classification = r.classification?.toLowerCase() || '';
         const payee = r.payee?.toUpperCase() || '';
         const source = r.source?.toUpperCase() || '';
+        // Include chargebacks so +override/−chargeback nets to Missing (returnees).
         return classification.includes('agency override') ||
                classification.includes('override') ||
+               classification.includes('chargeback') ||
                payee === 'BSI' ||
                payee === 'NHP' ||
                payee === 'THE' ||
@@ -1083,7 +1063,7 @@ export default function AgencyProductionRecon() {
                             </td>
                             <td style={{ ...tdBase, textAlign: 'right' }}>
                               {m.override
-                                ? <span style={{ color:'var(--green)',fontWeight:600 }}>{fmt(m.override.commission || m.override.commission_amount || 0)}</span>
+                                ? <span style={{ color: (m.override.override_net > 0) ? 'var(--green)' : 'var(--amber)', fontWeight:600 }} title={m.override.matchCount > 1 ? m.override.matchCount + ' rows netted' : undefined}>{fmt(m.override.override_net != null ? m.override.override_net : (m.override.commission || m.override.commission_amount || 0))}{m.override.matchCount > 1 ? ' (' + m.override.matchCount + ')' : ''}</span>
                                 : <span style={{ color:'var(--red)',fontSize:11 }}>—</span>}
                             </td>
                             <td style={{ ...tdAccent, textAlign: 'right' }}>

@@ -4,6 +4,7 @@ const multer = require('multer');
 const XLSX = require('xlsx');
 const { getPool } = require('../db/database');
 const { requireAuth, requireAdmin } = require('./auth');
+const { isAetnaActivePolicy } = require('../src/agencyOverrideReconMatch.cjs');
 
 // str() — safe Excel cell coercion: null/undefined → '', numbers/booleans → String, Dates → ISO date
 // Prevents TypeError when a numeric or null Excel cell value hits .trim() or .substring()
@@ -126,22 +127,7 @@ function isActivePolicy(row, carrier) {
       statusValue = str(row.FINAL_STATUS).trim() || str(row.POLICY_STATUS || row.APP_STATUS).trim();
       break;
     case 'Aetna':
-      // Aetna has three status columns to check
-      const enrollStatus = str(row.Enroll_Status).trim().toUpperCase();
-      const exitStatus = str(row.Exit_Status).trim().toUpperCase();
-      const termStatus = str(row.Term_Status).trim().toUpperCase();
-      
-      // Drop if any status contains Cancel/Voluntary
-      if (enrollStatus.includes('CANCEL')) return false;
-      if (exitStatus.includes('VOLUNTARY') || exitStatus.includes('CANCEL')) return false;
-      if (termStatus.includes('VOLUNTARY') || termStatus.includes('CANCEL')) return false;
-      
-      // For Aetna, only keep if Enroll_Status is Active or Future Active
-      if (enrollStatus.includes('ACTIVE') || enrollStatus.includes('FUTURE')) return true;
-      
-      // Otherwise drop (pending, in progress, etc.)
-      return false;
-      
+      return isAetnaActivePolicy(row);
     case 'Humana':
       statusValue = str(row.Status).trim();
       break;
@@ -439,7 +425,11 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
         planName = (row.PLAN_NAME || row['Plan Name'] || row.Plan_Name || row.PlanName || '').trim().substring(0, 255);
       }
       const policyNumber = (row.DOC_ID || row['Policy Number'] || row.Application_ID || row.HIC || '').toString().substring(0, 100);
-      const statusValue = (row.Status || row.App_Status || row.Consumer_Status || '').substring(0, 50);
+      const statusValue = str(
+        carrier === 'Aetna'
+          ? (row.Enroll_Status || row.Status || row.App_Status || row.Consumer_Status || '')
+          : (row.Status || row.App_Status || row.Consumer_Status || '')
+      ).substring(0, 50);
       const policyType = (row.PRODUCT_DESCRIPTION || row['Policy Type'] || row.Product || row.SubProduct || '').substring(0, 50);
       const enrollmentType = (row.Enrollment_Type || row['Enrollment Type'] || row.Application_Type || '').substring(0, 50);
       const state = (row.STATE || row.State || '').substring(0, 2);
