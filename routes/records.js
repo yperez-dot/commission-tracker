@@ -3,7 +3,7 @@ const router = express.Router();
 const { getPool } = require('../db/database');
 const { requireAuth } = require('./auth');
 const { normalizeAllRecords, normalizeAgentName } = require('./normalize');
-const { normalizeCarrierKey } = require('../src/matchingNormalize.cjs');
+const { normalizeCarrierKey, carriersMatch } = require('../src/matchingNormalize.cjs');
 const { clientNameKey, clientNameKeySql } = require('../src/clientNameKey');
 function requireAdmin(req, res, next) {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
@@ -334,12 +334,11 @@ router.get('/client-history', requireAuth, async (req, res) => {
       return res.status(400).json({ error: 'client and carrier are required' });
     }
 
-    const where = [
-      `${clientNameKeySql('cr')} = $1`,
-      `LOWER(TRIM(cr.carrier)) = LOWER(TRIM($2))`,
-    ];
-    const params = [clientNameKey(client), carrier];
-    let idx = 3;
+    // Name key only in SQL (format-tolerant). Carrier filtered in JS via
+    // carriersMatch so "UHC" ↔ "UnitedHealthcare", "Humana" ↔ "Humana Inc", etc.
+    const where = [`${clientNameKeySql('cr')} = $1`];
+    const params = [clientNameKey(client)];
+    let idx = 2;
 
     if (agent) {
       where.push(`LOWER(TRIM(cr.agent_name)) = LOWER(TRIM($${idx++}))`);
@@ -367,7 +366,7 @@ router.get('/client-history', requireAuth, async (req, res) => {
       params
     );
 
-    const rows = result.rows;
+    const rows = result.rows.filter((r) => carriersMatch(r.carrier, carrier));
     let commissionTotal = 0;
     let payableTotal = 0;
     for (const r of rows) {

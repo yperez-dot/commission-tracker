@@ -1,6 +1,7 @@
 'use strict';
 
 const { isTheiPrincipalAgent } = require('./theiPrincipalAgents');
+const { clientNameKey } = require('./clientNameKey');
 const {
   normName,
   nameVariants,
@@ -128,12 +129,18 @@ function buildMissingRenewalRows({
   const checkDate = periodToDate(period);
 
   const recMap = new Map(); // exact variant key → records
+  const recByNameKey = new Map(); // clientNameKey|carrier → records (All Data style)
   for (const r of periodRecords) {
+    const ck = normCarrier(r.carrier);
     for (const v of nameVariants(r.client_full_name)) {
-      const key = `${v}|${normCarrier(r.carrier)}`;
+      const key = `${v}|${ck}`;
       if (!recMap.has(key)) recMap.set(key, []);
       recMap.get(key).push(r);
     }
+    const nk = `${clientNameKey(r.client_full_name)}|${ck}`;
+    if (nk.startsWith('|')) continue;
+    if (!recByNameKey.has(nk)) recByNameKey.set(nk, []);
+    recByNameKey.get(nk).push(r);
   }
 
   const byCarrier = new Map();
@@ -157,11 +164,18 @@ function buildMissingRenewalRows({
     }
 
     let matchedRecs = [];
-    for (const v of nameVariants(client.client_full_name)) {
-      const k = `${v}|${nc}`;
-      if (recMap.has(k) && recMap.get(k).length) {
-        matchedRecs = recMap.get(k);
-        break;
+    const bobNameKey = `${clientNameKey(client.client_full_name)}|${nc}`;
+    if (bobNameKey && recByNameKey.has(bobNameKey)) {
+      matchedRecs = recByNameKey.get(bobNameKey);
+    }
+
+    if (!matchedRecs.length) {
+      for (const v of nameVariants(client.client_full_name)) {
+        const k = `${v}|${nc}`;
+        if (recMap.has(k) && recMap.get(k).length) {
+          matchedRecs = recMap.get(k);
+          break;
+        }
       }
     }
 

@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../api';
-import { normName, nameVariants, normCarrier } from '../matchingNormalize';
 
 function fmt(n) {
   const num = parseFloat(String(n || '0').replace(/[$,]/g, ''));
@@ -297,17 +296,14 @@ export default function MissingRenewals({ user }) {
     setClientLoading(true);
     setClientRecords([]);
     try {
-      // Pull a large window then filter — payment history spans many periods
-      const data = await apiFetch(`/records?search=${encodeURIComponent(row.client)}&limit=500`);
-      const recs = (data.records || []).filter(r => {
-        const normClient = normName(row.client);
-        const normRecord = normName(r.client_full_name);
-        if (normCarrier(r.carrier) !== normCarrier(row.carrier)) return false;
-        if (normClient === normRecord) return true;
-        return nameVariants(row.client).some(v => v === normRecord) ||
-               nameVariants(r.client_full_name).some(v => v === normClient);
+      // Same format-tolerant lookup as All Data Client File (LAST, FIRST ↔ FIRST LAST)
+      const params = new URLSearchParams({
+        client: row.client,
+        carrier: row.carrier,
       });
-      // Newest period first
+      const data = await apiFetch(`/records/client-history?${params}`);
+      const recs = [...(data.rows || [])];
+      // Newest period first (API returns oldest-first)
       recs.sort((a, b) => String(b.payment_period || '').localeCompare(String(a.payment_period || '')));
       setClientRecords(recs);
     } catch(e) { console.error(e); }
@@ -471,6 +467,11 @@ export default function MissingRenewals({ user }) {
                   {selectedClient.isHeld && <span style={{ marginLeft:8,background:'#E8E8E8',color:'#444',borderRadius:4,padding:'1px 6px',fontSize:11,fontWeight:500 }}>🔒 Held – Licensing</span>}
                   {selectedClient.isMissing && !selectedClient.isHeld && <span style={{ marginLeft:8,background:'#FFF4D6',color:'#856404',borderRadius:4,padding:'1px 6px',fontSize:11,fontWeight:500 }}>Missing</span>}
                 </div>
+                {selectedClient.isMissing && (
+                  <div style={{ fontSize:11,color:'var(--text-muted)',marginTop:4 }}>
+                    Missing for {periodLabel} — history below may include other months
+                  </div>
+                )}
               </div>
               <button onClick={() => setSelectedClient(null)} style={{ background:'none',border:'none',fontSize:20,cursor:'pointer',color:'var(--text-muted)' }}>✕</button>
             </div>

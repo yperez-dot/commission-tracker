@@ -109,6 +109,41 @@ describe('missingRenewalsLogic', () => {
     expect(result.summary.paidCommission).toBe(50);
   });
 
+  test('clientNameKey matches LAST, FIRST ↔ FIRST LAST for period pay', () => {
+    const bobClients = [
+      {
+        id: 1,
+        client_full_name: 'BEVERLY SWITZ',
+        agent_name: 'Yahoska Perez',
+        carrier: 'UnitedHealthcare',
+        effective_date: '2023-09-01',
+        last_commission_date: null,
+        last_commission_amount: 0,
+      },
+    ];
+    const periodRecords = [
+      {
+        id: 99,
+        client_full_name: 'SWITZ, BEVERLY',
+        carrier: 'UnitedHealthcare',
+        commission: 32.34,
+        classification: 'Renewal',
+        lob: 'MedSupp',
+        payment_period: '202605',
+      },
+    ];
+    const result = buildMissingRenewalRows({
+      bobClients,
+      periodRecords,
+      period: '202605',
+      heldKeySet: new Set(),
+      policyStatusMap: {},
+    });
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].isMissing).toBe(false);
+    expect(result.rows[0].commission).toBe(32.34);
+  });
+
   test('Held-only match stays missing/held, not paid', () => {
     const bobClients = [
       {
