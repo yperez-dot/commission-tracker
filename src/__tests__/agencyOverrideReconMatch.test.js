@@ -247,6 +247,34 @@ describe('three-way Hector → Carrier→BSI → THEI', () => {
     expect(getOverrideReconCategory(m)).toBe('missing');
   });
 
+  test('Carrier→BSI $ but house override net $0 (clawed) is NOT chase', () => {
+    const m = {
+      production: { id: 4, client_name: 'Clawed Client', carrier: 'UnitedHealthcare', status: 'COMPLETED' },
+      override: {
+        override_net: 0,
+        matchCount: 2,
+        allMatches: [{ commission: 75 }, { commission: -75 }],
+      },
+      carrierBSI: { commission: 175 },
+      carrierUploaded: true,
+      lifecycle: 'missing',
+      categoryHint: 'missing',
+    };
+    expect(getThreeWayOverrideStatus(m)).toBe('pending');
+    expect(getOverrideReconCategory(m)).toBe('missing');
+  });
+
+  test('Carrier→BSI $ but negative house net (polluted) is NOT chase', () => {
+    const m = {
+      production: { id: 5, client_name: 'LYNN RIMPLEY', carrier: 'UnitedHealthcare', status: 'COMPLETED' },
+      override: { override_net: -694, matchCount: 3, commission: -694 },
+      carrierBSI: { commission: 150 },
+      carrierUploaded: true,
+      lifecycle: 'missing',
+    };
+    expect(getThreeWayOverrideStatus(m)).not.toBe('chase_bsi');
+  });
+
   test('carrier BSI not uploaded yet → pending / Missing tab', () => {
     const m = {
       production: { id: 3, client_name: 'No Upload', carrier: 'Humana', status: 'Active' },

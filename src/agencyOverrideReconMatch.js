@@ -160,8 +160,10 @@ function isLicensingHoldRecord(record) {
  * Three-way status for Hector production → Carrier→BSI → BSI→THEI.
  *
  *   not_paid_to_bsi — on Hector, carrier BSI file uploaded, sale NOT on it
- *                     (carrier never paid BSI → don't chase remittance yet)
- *   chase_bsi       — on Hector AND on Carrier→BSI with $, but THEI not paid
+ *   chase_bsi       — Carrier→BSI has $, and we have NO house remittance /
+ *                     Agency Override history at all (true unpaid remittance)
+ *                   — NOT when override net is $0 / negative after clawbacks
+ *                     (those are returnee / settled, not a chase)
  *   pending         — carrier BSI statement not uploaded yet for this carrier
  */
 export function getThreeWayOverrideStatus(m) {
@@ -179,7 +181,9 @@ export function getThreeWayOverrideStatus(m) {
   }
 
   const carrierAmt = m.carrierBSI ? parseFloat(m.carrierBSI.commission || 0) : null;
-  if (m.carrierBSI && carrierAmt > 0 && !isOverridePaid(m.override)) return 'chase_bsi';
+  // True Chase: carrier paid BSI, THEI never got a remittance/override line.
+  // Net $0 / negative after clawbacks is NOT chase (Karl-style bogus report).
+  if (m.carrierBSI && carrierAmt > 0 && !m.override) return 'chase_bsi';
   if (m.carrierBSI && carrierAmt === 0) {
     if (isLicensingHoldRecord(m.carrierBSI)) return 'held_licensing';
     return 'request_audit';

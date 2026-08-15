@@ -179,7 +179,9 @@ function getThreeWayOverrideStatus(m) {
   }
 
   const carrierAmt = m.carrierBSI ? parseFloat(m.carrierBSI.commission || 0) : null;
-  if (m.carrierBSI && carrierAmt > 0 && !isOverridePaid(m.override)) return 'chase_bsi';
+  // True Chase: carrier paid BSI, THEI never got a remittance/override line.
+  // Net $0 / negative after clawbacks is NOT chase (bogus Karl-style report).
+  if (m.carrierBSI && carrierAmt > 0 && !m.override) return 'chase_bsi';
   if (m.carrierBSI && carrierAmt === 0) {
     if (isLicensingHoldRecord(m.carrierBSI)) return 'held_licensing';
     return 'request_audit';

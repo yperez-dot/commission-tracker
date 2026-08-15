@@ -945,8 +945,8 @@ router.get('/stats', requireAuth, async (req, res) => {
 //
 // Match key: normReconClient(col) + normReconCarrier(col) — period-agnostic (v1 limitation)
 // Status (manual_override_status wins when set):
-//   paid          — Leg 2 match found (BSI paid THEI)
-//   chase_bsi     — Leg 3 match with commission > 0, no Leg 2 (carrier paid BSI, BSI hasn’t paid THEI)
+//   paid          — Leg 2 Agency Override / remittance match (BSI paid THEI)
+//   chase_bsi     — Leg 3 commission > 0, no Leg 2 at all (carrier paid BSI; no remittance history)
 //   request_audit — Leg 3 $0 record OR carrier month uploaded but client absent
 //   pending       — no carrier statement uploaded for this carrier yet
 //
@@ -1004,9 +1004,21 @@ function buildReconCTE(apWhere) {
         FROM commission_records cr
         JOIN uploads u ON cr.upload_id = u.id
         WHERE (u.category IS NULL OR u.category = 'commission_statement')
-          AND cr.payee IN ('BSI','NHP','THE')
           AND cr.client_full_name IS NOT NULL
           AND TRIM(cr.client_full_name) <> ''
+          AND (
+            cr.classification ILIKE '%agency override%'
+            OR (
+              cr.classification ILIKE '%chargeback%'
+              AND (
+                LOWER(REPLACE(COALESCE(u.original_name,''), ' ', '_')) LIKE '%thei_statement_bsi%'
+                OR LOWER(REPLACE(COALESCE(u.original_name,''), ' ', '_')) LIKE '%thei_statement%bsi%'
+                OR LOWER(REPLACE(COALESCE(u.original_name,''), ' ', '_')) LIKE '%medicare%statement%'
+                OR LOWER(REPLACE(COALESCE(u.original_name,''), ' ', '_')) LIKE '%t.h.e%statement%'
+                OR LOWER(REPLACE(COALESCE(u.original_name,''), ' ', '_')) LIKE '%the_statements%'
+              )
+            )
+          )
       ) sub WHERE rn = 1
     ),
     leg3 AS (
