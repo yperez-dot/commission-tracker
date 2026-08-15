@@ -5,7 +5,11 @@
   "scripts": {
     "start": "node server.js",
     "build": "react-scripts build",
+<<<<<<< HEAD
     "test": "react-scripts test --watchAll=false --testPathPattern='commissionEngine|overrideStatements|theRemittance|bsiPayee|linaCompensation|bsiBookAttribution|overrideExcel|missingRenewalsLogic|uploadDestination|theiPrincipalAgents|writerPassThroughAgents|uploadSafe|matchingNormalize|fetchAllPages'"
+=======
+    "test": "react-scripts test --watchAll=false --testPathPattern='commissionEngine|overrideStatements|theRemittance|bsiPayee|linaCompensation|bsiBookAttribution|overrideExcel|missingRenewalsLogic|uploadDestination|theiPrincipalAgents|writerPassThroughAgents|uploadSafe|matchingNormalize|renewalsAutoResolve'"
+>>>>>>> 31b42c8 (Add plan-change review UI and renewals auto-resolve on upload)
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.20.1",

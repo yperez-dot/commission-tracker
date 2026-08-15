@@ -133,6 +133,12 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
                 Records imported: {uploadResult.rowCount ?? uploadResult.recordsImported}
               </div>
             )}
+            {uploadResult.resolvedRenewalsCount > 0 && (
+              <div style={{ marginTop: 8, fontWeight: 500 }}>
+                {uploadResult.resolvedRenewalsCount} chased/pending renewal
+                {uploadResult.resolvedRenewalsCount === 1 ? '' : 's'} auto-resolved
+              </div>
+            )}
           </UploadAlert>
         )}
 

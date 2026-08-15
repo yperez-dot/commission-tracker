@@ -286,6 +286,26 @@ export default function Upload({ user, onNavigate }) {
         {uploadResult && (
           <UploadAlert kind="success" title={`Upload successful — ${uploadResult.filename}`}>
             {uploadResult.rowCount} records imported · {fmt(uploadResult.commissionSum)} total · Carriers: {(uploadResult.carriers || []).join(', ')}
+            {uploadResult.resolvedRenewalsCount > 0 && (
+              <div style={{ marginTop: 8, fontWeight: 500 }}>
+                {uploadResult.resolvedRenewalsCount} previously chased/pending renewal
+                {uploadResult.resolvedRenewalsCount === 1 ? '' : 's'} auto-resolved
+                {Array.isArray(uploadResult.resolvedRenewals) && uploadResult.resolvedRenewals.length > 0 && (
+                  <ul style={{ margin: '6px 0 0', paddingLeft: 18, fontWeight: 400 }}>
+                    {uploadResult.resolvedRenewals.slice(0, 8).map((r, i) => (
+                      <li key={i}>
+                        {r.client} · {r.carrier}
+                        {r.paymentPeriod ? ` · ${r.paymentPeriod}` : ''}
+                        {r.commission != null ? ` · ${fmt(r.commission)}` : ''}
+                      </li>
+                    ))}
+                    {uploadResult.resolvedRenewals.length > 8 && (
+                      <li>+{uploadResult.resolvedRenewals.length - 8} more</li>
+                    )}
+                  </ul>
+                )}
+              </div>
+            )}
           </UploadAlert>
         )}
 
