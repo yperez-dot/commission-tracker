@@ -838,7 +838,7 @@ router.patch('/:id/override', requireAuth, requireAdmin, async (req, res) => {
     const { status } = req.body;
     const pool = getPool();
 
-    const VALID_STATUSES = ['paid', 'chase_bsi', 'request_audit', 'held_licensing', 'no_pay_expected', 'pending', null];
+    const VALID_STATUSES = ['paid', 'chase_bsi', 'not_paid_to_bsi', 'request_audit', 'held_licensing', 'no_pay_expected', 'pending', null];
     if (!VALID_STATUSES.includes(status)) {
       return res.status(400).json({ error: `Invalid status. Must be one of: ${VALID_STATUSES.filter(s => s !== null).join(', ')}, or null to clear.` });
     }
