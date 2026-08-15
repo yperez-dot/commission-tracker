@@ -414,6 +414,7 @@ function HouseOverridesPanel() {
   const [ovLoading, setOvLoading] = useState(false);
   const [ovError, setOvError] = useState('');
   const [autoLoaded, setAutoLoaded] = useState(false);
+  const [showSourceUploads, setShowSourceUploads] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -528,6 +529,7 @@ function HouseOverridesPanel() {
               onChange={(e) => {
                 setOvType(e.target.value);
                 setPreview(null);
+                setShowSourceUploads(false);
                 setAutoLoaded(false);
               }}
               style={{ minWidth: 220 }}
