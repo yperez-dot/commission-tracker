@@ -3,6 +3,8 @@ import { apiFetch } from '../api';
 import { formatCarrier } from '../utils/formatCarrier';
 import { formatDate } from '../utils/dateFormat';
 import EditCommissionModal from '../components/EditCommissionModal';
+import { commissionUploadExportPath, exportUploadFile } from '../utils/exportUpload';
+import { uploadCategoryLabel } from '../utils/uploadDestination';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -14,6 +16,39 @@ function formatPeriodLabel(p) {
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   if (s.match(/^\d{6}$/)) return months[parseInt(s.slice(4, 6), 10) - 1] + ' ' + s.slice(0, 4);
   return s;
+}
+
+/** Clickable dollar amount → source upload report (manual audit). */
+function AmountLink({ value, record, onOpenSource, style = {} }) {
+  const hasAmount = value != null && value !== '';
+  const display = hasAmount ? fmt(value) : '—';
+  const canLink = hasAmount && record?.upload_id;
+  if (!canLink) {
+    return <span style={style}>{display}</span>;
+  }
+  const name = record.upload_name || `Upload #${record.upload_id}`;
+  return (
+    <button
+      type="button"
+      onClick={(e) => {
+        e.stopPropagation();
+        onOpenSource(record);
+      }}
+      title={`Open source report: ${name}`}
+      style={{
+        background: 'none',
+        border: 'none',
+        padding: 0,
+        cursor: 'pointer',
+        fontWeight: 500,
+        textDecoration: 'underline',
+        textUnderlineOffset: 2,
+        ...style,
+      }}
+    >
+      {display}
+    </button>
+  );
 }
 
 function MultiSelect({ label, options, selected, onChange }) {
@@ -117,11 +152,15 @@ export default function AllData({ user, initialFilters = {} }) {
   const [clientHistoryLoading, setClientHistoryLoading] = useState(false);
   const [clientHistoryError, setClientHistoryError] = useState('');
   const [clientHistorySameAgent, setClientHistorySameAgent] = useState(true);
+  const [sourceReport, setSourceReport] = useState(null); // commission row with upload_* fields
+  const [sourceExporting, setSourceExporting] = useState(false);
+  const [uploadFilter, setUploadFilter] = useState(null); // { id, name }
 
   useEffect(() => {
     apiFetch('/records/filters').then(d => setFilterOptions(d)).catch(console.error);
     setSelAgents([]); setSelCarriers([]); setSelPeriods([]); setSelTypes([]); setSelPayees([]); setSelLOB([]);
     setAmountSign('');
+    setUploadFilter(null);
     setPage(0);
   }, [user.agency]);
 
@@ -158,6 +197,7 @@ export default function AllData({ user, initialFilters = {} }) {
       if (selLOB.length === 1) params.set('lob', selLOB[0]);
       if (selLOB.length > 1) params.set('lobs', selLOB.join(','));
       if (amountSign === 'negative' || amountSign === 'positive') params.set('amountSign', amountSign);
+      if (uploadFilter?.id) params.set('upload_id', String(uploadFilter.id));
       if (search.trim()) params.set('search', search.trim());
       if (sortCol) params.set('sortCol', sortCol);
       if (sortDir) params.set('sortDir', sortDir);
@@ -176,12 +216,12 @@ export default function AllData({ user, initialFilters = {} }) {
       setSelected(new Set());
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
-  }, [selAgents, selCarriers, selPeriods, selTypes, selPayees, selLOB, amountSign, search, sortCol, sortDir, hideTermed, user.agency]);
+  }, [selAgents, selCarriers, selPeriods, selTypes, selPayees, selLOB, amountSign, search, sortCol, sortDir, hideTermed, uploadFilter, user.agency]);
 
   useEffect(() => { 
     setPage(0); 
     loadRecords(0); 
-  }, [selAgents, selCarriers, selPeriods, selTypes, selPayees, selLOB, amountSign, search, sortCol, sortDir, hideTermed, user.agency]);  // loadRecords intentionally omitted to prevent double-trigger
+  }, [selAgents, selCarriers, selPeriods, selTypes, selPayees, selLOB, amountSign, search, sortCol, sortDir, hideTermed, uploadFilter, user.agency]);  // loadRecords intentionally omitted to prevent double-trigger
 
   function handlePage(dir) {
     const next = page + dir;
@@ -192,6 +232,42 @@ export default function AllData({ user, initialFilters = {} }) {
   function clearAll() {
     setSelAgents([]); setSelCarriers([]); setSelPeriods([]); setSelTypes([]); setSelPayees([]); setSelLOB([]);
     setAmountSign(''); setSearch('');
+    setUploadFilter(null);
+    setPage(0);
+  }
+
+  function openSourceReport(record) {
+    if (!record?.upload_id) return;
+    setSourceReport(record);
+  }
+
+  async function exportSourceReport() {
+    if (!sourceReport?.upload_id) return;
+    setSourceExporting(true);
+    try {
+      const base = String(sourceReport.upload_name || 'report').replace(/\.[^.]+$/, '');
+      await exportUploadFile({
+        path: commissionUploadExportPath(sourceReport.upload_id),
+        fallbackName: `${base}_export.xlsx`,
+      });
+    } catch (e) {
+      console.error(e);
+      window.alert(e.message || 'Export failed');
+    } finally {
+      setSourceExporting(false);
+    }
+  }
+
+  function viewSourceUploadRows() {
+    if (!sourceReport?.upload_id) return;
+    setUploadFilter({
+      id: sourceReport.upload_id,
+      name: sourceReport.upload_name || `Upload #${sourceReport.upload_id}`,
+    });
+    setSourceReport(null);
+    setClientHistory(null);
+    setPolicyModal(null);
+    setSearch('');
     setPage(0);
   }
 
@@ -230,7 +306,7 @@ export default function AllData({ user, initialFilters = {} }) {
   }
 
   const grandTotal = records.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0);
-  const hasFilters = selAgents.length || selCarriers.length || selPeriods.length || selTypes.length || selPayees.length || selLOB.length || amountSign || search.trim();
+  const hasFilters = selAgents.length || selCarriers.length || selPeriods.length || selTypes.length || selPayees.length || selLOB.length || amountSign || search.trim() || uploadFilter;
 
   async function exportCSV() {
     try {
@@ -248,6 +324,7 @@ export default function AllData({ user, initialFilters = {} }) {
       if (selLOB.length === 1) params.set('lob', selLOB[0]);
       if (selLOB.length > 1) params.set('lobs', selLOB.join(','));
       if (amountSign === 'negative' || amountSign === 'positive') params.set('amountSign', amountSign);
+      if (uploadFilter?.id) params.set('upload_id', String(uploadFilter.id));
       if (search.trim()) params.set('search', search.trim());
       
       // Fetch ALL records (set high limit to override default 100)
@@ -354,6 +431,94 @@ export default function AllData({ user, initialFilters = {} }) {
 
   return (
     <>
+      {sourceReport && (
+        <div
+          onClick={() => setSourceReport(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: 'var(--bg)', borderRadius: 12, padding: 24, width: 480, maxWidth: '96vw',
+              border: '0.5px solid var(--border)', boxShadow: '0 8px 32px rgba(0,0,0,0.15)',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14, gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 4 }}>
+                  Source report
+                </div>
+                <div style={{ fontSize: 16, fontWeight: 600, wordBreak: 'break-word' }}>
+                  {sourceReport.upload_name || `Upload #${sourceReport.upload_id}`}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSourceReport(null)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: 'var(--text-muted)' }}
+              >
+                ×
+              </button>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 16px', fontSize: 13, marginBottom: 18 }}>
+              <div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 2 }}>Uploads tab</div>
+                <div style={{ fontWeight: 500 }}>{uploadCategoryLabel(sourceReport.upload_category)}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 2 }}>Uploaded</div>
+                <div style={{ fontWeight: 500 }}>
+                  {sourceReport.upload_uploaded_at
+                    ? new Date(sourceReport.upload_uploaded_at).toLocaleString()
+                    : '—'}
+                </div>
+              </div>
+              <div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 2 }}>Carrier</div>
+                <div style={{ fontWeight: 500 }}>{formatCarrier(sourceReport.carrier) || '—'}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 2 }}>Period</div>
+                <div style={{ fontWeight: 500 }}>{formatPeriodLabel(sourceReport.payment_period)}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 2 }}>Client</div>
+                <div style={{ fontWeight: 500 }}>{sourceReport.client_full_name || '—'}</div>
+              </div>
+              <div>
+                <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 2 }}>Comm value</div>
+                <div style={{ fontWeight: 500, color: parseFloat(sourceReport.commission) < 0 ? 'var(--red)' : 'var(--green)' }}>
+                  {fmt(sourceReport.commission)}
+                </div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={viewSourceUploadRows}
+                style={{
+                  padding: '8px 14px', borderRadius: 8, border: 'none', cursor: 'pointer',
+                  background: 'var(--accent)', color: 'var(--sidebar-bg)', fontWeight: 600, fontSize: 13,
+                }}
+              >
+                View all rows from this report
+              </button>
+              <button
+                type="button"
+                onClick={exportSourceReport}
+                disabled={sourceExporting}
+                style={{
+                  padding: '8px 14px', borderRadius: 8, border: '1px solid var(--border)', cursor: sourceExporting ? 'wait' : 'pointer',
+                  background: 'var(--bg)', color: 'var(--text)', fontWeight: 500, fontSize: 13,
+                }}
+              >
+                {sourceExporting ? 'Exporting…' : 'Export report'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {policyModal && (
         <div onClick={()=>setPolicyModal(null)} style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.45)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center'}}>
           <div onClick={e=>e.stopPropagation()} style={{background:'var(--bg)',borderRadius:12,padding:28,width:520,maxWidth:'95vw',border:'0.5px solid var(--border)',boxShadow:'0 8px 32px rgba(0,0,0,0.15)',maxHeight:'85vh',overflowY:'auto'}}>
@@ -377,18 +542,35 @@ export default function AllData({ user, initialFilters = {} }) {
                 ['Payee', policyModal.payee],
                 ['MGA', policyModal.mga],
                 ['Premium', policyModal.premium ? fmt(policyModal.premium) : '—'],
-                ['Comm Value', fmt(policyModal.commission)],
+                ['Comm Value', null],
                 ['Gross Commission', policyModal.gross_commission != null ? fmt(policyModal.gross_commission) : null],
                 ['THEI Share', policyModal.thei_share != null ? fmt(policyModal.thei_share) : null],
                 ['BSI Share', policyModal.bsi_share != null ? fmt(policyModal.bsi_share) : null],
                 ['Agent Payable', policyModal.producer_payable != null ? fmt(policyModal.producer_payable) : null],
                 ['Sub-Agent Override', policyModal.sub_agent_override && policyModal.sub_agent_override > 0 ? fmt(policyModal.sub_agent_override) : null],
-              ].map(([label, val]) => val && val !== '—' ? (
+              ].map(([label, val]) => {
+                if (label === 'Comm Value') {
+                  return (
+                    <div key={label}>
+                      <div style={{fontSize:10,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:2}}>{label}</div>
+                      <div style={{fontWeight:500,color:'var(--text)'}}>
+                        <AmountLink
+                          value={policyModal.commission}
+                          record={policyModal}
+                          onOpenSource={openSourceReport}
+                          style={{ color: parseFloat(policyModal.commission) < 0 ? 'var(--red)' : 'var(--green)' }}
+                        />
+                      </div>
+                    </div>
+                  );
+                }
+                return val && val !== '—' ? (
                 <div key={label}>
                   <div style={{fontSize:10,color:'var(--text-muted)',textTransform:'uppercase',letterSpacing:'0.5px',marginBottom:2}}>{label}</div>
                   <div style={{fontWeight:500,color:'var(--text)'}}>{val}</div>
                 </div>
-              ) : null)}
+              ) : null;
+              })}
               {(() => {
                 const s = policyModal.raw_data ? (typeof policyModal.raw_data === 'string' ? JSON.parse(policyModal.raw_data) : policyModal.raw_data) : {};
                 return s.commRate ? (
@@ -414,7 +596,19 @@ export default function AllData({ user, initialFilters = {} }) {
               })()}
             </div>
             <div style={{marginTop:16,paddingTop:12,borderTop:'0.5px solid var(--border)',fontSize:11,color:'var(--text-muted)'}}>
-              Upload: {policyModal.upload_name || '—'}
+              Upload:{' '}
+              {policyModal.upload_id ? (
+                <button
+                  type="button"
+                  onClick={() => openSourceReport(policyModal)}
+                  style={{
+                    background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                    color: 'var(--accent-dark)', fontWeight: 500, textDecoration: 'underline', fontSize: 11,
+                  }}
+                >
+                  {policyModal.upload_name || `Upload #${policyModal.upload_id}`}
+                </button>
+              ) : (policyModal.upload_name || '—')}
             </div>
           </div>
         </div>
@@ -428,7 +622,7 @@ export default function AllData({ user, initialFilters = {} }) {
           <div
             onClick={(e) => e.stopPropagation()}
             style={{
-              background: 'var(--bg)', borderRadius: 12, padding: 24, width: 720, maxWidth: '96vw',
+              background: 'var(--bg)', borderRadius: 12, padding: 24, width: 860, maxWidth: '96vw',
               maxHeight: '85vh', overflowY: 'auto', border: '0.5px solid var(--border)',
               boxShadow: '0 8px 32px rgba(0,0,0,0.15)'
             }}
@@ -484,7 +678,7 @@ export default function AllData({ user, initialFilters = {} }) {
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                   <thead>
                     <tr>
-                      {['Period', 'Type', 'Amount', 'Policy', 'LOB', 'Agent'].map((h) => (
+                      {['Period', 'Type', 'Amount', 'Policy', 'LOB', 'Agent', 'Source'].map((h) => (
                         <th
                           key={h}
                           style={{
@@ -505,12 +699,36 @@ export default function AllData({ user, initialFilters = {} }) {
                         <tr key={row.id} style={{ borderBottom: '0.5px solid var(--border)' }}>
                           <td style={{ padding: '6px 8px' }}>{formatPeriodLabel(row.payment_period)}</td>
                           <td style={{ padding: '6px 8px' }}>{row.classification || '—'}</td>
-                          <td style={{ padding: '6px 8px', fontWeight: 500, color: amt < 0 ? 'var(--red)' : 'var(--green)' }}>
-                            {fmt(amt)}
+                          <td style={{ padding: '6px 8px' }}>
+                            <AmountLink
+                              value={amt}
+                              record={row}
+                              onOpenSource={openSourceReport}
+                              style={{ color: amt < 0 ? 'var(--red)' : 'var(--green)' }}
+                            />
                           </td>
                           <td style={{ padding: '6px 8px', color: 'var(--text-muted)' }}>{row.policy_number || '—'}</td>
                           <td style={{ padding: '6px 8px' }}>{row.lob || '—'}</td>
                           <td style={{ padding: '6px 8px' }}>{row.agent_name || '—'}</td>
+                          <td style={{ padding: '6px 8px', maxWidth: 160 }}>
+                            {row.upload_id ? (
+                              <button
+                                type="button"
+                                onClick={() => openSourceReport(row)}
+                                title={row.upload_name || `Upload #${row.upload_id}`}
+                                style={{
+                                  background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                                  color: 'var(--accent-dark)', fontSize: 11, textDecoration: 'underline',
+                                  textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis',
+                                  whiteSpace: 'nowrap', maxWidth: '100%', display: 'block',
+                                }}
+                              >
+                                {row.upload_name || `Upload #${row.upload_id}`}
+                              </button>
+                            ) : (
+                              <span style={{ color: 'var(--text-muted)' }}>—</span>
+                            )}
+                          </td>
                         </tr>
                       );
                     })}
@@ -524,7 +742,7 @@ export default function AllData({ user, initialFilters = {} }) {
 
       <div className="page-header">
         <div className="page-title">All Data</div>
-        <div className="page-sub">All commission records across all carriers and periods</div>
+        <div className="page-sub">All commission records across all carriers and periods · click an amount to see its source report</div>
       </div>
       <div className="page-body">
 
@@ -604,6 +822,29 @@ export default function AllData({ user, initialFilters = {} }) {
             )}
           </div>
         </div>
+
+        {uploadFilter && (
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap',
+            marginBottom: 12, padding: '10px 14px', borderRadius: 8,
+            background: 'var(--accent-light)', border: '0.5px solid var(--border)',
+          }}>
+            <div style={{ fontSize: 13 }}>
+              Showing rows from report:{' '}
+              <strong style={{ wordBreak: 'break-word' }}>{uploadFilter.name}</strong>
+            </div>
+            <button
+              type="button"
+              onClick={() => setUploadFilter(null)}
+              style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: 'var(--accent-dark)', fontWeight: 600, fontSize: 12, textDecoration: 'underline',
+              }}
+            >
+              Clear report filter
+            </button>
+          </div>
+        )}
 
         {hasFilters && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
@@ -699,7 +940,14 @@ export default function AllData({ user, initialFilters = {} }) {
                           </td>
                           <td style={{ fontSize: 12 }}>{formatDate(r.effective_date)}</td>
                           <td>{r.premium ? fmt(r.premium) : '—'}</td>
-                          <td style={{ fontWeight: 500, color: parseFloat(r.commission) < 0 ? 'var(--red)' : 'var(--green)' }}>{fmt(r.commission)}</td>
+                          <td>
+                            <AmountLink
+                              value={r.commission}
+                              record={r}
+                              onOpenSource={openSourceReport}
+                              style={{ color: parseFloat(r.commission) < 0 ? 'var(--red)' : 'var(--green)' }}
+                            />
+                          </td>
                           {hasCommSplit && (() => { const s = getCommSplit(r); return (
                             <>
                               <td style={{ fontSize: 12 }}>{s.commRate !== undefined ? `${s.commRate}%` : '—'}</td>
@@ -714,10 +962,41 @@ export default function AllData({ user, initialFilters = {} }) {
                             </span>
                           </td>
                           {hasLOB && <td style={{ fontSize: 11, fontWeight: 500, color: r.lob === 'ACA' ? 'var(--amber)' : 'var(--text-muted)' }}>{r.lob || '—'}</td>}
-                          {hasSplitData && <td style={{ fontSize: 12, fontWeight: 500 }}>{r.gross_commission != null ? fmt(r.gross_commission) : '—'}</td>}
-                          {hasSplitData && <td style={{ fontSize: 12, color: parseFloat(r.thei_share) > 0 ? 'var(--green)' : 'var(--text-muted)' }}>{r.thei_share != null ? fmt(r.thei_share) : '—'}</td>}
-                          {hasSplitData && <td style={{ fontSize: 12, color: parseFloat(r.bsi_share) > 0 ? 'var(--blue)' : 'var(--text-muted)' }}>{r.bsi_share != null ? fmt(r.bsi_share) : '—'}</td>}
-                          {hasSplitData && <td style={{ fontSize: 12, color: parseFloat(r.producer_payable) > 0 ? 'var(--accent-dark)' : 'var(--text-muted)' }}>{r.producer_payable != null ? fmt(r.producer_payable) : '—'}</td>}
+                          {hasSplitData && (
+                            <td style={{ fontSize: 12, fontWeight: 500 }}>
+                              <AmountLink value={r.gross_commission} record={r} onOpenSource={openSourceReport} />
+                            </td>
+                          )}
+                          {hasSplitData && (
+                            <td style={{ fontSize: 12 }}>
+                              <AmountLink
+                                value={r.thei_share}
+                                record={r}
+                                onOpenSource={openSourceReport}
+                                style={{ color: parseFloat(r.thei_share) > 0 ? 'var(--green)' : 'var(--text-muted)' }}
+                              />
+                            </td>
+                          )}
+                          {hasSplitData && (
+                            <td style={{ fontSize: 12 }}>
+                              <AmountLink
+                                value={r.bsi_share}
+                                record={r}
+                                onOpenSource={openSourceReport}
+                                style={{ color: parseFloat(r.bsi_share) > 0 ? 'var(--blue)' : 'var(--text-muted)' }}
+                              />
+                            </td>
+                          )}
+                          {hasSplitData && (
+                            <td style={{ fontSize: 12 }}>
+                              <AmountLink
+                                value={r.producer_payable}
+                                record={r}
+                                onOpenSource={openSourceReport}
+                                style={{ color: parseFloat(r.producer_payable) > 0 ? 'var(--accent-dark)' : 'var(--text-muted)' }}
+                              />
+                            </td>
+                          )}
                           {hasSubAgentOverride && <td style={{ fontSize: 12, fontWeight: 500, color: parseFloat(r.sub_agent_override) > 0 ? 'var(--amber)' : 'var(--text-muted)' }}>{r.sub_agent_override && r.sub_agent_override > 0 ? fmt(r.sub_agent_override) : '—'}</td>}
                           {hasMGA && <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.mga || '—'}</td>}
                           {user.role === 'admin' && (
