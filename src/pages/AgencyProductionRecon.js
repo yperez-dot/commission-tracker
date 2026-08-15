@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { apiFetch } from '../api';
 import { formatCarrier } from '../utils/formatCarrier';
 import { formatDate as formatDateUtil } from '../utils/dateFormat';
-import { normName, normalizeCarrier, carriersMatch } from '../matchingNormalizeEs';
+import { normName, normalizeCarrier, carriersMatch } from '../matchingNormalize';
 import { fetchAllPages, truncationMessage } from '../fetchAllPages';
 import TruncationBanner from '../components/TruncationBanner';
 

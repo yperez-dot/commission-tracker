@@ -6,7 +6,7 @@ const {
   carriersMatch,
   normalizeCarrierKey,
   nameVariants,
-} = require('../matchingNormalize');
+} = require('../matchingNormalize.cjs');
 
 describe('matchingNormalize', () => {
   test('normName strips middle initial on comma path', () => {

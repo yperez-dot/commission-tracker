@@ -1,22 +1,17 @@
+'use strict';
+
 /**
- * Shared client/carrier normalization for Sales Recon, Agency Recon,
- * Missing Renewals, and records APIs. Keep one copy — money matching depends on it.
- *
- * ESM for the CRA frontend. Node/API code should require `./matchingNormalize.cjs`.
+ * CJS bridge for Node (routes, scripts, Jest without ESM).
+ * Keep behavior in sync with matchingNormalize.js (ESM for CRA).
  */
 
-export function toTitleCase(str) {
+function toTitleCase(str) {
   return String(str || '')
     .toLowerCase()
     .replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-/**
- * Canonical client name for matching.
- * - "LAST, FIRST M." → "First Last" (strip MI + Jr/Sr)
- * - "First M. Last Jr" → "First Last"
- */
-export function normName(name) {
+function normName(name) {
   if (!name) return '';
   const s = String(name).trim();
 
@@ -29,12 +24,11 @@ export function normName(name) {
 
   let normalized = s.replace(/\s+/g, ' ').trim();
   normalized = normalized.replace(/\b(JR|SR|III|II|IV|V)\.?$/i, '').trim();
-  // Drop middle initials anywhere: "Maria L. Garcia" → "Maria Garcia"
   normalized = normalized.replace(/\s+[A-Za-z]\.?(?=\s|$)/g, '').trim();
   return toTitleCase(normalized);
 }
 
-export function nameVariants(name) {
+function nameVariants(name) {
   if (!name) return [];
   const norm = normName(name);
   const parts = norm.split(' ').filter(Boolean);
@@ -66,8 +60,7 @@ function significantTokens(name) {
     .filter((t) => t.length > 1);
 }
 
-/** Strict fuzzy: same token multiset OR (shared surname + shared given name). */
-export function namesLooseMatch(a, b) {
+function namesLooseMatch(a, b) {
   const ta = significantTokens(a);
   const tb = significantTokens(b);
   if (!ta.length || !tb.length) return false;
@@ -83,17 +76,12 @@ export function namesLooseMatch(a, b) {
   return shared.length >= 2 && shared.length >= Math.min(ta.length, tb.length) - 1;
 }
 
-/**
- * Canonical carrier family key for matching.
- * United of Omaha / Mutual of Omaha must NEVER collapse to UHC Medicare.
- */
-export function normalizeCarrier(carrier) {
+function normalizeCarrier(carrier) {
   const s = String(carrier || '')
     .toLowerCase()
     .trim();
   if (!s) return '';
 
-  // Life / Omaha — check before generic "united"
   if (s.includes('mutual of omaha') || (s.includes('mutual') && s.includes('omaha'))) {
     return 'mutual of omaha';
   }
@@ -131,24 +119,16 @@ export function normalizeCarrier(carrier) {
   return s;
 }
 
-/** Alias used by Missing Renewals / BOB paths */
-export const normCarrier = normalizeCarrier;
+const normCarrier = normalizeCarrier;
 
-/**
- * Exact match on canonical carrier keys.
- * Rejects empty carriers — `'humana'.includes('')` is true in JS and caused false pays.
- */
-export function carriersMatch(a, b) {
+function carriersMatch(a, b) {
   const ca = normalizeCarrier(a);
   const cb = normalizeCarrier(b);
   if (!ca || !cb) return false;
   return ca === cb;
 }
 
-/**
- * Compact key for maps that strip non-alphanumerics (records.js style).
- */
-export function normalizeCarrierKey(carrier) {
+function normalizeCarrierKey(carrier) {
   const n = normalizeCarrier(carrier);
   if (!n) return '';
   if (n === 'unitedhealthcare') return 'unitedhealthcare';
@@ -162,3 +142,14 @@ export function normalizeCarrierKey(carrier) {
   if (n === 'mutual of omaha') return 'mutualofomaha';
   return n.replace(/[^a-z0-9]/g, '');
 }
+
+module.exports = {
+  normName,
+  nameVariants,
+  namesLooseMatch,
+  normalizeCarrier,
+  normCarrier,
+  carriersMatch,
+  normalizeCarrierKey,
+  toTitleCase,
+};
