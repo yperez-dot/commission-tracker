@@ -1,5 +1,59 @@
 import { normName, normalizeCarrier, carriersMatch, namesLooseMatch } from './matchingNormalize';
 
+/** Token-sorted client key (same idea as clientNameKey). */
+function saleClientKey(name) {
+  if (!name) return '';
+  const noAccents = String(name)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+  return noAccents
+    .toUpperCase()
+    .replace(/[^A-Z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((t) => t.length > 1)
+    .sort()
+    .join('|');
+}
+
+/**
+ * Identity of one sale across rolling 90-day production uploads.
+ * Same client + carrier + eff date + policy = same sale (not a new enrollment).
+ */
+export function productionSaleKey(prod) {
+  const client = saleClientKey(prod?.client_name);
+  const carrier = normalizeCarrier(prod?.carrier);
+  const eff = String(prod?.effective_date || '').slice(0, 10);
+  const policy = String(prod?.policy_number || prod?.policy_number_production || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+  return `${client}|${carrier}|${eff}|${policy}`;
+}
+
+function productionRecency(prod) {
+  const t = Date.parse(prod?.upload_date || prod?.uploaded_at || '') || 0;
+  const id = Number(prod?.id) || 0;
+  return t * 1e6 + id;
+}
+
+/**
+ * Collapse rolling production duplicates to one row per true sale.
+ * Keeps the newest upload when the same sale repeats across batches.
+ */
+export function dedupeProductionSales(rows) {
+  const map = new Map();
+  for (const p of rows || []) {
+    const key = productionSaleKey(p);
+    const [client, carrier] = key.split('|');
+    if (!client || !carrier) continue;
+    const prev = map.get(key);
+    if (!prev || productionRecency(p) >= productionRecency(prev)) {
+      map.set(key, p);
+    }
+  }
+  return [...map.values()];
+}
+
 /**
  * Match agency production → BSI→THEI override commission rows.
  * Nets ALL matching rows for client+carrier so +$80 override and −$80

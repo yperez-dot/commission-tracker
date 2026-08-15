@@ -5,6 +5,51 @@
  */
 const { normName, normalizeCarrier, carriersMatch, namesLooseMatch } = require('./matchingNormalize.cjs');
 
+function saleClientKey(name) {
+  if (!name) return '';
+  const noAccents = String(name)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+  return noAccents
+    .toUpperCase()
+    .replace(/[^A-Z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((t) => t.length > 1)
+    .sort()
+    .join('|');
+}
+
+function productionSaleKey(prod) {
+  const client = saleClientKey(prod?.client_name);
+  const carrier = normalizeCarrier(prod?.carrier);
+  const eff = String(prod?.effective_date || '').slice(0, 10);
+  const policy = String(prod?.policy_number || prod?.policy_number_production || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+  return `${client}|${carrier}|${eff}|${policy}`;
+}
+
+function productionRecency(prod) {
+  const t = Date.parse(prod?.upload_date || prod?.uploaded_at || '') || 0;
+  const id = Number(prod?.id) || 0;
+  return t * 1e6 + id;
+}
+
+function dedupeProductionSales(rows) {
+  const map = new Map();
+  for (const p of rows || []) {
+    const key = productionSaleKey(p);
+    const [client, carrier] = key.split('|');
+    if (!client || !carrier) continue;
+    const prev = map.get(key);
+    if (!prev || productionRecency(p) >= productionRecency(prev)) {
+      map.set(key, p);
+    }
+  }
+  return [...map.values()];
+}
+
 function findOverrideMatch(production, overrides) {
   const prodClient = production.client_name;
   const prodClientNorm = normName(prodClient);
@@ -138,4 +183,6 @@ module.exports = {
   isOverridePaid,
   expandOverrideLifecycle,
   isAetnaActivePolicy,
+  productionSaleKey,
+  dedupeProductionSales,
 };

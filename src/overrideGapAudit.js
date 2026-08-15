@@ -5,12 +5,12 @@
  * paid override → chargeback → still in production with no open override.
  */
 
-const { clientNameKey } = require('./clientNameKey');
 const {
   findOverrideMatch,
   isOverridePaid,
+  dedupeProductionSales,
+  productionSaleKey,
 } = require('./agencyOverrideReconMatch.cjs');
-const { normalizeCarrier } = require('./matchingNormalize.cjs');
 
 function isOverrideLikeRow(row) {
   const classification = String(row.classification || '').toLowerCase();
@@ -58,18 +58,11 @@ function sumBySign(rows) {
  */
 function auditOverrideGaps(production, overrideRows) {
   const overrides = (overrideRows || []).filter(isOverrideLikeRow);
-  const seen = new Set();
   const gaps = [];
+  // Same sale can appear on every rolling 90-day production file — audit once per sale.
+  const uniqueProduction = dedupeProductionSales(production);
 
-  for (const prod of production || []) {
-    const nameKey = clientNameKey(prod.client_name);
-    const carrierKey = normalizeCarrier(prod.carrier);
-    if (!nameKey || !carrierKey) continue;
-
-    const dedupeKey = `${nameKey}|${carrierKey}`;
-    if (seen.has(dedupeKey)) continue;
-    seen.add(dedupeKey);
-
+  for (const prod of uniqueProduction) {
     const match = findOverrideMatch(prod, overrides);
     const all = match?.allMatches || [];
     const sums = sumBySign(all);
@@ -106,6 +99,7 @@ function auditOverrideGaps(production, overrideRows) {
       policy_number: prod.policy_number || null,
       production_id: prod.id || null,
       upload_batch: prod.upload_batch || null,
+      sale_key: productionSaleKey(prod),
       override_net: net,
       paid_total: sums.paid,
       chargeback_total: sums.chargeback,
@@ -116,7 +110,8 @@ function auditOverrideGaps(production, overrideRows) {
   }
 
   const summary = {
-    production_clients: seen.size,
+    production_clients: uniqueProduction.length,
+    production_rows_raw: (production || []).length,
     override_rows_scanned: overrides.length,
     gap_total: gaps.length,
     returnee_clawback: gaps.filter((g) => g.gap_type === 'returnee_clawback').length,

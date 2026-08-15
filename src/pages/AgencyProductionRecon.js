@@ -3,7 +3,7 @@ import { apiFetch } from '../api';
 import { formatCarrier } from '../utils/formatCarrier';
 import { formatDate as formatDateUtil } from '../utils/dateFormat';
 import { normName, normalizeCarrier, carriersMatch } from '../matchingNormalize';
-import { findOverrideMatch, isOverridePaid, expandOverrideLifecycle } from '../agencyOverrideReconMatch';
+import { findOverrideMatch, isOverridePaid, expandOverrideLifecycle, dedupeProductionSales } from '../agencyOverrideReconMatch';
 import { fetchAllPages, truncationMessage } from '../fetchAllPages';
 import TruncationBanner from '../components/TruncationBanner';
 import { expectedAgencyOverride, expectedOverrideLabel } from '../utils/agencyOverrideExpected';
@@ -459,7 +459,9 @@ export default function AgencyProductionRecon() {
   const matches = useMemo(() => {
     const bsiKeysList = [...bsiUploadedKeys];
     const rows = [];
-    for (const prod of production) {
+    // Rolling 90-day production repeats the same sale — one recon row per true sale.
+    const uniqueProduction = dedupeProductionSales(production);
+    for (const prod of uniqueProduction) {
       const carrierBSI = _findCarrierBSIMatch(prod, carrierBSIRecords);
       const heldRecord = _findHeldRecord(prod, carrierBSIRecords);
       const prodCarrier = normalizeCarrier(prod.carrier || '');
@@ -1449,9 +1451,9 @@ export default function AgencyProductionRecon() {
         <div style={{ marginTop: 30, padding: 16, background: 'var(--blue-light)', borderRadius: 6, borderLeft: '4px solid var(--blue)', color: 'var(--blue-dark)', fontSize: 13, lineHeight: 1.6 }}>
           <div style={{ fontWeight: 600, marginBottom: 8 }}>💡 How this works:</div>
           <ul style={{ paddingLeft: 20, margin: 0 }}>
-            <li><strong>Agency Production:</strong> Hector's monthly reports showing ALL sales (uploaded via "Upload Agency Production")</li>
+            <li><strong>Agency Production:</strong> Hector&apos;s monthly reports (90-day rolling — same sale can repeat across uploads)</li>
             <li><strong>Override Statements:</strong> BSI commission statements showing what THEI got paid</li>
-            <li><strong>This page:</strong> Matches production to overrides and shows status</li>
+            <li><strong>This page:</strong> One row per true sale (client + carrier + eff date + policy), not per upload</li>
           </ul>
           <div style={{ fontWeight: 600, marginTop: 12, marginBottom: 8 }}>Status Categories:</div>
           <ul style={{ paddingLeft: 20, margin: 0 }}>

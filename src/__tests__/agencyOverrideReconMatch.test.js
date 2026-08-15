@@ -96,4 +96,50 @@ describe('agencyOverrideReconMatch', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].lifecycle).toBe('paid');
   });
+
+  test('rolling production duplicates collapse to one sale', () => {
+    const { dedupeProductionSales, productionSaleKey } = require('../agencyOverrideReconMatch.cjs');
+    const rows = dedupeProductionSales([
+      {
+        id: 1,
+        client_name: 'RONALDO BALBOA',
+        carrier: 'Devoted Health',
+        effective_date: '2026-05-01',
+        policy_number: 'DEV123',
+        upload_date: '2026-06-01',
+      },
+      {
+        id: 2,
+        client_name: 'Balboa, Ronaldo',
+        carrier: 'Devoted',
+        effective_date: '2026-05-01',
+        policy_number: 'DEV123',
+        upload_date: '2026-08-01',
+      },
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].id).toBe(2);
+    expect(productionSaleKey(rows[0])).toContain('2026-05-01');
+  });
+
+  test('different eff dates stay as separate sales', () => {
+    const { dedupeProductionSales } = require('../agencyOverrideReconMatch.cjs');
+    const rows = dedupeProductionSales([
+      {
+        id: 1,
+        client_name: 'RONALDO BALBOA',
+        carrier: 'Devoted',
+        effective_date: '2026-01-01',
+        policy_number: 'A',
+      },
+      {
+        id: 2,
+        client_name: 'RONALDO BALBOA',
+        carrier: 'Devoted',
+        effective_date: '2026-05-01',
+        policy_number: 'B',
+      },
+    ]);
+    expect(rows).toHaveLength(2);
+  });
 });

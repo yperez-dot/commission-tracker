@@ -69,14 +69,27 @@ describe('overrideGapAudit', () => {
     expect(summary.gap_total).toBe(0);
   });
 
-  test('dedupes same client across production rows', () => {
+  test('dedupes rolling production duplicates for same sale', () => {
     const { summary } = auditOverrideGaps(
       [
-        { id: 1, client_name: 'Same Person', carrier: 'Aetna' },
-        { id: 2, client_name: 'PERSON, SAME', carrier: 'Aetna' },
+        {
+          id: 1,
+          client_name: 'RONALDO BALBOA',
+          carrier: 'Devoted',
+          effective_date: '2026-05-01',
+          policy_number: 'X1',
+        },
+        {
+          id: 2,
+          client_name: 'BALBOA, RONALDO',
+          carrier: 'Devoted Health',
+          effective_date: '2026-05-01',
+          policy_number: 'X1',
+        },
       ],
       []
     );
+    expect(summary.production_rows_raw).toBe(2);
     expect(summary.production_clients).toBe(1);
     expect(summary.never_paid).toBe(1);
   });
