@@ -240,6 +240,13 @@ function buildMissingRenewalRows({
       missing: built.filter((r) => r.isMissing && !r.isHeld).length,
       held: built.filter((r) => r.isHeld).length,
       paid: built.filter((r) => !r.isMissing).length,
+      // One-period estimate from BOB last_commission_amount (not current-period $0)
+      estimatedMissing: built
+        .filter((r) => r.isMissing && !r.isHeld)
+        .reduce((s, r) => s + (parseFloat(r.lastKnownCommission) || 0), 0),
+      paidCommission: built
+        .filter((r) => !r.isMissing)
+        .reduce((s, r) => s + (parseFloat(r.commission) || 0), 0),
     },
   };
 }

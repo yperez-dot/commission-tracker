@@ -453,6 +453,9 @@ export default function MissingRenewals({ user }) {
   const filteredHeld    = filtered.filter(r => r.isHeld).length;
   const filteredPaid    = filtered.filter(r => !r.isMissing).length;
   const totalCommission = filtered.filter(r => !r.isMissing).reduce((s,r) => s + r.commission, 0);
+  const estimatedMissing = filtered
+    .filter(r => r.isMissing && !r.isHeld)
+    .reduce((s, r) => s + (parseFloat(r.lastKnownCommission) || 0), 0);
   const periodLabel = formatPeriodLabel(selectedPeriod) || selectedPeriod;
 
   return (
@@ -661,7 +664,11 @@ export default function MissingRenewals({ user }) {
               <span style={{ color:'var(--text-muted)',margin:'0 4px' }}>|</span>
               <span style={{ color:'var(--green)',fontWeight:500 }}>Paid: {filteredPaid}</span>
               <span style={{ color:'var(--text-muted)',margin:'0 4px' }}>|</span>
-              <span>Commission: <strong style={{ color:'var(--green)' }}>{fmt(totalCommission)}</strong></span>
+              <span>Paid $: <strong style={{ color:'var(--green)' }}>{fmt(totalCommission)}</strong></span>
+              <span style={{ color:'var(--text-muted)',margin:'0 4px' }}>|</span>
+              <span title="Sum of last known commission for missing rows (one period)">
+                Est. missing: <strong style={{ color:'var(--red)' }}>{fmt(estimatedMissing)}</strong>
+              </span>
               <span style={{ fontSize:12,color:'var(--text-muted)',marginLeft:8 }}>— {periodLabel}</span>
             </div>
 
@@ -1006,8 +1013,15 @@ export default function MissingRenewals({ user }) {
                   </tbody>
                   <tfoot>
                     <tr style={{ background:'var(--bg-subtle)',fontWeight:500 }}>
-                      <td colSpan={7} style={{ padding:'8px 12px',fontSize:12 }}>Total ({filtered.filter(r=>!r.isMissing).length} paid)</td>
-                      <td style={{ padding:'8px 12px',fontSize:12,color:'var(--green)' }}>{fmt(totalCommission)}</td>
+                      <td colSpan={7} style={{ padding:'8px 12px',fontSize:12 }}>
+                        Paid ({filteredPaid}) · Est. missing ({filteredMissing})
+                      </td>
+                      <td style={{ padding:'8px 12px',fontSize:12 }}>
+                        <span style={{ color:'var(--green)' }}>{fmt(totalCommission)}</span>
+                        {filteredMissing > 0 && (
+                          <span style={{ color:'var(--red)', marginLeft:8 }}>/ {fmt(estimatedMissing)}</span>
+                        )}
+                      </td>
                       <td colSpan={4}></td>
                     </tr>
                   </tfoot>

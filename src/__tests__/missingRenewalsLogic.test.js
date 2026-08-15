@@ -104,6 +104,9 @@ describe('missingRenewalsLogic', () => {
     expect(alice.commission).toBe(50);
     expect(bob.isMissing).toBe(true);
     expect(bob.monthsMissing).toBe(2); // 202511 → 202601
+    expect(bob.lastKnownCommission).toBe(40);
+    expect(result.summary.estimatedMissing).toBe(40);
+    expect(result.summary.paidCommission).toBe(50);
   });
 
   test('Held-only match stays missing/held, not paid', () => {
