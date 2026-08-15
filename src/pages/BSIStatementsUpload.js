@@ -20,6 +20,7 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
   const [deletingId, setDeletingId] = useState(null);
   const [exportingId, setExportingId] = useState(null);
   const [routeConfirm, setRouteConfirm] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const loadUploads = useCallback(async () => {
     try {
@@ -98,6 +99,22 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
       setExportingId(null);
     }
   }
+
+  const q = searchQuery.trim().toLowerCase();
+  const visibleUploads = !q
+    ? uploads
+    : uploads.filter((u) => {
+        const hay = [
+          u.original_name,
+          u.uploaded_by_name,
+          u.carrier,
+          u.uploaded_by != null ? `User ${u.uploaded_by}` : '',
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        return hay.includes(q);
+      });
 
   return (
     <div>
