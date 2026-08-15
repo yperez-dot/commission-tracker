@@ -52,6 +52,7 @@ export default function App() {
     setAgencyView(val);
     localStorage.setItem('olicomm_agency_view', val);
     window.__olicomm_agency_override = val;
+    setPageParams({});
   }
 
   React.useEffect(() => {
@@ -183,7 +184,7 @@ export default function App() {
     'agency-production-upload': <AgencyProductionUpload key={agencyView} user={effectiveUser} onNavigate={navigate} />,
     'bsi-statements-upload': <BSIStatementsUpload key={agencyView} user={effectiveUser} onNavigate={navigate} />,
     'agency-production-recon': <AgencyProductionRecon key={agencyView} user={effectiveUser} />,
-    alldata: <AllData key={agencyView} user={effectiveUser} initialFilters={pageParams} />,
+    alldata: <AllData key={`${agencyView}-${JSON.stringify(pageParams)}`} user={effectiveUser} initialFilters={pageParams} />,
     bob: <BookOfBusiness key={agencyView} user={effectiveUser} />,
     renewals: <MissingRenewals key={agencyView} user={effectiveUser} />,
     reconciliation: <Reconciliation key={agencyView} user={effectiveUser} />,

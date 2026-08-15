@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiFetch } from '../api';
 import { formatCarrier } from '../utils/formatCarrier';
+import { lobCardMetrics } from '../lobCardMetrics';
 import {
   DASHBOARD_MY_AGENTS,
   DASHBOARD_PRINCIPAL_AGENTS,
@@ -238,32 +239,6 @@ function HouseSplitWidget({ data, loading, bookLabel }) {
   );
 }
 
-function lobCardMetrics(lobData, lobName, viewMode) {
-  const isACA = lobName === 'ACA';
-  if (isACA && viewMode === 'agency') {
-    return {
-      amount: parseFloat(lobData.thei_total || 0),
-      count: parseInt(lobData.override_count ?? lobData.count ?? 0, 10),
-    };
-  }
-  if (isACA && viewMode === 'agent') {
-    return {
-      amount: parseFloat(lobData.agent_payable || 0),
-      count: parseInt(lobData.count || 0, 10),
-    };
-  }
-  if (viewMode === 'agency') {
-    return {
-      amount: parseFloat(lobData.thei_total || lobData.total || 0),
-      count: parseInt(lobData.count || 0, 10),
-    };
-  }
-  return {
-    amount: parseFloat(lobData.agent_payable || lobData.total || 0),
-    count: parseInt(lobData.count || 0, 10),
-  };
-}
-
 export default function Dashboard({ user, onNavigate }) {
   const agencyView = user.agency || '';
   const [summary, setSummary] = useState(null);
@@ -373,13 +348,32 @@ export default function Dashboard({ user, onNavigate }) {
     if (!onNavigate) return;
     const agentOverride = viewMode === 'agent'
       ? (overrides.agent || DASHBOARD_PRINCIPAL_AGENTS[0])
-      : (overrides.agent||(selAgents.length===1?selAgents[0]:''));
+      : (overrides.agent || (selAgents.length === 1 ? selAgents[0] : ''));
+    const agents = overrides.agents
+      || (viewMode === 'agent'
+        ? DASHBOARD_PRINCIPAL_AGENTS.filter(a => allFilters.agents.includes(a))
+        : (agentOverride ? [agentOverride] : (selAgents.length ? selAgents : [])));
+    const carriers = overrides.carriers
+      || (overrides.carrier ? [overrides.carrier] : (selCarriers.length ? selCarriers : []));
+    const periods = overrides.periods
+      || (overrides.period ? [overrides.period] : (selPeriods.length ? selPeriods : []));
+    const classifications = overrides.classifications
+      || (overrides.classification ? [overrides.classification] : (selTypes.length ? selTypes : []));
+    const lobs = overrides.lobs
+      || (overrides.lob ? [overrides.lob] : (selLOBs.length ? selLOBs : []));
     onNavigate('alldata', {
-      agent: agentOverride,
-      carrier: overrides.carrier||(selCarriers.length===1?selCarriers[0]:''),
-      period: overrides.period||(selPeriods.length===1?selPeriods[0]:''),
-      classification: overrides.classification||(selTypes.length===1?selTypes[0]:''),
-      lob: overrides.lob || (selLOBs.length===1?selLOBs[0]:''),
+      agents,
+      carriers,
+      periods,
+      classifications,
+      lobs,
+      // Keep singular keys for older call sites / deep links
+      agent: agents.length === 1 ? agents[0] : '',
+      carrier: carriers.length === 1 ? carriers[0] : '',
+      period: periods.length === 1 ? periods[0] : '',
+      classification: classifications.length === 1 ? classifications[0] : '',
+      lob: lobs.length === 1 ? lobs[0] : '',
+      amountSign: overrides.amountSign || '',
     });
   }
 
@@ -562,14 +556,20 @@ export default function Dashboard({ user, onNavigate }) {
                 <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(280px, 1fr))',gap:10}}>
                 {cards.map((cardData, idx) => {
                   const isACA = cardData.displayName === 'ACA';
+                  const isMedicare = cardData.displayName === 'Medicare';
                   const isActive = selLOBs.length > 0 && cardData.lobCodes.some(code => selLOBs.includes(code));
                   return (
                     <div
                       key={idx}
                       onClick={() => {
+                        if (isMedicare) {
+                          drillDown({ lobs: cardData.lobCodes });
+                          return;
+                        }
                         if (isActive) { setSelLOBs([]); }
                         else { setSelLOBs(cardData.lobCodes); }
                       }}
+                      title={isMedicare ? 'Open Medicare commission details' : undefined}
                       style={{
                         ...card,
                         padding:'16px 20px',
@@ -594,6 +594,9 @@ export default function Dashboard({ user, onNavigate }) {
                           : isACA
                             ? 'agent policies'
                             : 'policies'}
+                        {isMedicare && (
+                          <span style={{ marginLeft: 6, color: C.accentDark }}>· view details</span>
+                        )}
                       </div>
                     </div>
                   );
@@ -608,13 +611,28 @@ export default function Dashboard({ user, onNavigate }) {
               const calcChange = (change) => (change === null || change === undefined ? null : change);
 
               return [
-                {label:'Total Commissions', value:fmt(summary?.totalCommission), color:C.green, sub:`${(summary?.totalRecords||0).toLocaleString()} records`, change: calcChange(totalTrend), changeHint: totalTrend != null ? '2nd half vs 1st' : null},
-                {label:'Net Sales', value:fmt(netSales), color:C.accentDark, sub:'after chargebacks', change: null},
-                {label:'Chargebacks', value:fmt(totalCB), color:totalCB>0?C.red:C.textMuted, sub:totalAdv>0?`${fmt(totalAdv)} advance`:'no advances', change: calcChange(cbTrend), changeHint: cbTrend != null ? '2nd half vs 1st' : null},
-                {label:'Agents', value:kpi?.agents?.length||0, color:C.text, sub:'active this period', change: null},
+                {label:'Total Commissions', value:fmt(summary?.totalCommission), color:C.green, sub:`${(summary?.totalRecords||0).toLocaleString()} records`, change: calcChange(totalTrend), changeHint: totalTrend != null ? '2nd half vs 1st' : null, onClick: null},
+                {label:'Net Sales', value:fmt(netSales), color:C.accentDark, sub:'after chargebacks', change: null, onClick: () => drillDown({})},
+                {label:'Chargebacks', value:fmt(totalCB), color:totalCB>0?C.red:C.textMuted, sub:totalAdv>0?`${fmt(totalAdv)} advance`:'no advances', change: calcChange(cbTrend), changeHint: cbTrend != null ? '2nd half vs 1st' : null, onClick: () => drillDown({ amountSign: 'negative' })},
+                {label:'Agents', value:kpi?.agents?.length||0, color:C.text, sub:'active this period', change: null, onClick: null},
               ].map((c,i)=>(
-                <div key={i} style={{...card,padding:'16px 20px'}}>
-                  <div style={{fontSize:10,color:C.textMuted,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.8px',marginBottom:8}}>{c.label}</div>
+                <div
+                  key={i}
+                  onClick={c.onClick || undefined}
+                  title={c.onClick ? `Open ${c.label.toLowerCase()} details` : undefined}
+                  style={{
+                    ...card,
+                    padding:'16px 20px',
+                    cursor: c.onClick ? 'pointer' : 'default',
+                    transition: c.onClick ? 'border-color 0.15s, box-shadow 0.15s' : undefined,
+                  }}
+                  onMouseEnter={c.onClick ? (e) => { e.currentTarget.style.borderColor = C.accent; } : undefined}
+                  onMouseLeave={c.onClick ? (e) => { e.currentTarget.style.borderColor = C.border; } : undefined}
+                >
+                  <div style={{fontSize:10,color:C.textMuted,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.8px',marginBottom:8}}>
+                    {c.label}
+                    {c.onClick && <span style={{ marginLeft: 6, fontWeight: 500, color: C.accentDark, textTransform: 'none', letterSpacing: 0 }}>· details</span>}
+                  </div>
                   <div style={{fontSize:28,fontWeight:600,color:c.color,lineHeight:1.1,marginBottom:6}}>{loading?'—':c.value}</div>
                   <div style={{display:'flex',alignItems:'center',gap:6,marginTop:4,flexWrap:'wrap'}}>
                     <div style={{fontSize:11,color:C.textMuted}}>{c.sub}</div>

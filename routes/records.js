@@ -63,7 +63,7 @@ function normalizeAgentKey(name) {
 router.get('/', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
-    const { agent, agents, carrier, carriers, period, periods, classification, classifications, lob, lobs, planType, payee, search, upload_id, upload_category, exclude_upload_category, sortCol, sortDir = 'asc', limit = 100, offset = 0 } = req.query;
+    const { agent, agents, carrier, carriers, period, periods, classification, classifications, lob, lobs, planType, payee, search, upload_id, upload_category, exclude_upload_category, amountSign, sortCol, sortDir = 'asc', limit = 100, offset = 0 } = req.query;
     let where = [], params = [], idx = 1;
 
     if (req.user.role === 'agent') {
@@ -87,6 +87,8 @@ router.get('/', requireAuth, async (req, res) => {
     if (upload_category) { where.push(`u.category = $${idx++}`); params.push(upload_category); }
     if (exclude_upload_category) { where.push(`(u.category IS NULL OR u.category != $${idx++})`); params.push(exclude_upload_category); }
     if (payee) { where.push(`cr.payee = $${idx++}`); params.push(payee); }
+    if (amountSign === 'negative') { where.push('cr.commission < 0'); }
+    else if (amountSign === 'positive') { where.push('cr.commission >= 0'); }
     if (search) { where.push(`(cr.client_full_name ILIKE $${idx} OR cr.agent_name ILIKE $${idx} OR cr.carrier ILIKE $${idx})`); params.push(`%${search}%`); idx++; }
 
     const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
@@ -293,7 +295,14 @@ router.get('/summary', requireAuth, async (req, res) => {
       pool.query(`SELECT agent_name, SUM(commission) as total, COUNT(*) as count FROM commission_records ${wc} GROUP BY agent_name ORDER BY total DESC`, params),
       pool.query(`SELECT carrier, SUM(commission) as total, COUNT(*) as count FROM commission_records ${wc} GROUP BY carrier ORDER BY total DESC`, params),
       pool.query(`SELECT payment_period as period, SUM(commission) as total, COUNT(*) as count, ABS(SUM(CASE WHEN commission < 0 THEN commission ELSE 0 END)) as chargebacks FROM commission_records ${wc} GROUP BY payment_period ORDER BY payment_period ASC`, params),
-      pool.query(`SELECT lob, SUM(commission) as total, SUM(COALESCE(producer_payable,0)) as agent_payable, SUM(COALESCE(thei_share,0)) as thei_total, COUNT(*) as count, COUNT(*) FILTER (WHERE COALESCE(thei_share, 0) <> 0) as override_count FROM commission_records ${wc} GROUP BY lob ORDER BY lob`, params),
+      pool.query(`SELECT lob,
+        SUM(commission) as total,
+        SUM(COALESCE(producer_payable,0)) as agent_payable,
+        SUM(COALESCE(thei_share,0)) as thei_total,
+        SUM(CASE WHEN COALESCE(producer_payable, 0) <> 0 THEN producer_payable ELSE commission END) as agent_production,
+        COUNT(*) as count,
+        COUNT(*) FILTER (WHERE COALESCE(thei_share, 0) <> 0) as override_count
+        FROM commission_records ${wc} GROUP BY lob ORDER BY lob`, params),
     ]);
 
     res.json({
