@@ -158,6 +158,69 @@ router.get('/', requireAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ─── GET /client-history — commission trend for one client (All Data drill-down)
+router.get('/client-history', requireAuth, async (req, res) => {
+  try {
+    const pool = getPool();
+    const { client, carrier, agent } = req.query;
+    if (!client || !carrier) {
+      return res.status(400).json({ error: 'client and carrier are required' });
+    }
+
+    const where = [
+      `LOWER(TRIM(client_full_name)) = LOWER(TRIM($1))`,
+      `LOWER(TRIM(carrier)) = LOWER(TRIM($2))`,
+    ];
+    const params = [client, carrier];
+    let idx = 3;
+
+    if (agent) {
+      where.push(`LOWER(TRIM(agent_name)) = LOWER(TRIM($${idx++}))`);
+      params.push(agent);
+    }
+
+    if (req.user.role === 'agent') {
+      where.push(`agent_name ILIKE $${idx++}`);
+      params.push(`%${req.user.name}%`);
+    } else if (req.user.role === 'admin') {
+      const af = agencyFilter(req, null);
+      if (af) where.push(af);
+    }
+
+    const result = await pool.query(
+      `SELECT id, payment_period, classification, commission, producer_payable,
+              thei_share, bsi_share, policy_number, effective_date, lob, agent_name, carrier
+       FROM commission_records
+       WHERE ${where.join(' AND ')}
+       ORDER BY payment_period ASC NULLS LAST, id ASC`,
+      params
+    );
+
+    const rows = result.rows;
+    let commissionTotal = 0;
+    let payableTotal = 0;
+    for (const r of rows) {
+      commissionTotal += parseFloat(r.commission) || 0;
+      payableTotal += parseFloat(r.producer_payable) || 0;
+    }
+
+    res.json({
+      client,
+      carrier,
+      agent: agent || null,
+      rows,
+      totals: {
+        count: rows.length,
+        commission: Math.round(commissionTotal * 100) / 100,
+        producer_payable: Math.round(payableTotal * 100) / 100,
+      },
+    });
+  } catch (err) {
+    console.error('client-history error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.delete('/:id', requireAuth, requireAdmin, async (req, res) => {
   try {
     const pool = getPool();
@@ -564,6 +627,8 @@ router.get('/adp-payable', requireAuth, requireAdmin, async (req, res) => {
       params.push(`${year}%`);
       whereParts.push(`payment_period LIKE $${params.length}`);
     }
+    const af = agencyFilter(req, null);
+    if (af) whereParts.push(af);
     const whereClause = `WHERE ${whereParts.join(' AND ')}`;
 
     const perProducer = await pool.query(

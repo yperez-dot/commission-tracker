@@ -8,6 +8,14 @@ function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+function formatPeriodLabel(p) {
+  if (!p) return '—';
+  const s = String(p).trim();
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  if (s.match(/^\d{6}$/)) return months[parseInt(s.slice(4, 6), 10) - 1] + ' ' + s.slice(0, 4);
+  return s;
+}
+
 function MultiSelect({ label, options, selected, onChange }) {
   const [open, setOpen] = useState(false);
   const allSelected = selected.length === 0;
@@ -94,6 +102,12 @@ export default function AllData({ user, initialFilters = {} }) {
   const PAGE_SIZE = 100;
   const [policyModal, setPolicyModal] = useState(null);
   const [editRecord, setEditRecord] = useState(null);
+  const [clientHistory, setClientHistory] = useState(null); // { client, carrier, agent }
+  const [clientHistoryData, setClientHistoryData] = useState([]);
+  const [clientHistoryTotals, setClientHistoryTotals] = useState(null);
+  const [clientHistoryLoading, setClientHistoryLoading] = useState(false);
+  const [clientHistoryError, setClientHistoryError] = useState('');
+  const [clientHistorySameAgent, setClientHistorySameAgent] = useState(true);
 
   useEffect(() => {
     apiFetch('/records/filters').then(d => setFilterOptions(d)).catch(console.error);
@@ -255,6 +269,33 @@ export default function AllData({ user, initialFilters = {} }) {
     single: { title: 'Delete this record?', sub: deleteTarget ? `${deleteTarget.client_full_name} · ${deleteTarget.carrier} · ${fmt(deleteTarget.commission)}` : '', btn: 'Delete' }
   };
 
+  async function loadClientHistory(r, sameAgent = clientHistorySameAgent) {
+    if (!r?.client_full_name || !r?.carrier) return;
+    setClientHistory({
+      client_full_name: r.client_full_name,
+      carrier: r.carrier,
+      agent_name: r.agent_name,
+    });
+    setClientHistoryLoading(true);
+    setClientHistoryError('');
+    setClientHistoryData([]);
+    setClientHistoryTotals(null);
+    try {
+      const params = new URLSearchParams({
+        client: r.client_full_name,
+        carrier: r.carrier,
+      });
+      if (sameAgent && r.agent_name) params.set('agent', r.agent_name);
+      const data = await apiFetch(`/records/client-history?${params}`);
+      setClientHistoryData(data.rows || []);
+      setClientHistoryTotals(data.totals || null);
+    } catch (e) {
+      setClientHistoryError(e.message || 'Failed to load history');
+    } finally {
+      setClientHistoryLoading(false);
+    }
+  }
+
   const hasMGA = records.some(r => r.mga && r.mga.trim());
   const hasCommSplit = records.some(r => {
     try { const raw = typeof r.raw_data === 'string' ? JSON.parse(r.raw_data) : r.raw_data; return raw && raw.agentComm !== undefined; } catch(e) { return false; }
@@ -355,6 +396,109 @@ export default function AllData({ user, initialFilters = {} }) {
           </div>
         </div>
       )}
+
+      {clientHistory && (
+        <div
+          onClick={() => setClientHistory(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: 'var(--bg)', borderRadius: 12, padding: 24, width: 720, maxWidth: '96vw',
+              maxHeight: '85vh', overflowY: 'auto', border: '0.5px solid var(--border)',
+              boxShadow: '0 8px 32px rgba(0,0,0,0.15)'
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12, gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 4 }}>
+                  Commission history
+                </div>
+                <div style={{ fontSize: 17, fontWeight: 600 }}>{clientHistory.client_full_name}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+                  {formatCarrier(clientHistory.carrier)}
+                  {clientHistory.agent_name ? ` · ${clientHistory.agent_name}` : ''}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setClientHistory(null)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: 'var(--text-muted)' }}
+              >
+                ×
+              </button>
+            </div>
+
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-muted)', marginBottom: 14, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={clientHistorySameAgent}
+                onChange={(e) => {
+                  const next = e.target.checked;
+                  setClientHistorySameAgent(next);
+                  loadClientHistory(clientHistory, next);
+                }}
+              />
+              Same agent only
+            </label>
+
+            {clientHistoryLoading ? (
+              <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Loading…</div>
+            ) : clientHistoryError ? (
+              <div style={{ padding: 12, borderRadius: 8, background: '#F5EAE4', color: '#7A3D1F', fontSize: 13 }}>{clientHistoryError}</div>
+            ) : clientHistoryData.length === 0 ? (
+              <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No commission rows found</div>
+            ) : (
+              <>
+                <div style={{ display: 'flex', gap: 16, marginBottom: 12, flexWrap: 'wrap', fontSize: 12 }}>
+                  <span><strong>{clientHistoryTotals?.count ?? clientHistoryData.length}</strong> rows</span>
+                  <span>Commission total: <strong style={{ color: 'var(--green)' }}>{fmt(clientHistoryTotals?.commission)}</strong></span>
+                  {(clientHistoryTotals?.producer_payable || 0) !== 0 && (
+                    <span>Producer payable: <strong>{fmt(clientHistoryTotals.producer_payable)}</strong></span>
+                  )}
+                </div>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <thead>
+                    <tr>
+                      {['Period', 'Type', 'Amount', 'Policy', 'LOB', 'Agent'].map((h) => (
+                        <th
+                          key={h}
+                          style={{
+                            textAlign: 'left', padding: '6px 8px',
+                            borderBottom: '0.5px solid var(--border)', color: 'var(--text-muted)', fontSize: 11
+                          }}
+                        >
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {clientHistoryData.map((row) => {
+                      const payable = parseFloat(row.producer_payable || 0);
+                      const amt = payable !== 0 ? payable : (parseFloat(row.commission) || 0);
+                      return (
+                        <tr key={row.id} style={{ borderBottom: '0.5px solid var(--border)' }}>
+                          <td style={{ padding: '6px 8px' }}>{formatPeriodLabel(row.payment_period)}</td>
+                          <td style={{ padding: '6px 8px' }}>{row.classification || '—'}</td>
+                          <td style={{ padding: '6px 8px', fontWeight: 500, color: amt < 0 ? 'var(--red)' : 'var(--green)' }}>
+                            {fmt(amt)}
+                          </td>
+                          <td style={{ padding: '6px 8px', color: 'var(--text-muted)' }}>{row.policy_number || '—'}</td>
+                          <td style={{ padding: '6px 8px' }}>{row.lob || '—'}</td>
+                          <td style={{ padding: '6px 8px' }}>{row.agent_name || '—'}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="page-header">
         <div className="page-title">All Data</div>
         <div className="page-sub">All commission records across all carriers and periods</div>
@@ -482,7 +626,20 @@ export default function AllData({ user, initialFilters = {} }) {
                               : '—'}
                           </td>
                           <td style={{ fontSize: 13 }}>
-                            {r.client_full_name || '—'}
+                            {r.client_full_name ? (
+                              <button
+                                type="button"
+                                onClick={() => loadClientHistory(r)}
+                                title="View commission history"
+                                style={{
+                                  background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                                  color: 'var(--accent-dark)', fontWeight: 500, fontSize: 13, textDecoration: 'underline',
+                                  textAlign: 'left'
+                                }}
+                              >
+                                {r.client_full_name}
+                              </button>
+                            ) : '—'}
                             {r.is_termed && (
                               <span style={{
                                 marginLeft: 6,
