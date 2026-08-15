@@ -100,7 +100,7 @@ Same row universe as THEI house (overrides + Alba peels). **Field:** `bsi_share`
 **Full-pot formula:** `producer = pot × 0.5`, `thei = pot × 0.25`, `bsi = pot × 0.25`  
 **Remittance (amount = THEI’s 25%):** `thei = amt`, `bsi = amt`, `producer = amt × 2`, `gross = amt × 4`
 
-### Marco (IRS Swan peel — House Statements)
+### Marco (Swan peel — House Statements)
 
 **Included:** Agency Override for Marco agent list (Jendy excluded from period ≥ `202606`).
 

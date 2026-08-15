@@ -507,7 +507,7 @@ function HouseOverridesPanel() {
       <div className="card" style={{ marginBottom: 14 }}>
         <div className="card-title" style={{ fontSize: 15, marginBottom: 6 }}>House statements</div>
         <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14, lineHeight: 1.45 }}>
-          THEI NHP sales and THEI BSI remittance are separate reports. Marco (IRS Swan) $10 agency peel, and Integrity / CAM / Chris producer shares.
+          THEI NHP sales and THEI BSI remittance are separate reports. Marco (Swan) $10 agency peel, and Integrity / CAM / Chris producer shares.
           Lina’s agent production is under <strong>Agent Payouts</strong> — not here.
         </div>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
@@ -744,7 +744,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
 
           const hasSubAgentOverride = parseFloat(r.sub_agent_override || 0) > 0;
           const isACAPayable = lob === 'ACA' && producerPayable !== 0;
-          // Marco $10 is an agency (IRS Swan) house peel — House Statements only, not Agent Payouts
+          // Marco $10 is an agency (Swan) house peel — House Statements only, not Agent Payouts
           return isACAPayable && !isYourTeam(r.agent_name) && !hasSubAgentOverride;
         });
       }
@@ -902,7 +902,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
     },
     overrides: {
       title: 'House Statements',
-      sub: 'THEI NHP vs BSI remittance, Marco (IRS Swan) $10 agency peel, Integrity / CAM / Chris',
+      sub: 'THEI NHP vs BSI remittance, Marco (Swan) $10 agency peel, Integrity / CAM / Chris',
     },
     loa: {
       title: 'LOA Statements',
@@ -929,7 +929,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
             <div className="card" style={{ marginBottom: 14 }}>
               <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12, lineHeight: 1.45 }}>
                 Agent production only — ACA producer pay (100% pass-through) and{' '}
-                <strong>Lina Hernandez</strong> (NB / Renewal / Chargeback). Marco (IRS Swan) and Integrity /
+                <strong>Lina Hernandez</strong> (NB / Renewal / Chargeback). Marco (Swan) and Integrity /
                 CAM are under <strong>House Statements</strong>.
               </div>
               <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
