@@ -1,9 +1,18 @@
 #!/usr/bin/env node
+'use strict';
+
 const { Pool } = require('pg');
 
+if (!process.env.DATABASE_URL) {
+  console.error('ERROR: DATABASE_URL is required');
+  process.exit(1);
+}
+
 const pool = new Pool({
-  connectionString: process.env.DATABASE_URL || 'postgresql://postgres:LyahRMtjzhkPkaPpXtgysioPUBUVPAOi@metro.proxy.rlwy.net:24676/railway',
-  ssl: { rejectUnauthorized: false }
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_URL.includes('railway')
+    ? { rejectUnauthorized: false }
+    : undefined,
 });
 
 async function runQuery(sql) {
@@ -20,7 +29,7 @@ async function runQuery(sql) {
 
 const query = process.argv[2];
 if (!query) {
-  console.error('Usage: node railway-query.js "SELECT ..."');
+  console.error('Usage: DATABASE_URL=... node railway-query.js "SELECT ..."');
   process.exit(1);
 }
 

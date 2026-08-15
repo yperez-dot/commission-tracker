@@ -86,7 +86,7 @@ router.get('/payout-status', requireAuth, async (req, res) => {
  * PUT /api/payroll/payout-status
  * body: { period, agent, paid, amount?, paidDate?, notes?, agency? }
  */
-router.put('/payout-status', requireAuth, async (req, res) => {
+router.put('/payout-status', requireAuth, requireAdmin, async (req, res) => {
   try {
     const pool = getPool();
     await ensurePayoutStatusTable(pool);
@@ -165,7 +165,7 @@ router.get('/payout-history', requireAuth, async (req, res) => {
 });
 
 /** DELETE /api/payroll/payout-status/:id — clear a paid mark (History delete) */
-router.delete('/payout-status/:id', requireAuth, async (req, res) => {
+router.delete('/payout-status/:id', requireAuth, requireAdmin, async (req, res) => {
   try {
     const pool = getPool();
     await ensurePayoutStatusTable(pool);

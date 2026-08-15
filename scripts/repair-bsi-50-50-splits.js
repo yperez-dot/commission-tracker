@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 'use strict';
+if (!process.env.DATABASE_URL) { console.error('DATABASE_URL required'); process.exit(1); }
+
 
 /**
  * Repair BSI Agency Override rows that were mis-split as 100% THEI / 0% BSI.
@@ -24,8 +26,7 @@ const PERIOD = periodArg ? periodArg.split('=')[1] : null;
 
 const pool = new Pool({
   connectionString:
-    process.env.DATABASE_URL ||
-    'postgresql://postgres:HzFAKESECRET_a3b4c5d6e7f8g9h0i1j2@caboose.proxy.rlwy.net:21534/railway',
+    process.env.DATABASE_URL,
   ssl: process.env.DATABASE_URL ? undefined : { rejectUnauthorized: false },
 });
 

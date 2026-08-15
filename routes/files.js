@@ -11,6 +11,7 @@ const { normalizeAgentName } = require('./normalize');
 const { detectPlanChanges } = require('./planChanges');
 const { resolvePassThroughLiableAgent } = require('../src/writerPassThroughAgents');
 const { ensurePassThroughSchema } = require('./pass-through');
+const { safeUploadFilename, isAllowedUploadName } = require('./uploadSafe');
 let pdfParse;
 try { pdfParse = require('pdf-parse'); } catch(e) { console.log('pdf-parse not installed'); }
 
@@ -19,14 +20,13 @@ if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
 const storage = multer.diskStorage({
   destination: UPLOADS_DIR,
-  filename: (req, file, cb) => cb(null, `${Date.now()}_${file.originalname.replace(/\s+/g, '_')}`)
+  filename: (req, file, cb) => cb(null, safeUploadFilename(file.originalname))
 });
 const upload = multer({
   storage,
   limits: { fileSize: 20 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    const allowed = /\.(xlsx|xls|csv|pdf)$/i;
-    cb(null, allowed.test(file.originalname));
+    cb(null, isAllowedUploadName(file.originalname));
   }
 });
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -4132,7 +4132,7 @@ async function findDuplicates(pool, records) {
 }
 
 // ─── Upload route ─────────────────────────────────────────────────────────────
-router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
+router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (req, res) => {
   console.log('[UPLOAD] ===== FILE RECEIVED =====');
   console.log('[UPLOAD] Filename:', req.file?.originalname);
   console.log('[UPLOAD] Mimetype:', req.file?.mimetype);
@@ -4726,7 +4726,7 @@ function heuristicMapping(headers) {
   };
 }
 
-router.post('/fix-periods', requireAuth, async (req, res) => {
+router.post('/fix-periods', requireAuth, requireAdmin, async (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
   try {
     const pool = getPool();
@@ -4764,7 +4764,7 @@ router.post('/fix-periods', requireAuth, async (req, res) => {
   }
 });
 
-router.post('/apply-bsi-split', requireAuth, async (req, res) => {
+router.post('/apply-bsi-split', requireAuth, requireAdmin, async (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
   try {
     const pool = getPool();
@@ -5203,7 +5203,7 @@ function parseBSICarrierStatementRows(wb, filename) {
 module.exports = router;
 
 // BSI Statements Upload - separate from commission statements
-router.post('/upload-bsi-statement', requireAuth, upload.single('file'), async (req, res) => {
+router.post('/upload-bsi-statement', requireAuth, requireAdmin, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
   try {
