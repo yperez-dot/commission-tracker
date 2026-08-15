@@ -115,6 +115,22 @@ export function detectUploadDestination(filename) {
     };
   }
 
+  // AgentView CNHIC / HealthSpring Med Supp commission report
+  if (
+    f.includes('agentview') ||
+    f.includes('agent_view') ||
+    f.includes('agentcommissionreport') ||
+    f.includes('agent_commission_report') ||
+    /agent.?commission.?report/.test(f)
+  ) {
+    return {
+      id: 'commission_statement',
+      label: 'Commission Statements',
+      reason: 'Looks like an AgentView (CNHIC/HealthSpring) commission report',
+      confidence: 'high',
+    };
+  }
+
   // Direct carrier commission statements (UHC/Humana/Aetna/etc. to THEI)
   if (
     f.includes('commission_statement_2737247') ||
