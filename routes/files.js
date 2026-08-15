@@ -22,7 +22,7 @@ const {
 const {
   resolveNhpUploadOriginalName,
 } = require('../src/nhpUploadName');
-const { classifyTHECarrierTransaction } = require('../src/theCarrierStatementClassify');
+const { classifyTHECarrierTransaction, classifyHumanaDevotedBSITransaction } = require('../src/theCarrierStatementClassify');
 let pdfParse;
 try { pdfParse = require('pdf-parse'); } catch(e) { console.log('pdf-parse not installed'); }
 
@@ -4800,16 +4800,16 @@ router.get('/uploads', requireAuth, async (req, res) => {
     const agency = getAgency(req);
     const category = req.query.category; // Filter by category if provided
 
-    // Best-effort: THEI Devoted principal rows mislabeled Agency Override → Agent Commission
-    if (!category || category === 'commission_statement') {
+    // Best-effort: Devoted overpay guards (THEI agent commission + BSI override)
+    if (!category || category === 'commission_statement' || category === 'bsi_statement') {
       try {
-        const { backfillDevotedAgentCommission } = require('../src/theCarrierStatementClassify');
-        const devotedFixed = await backfillDevotedAgentCommission(pool);
-        if (devotedFixed) {
-          console.log(`[uploads] reclassified ${devotedFixed} Devoted Agency Override → Agent Commission`);
+        const { backfillDevotedCommissionGuards } = require('../src/theCarrierStatementClassify');
+        const { agentFixed, bsiFixed } = await backfillDevotedCommissionGuards(pool);
+        if (agentFixed || bsiFixed) {
+          console.log(`[uploads] Devoted guards: agentCommission=${agentFixed}, bsiOverride=${bsiFixed}`);
         }
       } catch (e) {
-        console.warn('[uploads] Devoted agent-commission backfill', e.message);
+        console.warn('[uploads] Devoted commission guards', e.message);
       }
     }
 
@@ -5217,7 +5217,6 @@ function parseHumanaDevotedBSIRows(wb, filename) {
     const policyNumber    = String(row['Policy #'] || '').trim();
     const productRaw      = String(row['Product'] || '').trim();
     const statusRaw       = String(row['Status'] || '').trim();
-    const fyRaw           = String(row['First Year/Renewal'] || '').trim().toLowerCase();
 
     // Commission ($) may be a number or a string with $ sign
     const commissionRaw = row['Commission ($)'];
@@ -5235,16 +5234,9 @@ function parseHumanaDevotedBSIRows(wb, filename) {
     else if (carrierLower.includes('devoted')) carrier = 'Devoted';
     else                                        carrier = carrierRaw;
 
-    // Classification: Commission Type field is authoritative for Override; fyRaw handles New Business vs Renewal
-    // Override check FIRST — prevents commission type from being inferred from enrollment type
-    const commissionType = String(row['Commission Type'] || '').trim();
-    const commissionTypeLower = commissionType.toLowerCase();
-    let classification;
-    if (commission < 0)                               classification = 'Chargeback';
-    else if (commissionTypeLower.includes('override')) classification = 'Agency Override';
-    else if (fyRaw.includes('first'))                 classification = 'New Business';
-    else if (fyRaw.includes('renew'))                 classification = 'Renewal';
-    else                                              classification = 'New Business'; // fallback
+    // BSI Humana/Devoted feeds are the house override pot (split with BSI).
+    // First Year/Renewal is enrollment metadata — not OliComm New Business.
+    let classification = classifyHumanaDevotedBSITransaction({ commission });
 
     // Agent name — "Writing Agent" is the individual; "Agent Name" is the BSI agency
     const agentName = isAgencyName(writingAgentRaw)
