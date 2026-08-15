@@ -20,6 +20,7 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
   const [deletingId, setDeletingId] = useState(null);
   const [exportingId, setExportingId] = useState(null);
   const [routeConfirm, setRouteConfirm] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const loadUploads = useCallback(async () => {
     try {
@@ -99,6 +100,22 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
     }
   }
 
+  const q = searchQuery.trim().toLowerCase();
+  const visibleUploads = !q
+    ? uploads
+    : uploads.filter((u) => {
+        const hay = [
+          u.original_name,
+          u.uploaded_by_name,
+          u.carrier,
+          u.uploaded_by != null ? `User ${u.uploaded_by}` : '',
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        return hay.includes(q);
+      });
+
   return (
     <div>
       {routeConfirm && (
@@ -166,11 +183,43 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
           </UploadAlert>
         )}
 
-        <UploadHistoryCard title={`Uploaded BSI Statements (${uploads.length})`}>
+        <UploadHistoryCard
+          title={`Uploaded BSI Statements (${q ? `${visibleUploads.length} of ${uploads.length}` : uploads.length})`}
+        >
+        {uploads.length > 0 && (
+          <div style={{ padding: '0 0 12px', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <input
+              type="text"
+              placeholder="Search filename, carrier, or uploader…"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              style={{
+                flex: '1 1 240px', minWidth: 180, padding: '8px 12px', borderRadius: 6,
+                border: '0.5px solid var(--border)', fontSize: 13, background: 'var(--bg)', color: 'var(--text)',
+              }}
+            />
+            {q && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                style={{
+                  background: 'none', border: '0.5px solid var(--border)', borderRadius: 6,
+                  padding: '7px 12px', fontSize: 12, cursor: 'pointer', color: 'var(--text-muted)',
+                }}
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        )}
 
         {uploads.length === 0 ? (
           <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
             No BSI statements uploaded yet
+          </div>
+        ) : visibleUploads.length === 0 ? (
+          <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
+            No uploads match “{searchQuery.trim()}”
           </div>
         ) : (
           <div style={{
@@ -190,9 +239,9 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
                 </tr>
               </thead>
               <tbody>
-                {uploads.map((u, i) => (
+                {visibleUploads.map((u, i) => (
                   <tr key={u.id} style={{
-                    borderBottom: i < uploads.length - 1 ? '1px solid var(--border)' : 'none'
+                    borderBottom: i < visibleUploads.length - 1 ? '1px solid var(--border)' : 'none'
                   }}>
                     <td style={{ padding: 12, fontSize: 14 }}>
                       <a
