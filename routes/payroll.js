@@ -186,6 +186,205 @@ router.delete('/payout-status/:id', requireAuth, requireAdmin, async (req, res) 
   }
 });
 
+// ─── Agent contacts + email statements ───────────────────────────────────────
+
+const {
+  buildAgentStatementCsv,
+  statementFilename,
+  isValidEmail,
+} = require('../src/agentStatementCsv');
+
+async function ensureAgentContactsTable(pool) {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS agent_contacts (
+      id SERIAL PRIMARY KEY,
+      agent_name TEXT UNIQUE NOT NULL,
+      email TEXT,
+      phone TEXT,
+      created_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW()
+    )
+  `);
+}
+
+async function resolveAgentEmail(pool, agentName) {
+  const name = String(agentName || '').trim();
+  if (!name) return null;
+
+  const contact = await pool.query(
+    `SELECT email FROM agent_contacts
+     WHERE LOWER(TRIM(agent_name)) = LOWER(TRIM($1))
+     LIMIT 1`,
+    [name]
+  );
+  if (contact.rows[0]?.email) return String(contact.rows[0].email).trim();
+
+  const user = await pool.query(
+    `SELECT email FROM users
+     WHERE LOWER(TRIM(name)) = LOWER(TRIM($1))
+     LIMIT 1`,
+    [name]
+  );
+  if (user.rows[0]?.email) return String(user.rows[0].email).trim();
+
+  return null;
+}
+
+/** GET /api/payroll/agent-contacts */
+router.get('/agent-contacts', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const pool = getPool();
+    await ensureAgentContactsTable(pool);
+    const result = await pool.query(
+      `SELECT id, agent_name, email, phone, updated_at
+       FROM agent_contacts
+       ORDER BY agent_name ASC`
+    );
+    res.json({ contacts: result.rows });
+  } catch (err) {
+    console.error('[payroll] agent-contacts GET', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** PUT /api/payroll/agent-contacts — upsert by agent_name */
+router.put('/agent-contacts', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const pool = getPool();
+    await ensureAgentContactsTable(pool);
+    const agentName = String(req.body?.agent_name || '').trim();
+    const email = String(req.body?.email || '').trim().toLowerCase();
+    const phone = req.body?.phone != null ? String(req.body.phone).trim() : null;
+
+    if (!agentName) return res.status(400).json({ error: 'agent_name is required' });
+    if (!email || !isValidEmail(email)) {
+      return res.status(400).json({ error: 'Valid email is required' });
+    }
+
+    const result = await pool.query(
+      `INSERT INTO agent_contacts (agent_name, email, phone, updated_at)
+       VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (agent_name)
+       DO UPDATE SET email = EXCLUDED.email, phone = EXCLUDED.phone, updated_at = NOW()
+       RETURNING *`,
+      [agentName, email, phone]
+    );
+    res.json({ success: true, contact: result.rows[0] });
+  } catch (err) {
+    console.error('[payroll] agent-contacts PUT', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** DELETE /api/payroll/agent-contacts/:id */
+router.delete('/agent-contacts/:id', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const pool = getPool();
+    await ensureAgentContactsTable(pool);
+    const result = await pool.query(
+      `DELETE FROM agent_contacts WHERE id = $1 RETURNING *`,
+      [req.params.id]
+    );
+    if (!result.rows.length) return res.status(404).json({ error: 'Contact not found' });
+    res.json({ success: true, deleted: result.rows[0] });
+  } catch (err) {
+    console.error('[payroll] agent-contacts DELETE', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/payroll/send-statement
+ * body: { agent_name, period_label, records?, statement_csv?, statement_base64?, is_bsi? }
+ * Prefer records (server builds CSV) or statement_csv / base64 attachment from client.
+ */
+router.post('/send-statement', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const apiKey = process.env.RESEND_API_KEY;
+    if (!apiKey) {
+      return res.status(503).json({
+        error: 'Email not configured. Set RESEND_API_KEY (and optional RESEND_FROM_EMAIL) on the API.',
+      });
+    }
+
+    const pool = getPool();
+    await ensureAgentContactsTable(pool);
+
+    const agentName = String(req.body?.agent_name || '').trim();
+    const periodLabel = String(req.body?.period_label || '').trim() || 'Statement';
+    if (!agentName) return res.status(400).json({ error: 'agent_name is required' });
+
+    const toEmail = await resolveAgentEmail(pool, agentName);
+    if (!toEmail || !isValidEmail(toEmail)) {
+      return res.status(400).json({
+        error: `No email on file for ${agentName}. Add one under Agent emails.`,
+      });
+    }
+
+    let csvText = null;
+    if (Array.isArray(req.body?.records) && req.body.records.length >= 0) {
+      csvText = buildAgentStatementCsv(agentName, req.body.records, periodLabel);
+    } else if (req.body?.statement_csv) {
+      csvText = String(req.body.statement_csv);
+    } else if (req.body?.statement_base64) {
+      csvText = Buffer.from(String(req.body.statement_base64), 'base64').toString('utf8');
+    } else {
+      return res.status(400).json({ error: 'records or statement_csv required' });
+    }
+
+    const isBSI = !!req.body?.is_bsi;
+    const filename = statementFilename(agentName, periodLabel, isBSI);
+    const fromEmail =
+      process.env.RESEND_FROM_EMAIL || 'commissions@healthexps.com';
+    const firstName = String(agentName.split(/\s+/)[0] || agentName)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+    const safePeriod = String(periodLabel)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+
+    const { Resend } = require('resend');
+    const resend = new Resend(apiKey);
+    const sendResult = await resend.emails.send({
+      from: fromEmail,
+      to: toEmail,
+      subject: `Your Commission Statement — ${periodLabel}`,
+      html: `
+        <p>Hi ${firstName},</p>
+        <p>Please find your commission statement for <strong>${safePeriod}</strong> attached.</p>
+        <p>Questions? Reply to this email or call 1-800-380-6821.</p>
+        <br/>
+        <p>The Health Experts Insurance</p>
+      `,
+      attachments: [
+        {
+          filename,
+          content: Buffer.from(csvText, 'utf8'),
+        },
+      ],
+    });
+
+    if (sendResult?.error) {
+      console.error('[payroll] Resend error', sendResult.error);
+      return res.status(502).json({
+        error: sendResult.error.message || 'Failed to send email via Resend',
+      });
+    }
+
+    res.json({
+      success: true,
+      to: toEmail,
+      filename,
+      id: sendResult?.data?.id || null,
+    });
+  } catch (err) {
+    console.error('[payroll] send-statement', err);
+    res.status(500).json({ error: err.message || 'Failed to send statement' });
+  }
+});
+
 function formatPeriodLabel(p) {
   if (!p) return p;
   const s = String(p).trim();

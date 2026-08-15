@@ -2,6 +2,11 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { apiFetch, apiDownload } from '../api';
 import LOAStatements from '../components/LOAStatements';
 import { formatDate } from '../utils/dateFormat';
+import {
+  buildAgentStatementCsv,
+  statementFilename,
+  recordAmount as sharedRecordAmount,
+} from '../agentStatementCsv';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -34,10 +39,7 @@ function formatPeriodLabel(p) {
 }
 
 function recordAmount(r) {
-  const hasSubAgentOV = parseFloat(r.sub_agent_override || 0) !== 0;
-  if (hasSubAgentOV) return parseFloat(r.sub_agent_override);
-  if (r.producer_payable != null) return parseFloat(r.producer_payable) || 0;
-  return parseFloat(r.commission) || 0;
+  return sharedRecordAmount(r);
 }
 
 function downloadTextFile(filename, text) {
@@ -90,57 +92,12 @@ function chipStyle(active) {
 }
 
 function generateStatement(agent, records, periodLabel, isBSI) {
-  const filename = isBSI
-    ? `BSI_Statement_${agent.replace(/\s+/g, '_')}_${periodLabel.replace(/\s+/g, '_')}.csv`
-    : `THEI_Statement_${agent.replace(/\s+/g, '_')}_${periodLabel.replace(/\s+/g, '_')}.csv`;
-
-  const fmtCsv = (n) => '$' + Number(n || 0).toFixed(2);
-  const positives = records.filter((r) => recordAmount(r) >= 0);
-  const negatives = records.filter((r) => recordAmount(r) < 0);
-  const grossTotal = positives.reduce((s, r) => s + recordAmount(r), 0);
-  const chargebackTotal = negatives.reduce((s, r) => s + recordAmount(r), 0);
-  const netTotal = grossTotal + chargebackTotal;
-  const headers = ['Policy #', 'Client', 'Statement', 'Lives', 'Effective Date', 'Commission', 'Type'];
-
-  const rows = [
-    [`*** AGENT: ${agent} ***`, '', '', '', '', '', ''],
-    [`Period: ${periodLabel}`, '', '', '', '', '', ''],
-    ['', '', '', '', '', '', ''],
-    headers,
-    ...positives.map((r) => [
-      r.policy_number || '—',
-      r.client_full_name,
-      r.statement_month || r.carrier,
-      r.members != null && r.members !== 0 ? r.members : '',
-      formatDate(r.effective_date),
-      fmtCsv(recordAmount(r)),
-      r.classification || '—',
-    ]),
-    ...(negatives.length
-      ? [
-          ['--- CHARGEBACKS ---', '', '', '', '', '', ''],
-          ...negatives.map((r) => [
-            r.policy_number || '—',
-            r.client_full_name,
-            r.statement_month || r.carrier,
-            r.members != null && r.members !== 0 ? r.members : '',
-            formatDate(r.effective_date),
-            fmtCsv(recordAmount(r)),
-            r.classification || '—',
-          ]),
-        ]
-      : []),
-    ['', '', '', '', '', '', ''],
-    ['Gross Commission', '', '', '', '', fmtCsv(grossTotal), ''],
-    ...(negatives.length ? [['Chargebacks', '', '', '', '', fmtCsv(chargebackTotal), '']] : []),
-    ['NET TOTAL', '', '', '', '', fmtCsv(netTotal), ''],
-  ];
-
-  const csv = rows.map((r) => r.map((v) => `"${String(v || '').replace(/"/g, '""')}"`).join(',')).join('\n');
+  const filename = statementFilename(agent, periodLabel, isBSI);
+  const csv = buildAgentStatementCsv(agent, records, periodLabel);
   downloadTextFile(filename, csv);
 }
 
-function PayoutRow({ p, isPaid, paidDate, onTogglePaid, onExport, exportLabel }) {
+function PayoutRow({ p, isPaid, paidDate, onTogglePaid, onExport, onEmail, emailBusy, exportLabel }) {
   const [expanded, setExpanded] = useState(false);
   const posCount = p.records.filter((r) => recordAmount(r) > 0).length;
   const negCount = p.records.filter((r) => recordAmount(r) < 0).length;
@@ -204,6 +161,17 @@ function PayoutRow({ p, isPaid, paidDate, onTogglePaid, onExport, exportLabel })
           <button className="btn btn-primary" onClick={onExport} style={{ fontSize: 11, padding: '4px 12px' }}>
             {exportLabel || 'Statement'}
           </button>
+          {onEmail && (
+            <button
+              className="btn"
+              onClick={onEmail}
+              disabled={emailBusy}
+              title="Email CSV statement to agent"
+              style={{ fontSize: 11, padding: '4px 12px' }}
+            >
+              {emailBusy ? 'Sending…' : 'Email'}
+            </button>
+          )}
         </div>
       </div>
       {expanded && (
@@ -586,8 +554,17 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
   const [linaBusy, setLinaBusy] = useState(false);
   const [linaError, setLinaError] = useState('');
   const [statusBusy, setStatusBusy] = useState(false);
+  const [emailBusyAgent, setEmailBusyAgent] = useState(null);
+  const [emailToast, setEmailToast] = useState('');
+  const [showContacts, setShowContacts] = useState(false);
+  const [contacts, setContacts] = useState([]);
+  const [contactsLoading, setContactsLoading] = useState(false);
+  const [contactForm, setContactForm] = useState({ agent_name: '', email: '', phone: '' });
+  const [contactError, setContactError] = useState('');
+  const [contactSaving, setContactSaving] = useState(false);
   const isBSI = (user.agency || '').toLowerCase().includes('broker society');
   const agencyParam = encodeURIComponent(user.agency || 'thei');
+  const isAdmin = user?.role === 'admin';
 
   async function loadPayoutHistory() {
     try {
@@ -630,6 +607,76 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
       setLinaError(e.message || 'Failed to download Lina statement');
     } finally {
       setLinaBusy(false);
+    }
+  }
+
+  async function loadContacts() {
+    setContactsLoading(true);
+    setContactError('');
+    try {
+      const data = await apiFetch('/payroll/agent-contacts');
+      setContacts(data.contacts || []);
+    } catch (e) {
+      setContactError(e.message || 'Failed to load contacts');
+      setContacts([]);
+    } finally {
+      setContactsLoading(false);
+    }
+  }
+
+  async function openContactsModal() {
+    setShowContacts(true);
+    setContactForm({ agent_name: '', email: '', phone: '' });
+    await loadContacts();
+  }
+
+  async function saveContact(e) {
+    e?.preventDefault?.();
+    setContactSaving(true);
+    setContactError('');
+    try {
+      await apiFetch('/payroll/agent-contacts', {
+        method: 'PUT',
+        body: JSON.stringify(contactForm),
+      });
+      setContactForm({ agent_name: '', email: '', phone: '' });
+      await loadContacts();
+    } catch (err) {
+      setContactError(err.message || 'Failed to save contact');
+    } finally {
+      setContactSaving(false);
+    }
+  }
+
+  async function deleteContact(id) {
+    if (!window.confirm('Remove this agent email?')) return;
+    try {
+      await apiFetch(`/payroll/agent-contacts/${id}`, { method: 'DELETE' });
+      await loadContacts();
+    } catch (err) {
+      setContactError(err.message || 'Failed to delete');
+    }
+  }
+
+  async function emailStatement(agent, records, periodLabel) {
+    setEmailBusyAgent(agent);
+    setEmailToast('');
+    try {
+      const result = await apiFetch('/payroll/send-statement', {
+        method: 'POST',
+        body: JSON.stringify({
+          agent_name: agent,
+          period_label: periodLabel,
+          records,
+          is_bsi: isBSI,
+        }),
+      });
+      setEmailToast(`Sent to ${result.to || agent}`);
+      setTimeout(() => setEmailToast(''), 4000);
+    } catch (err) {
+      alert(err.message || 'Failed to send. Add the agent email under Agent emails, and set RESEND_API_KEY on the API.');
+    } finally {
+      setEmailBusyAgent(null);
     }
   }
 
@@ -928,7 +975,17 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
                     Export all
                   </button>
                 )}
+                {isAdmin && (
+                  <button className="btn" onClick={openContactsModal} style={{ fontSize: 12 }}>
+                    Agent emails
+                  </button>
+                )}
               </div>
+              {emailToast && (
+                <div style={{ marginTop: 10, fontSize: 13, color: 'var(--green)', fontWeight: 500 }}>
+                  {emailToast}
+                </div>
+              )}
               {selectedPeriod && (
                 <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
                   <button style={chipStyle(statusFilter === 'unpaid')} onClick={() => setStatusFilter('unpaid')}>
@@ -1082,6 +1139,12 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
                         paidDate={paidDates[p.agent]}
                         onTogglePaid={togglePaid}
                         exportLabel={p.agent === 'Lina Hernandez' ? 'Excel' : 'Statement'}
+                        emailBusy={emailBusyAgent === p.agent}
+                        onEmail={
+                          isAdmin
+                            ? () => emailStatement(p.agent, p.records, periodLabel)
+                            : null
+                        }
                         onExport={() => {
                           if (p.agent === 'Lina Hernandez' && selectedPeriod && selectedPeriod !== 'all') {
                             downloadLinaExcel(selectedPeriod);
@@ -1172,6 +1235,111 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
           </div>
         )}
       </div>
+
+      {showContacts && (
+        <div
+          onClick={() => setShowContacts(false)}
+          style={{
+            position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: 'var(--bg)', borderRadius: 12, padding: 24, width: 560, maxWidth: '96vw',
+              maxHeight: '85vh', overflowY: 'auto', border: '0.5px solid var(--border)',
+              boxShadow: '0 8px 32px rgba(0,0,0,0.15)',
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+              <div>
+                <div style={{ fontSize: 16, fontWeight: 600 }}>Agent emails</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+                  Used when emailing commission statements. Falls back to User Accounts email if names match.
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowContacts(false)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: 'var(--text-muted)' }}
+              >
+                ×
+              </button>
+            </div>
+
+            <form onSubmit={saveContact} style={{ display: 'grid', gap: 8, marginBottom: 16 }}>
+              <input
+                className="filter-select"
+                style={{ cursor: 'text' }}
+                placeholder="Agent name (exact payout name)"
+                value={contactForm.agent_name}
+                onChange={(e) => setContactForm({ ...contactForm, agent_name: e.target.value })}
+                required
+              />
+              <input
+                className="filter-select"
+                style={{ cursor: 'text' }}
+                type="email"
+                placeholder="Email"
+                value={contactForm.email}
+                onChange={(e) => setContactForm({ ...contactForm, email: e.target.value })}
+                required
+              />
+              <input
+                className="filter-select"
+                style={{ cursor: 'text' }}
+                placeholder="Phone (optional)"
+                value={contactForm.phone}
+                onChange={(e) => setContactForm({ ...contactForm, phone: e.target.value })}
+              />
+              <button className="btn btn-primary" type="submit" disabled={contactSaving}>
+                {contactSaving ? 'Saving…' : 'Save contact'}
+              </button>
+            </form>
+
+            {contactError && (
+              <div style={{ marginBottom: 12, padding: 10, borderRadius: 8, background: '#F5EAE4', color: '#7A3D1F', fontSize: 13 }}>
+                {contactError}
+              </div>
+            )}
+
+            {contactsLoading ? (
+              <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>Loading…</div>
+            ) : contacts.length === 0 ? (
+              <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>No contacts yet</div>
+            ) : (
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <thead>
+                  <tr>
+                    <th style={{ textAlign: 'left', padding: '6px 8px', borderBottom: '0.5px solid var(--border)', color: 'var(--text-muted)' }}>Agent</th>
+                    <th style={{ textAlign: 'left', padding: '6px 8px', borderBottom: '0.5px solid var(--border)', color: 'var(--text-muted)' }}>Email</th>
+                    <th style={{ width: 70 }} />
+                  </tr>
+                </thead>
+                <tbody>
+                  {contacts.map((c) => (
+                    <tr key={c.id}>
+                      <td style={{ padding: '6px 8px', fontWeight: 500 }}>{c.agent_name}</td>
+                      <td style={{ padding: '6px 8px' }}>{c.email}</td>
+                      <td style={{ padding: '6px 8px' }}>
+                        <button
+                          type="button"
+                          className="btn btn-danger"
+                          style={{ fontSize: 11, padding: '2px 8px' }}
+                          onClick={() => deleteContact(c.id)}
+                        >
+                          Remove
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
