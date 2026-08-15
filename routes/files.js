@@ -1391,41 +1391,10 @@ const {
 } = require('../src/theRemittanceStatement');
 
 const { applyBsiBookAgentProduction } = require('../src/bsiBookAttribution');
-
-// Extract period from NHP "Carrier-Statement Month" column (e.g., "Cigna - April 2026" → "202604")
-function extractPeriodFromStatementMonth(statementMonth) {
-  if (!statementMonth) return null;
-  const s = String(statementMonth).toLowerCase();
-  
-  // Extract month name and year
-  const monthNames = {
-    'january': '01', 'jan': '01',
-    'february': '02', 'feb': '02',
-    'march': '03', 'mar': '03',
-    'april': '04', 'apr': '04',
-    'may': '05',
-    'june': '06', 'jun': '06',
-    'july': '07', 'jul': '07',
-    'august': '08', 'aug': '08',
-    'september': '09', 'sep': '09', 'sept': '09',
-    'october': '10', 'oct': '10',
-    'november': '11', 'nov': '11',
-    'december': '12', 'dec': '12'
-  };
-  
-  // Try to find month and year
-  const yearMatch = s.match(/\b(20\d{2})\b/);
-  if (!yearMatch) return null;
-  const year = yearMatch[1];
-  
-  for (const [monthName, monthNum] of Object.entries(monthNames)) {
-    if (s.includes(monthName)) {
-      return `${year}${monthNum}`;
-    }
-  }
-  
-  return null;
-}
+const {
+  extractPeriodFromStatementMonth,
+  resolveNhpPaymentPeriod,
+} = require('../src/nhpPeriod');
 
 function parseNHPRows(wb, uploadPeriod) {
   const records = [];
@@ -1494,8 +1463,8 @@ function parseNHPRows(wb, uploadPeriod) {
     const effectiveDateRaw = row[effectiveDateIdx + shift];
     const effectiveDate = formatDate(effectiveDateRaw);
     
-    // Use upload date as period for ALL records (one statement = one payroll batch)
-    const period = uploadPeriod || 'Unknown';
+    // Prefer Carrier-Statement Month (coverage month); fall back to upload-date batch
+    const period = resolveNhpPaymentPeriod(carrierRaw, uploadPeriod);
     
     const commType = String(row[commTypeIdx + shift] || '').trim();
     const commClass = String(row[commClassIdx + shift] || '').trim();
@@ -4298,10 +4267,15 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
       } else if (isMolinaACAFile(req.file.originalname)) {
         records = parseMolinaACARows(wb, req.file.originalname);
       } else if (isNHPFile(req.file.originalname)) {
-        // Use upload date as period for all NHP records
+        // Fallback only — each row prefers Carrier-Statement Month via resolveNhpPaymentPeriod
         const now = new Date();
         const uploadPeriod = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
         records = parseNHPRows(wb, uploadPeriod);
+        const periods = {};
+        for (const r of records) {
+          periods[r.period] = (periods[r.period] || 0) + 1;
+        }
+        console.log('[UPLOAD] NHP payment_period breakdown:', periods);
       } else if (isYourFMOFile(req.file.originalname)) {
         records = parseYourFMORows(wb, req.file.originalname);
       } else if (isHumanaFile(req.file.originalname)) {
