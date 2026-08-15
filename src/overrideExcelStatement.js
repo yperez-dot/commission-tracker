@@ -26,7 +26,7 @@ function titleFor(type) {
   if (type === STATEMENT_TYPES.BSI_OVERRIDE) return 'BSI Override Statement';
   if (type === STATEMENT_TYPES.THEI_NHP) return 'THEI House Statement — NHP Sales';
   if (type === STATEMENT_TYPES.THEI_BSI) return 'THEI House Statement — BSI Remittance';
-  if (type === STATEMENT_TYPES.MARCO) return 'Marco (IRS Swan) Override Statement';
+  if (type === STATEMENT_TYPES.MARCO) return 'Marco (Swan) Override Statement';
   if (type === STATEMENT_TYPES.INTEGRITY) return 'Integrity Partners Producer Statement';
   return 'THEI Override Statement';
 }
@@ -42,7 +42,7 @@ function noteFor(type) {
     return 'THEI share of what BSI pays us (BSI remittance / BSI payee feeds). NHP sales are on the NHP report.';
   }
   if (type === STATEMENT_TYPES.MARCO) {
-    return '$10 per policy agency peel (IRS Swan / Marco) across downline. Not an agent commission.';
+    return '$10 per policy agency peel (Swan / Marco) across downline. Not an agent commission.';
   }
   if (type === STATEMENT_TYPES.INTEGRITY) {
     return 'Integrity / CAM / Chris 50% producer share. THEI 25% and BSI 25% are on house override statements.';

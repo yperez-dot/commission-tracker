@@ -110,9 +110,9 @@ router.get('/types', requireAuth, (_req, res) => {
       },
       {
         id: STATEMENT_TYPES.MARCO,
-        label: 'Marco (IRS Swan)',
+        label: 'Marco (Swan)',
         amountField: 'sub_agent_override',
-        description: '$10/policy agency peel (IRS Swan / Marco) across downline — not an agent payout',
+        description: '$10/policy agency peel (Swan / Marco) across downline — not an agent payout',
         exportFormat: 'xlsx',
       },
       {
