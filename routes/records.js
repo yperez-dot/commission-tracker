@@ -204,7 +204,24 @@ router.get('/', requireAuth, async (req, res) => {
       params
     );
 
-    res.json({ records: records.rows, total: parseInt(total.rows[0].count, 10) });
+    const sumsResult = await pool.query(
+      `SELECT
+         COALESCE(SUM(cr.commission), 0)::float AS commission,
+         COALESCE(SUM(cr.gross_commission), 0)::float AS gross_commission,
+         COALESCE(SUM(cr.thei_share), 0)::float AS thei_share,
+         COALESCE(SUM(cr.bsi_share), 0)::float AS bsi_share,
+         COALESCE(SUM(cr.producer_payable), 0)::float AS producer_payable,
+         COALESCE(SUM(cr.sub_agent_override), 0)::float AS sub_agent_override,
+         COALESCE(SUM(cr.premium), 0)::float AS premium
+       FROM commission_records cr${uploadJoin} ${wc}`,
+      params
+    );
+
+    res.json({
+      records: records.rows,
+      total: parseInt(total.rows[0].count, 10),
+      sums: sumsResult.rows[0] || null,
+    });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

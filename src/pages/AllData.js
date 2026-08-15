@@ -124,6 +124,7 @@ function listFromInitial(filters, singularKey, pluralKey) {
 
 export default function AllData({ user, initialFilters = {} }) {
   const [records, setRecords] = useState([]);
+  const [filterSums, setFilterSums] = useState(null);
   const [total, setTotal] = useState(0);
   const [filterOptions, setFilterOptions] = useState({ agents: [], carriers: [], periods: [], planTypes: [], classifications: [], lobs: [] });
   const [selAgents, setSelAgents] = useState(() => listFromInitial(initialFilters, 'agent', 'agents'));
@@ -219,6 +220,7 @@ export default function AllData({ user, initialFilters = {} }) {
       setRecords(uniqueRecords);
       setClients([]);
       setTotal(data.total || 0);
+      setFilterSums(data.sums || null);
       setSelected(new Set());
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
@@ -240,6 +242,7 @@ export default function AllData({ user, initialFilters = {} }) {
       setClients(data.clients || []);
       setRecords([]);
       setTotal(data.total || 0);
+      setFilterSums(null);
       setSelected(new Set());
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
@@ -337,7 +340,17 @@ export default function AllData({ user, initialFilters = {} }) {
 
   const grandTotal = listMode === 'clients'
     ? clients.reduce((s, r) => s + (parseFloat(r.commission_total) || 0), 0)
-    : records.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0);
+    : (filterSums ? parseFloat(filterSums.commission) || 0 : records.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0));
+  const sumMoney = (key) => {
+    if (filterSums && filterSums[key] != null) return parseFloat(filterSums[key]) || 0;
+    return records.reduce((s, r) => s + (parseFloat(r[key]) || 0), 0);
+  };
+  const footerMoney = (n, color) => (
+    <td style={{ padding: '10px 12px', fontSize: 13, fontWeight: 600, whiteSpace: 'nowrap', color: color || (n < 0 ? 'var(--red)' : 'var(--green)') }}>
+      {fmt(n)}
+    </td>
+  );
+  const footerEmpty = () => <td style={{ padding: '10px 12px' }} />;
   const hasFilters = selAgents.length || selCarriers.length || selPeriods.length || selTypes.length || selPayees.length || selLOB.length || amountSign || search.trim() || uploadFilter;
   const tableEmpty = listMode === 'clients' ? clients.length === 0 : records.length === 0;
 
@@ -1183,11 +1196,31 @@ export default function AllData({ user, initialFilters = {} }) {
                     })}
                   </tbody>
                   <tfoot>
-                    <tr style={{ background: 'var(--bg-subtle)', fontWeight: 500 }}>
-                      {user.role === 'admin' && <td></td>}
-                      <td colSpan={6} style={{ padding: '10px 12px', fontSize: 13 }}>Page total ({records.length})</td>
-                      <td style={{ padding: '10px 12px', fontSize: 13, color: grandTotal < 0 ? 'var(--red)' : 'var(--green)' }}>{fmt(grandTotal)}</td>
-                      <td colSpan={100}></td>
+                    <tr style={{ background: 'var(--bg-subtle)', fontWeight: 500, borderTop: '1px solid var(--border)' }}>
+                      {user.role === 'admin' && footerEmpty()}
+                      <td style={{ padding: '10px 12px', fontSize: 12, color: 'var(--text-muted)' }} />
+                      {/* Carrier → Premium (6 cols before Comm Value) */}
+                      <td colSpan={6} style={{ padding: '10px 12px', fontSize: 13 }}>
+                        Total ({total.toLocaleString()} {total === 1 ? 'record' : 'records'})
+                      </td>
+                      {footerMoney(sumMoney('commission'))}
+                      {hasCommSplit && (
+                        <>
+                          {footerEmpty()}
+                          {footerEmpty()}
+                          {footerEmpty()}
+                        </>
+                      )}
+                      {footerEmpty()}
+                      {footerEmpty()}
+                      {hasLOB && footerEmpty()}
+                      {hasSplitData && footerMoney(sumMoney('gross_commission'))}
+                      {hasSplitData && footerMoney(sumMoney('thei_share'), sumMoney('thei_share') !== 0 ? 'var(--green)' : 'var(--text-muted)')}
+                      {hasSplitData && footerMoney(sumMoney('bsi_share'), sumMoney('bsi_share') !== 0 ? 'var(--blue)' : 'var(--text-muted)')}
+                      {hasSplitData && footerMoney(sumMoney('producer_payable'), sumMoney('producer_payable') !== 0 ? 'var(--accent-dark)' : 'var(--text-muted)')}
+                      {hasSubAgentOverride && footerMoney(sumMoney('sub_agent_override'), sumMoney('sub_agent_override') !== 0 ? 'var(--amber)' : 'var(--text-muted)')}
+                      {hasMGA && footerEmpty()}
+                      {user.role === 'admin' && footerEmpty()}
                     </tr>
                   </tfoot>
                 </table>
