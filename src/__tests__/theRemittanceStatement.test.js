@@ -53,6 +53,14 @@ describe('theRemittanceStatement', () => {
     expect(integrity.producerPayable).toBe(82.5);
     expect(integrity.grossCommission).toBe(165);
 
+    const clawback = records.find((r) => r.theiShare === -30 && /borcione/i.test(r.client));
+    expect(clawback).toBeTruthy();
+    expect(clawback.classification).toBe('Agency Override Chargeback');
+
+    const credit = records.find((r) => r.theiShare === 70 && /vanheyningen/i.test(r.agent));
+    expect(credit).toBeTruthy();
+    expect(credit.classification).toBe('Agency Override');
+
     const byCarrier = records.reduce((acc, r) => {
       acc[r.carrier] = (acc[r.carrier] || 0) + 1;
       return acc;

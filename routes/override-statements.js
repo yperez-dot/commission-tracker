@@ -132,6 +132,37 @@ async function backfillAcaOscarToNhpSource(pool) {
   return result.rowCount || 0;
 }
 
+/**
+ * Remittance clawbacks were stored as plain Chargeback and dropped from house
+ * statements (fetch uses classification ILIKE '%override%'). Retag so June/July
+ * remittance nets match the uploaded CSV.
+ */
+async function backfillRemittanceOverrideChargebacks(pool) {
+  const result = await pool.query(`
+    UPDATE commission_records cr
+    SET classification = 'Agency Override Chargeback'
+    FROM uploads u
+    WHERE cr.upload_id = u.id
+      AND LOWER(TRIM(COALESCE(cr.classification, ''))) = 'chargeback'
+      AND COALESCE(cr.commission, 0) < 0
+      AND (
+        LOWER(REPLACE(REPLACE(u.original_name, ' ', '_'), '.', '_')) LIKE '%thei_statement_bsi%'
+        OR LOWER(REPLACE(u.original_name, ' ', '_')) LIKE '%thei_statement%bsi%'
+        OR LOWER(REPLACE(u.original_name, ' ', '_')) LIKE '%t.h.e%statement%'
+        OR LOWER(REPLACE(u.original_name, ' ', '_')) LIKE '%the_statements%'
+        OR LOWER(REPLACE(u.original_name, ' ', '_')) LIKE '%the_statement%'
+        OR (
+          LOWER(REPLACE(u.original_name, ' ', '_')) LIKE '%medicare%statement%'
+          AND (
+            LOWER(REPLACE(u.original_name, ' ', '_')) LIKE '%the%'
+            OR LOWER(REPLACE(u.original_name, ' ', '_')) LIKE '%thei%'
+          )
+        )
+      )
+  `);
+  return result.rowCount || 0;
+}
+
 async function fetchOverrideRows(pool, period, type) {
   const params = [];
   // THEI/BSI: Agency Override rows PLUS Alba rate-peeled agent-production shares.
@@ -191,7 +222,7 @@ router.get('/types', requireAuth, (_req, res) => {
         id: STATEMENT_TYPES.THEI_BSI,
         label: 'THEI — BSI remittance',
         amountField: 'thei_share',
-        description: 'THEI share of what BSI pays us (Medicare remittance — not Oscar/ACA)',
+        description: 'THEI remittance CSV only (BSI→THE file) — not carrier BSI feed peels',
         exportFormat: 'xlsx',
       },
       {
@@ -276,6 +307,14 @@ router.get('/preview', requireAuth, async (req, res) => {
         console.warn('[override-statements] ACA/Oscar NHP backfill', e.message);
       }
     }
+    if (type === STATEMENT_TYPES.THEI_BSI) {
+      try {
+        const n = await backfillRemittanceOverrideChargebacks(pool);
+        if (n) console.log(`[override-statements] retagged ${n} remittance Chargebacks → Agency Override Chargeback`);
+      } catch (e) {
+        console.warn('[override-statements] remittance chargeback backfill', e.message);
+      }
+    }
     if (type === STATEMENT_TYPES.THEI_NHP) {
       try {
         nhpSourceBackfilled += await backfillNhpSourceFromUploads(pool);
@@ -311,9 +350,23 @@ router.get('/preview', requireAuth, async (req, res) => {
                  OR LOWER(REPLACE(u.original_name, ' ', '_')) LIKE '%nhp%'
                )`
             : type === STATEMENT_TYPES.THEI_BSI
-              ? `AND (cr.source IN ('BSI','BSI_PAYEE') OR u.category = 'bsi_statement')
+              ? `AND cr.source IN ('BSI','BSI_PAYEE')
                  AND UPPER(COALESCE(cr.lob,'')) <> 'ACA'
-                 AND LOWER(COALESCE(cr.carrier,'')) NOT LIKE '%oscar%'`
+                 AND LOWER(COALESCE(cr.carrier,'')) NOT LIKE '%oscar%'
+                 AND (
+                   LOWER(REPLACE(REPLACE(u.original_name, ' ', '_'), '.', '_')) LIKE '%thei_statement_bsi%'
+                   OR LOWER(REPLACE(u.original_name, ' ', '_')) LIKE '%thei_statement%bsi%'
+                   OR LOWER(REPLACE(u.original_name, ' ', '_')) LIKE '%t.h.e%statement%'
+                   OR LOWER(REPLACE(u.original_name, ' ', '_')) LIKE '%the_statements%'
+                   OR LOWER(REPLACE(u.original_name, ' ', '_')) LIKE '%the_statement%'
+                   OR (
+                     LOWER(REPLACE(u.original_name, ' ', '_')) LIKE '%medicare%statement%'
+                     AND (
+                       LOWER(REPLACE(u.original_name, ' ', '_')) LIKE '%the%'
+                       OR LOWER(REPLACE(u.original_name, ' ', '_')) LIKE '%thei%'
+                     )
+                   )
+                 )`
               : '';
         const up = await pool.query(
           `SELECT u.id, u.original_name, COUNT(cr.id)::int AS row_count,
@@ -382,6 +435,9 @@ router.get('/export-xlsx', requireAuth, requireAdmin, async (req, res) => {
     const pool = getPool();
     if (type === STATEMENT_TYPES.THEI_NHP) {
       try { await backfillNhpSourceFromUploads(pool); } catch (e) { /* best-effort */ }
+    }
+    if (type === STATEMENT_TYPES.THEI_BSI) {
+      try { await backfillRemittanceOverrideChargebacks(pool); } catch (e) { /* best-effort */ }
     }
     const rows = await fetchOverrideRows(pool, period, type);
     const bundle = buildOverrideStatements(rows, type, { period });

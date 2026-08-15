@@ -10,6 +10,8 @@ const {
 const { isMarcoAgent, isIntegrityAgent, isAlbaHernandez } = require('../payeeSchedules');
 
 describe('payeeSchedules', () => {
+  const { isTheRemittanceUploadName, isBsiRemitSource } = require('../payeeSchedules');
+
   it('recognizes Integrity agents including CAM', () => {
     expect(isIntegrityAgent('Christian Munoz')).toBe(true);
     expect(isIntegrityAgent('Cam Insurance Solutions Corp')).toBe(true);
@@ -20,6 +22,18 @@ describe('payeeSchedules', () => {
     expect(isMarcoAgent('Jendy Vanheyningen', '202605')).toBe(true);
     expect(isMarcoAgent('Jendy Vanheyningen', '202606')).toBe(false);
     expect(isMarcoAgent('Kelly Carpenter', '202606')).toBe(true);
+  });
+
+  it('identifies remittance uploads vs carrier BSI feeds', () => {
+    expect(isTheRemittanceUploadName('thei_statement_BSI_06.2026.csv')).toBe(true);
+    expect(isTheRemittanceUploadName('T.H.E_STATEMENTS.csv')).toBe(true);
+    expect(isTheRemittanceUploadName('uhc_bsi_statement_june.xlsx')).toBe(false);
+    expect(
+      isBsiRemitSource('BSI', { upload_original_name: 'thei_statement_BSI_06.2026.csv' })
+    ).toBe(true);
+    expect(
+      isBsiRemitSource('BSI', { upload_original_name: 'humana_bsi_statement.xlsx' })
+    ).toBe(false);
   });
 });
 
@@ -109,6 +123,45 @@ describe('overrideStatementBuilder', () => {
     expect(bsi.statements[0].lineCount).toBe(1);
     expect(classifyOverrideLine(sourced[2], STATEMENT_TYPES.THEI_NHP)).toBeNull();
     expect(classifyOverrideLine(sourced[2], STATEMENT_TYPES.THEI_BSI)).toBeNull();
+  });
+
+  it('THEI BSI remittance excludes carrier BSI feed peels and includes override chargebacks', () => {
+    const remittanceAo = {
+      ...rows[1],
+      id: 301,
+      source: 'BSI',
+      thei_share: 75,
+      bsi_share: 75,
+      classification: 'Agency Override',
+      upload_original_name: 'thei_statement_BSI_06.2026.csv',
+    };
+    const remittanceCb = {
+      ...rows[1],
+      id: 302,
+      source: 'BSI',
+      thei_share: -28.13,
+      bsi_share: -28.13,
+      commission: -28.13,
+      classification: 'Agency Override Chargeback',
+      upload_original_name: 'thei_statement_BSI_06.2026.csv',
+    };
+    const carrierPeel = {
+      ...rows[1],
+      id: 303,
+      source: 'BSI',
+      thei_share: 400,
+      bsi_share: 400,
+      classification: 'Agency Override',
+      upload_original_name: 'uhc_bsi_statement_june.xlsx',
+    };
+    const bundle = buildOverrideStatements(
+      [remittanceAo, remittanceCb, carrierPeel],
+      STATEMENT_TYPES.THEI_BSI,
+      { period: '202601' }
+    );
+    expect(bundle.grandTotal).toBeCloseTo(46.87, 2);
+    expect(bundle.statements[0].lineCount).toBe(2);
+    expect(classifyOverrideLine(carrierPeel, STATEMENT_TYPES.THEI_BSI)).toBeNull();
   });
 
   it('THEI NHP includes mistagged direct_carrier rows from NHP upload filenames', () => {

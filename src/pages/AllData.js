@@ -406,7 +406,7 @@ export default function AllData({ user, initialFilters = {} }) {
     if (c === 'Renewal') return 'badge-blue';
     if (c === 'Agent Commission') return 'badge-green';
     if (c === 'Agency Override') return 'badge-blue';
-    if (c === 'Chargeback') return 'badge-red';
+    if (c === 'Agency Override Chargeback' || c === 'Chargeback') return 'badge-red';
     if (c === 'HRA/Bonus') return 'badge-amber';
     return 'badge-gray';
   }
