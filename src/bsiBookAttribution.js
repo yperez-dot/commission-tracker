@@ -61,7 +61,9 @@ function extractWritingNpn(record) {
 function normalizeRateCarrier(carrier) {
   const c = String(carrier || '').trim().toLowerCase();
   if (!c) return '';
-  if (c.includes('united') || c === 'uhc') return 'UHC';
+  // Life Omaha — never map to UHC Medicare rates
+  if (c.includes('omaha')) return 'UnitedOfOmaha';
+  if ((c.includes('united') || c === 'uhc') && !c.includes('omaha')) return 'UHC';
   if (c.includes('aetna')) return 'Aetna';
   if (c.includes('humana')) return 'Humana';
   if (c.includes('devoted')) return 'Devoted';

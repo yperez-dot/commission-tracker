@@ -3,6 +3,7 @@ const router = express.Router();
 const { getPool } = require('../db/database');
 const { requireAuth } = require('./auth');
 const { normalizeAllRecords, normalizeAgentName } = require('./normalize');
+const { normalizeCarrierKey } = require('../src/matchingNormalize');
 function requireAdmin(req, res, next) {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
   next();
@@ -57,29 +58,7 @@ function normalizeAgentKey(name) {
   return normalizeNameKey(normalizeAgentName(name));
 }
 
-// normalizeCarrierKey: carrier-family normalization.
-function normalizeCarrierKey(carrier) {
-  if (!carrier) return '';
-  const c = carrier.toLowerCase().trim();
-  if (c.includes('humana')) return 'humana';
-  if (c.includes('aetna')) return 'aetna';
-  if (c.includes('uhc') || c.includes('united')) return 'unitedhealthcare';
-  if (c.includes('doctors')) return 'doctors';
-  if (c.includes('careplus') || c.includes('care plus')) return 'careplus';
-  if (c.includes('devoted')) return 'devoted';
-  if (c.includes('solis')) return 'solis';
-  if (c.includes('healthsun') || c.includes('health sun')) return 'healthsun';
-  if (c.includes('oscar')) return 'oscar';
-  if (c.includes('molina')) return 'molina';
-  if (c.includes('wellcare')) return 'wellcare';
-  if (c.includes('florida blue') || c.includes('bcbs') || c.includes('blue cross')) return 'floridablue';
-  if (c.includes('cigna')) return 'cigna';
-  if (c.includes('avmed')) return 'avmed';
-  if (c.includes('simply')) return 'simply';
-  if (c.includes('elevance') || c.includes('anthem')) return 'elevance';
-  if (c.includes('freedom')) return 'freedom';
-  return c.replace(/[^a-z0-9]/g, '');
-}
+// normalizeCarrierKey imported from src/matchingNormalize (Omaha carve-out)
 
 router.get('/', requireAuth, async (req, res) => {
   try {

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../api';
 import { formatDate as formatDateUtil } from '../utils/dateFormat';
 import { THEI_DIRECT_AGENTS, isTheiDirectAgent, directAgentsLabel } from '../theiPrincipalAgents';
+import { normName, normalizeCarrier, carriersMatch } from '../matchingNormalize';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -82,38 +83,11 @@ function normalizeName(name) {
   return name.toLowerCase().trim().replace(/\s+/g, ' ');
 }
 
-// Normalize name to match database normalized_name logic (same as Missing Renewals)
-function normName(name) {
-  if (!name) return '';
-  const s = String(name).trim();
-  
-  // Helper: Convert to Title Case
-  function toTitleCase(str) {
-    return str.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
-  }
-  
-  // Handle comma-separated "LAST, FIRST" format
-  // Everything before the comma is the full surname (handles compound surnames)
-  if (s.includes(',')) {
-    let [last, first] = s.split(',').map(p => p.trim());
-    
-    // Strip common suffixes from surname
-    last = last.replace(/\b(JR|SR|III|II|IV|V)\.?$/i, '').trim();
-    
-    // Return "FIRST LAST" in Title Case
-    const normalized = `${first} ${last}`.replace(/\s+/g, ' ').trim();
-    return toTitleCase(normalized);
-  }
-  
-  // For non-comma format, just normalize spaces and title case
-  const normalized = s.replace(/\s+/g, ' ').trim();
-  return toTitleCase(normalized);
-}
-
-// Normalize agent names (handle test data and variations)
+// Normalize name to match database normalized_name logic (shared matchingNormalize)
+// normalizeAgentName kept local for Yahoska test alias
 function normalizeAgentName(name) {
   if (!name) return '';
-  const normalized = normalizeName(name);
+  const normalized = (name || '').toLowerCase().trim().replace(/\s+/g, ' ');
   
   // Map known variations to canonical names
   if (normalized.includes('yahoska')) {
@@ -155,24 +129,7 @@ function parseClientName(name) {
   return { first: '', last: words[0] || '', full: normalized };
 }
 
-// Normalize carrier names
-function normalizeCarrier(carrier) {
-  if (!carrier) return '';
-  const c = carrier.toLowerCase().trim();
-  
-  if (c.includes('humana')) return 'humana';
-  if (c.includes('aetna')) return 'aetna';
-  if (c.includes('uhc') || c.includes('united')) return 'uhc';
-  if (c.includes('doctors')) return 'doctors';
-  if (c.includes('careplus') || c.includes('care plus')) return 'careplus';
-  if (c.includes('devoted')) return 'devoted';
-  if (c.includes('wellcare')) return 'wellcare';
-  if (c.includes('healthsun')) return 'healthsun';
-  if (c.includes('florida blue') || c.includes('fl blue')) return 'florida blue';
-  
-  return c;
-}
-
+// Normalize carrier names — shared matchingNormalize (Omaha ≠ UHC)
 // Check if dates match
 function datesMatch(date1, date2) {
   if (!date1 || !date2) return false;
@@ -262,8 +219,8 @@ function findMatch(sale, commissions, manualPayments = []) {
     // Client name match using normName() (handles "LAST FIRST" vs "FIRST LAST")
     const clientMatch = saleClientNorm === commClientNorm;
     
-    // Carrier match
-    const carrierMatch = carrier === commCarrier || carrier.includes(commCarrier) || commCarrier.includes(carrier);
+    // Carrier match (exact canonical — empty carrier never matches)
+    const carrierMatch = carriersMatch(carrier, commCarrier);
     
     // Policy number match (fallback for name mismatches)
     const policyMatch = salePolicy && commPolicy && salePolicy === commPolicy;

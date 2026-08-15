@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../api';
+import { normName, nameVariants, normCarrier } from '../matchingNormalize';
 
 function fmt(n) {
   const num = parseFloat(String(n || '0').replace(/[$,]/g, ''));
@@ -27,64 +28,6 @@ function normPeriod(p) {
   return null;
 }
 
-// Normalize a name to match database normalized_name logic
-function normName(name) {
-  if (!name) return '';
-  const s = String(name).trim();
-  
-  // Helper: Convert to Title Case
-  function toTitleCase(str) {
-    return str.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
-  }
-  
-  // Handle comma-separated "LAST, FIRST" format
-  // Everything before the comma is the full surname (handles compound surnames)
-  if (s.includes(',')) {
-    let [last, first] = s.split(',').map(p => p.trim());
-    
-    // Strip common suffixes from surname
-    last = last.replace(/\b(JR|SR|III|II|IV|V)\.?$/i, '').trim();
-    // Strip trailing middle initial(s) from first-name part — same class of fix
-    // as normReconClient comma-path (backend commit 9199248).
-    // "Alfred G." → "Alfred", "Joseph M." → "Joseph"
-    first = first.replace(/(\s+[A-Za-z]\.?)+$/i, '').trim();
-    // Return "FIRST LAST" in Title Case
-    const normalized = `${first} ${last}`.replace(/\s+/g, ' ').trim();
-    return toTitleCase(normalized);
-  }
-  
-  // For non-comma format, just normalize spaces and title case
-  const normalized = s.replace(/\s+/g, ' ').trim();
-  return toTitleCase(normalized);
-}
-
-// Generate name variants to handle Humana's LASTNAME FIRSTNAME format
-function nameVariants(name) {
-  if (!name) return [];
-  const norm = normName(name);
-  const parts = norm.split(' ').filter(Boolean);
-  const result = [norm];
-
-  if (parts.length >= 2) {
-    // Strip trailing initial from end — /^[A-Za-z]\.[?]$/ catches both "G" (len 1,
-    // worked before) and "G." (len 2 with period, was silently missed by p.length===1)
-    const noTrailingInitial = parts.filter((p, i) => !(i === parts.length - 1 && /^[A-Za-z]\.?$/.test(p))).join(' ');
-    if (noTrailingInitial !== norm) result.push(noTrailingInitial);
-
-    // Reversed word order: "hector proano alcivar" → "alcivar proano hector"
-    const reversed = [...parts].reverse().join(' ');
-    if (!result.includes(reversed)) result.push(reversed);
-
-    // Reversed without trailing initial
-    const partsNoInitial = parts.filter((p, i) => !(i === parts.length - 1 && /^[A-Za-z]\.?$/.test(p)));
-    const reversedNoInitial = [...partsNoInitial].reverse().join(' ');
-    if (!result.includes(reversedNoInitial)) result.push(reversedNoInitial);
-  }
-
-  return result;
-}
-
-// Prettify date strings for display: handles YYYYMMDD, MM/DD/YYYY, YYYY-MM-DD, Excel serial numbers
 // Calculate months between last paid and termed date
 function calculateOwedMonths(lastPaidPeriod, termedDate) {
   if (!lastPaidPeriod || !termedDate) return 0;
@@ -136,25 +79,6 @@ function prettifyDate(d) {
     return mo >= 1 && mo <= 12 ? `${months[mo-1]} ${parseInt(m3[3],10)}, ${m3[1]}` : s;
   }
   return s; // leave anything else as-is
-}
-
-function normCarrier(c) {
-  const s = String(c || '').toLowerCase();
-  if (s.includes('united') || s.includes('uhc')) return 'unitedhealthcare';
-  if (s.includes('humana')) return 'humana';
-  if (s.includes('aetna')) return 'aetna';
-  if (s.includes('devoted')) return 'devoted health';
-  if (s.includes('cigna')) return 'cigna';
-  if (s.includes('oscar')) return 'oscar health';
-  if (s.includes('florida blue') || s.includes('bcbs')) return 'florida blue';
-  if (s.includes('gold kidney')) return 'gold kidney';
-  if (s.includes('simply')) return 'simply';
-  if (s.includes('molina')) return 'molina';
-  if (s.includes('solis')) return 'solis';
-  if (s.includes('healthsun') || s.includes('health sun')) return 'healthsun';
-  if (s.includes('doctors')) return 'doctors healthcare';
-  if (s.includes('avmed') || s.includes('av med')) return 'avmed';
-  return s;
 }
 
 function periodToDate(p) {
