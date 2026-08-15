@@ -122,6 +122,92 @@ function isOverridePaid(overrideMatch) {
   return net > 0;
 }
 
+function isLicensingHoldRecord(record) {
+  if (!record || record.classification !== 'Held') return false;
+  try {
+    const rd =
+      typeof record.raw_data === 'string' ? JSON.parse(record.raw_data) : record.raw_data || {};
+    const reason = String(rd['Hold Reason'] || '').toLowerCase();
+    return reason.includes('not licensed') || reason.includes('not appointed');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Three-way status for Hector production → Carrier→BSI → BSI→THEI.
+ *
+ *   not_paid_to_bsi — on Hector, carrier BSI file uploaded, sale NOT on it
+ *                     (carrier never paid BSI → don't chase remittance yet)
+ *   chase_bsi       — on Hector AND on Carrier→BSI with $, but THEI not paid
+ *   pending         — carrier BSI statement not uploaded yet for this carrier
+ */
+function getThreeWayOverrideStatus(m) {
+  if (!m) return 'pending';
+  if (m.lifecycle === 'paid') return 'paid';
+  if (m.lifecycle === 'chargeback') return 'chargeback';
+  if (m.production?.manual_override_status) return m.production.manual_override_status;
+  if (isOverridePaid(m.override)) return 'paid';
+
+  const prodStatus = String(m.production?.status || '')
+    .toUpperCase()
+    .trim();
+  if (['WITHDRAWN', 'IN PROGRESS', 'CANCELLED', 'DENIED'].includes(prodStatus)) {
+    return 'no_pay_expected';
+  }
+
+  const carrierAmt = m.carrierBSI ? parseFloat(m.carrierBSI.commission || 0) : null;
+  if (m.carrierBSI && carrierAmt > 0 && !isOverridePaid(m.override)) return 'chase_bsi';
+  if (m.carrierBSI && carrierAmt === 0) {
+    if (isLicensingHoldRecord(m.carrierBSI)) return 'held_licensing';
+    return 'request_audit';
+  }
+  if (!m.carrierBSI && m.heldRecord && isLicensingHoldRecord(m.heldRecord)) {
+    return 'held_licensing';
+  }
+  if (!m.carrierBSI && m.carrierUploaded) return 'not_paid_to_bsi';
+  return 'pending';
+}
+
+/**
+ * Tab bucket for Agency Override Recon.
+ * Auto chase_bsi / not_paid_to_bsi must not all dump into Missing.
+ */
+function getOverrideReconCategory(m) {
+  if (!m) return 'missing';
+  const manual = m.production?.manual_override_status || null;
+  if (manual === 'no_pay_expected') return 'cancelled';
+  if (manual === 'paid') return 'paid';
+  if (manual === 'chase_bsi') return 'chase';
+  if (manual === 'not_paid_to_bsi') return 'not_on_bsi';
+
+  if (m.lifecycle === 'chargeback' || m.categoryHint === 'cancelled') return 'cancelled';
+  if (m.lifecycle === 'paid' || m.categoryHint === 'paid') return 'paid';
+  if (m.categoryHint && m.categoryHint !== 'missing') return m.categoryHint;
+
+  if (isOverridePaid(m.override)) return 'paid';
+
+  const prodStatus = String(m.production?.status || '')
+    .toUpperCase()
+    .trim();
+  if (['WITHDRAWN', 'IN PROGRESS', 'CANCELLED', 'DENIED'].includes(prodStatus)) {
+    return 'cancelled';
+  }
+
+  const status = String(m.production?.status || '').toLowerCase();
+  if (status.includes('plan denied') || status.includes('plan_denied') || status.includes('denied')) {
+    return 'plandenied';
+  }
+  if (status.includes('plan change') || status.includes('plan_change')) return 'planchange';
+  if (status.includes('cancel') || status.includes('terminated')) return 'cancelled';
+  if (status.includes('chase') || status.includes('chasing')) return 'chase';
+
+  const tw = getThreeWayOverrideStatus(m);
+  if (tw === 'chase_bsi') return 'chase';
+  if (tw === 'not_paid_to_bsi') return 'not_on_bsi';
+  return 'missing';
+}
+
 function wrapSingleOverride(row) {
   const amt = Math.round((parseFloat(row.commission) || 0) * 100) / 100;
   return {
@@ -228,4 +314,6 @@ module.exports = {
   productionSaleKey,
   dedupeProductionSales,
   isOverrideStatementRow,
+  getThreeWayOverrideStatus,
+  getOverrideReconCategory,
 };

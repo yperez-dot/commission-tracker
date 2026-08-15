@@ -172,3 +172,49 @@ describe('agencyOverrideReconMatch', () => {
     expect(rows[0].override.override_net).toBe(80);
   });
 });
+
+describe('three-way Hector → Carrier→BSI → THEI', () => {
+  const {
+    getThreeWayOverrideStatus,
+    getOverrideReconCategory,
+  } = require('../agencyOverrideReconMatch.cjs');
+
+  test('Humana on Hector but not on BSI statements → not_paid_to_bsi / not_on_bsi tab', () => {
+    const m = {
+      production: { id: 1, client_name: 'Jane Humana', carrier: 'Humana', status: 'Active' },
+      override: null,
+      carrierBSI: null,
+      carrierUploaded: true,
+      lifecycle: 'missing',
+      categoryHint: 'missing',
+    };
+    expect(getThreeWayOverrideStatus(m)).toBe('not_paid_to_bsi');
+    expect(getOverrideReconCategory(m)).toBe('not_on_bsi');
+  });
+
+  test('on Hector + on Carrier→BSI $ + no THEI remittance → chase_bsi / chase tab', () => {
+    const m = {
+      production: { id: 2, client_name: 'Paid To BSI', carrier: 'Humana', status: 'Active' },
+      override: null,
+      carrierBSI: { commission: 150, classification: 'New Business' },
+      carrierUploaded: true,
+      lifecycle: 'missing',
+      categoryHint: 'missing',
+    };
+    expect(getThreeWayOverrideStatus(m)).toBe('chase_bsi');
+    expect(getOverrideReconCategory(m)).toBe('chase');
+  });
+
+  test('carrier BSI not uploaded yet → pending / missing tab', () => {
+    const m = {
+      production: { id: 3, client_name: 'No Upload', carrier: 'Humana', status: 'Active' },
+      override: null,
+      carrierBSI: null,
+      carrierUploaded: false,
+      lifecycle: 'missing',
+      categoryHint: 'missing',
+    };
+    expect(getThreeWayOverrideStatus(m)).toBe('pending');
+    expect(getOverrideReconCategory(m)).toBe('missing');
+  });
+});

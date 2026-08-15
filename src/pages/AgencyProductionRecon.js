@@ -3,7 +3,7 @@ import { apiFetch } from '../api';
 import { formatCarrier } from '../utils/formatCarrier';
 import { formatDate as formatDateUtil } from '../utils/dateFormat';
 import { normName, normalizeCarrier, carriersMatch } from '../matchingNormalize';
-import { findOverrideMatch, isOverridePaid, expandOverrideLifecycle, dedupeProductionSales, isOverrideStatementRow } from '../agencyOverrideReconMatch';
+import { findOverrideMatch, expandOverrideLifecycle, dedupeProductionSales, isOverrideStatementRow, getThreeWayOverrideStatus, getOverrideReconCategory } from '../agencyOverrideReconMatch';
 import { fetchAllPages, truncationMessage } from '../fetchAllPages';
 import TruncationBanner from '../components/TruncationBanner';
 import { expectedAgencyOverride, expectedOverrideLabel } from '../utils/agencyOverrideExpected';
@@ -219,20 +219,13 @@ function parseEffectiveDate(dateStr) {
 // Pure helpers — defined outside component so useMemo deps stay stable
 function _findCarrierBSIMatch(prod, carrierRecords) {
   const prodPeriod = prod.payment_period || '';
-  const samePeriod = prodPeriod
-    ? carrierRecords.filter(r => r.payment_period === prodPeriod)
-    : carrierRecords;
-  return findOverrideMatch(prod, samePeriod);
-}
-
-// Pure helper: true when a Carrier→BSI 'Held' record is a licensing hold (not Paper Check / Future Txn)
-function _isLicensingHold(record) {
-  if (!record || record.classification !== 'Held') return false;
-  try {
-    const rd = typeof record.raw_data === 'string' ? JSON.parse(record.raw_data) : (record.raw_data || {});
-    const reason = (rd['Hold Reason'] || '').toLowerCase();
-    return reason.includes('not licensed') || reason.includes('not appointed');
-  } catch { return false; }
+  if (prodPeriod) {
+    const samePeriod = carrierRecords.filter((r) => r.payment_period === prodPeriod);
+    const periodMatch = findOverrideMatch(prod, samePeriod);
+    if (periodMatch) return periodMatch;
+  }
+  // Fall back across periods — Hector month ≠ statement month still means carrier paid BSI.
+  return findOverrideMatch(prod, carrierRecords);
 }
 
 // Extract hold detail for held_licensing rows: { reason, state, county }
@@ -263,55 +256,9 @@ function _findHeldRecord(prod, carrierRecords) {
   ) || null;
 }
 
-function _getThreeWayStatus(m) {
-  // Lifecycle history rows: paid override / chargeback-left / current gap
-  if (m.lifecycle === 'paid') return 'paid';
-  if (m.lifecycle === 'chargeback') return 'chargeback';
-  if (m.production.manual_override_status) return m.production.manual_override_status;
-  if (isOverridePaid(m.override)) return 'paid';
-  // Bug 2: non-payable production status — checked AFTER l2 paid, so a cancelled app
-  // that actually received a commission still surfaces as paid (not silently suppressed)
-  const prodStatus = (m.production.status || '').toUpperCase().trim();
-  if (['WITHDRAWN', 'IN PROGRESS', 'CANCELLED', 'DENIED'].includes(prodStatus)) return 'no_pay_expected';
-  const carrierAmt = m.carrierBSI ? parseFloat(m.carrierBSI.commission || 0) : null;
-  if (m.carrierBSI && carrierAmt > 0 && !isOverridePaid(m.override)) return 'chase_bsi';
-  // Bug 1a: Carrier→BSI match found but $0 — check if it's a licensing hold
-  if (m.carrierBSI && carrierAmt === 0) {
-    if (_isLicensingHold(m.carrierBSI)) return 'held_licensing';
-    return 'request_audit';
-  }
-  // Bug 1b: No Carrier→BSI period match, but a Held record exists for this client+carrier
-  if (!m.carrierBSI && m.heldRecord && _isLicensingHold(m.heldRecord)) return 'held_licensing';
-  if (!m.carrierBSI && m.carrierUploaded) return 'request_audit';
-  return 'pending';
-}
-
-function _getCategory(m) {
-  // Manual override wins bucket placement (No Pay Expected must not sit in Missing).
-  const manual = m.production?.manual_override_status || null;
-  if (manual === 'no_pay_expected') return 'cancelled';
-  if (manual === 'paid') return 'paid';
-  if (manual === 'chase_bsi') return 'chase';
-
-  if (m.lifecycle === 'chargeback' || m.categoryHint === 'cancelled') return 'cancelled';
-  if (m.lifecycle === 'paid' || m.categoryHint === 'paid') return 'paid';
-  if (m.categoryHint && m.categoryHint !== 'missing') return m.categoryHint;
-
-  if (isOverridePaid(m.override)) return 'paid';
-
-  // Auto no-pay production statuses — same as three-way, keep out of Missing
-  const prodStatus = (m.production.status || '').toUpperCase().trim();
-  if (['WITHDRAWN', 'IN PROGRESS', 'CANCELLED', 'DENIED'].includes(prodStatus)) {
-    return 'cancelled';
-  }
-
-  const status = m.production.status?.toLowerCase() || '';
-  if (status.includes('plan denied') || status.includes('plan_denied') || status.includes('denied')) return 'plandenied';
-  if (status.includes('plan change') || status.includes('plan_change')) return 'planchange';
-  if (status.includes('cancel') || status.includes('terminated')) return 'cancelled';
-  if (status.includes('chase') || status.includes('chasing')) return 'chase';
-  return 'missing';
-}
+// Aliases — shared three-way / tab logic lives in agencyOverrideReconMatch.js
+const _getThreeWayStatus = getThreeWayOverrideStatus;
+const _getCategory = getOverrideReconCategory;
 
 export default function AgencyProductionRecon() {
   const [loading, setLoading] = useState(false);
@@ -320,7 +267,7 @@ export default function AgencyProductionRecon() {
   const [overrides, setOverrides] = useState([]);
   const [carrierBSIRecords, setCarrierBSIRecords] = useState([]);
   const [bsiUploadedKeys, setBsiUploadedKeys] = useState(new Set()); // "CARRIER|PERIOD" keys
-  const [tab, setTab] = useState('missing'); // Default to Missing tab
+  const [tab, setTab] = useState('not_on_bsi'); // Default: on Hector, not on Carrier→BSI
   const [filterCarriers, setFilterCarriers] = useState([]);
   const [filterAgents, setFilterAgents] = useState([]);
   const [filterEffDates, setFilterEffDates] = useState([]);
@@ -496,6 +443,7 @@ export default function AgencyProductionRecon() {
   // categorized: only reruns when matches changes
   const categorized = useMemo(() => ({
     missing:    matches.filter(m => _getCategory(m) === 'missing'),
+    not_on_bsi: matches.filter(m => _getCategory(m) === 'not_on_bsi'),
     planchange: matches.filter(m => _getCategory(m) === 'planchange'),
     plandenied: matches.filter(m => _getCategory(m) === 'plandenied'),
     chase:      matches.filter(m => _getCategory(m) === 'chase'),
@@ -527,6 +475,7 @@ export default function AgencyProductionRecon() {
     }
     return {
       missing:    applyFilters(categorized.missing),
+      not_on_bsi: applyFilters(categorized.not_on_bsi),
       planchange: applyFilters(categorized.planchange),
       plandenied: applyFilters(categorized.plandenied),
       chase:      applyFilters(categorized.chase),
@@ -538,12 +487,13 @@ export default function AgencyProductionRecon() {
   // rawDisplayData: only reruns on tab or filtered change
   const rawDisplayData = useMemo(() => (
     tab === 'missing'    ? (filtered.missing    || []) :
+    tab === 'not_on_bsi' ? (filtered.not_on_bsi || []) :
     tab === 'planchange' ? (filtered.planchange || []) :
     tab === 'plandenied' ? (filtered.plandenied || []) :
     tab === 'chase'      ? (filtered.chase      || []) :
     tab === 'cancelled'  ? (filtered.cancelled  || []) :
     tab === 'paid'       ? (filtered.paid       || []) :
-    [...(filtered.missing||[]), ...(filtered.planchange||[]),
+    [...(filtered.missing||[]), ...(filtered.not_on_bsi||[]), ...(filtered.planchange||[]),
      ...(filtered.plandenied||[]), ...(filtered.chase||[]), ...(filtered.cancelled||[]), ...(filtered.paid||[])]
   ), [filtered, tab]);
 
@@ -612,9 +562,15 @@ export default function AgencyProductionRecon() {
     if (tab === 'missing') {
       dataToExport = filtered.missing || [];
       filename = `agency-overrides-missing-${new Date().toISOString().split('T')[0]}.csv`;
+    } else if (tab === 'not_on_bsi') {
+      dataToExport = filtered.not_on_bsi || [];
+      filename = `agency-overrides-not-on-bsi-${new Date().toISOString().split('T')[0]}.csv`;
     } else if (tab === 'planchange') {
       dataToExport = filtered.planchange || [];
       filename = `agency-overrides-planchange-${new Date().toISOString().split('T')[0]}.csv`;
+    } else if (tab === 'chase') {
+      dataToExport = filtered.chase || [];
+      filename = `agency-overrides-chase-bsi-${new Date().toISOString().split('T')[0]}.csv`;
     } else if (tab === 'cancelled') {
       dataToExport = filtered.cancelled || [];
       filename = `agency-overrides-cancelled-${new Date().toISOString().split('T')[0]}.csv`;
@@ -622,7 +578,7 @@ export default function AgencyProductionRecon() {
       dataToExport = filtered.paid || [];
       filename = `agency-overrides-paid-${new Date().toISOString().split('T')[0]}.csv`;
     } else {
-      dataToExport = [...(filtered.missing || []), ...(filtered.planchange || []), ...(filtered.plandenied || []), ...(filtered.chase || []), ...(filtered.cancelled || []), ...(filtered.paid || [])];
+      dataToExport = [...(filtered.missing || []), ...(filtered.not_on_bsi || []), ...(filtered.planchange || []), ...(filtered.plandenied || []), ...(filtered.chase || []), ...(filtered.cancelled || []), ...(filtered.paid || [])];
       filename = `agency-overrides-all-${new Date().toISOString().split('T')[0]}.csv`;
     }
     
@@ -955,6 +911,7 @@ export default function AgencyProductionRecon() {
                 { value: null, label: '— Auto (clear manual)' },
                 { value: 'paid', label: 'Paid' },
                 { value: 'chase_bsi', label: 'Chase BSI' },
+                { value: 'not_paid_to_bsi', label: 'Not on BSI (carrier unpaid)' },
                 { value: 'request_audit', label: 'Request Audit' },
                 { value: 'held_licensing', label: 'Held – Licensing' },
                 { value: 'no_pay_expected', label: 'No Pay Expected' },
@@ -994,7 +951,7 @@ export default function AgencyProductionRecon() {
       <div className="page-header">
         <div className="page-title">Agency Override Reconciliation</div>
         <div className="page-sub">
-          Expected BSI→THEI is THEI&apos;s 50% of the carrier×state override pot (Initial/Renewal). Matches Sales Recon clarity — rate table, not $347 agent commission.
+          Hector production → Carrier→BSI → BSI→THEI. Not on BSI = carrier never paid BSI. Chase BSI = carrier paid BSI but remittance missing.
         </div>
       </div>
 
@@ -1044,13 +1001,14 @@ export default function AgencyProductionRecon() {
                 <div className="form-label" style={{ marginBottom: 6 }}>Override Status</div>
                 <MultiSelect
                   label="Status"
-                  options={['paid','chargeback','chase_bsi','request_audit','held_licensing','no_pay_expected','pending']}
+                  options={['paid','chargeback','chase_bsi','not_paid_to_bsi','request_audit','held_licensing','no_pay_expected','pending']}
                   selected={filterOverrideStatus}
                   onChange={setFilterOverrideStatus}
                   formatOption={v => ({
                     paid: '🟢 Paid',
                     chargeback: '↩️ Chargeback',
                     chase_bsi: '🔴 Chase BSI',
+                    not_paid_to_bsi: '🟠 Not on BSI',
                     request_audit: '🟡 Request Audit',
                     held_licensing: '🔒 Held – Licensing',
                     no_pay_expected: '⛔ No Pay Expected',
@@ -1217,9 +1175,17 @@ export default function AgencyProductionRecon() {
 
         {!loading && (
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-            <div style={{ borderBottom: '1px solid var(--border)', padding: '0 20px', display: 'flex', gap: 2 }}>
+            <div style={{ borderBottom: '1px solid var(--border)', padding: '0 20px', display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+              <button style={tabStyle('not_on_bsi')} onClick={() => setTab('not_on_bsi')}
+                title="On Hector production, but NOT on Carrier→BSI statements — carrier never paid BSI">
+                Not on BSI ({(filtered.not_on_bsi || []).length})
+              </button>
+              <button style={tabStyle('chase')} onClick={() => setTab('chase')}
+                title="On Hector AND on Carrier→BSI, but THEI remittance missing — chase BSI">
+                Chase BSI ({(filtered.chase || []).length})
+              </button>
               <button style={tabStyle('missing')} onClick={() => setTab('missing')}
-                title="No carrier data uploaded for this carrier+period — override status unknown">
+                title="Other unpaid / returnee gaps (carrier statement not uploaded yet, or clawback return)">
                 Missing ({(filtered.missing || []).length})
               </button>
               <button style={tabStyle('planchange')} onClick={() => setTab('planchange')}
@@ -1229,10 +1195,6 @@ export default function AgencyProductionRecon() {
               <button style={tabStyle('plandenied')} onClick={() => setTab('plandenied')}
                 title="Application denied by the carrier; no override expected">
                 Plan Denied ({(filtered.plandenied || []).length})
-              </button>
-              <button style={tabStyle('chase')} onClick={() => setTab('chase')}
-                title="Override being actively chased or disputed with BSI">
-                Chase ({(filtered.chase || []).length})
               </button>
               <button style={tabStyle('cancelled')} onClick={() => setTab('cancelled')}
                 title="Cancelled / disenrolled / override chargeback (left the plan)">
@@ -1244,16 +1206,17 @@ export default function AgencyProductionRecon() {
               </button>
               <button style={tabStyle('all')} onClick={() => setTab('all')}
                 title="All production records across every status category">
-                All ({(filtered.missing || []).length + (filtered.planchange || []).length + (filtered.plandenied || []).length + (filtered.chase || []).length + (filtered.cancelled || []).length + (filtered.paid || []).length})
+                All ({(filtered.missing || []).length + (filtered.not_on_bsi || []).length + (filtered.planchange || []).length + (filtered.plandenied || []).length + (filtered.chase || []).length + (filtered.cancelled || []).length + (filtered.paid || []).length})
               </button>
             </div>
             {/* One-line subtitle per tab */}
             {tab !== 'all' && (() => {
               const subtitles = {
-                missing:    'No open BSI→THEI override — includes returns after chargeback and rows with no carrier data yet.',
+                not_on_bsi: 'On Hector’s books, but not on Carrier→BSI statements — BSI was never paid by the carrier (e.g. many Humana). You will not get paid until the carrier pays BSI.',
+                chase:      'On Hector AND Carrier→BSI paid BSI, but BSI→THEI remittance is missing — chase BSI for your half.',
+                missing:    'Other unpaid gaps — carrier statement not uploaded yet, or returnee after chargeback with no open override.',
                 planchange: 'Client changed plans; original override may not apply.',
                 plandenied: 'Application denied by the carrier; no override expected.',
-                chase:      'Override being actively chased or disputed with BSI.',
                 cancelled:  'Cancelled / disenrolled, override chargeback, or No Pay Expected (not chasing).',
                 paid:       'Override commission paid — including earlier paid rows when a later chargeback clawed it back.',
               };
@@ -1327,6 +1290,7 @@ export default function AgencyProductionRecon() {
                             if (twStatus === 'paid')          return <span style={{ background:'#D4EDDA',color:'#155724',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>🟢 Paid</span>;
                             if (twStatus === 'chargeback')    return <span style={{ background:'#F8D7DA',color:'#721C24',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>↩️ Chargeback</span>;
                             if (twStatus === 'chase_bsi')     return <span style={{ background:'#F8D7DA',color:'#721C24',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>🔴 Chase BSI</span>;
+                            if (twStatus === 'not_paid_to_bsi') return <span style={{ background:'#FFE8D6',color:'#9A3412',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>🟠 Not on BSI</span>;
                             if (twStatus === 'request_audit') return <span style={{ background:'#FFF3CD',color:'#856404',padding:'3px 8px',borderRadius:4,fontSize:11,fontWeight:600 }}>🟡 Request Audit</span>;
                             if (twStatus === 'held_licensing') {
                               const hd = _getHoldDetail(m);
@@ -1464,16 +1428,16 @@ export default function AgencyProductionRecon() {
         <div style={{ marginTop: 30, padding: 16, background: 'var(--blue-light)', borderRadius: 6, borderLeft: '4px solid var(--blue)', color: 'var(--blue-dark)', fontSize: 13, lineHeight: 1.6 }}>
           <div style={{ fontWeight: 600, marginBottom: 8 }}>💡 How this works:</div>
           <ul style={{ paddingLeft: 20, margin: 0 }}>
-            <li><strong>Agency Production:</strong> Hector&apos;s monthly reports (90-day rolling — same sale can repeat across uploads)</li>
-            <li><strong>Override Statements:</strong> BSI commission statements showing what THEI got paid</li>
-            <li><strong>This page:</strong> One row per true sale (client + carrier + eff date + policy), not per upload</li>
+            <li><strong>Hector production:</strong> who is on the books (who should be paid)</li>
+            <li><strong>Carrier→BSI statements:</strong> did the carrier pay BSI for that sale?</li>
+            <li><strong>BSI→THEI remittance:</strong> did we get our half from BSI?</li>
           </ul>
           <div style={{ fontWeight: 600, marginTop: 12, marginBottom: 8 }}>Status Categories:</div>
           <ul style={{ paddingLeft: 20, margin: 0 }}>
-            <li><strong>Missing:</strong> In production with no open override (includes came-back-after-chargeback)</li>
-            <li><strong>Plan Change:</strong> Client changed plans (may or may not have override)</li>
-            <li><strong>Cancelled:</strong> Cancelled / disenrolled, chargeback when they left, or manually set No Pay Expected</li>
-            <li><strong>Paid:</strong> Override paid in statements (history kept even if later charged back)</li>
+            <li><strong>Not on BSI:</strong> On Hector, but not on Carrier→BSI — BSI never got paid (common for Humana). Do not chase remittance yet.</li>
+            <li><strong>Chase BSI:</strong> On Hector and Carrier→BSI paid, but remittance missing — chase BSI.</li>
+            <li><strong>Missing:</strong> Other unpaid gaps (no carrier file uploaded yet, or returnee after chargeback).</li>
+            <li><strong>Paid:</strong> Override paid in statements (history kept even if later charged back).</li>
             <li><strong>Same person can appear in more than one tab</strong> (e.g. Paid → Cancelled chargeback → Missing again)</li>
           </ul>
         </div>
