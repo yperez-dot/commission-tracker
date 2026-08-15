@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { apiFetch, apiUpload } from '../api';
 import { formatDate } from '../utils/dateFormat';
 import { UploadPageShell, UploadDropZone, UploadAlert, UploadHistoryCard } from '../components/UploadPageLayout';
+import { medicareProUploadExportPath, exportUploadFile } from '../utils/exportUpload';
 export default function MedicareProUpload() {
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState([]);
@@ -14,6 +15,7 @@ export default function MedicareProUpload() {
   const [viewingBatch, setViewingBatch] = useState(null);
   const [batchData, setBatchData] = useState([]);
   const [loadingBatchData, setLoadingBatchData] = useState(false);
+  const [exportingId, setExportingId] = useState(null);
 
   // Load upload history on mount
   useEffect(() => {
@@ -65,6 +67,22 @@ export default function MedicareProUpload() {
       await loadUploadHistory();
     } catch (err) {
       alert(`Error deleting batch: ${err.message}`);
+    }
+  }
+
+  async function handleExportUpload(upload) {
+    if (!upload?.id) return;
+    setExportingId(upload.id);
+    setError(null);
+    try {
+      await exportUploadFile({
+        path: medicareProUploadExportPath(upload.id, 'xlsx'),
+        fallbackName: `${String(upload.filename || upload.upload_batch || 'medicarepro').replace(/\.[^.]+$/, '')}_export.xlsx`,
+      });
+    } catch (err) {
+      setError(err.message || 'Export failed');
+    } finally {
+      setExportingId(null);
     }
   }
 
@@ -324,13 +342,23 @@ export default function MedicareProUpload() {
                       <td style={{ fontSize: 13 }}>{upload.uploaded_by || '—'}</td>
                       <td style={{ fontWeight: 500, color: 'var(--green)' }}>{upload.record_count}</td>
                       <td style={{ textAlign: 'center' }}>
-                        <button
-                          className="btn btn-sm"
-                          onClick={() => handleDeleteBatch(upload.upload_batch)}
-                          style={{ background: 'var(--red)', color: 'white', fontSize: 11, padding: '4px 10px' }}
-                        >
-                          Delete
-                        </button>
+                        <div style={{ display: 'inline-flex', gap: 6 }}>
+                          <button
+                            className="btn btn-sm"
+                            onClick={() => handleExportUpload(upload)}
+                            disabled={exportingId === upload.id}
+                            style={{ fontSize: 11, padding: '4px 10px' }}
+                          >
+                            {exportingId === upload.id ? '...' : 'Export'}
+                          </button>
+                          <button
+                            className="btn btn-sm"
+                            onClick={() => handleDeleteBatch(upload.upload_batch)}
+                            style={{ background: 'var(--red)', color: 'white', fontSize: 11, padding: '4px 10px' }}
+                          >
+                            Delete
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}

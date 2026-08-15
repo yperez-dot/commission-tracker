@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch, getToken } from '../api';
 import { UploadPageShell, UploadDropZone, UploadAlert, UploadHistoryCard } from '../components/UploadPageLayout';
+import { agencyProductionUploadExportPath, exportUploadFile } from '../utils/exportUpload';
 
 export default function AgencyProductionUpload() {
   const [files, setFiles] = useState([]);
@@ -11,6 +12,7 @@ export default function AgencyProductionUpload() {
   const [dragOver, setDragOver] = useState(false);
   const [uploadHistory, setUploadHistory] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
+  const [exportingId, setExportingId] = useState(null);
 
   const API_URL = process.env.REACT_APP_API_URL || '';
 
@@ -172,6 +174,22 @@ export default function AgencyProductionUpload() {
       await loadUploadHistory();
     } catch (err) {
       alert(`Error deleting upload: ${err.message}`);
+    }
+  }
+
+  async function handleExportUpload(upload) {
+    if (!upload?.id) return;
+    setExportingId(upload.id);
+    setError(null);
+    try {
+      await exportUploadFile({
+        path: agencyProductionUploadExportPath(upload.id, 'xlsx'),
+        fallbackName: `${String(upload.filename || upload.carrier || 'agency_production').replace(/\.[^.]+$/, '')}_export.xlsx`,
+      });
+    } catch (err) {
+      setError(err.message || 'Export failed');
+    } finally {
+      setExportingId(null);
     }
   }
 
@@ -401,13 +419,23 @@ export default function AgencyProductionUpload() {
                       <td style={{ fontSize: 13 }}>{upload.uploaded_by || '—'}</td>
                       <td style={{ fontWeight: 500, color: 'var(--green)' }}>{upload.record_count}</td>
                       <td style={{ textAlign: 'center' }}>
-                        <button
-                          className="btn btn-sm"
-                          onClick={() => handleDeleteUpload(upload)}
-                          style={{ background: 'var(--red)', color: 'white', fontSize: 11, padding: '4px 10px' }}
-                        >
-                          Delete
-                        </button>
+                        <div style={{ display: 'inline-flex', gap: 6 }}>
+                          <button
+                            className="btn btn-sm"
+                            onClick={() => handleExportUpload(upload)}
+                            disabled={exportingId === upload.id}
+                            style={{ fontSize: 11, padding: '4px 10px' }}
+                          >
+                            {exportingId === upload.id ? '...' : 'Export'}
+                          </button>
+                          <button
+                            className="btn btn-sm"
+                            onClick={() => handleDeleteUpload(upload)}
+                            style={{ background: 'var(--red)', color: 'white', fontSize: 11, padding: '4px 10px' }}
+                          >
+                            Delete
+                          </button>
+                        </div>
                       </td>
                     </tr>
                   ))}

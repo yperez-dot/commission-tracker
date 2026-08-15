@@ -9,6 +9,7 @@ import {
 } from '../utils/uploadDestination';
 import { setPendingUpload, takePendingUpload } from '../utils/pendingUpload';
 import { UploadPageShell, UploadDropZone, UploadAlert } from '../components/UploadPageLayout';
+import { commissionUploadExportPath, exportUploadFile } from '../utils/exportUpload';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -24,6 +25,7 @@ export default function Upload({ user, onNavigate }) {
   const [viewUpload, setViewUpload] = useState(null);
   const [selectedUploads, setSelectedUploads] = useState(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [exportingId, setExportingId] = useState(null);
   const [viewRecords, setViewRecords] = useState([]);
   const [viewLoading, setViewLoading] = useState(false);
   // New: search/filter/sort state for the uploads list
@@ -108,6 +110,22 @@ export default function Upload({ user, onNavigate }) {
       setUploads(prev => prev.filter(u => u.id !== id));
     } catch (e) { console.error(e); }
     finally { setDeletingId(null); }
+  }
+
+  async function exportUpload(u) {
+    if (!u?.id) return;
+    setExportingId(u.id);
+    setError('');
+    try {
+      await exportUploadFile({
+        path: commissionUploadExportPath(u.id, 'xlsx'),
+        fallbackName: `${String(u.original_name || 'upload').replace(/\.[^.]+$/, '')}_export.xlsx`,
+      });
+    } catch (e) {
+      setError(e.message || 'Export failed');
+    } finally {
+      setExportingId(null);
+    }
   }
 
   function toggleSelectUpload(id) {
@@ -545,6 +563,13 @@ export default function Upload({ user, onNavigate }) {
               </div>
               <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
                 <span style={{ fontSize: 10, background: '#EAF3DE', color: '#3B6D11', borderRadius: 4, padding: '2px 8px', fontWeight: 600 }}>Digested</span>
+                <button
+                  onClick={() => exportUpload(u)}
+                  disabled={exportingId === u.id}
+                  style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 10px', fontSize: 11, cursor: 'pointer', color: 'var(--text)' }}
+                >
+                  {exportingId === u.id ? '...' : 'Export'}
+                </button>
                 {user.role === 'admin' && (
                   <button onClick={() => deleteUpload(u.id)} disabled={deletingId === u.id}
                     style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 10px', fontSize: 11, cursor: 'pointer', color: '#E24B4A' }}>

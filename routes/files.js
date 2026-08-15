@@ -4835,6 +4835,55 @@ router.delete('/uploads/:id', requireAuth, requireAdmin, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+/**
+ * GET /api/files/uploads/:id/export?format=xlsx|csv
+ * Download all commission_records for one upload (Commission / BSI / Agent Payout).
+ */
+router.get('/uploads/:id/export', requireAuth, async (req, res) => {
+  try {
+    const {
+      sendTabularExport,
+      COMMISSION_EXPORT_COLUMNS,
+    } = require('../src/uploadDataExport');
+    const pool = getPool();
+    const uploadId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(uploadId)) {
+      return res.status(400).json({ error: 'Invalid upload id' });
+    }
+    const uploadResult = await pool.query(
+      `SELECT id, original_name, category FROM uploads WHERE id = $1`,
+      [uploadId]
+    );
+    if (!uploadResult.rows.length) {
+      return res.status(404).json({ error: 'Upload not found' });
+    }
+    const upload = uploadResult.rows[0];
+    const records = await pool.query(
+      `SELECT agent_name, carrier, plan_type, lob, client_full_name, policy_number,
+              effective_date, payment_period, statement_month, classification,
+              premium, commission, gross_commission, thei_share, bsi_share,
+              producer_payable, sub_agent_override, payee, mga, source
+       FROM commission_records
+       WHERE upload_id = $1
+       ORDER BY id`,
+      [uploadId]
+    );
+    if (!records.rows.length) {
+      return res.status(404).json({ error: 'No records found for this upload' });
+    }
+    return sendTabularExport(res, {
+      rows: records.rows,
+      columns: COMMISSION_EXPORT_COLUMNS,
+      originalName: upload.original_name,
+      format: req.query.format,
+      sheetName: 'Commission Records',
+    });
+  } catch (err) {
+    console.error('[files] upload export', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 async function mapColumnsWithAI(headers, sample) {
   try {
     const prompt = `You are parsing an insurance carrier commission statement Excel file.
