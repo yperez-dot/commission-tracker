@@ -7,7 +7,7 @@ const {
   namesLooseMatch,
   normCarrier,
   normalizeCarrier,
-} = require('./matchingNormalize');
+} = require('./matchingNormalize.cjs');
 
 /**
  * Shared Missing Renewals matching + row build logic (server-side).

@@ -8,7 +8,7 @@ import {
   sumCommissionNet,
 } from '../utils/salesReconPayment';
 import { THEI_DIRECT_AGENTS, isTheiDirectAgent, directAgentsLabel } from '../theiPrincipalAgents';
-import { normName, normalizeCarrier, carriersMatch } from '../matchingNormalizeEs';
+import { normName, normalizeCarrier, carriersMatch } from '../matchingNormalize';
 import { fetchAllPages, truncationMessage } from '../fetchAllPages';
 import TruncationBanner from '../components/TruncationBanner';
 

@@ -5,7 +5,7 @@ const {
   normalizeCarrier,
   carriersMatch,
   namesLooseMatch,
-} = require('./matchingNormalize');
+} = require('./matchingNormalize.cjs');
 
 /**
  * Build a lookup key for chase/pending policy rows vs upload payments.
