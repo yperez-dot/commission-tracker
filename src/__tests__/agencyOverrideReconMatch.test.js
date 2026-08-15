@@ -11,7 +11,7 @@ describe('agencyOverrideReconMatch', () => {
     const prod = { client_name: 'Milagros Cambas De Rivas', carrier: 'Aetna' };
     const overrides = [
       { client_full_name: 'CAMBAS DE RIVAS, MILAGROS', carrier: 'Aetna', commission: 80, classification: 'Agency Override' },
-      { client_full_name: 'Milagros Cambas De Rivas', carrier: 'Aetna', commission: -80, classification: 'Chargeback' },
+      { client_full_name: 'Milagros Cambas De Rivas', carrier: 'Aetna', commission: -80, classification: 'Agency Override Chargeback' },
     ];
     const match = findOverrideMatch(prod, overrides);
     expect(match).not.toBeNull();
@@ -74,7 +74,7 @@ describe('agencyOverrideReconMatch', () => {
     const prod = { id: 42, client_name: 'Milagros Cambas De Rivas', carrier: 'Aetna' };
     const overrides = [
       { id: 1, client_full_name: 'Milagros Cambas De Rivas', carrier: 'Aetna', commission: 80, classification: 'Agency Override' },
-      { id: 2, client_full_name: 'Milagros Cambas De Rivas', carrier: 'Aetna', commission: -80, classification: 'Chargeback' },
+      { id: 2, client_full_name: 'Milagros Cambas De Rivas', carrier: 'Aetna', commission: -80, classification: 'Agency Override Chargeback' },
     ];
     const rows = expandOverrideLifecycle(prod, overrides);
     expect(rows.map((r) => r.lifecycle).sort()).toEqual(['chargeback', 'missing', 'paid']);
@@ -84,6 +84,48 @@ describe('agencyOverrideReconMatch', () => {
     expect(rows.find((r) => r.lifecycle === 'paid').categoryHint).toBe('paid');
     expect(rows.find((r) => r.lifecycle === 'chargeback').categoryHint).toBe('cancelled');
     expect(rows.find((r) => r.lifecycle === 'missing').categoryHint).toBe('missing');
+  });
+
+  test('Karl Brown: agent Chargeback does not pull house override net negative / false Chase', () => {
+    const {
+      isOverrideStatementRow,
+      findOverrideMatch,
+      isOverridePaid,
+      getThreeWayOverrideStatus,
+    } = require('../agencyOverrideReconMatch.cjs');
+    const agentCb = {
+      classification: 'Chargeback',
+      commission: -347,
+      upload_name: 'KR_UHC STATEMENT_FEBRUARY_2026.xlsx',
+      client_full_name: 'Karl P. Brown',
+      carrier: 'UnitedHealthcare',
+    };
+    const houseRows = [
+      { id: 1, classification: 'Agency Override', commission: 75, upload_name: 'Statement-health experts (4).pdf', client_full_name: 'Karl P. Brown', carrier: 'UnitedHealthcare' },
+      { id: 2, classification: 'Chargeback', commission: -75, upload_name: 'Medicare Statement -THE-March (3).pdf', client_full_name: 'Karl P. Brown', carrier: 'UnitedHealthcare' },
+      { id: 3, classification: 'Agency Override', commission: 34.38, upload_name: 'Medicare Statement -THE-March (3).pdf', client_full_name: 'Karl P. Brown', carrier: 'UnitedHealthcare' },
+      { id: 4, classification: 'Chargeback', commission: -21.88, upload_name: 'thei_statement_BSI_06.2026.csv', client_full_name: 'Karl P. Brown', carrier: 'UnitedHealthcare' },
+    ];
+    expect(isOverrideStatementRow(agentCb)).toBe(false);
+    expect(houseRows.every(isOverrideStatementRow)).toBe(true);
+
+    const prod = { id: 99, client_name: 'KARL BROWN', carrier: 'UnitedHealthcare', status: 'COMPLETED' };
+    const wrongNet = findOverrideMatch(prod, [agentCb, ...houseRows]);
+    expect(wrongNet.override_net).toBeCloseTo(-334.5, 1); // old bug: agent CB included
+
+    const houseOnly = [agentCb, ...houseRows].filter(isOverrideStatementRow);
+    const match = findOverrideMatch(prod, houseOnly);
+    // House net = 75 - 75 + 34.38 - 21.88 = +12.50 → Paid, not Chase
+    expect(match.override_net).toBeCloseTo(12.5, 2);
+    expect(isOverridePaid(match)).toBe(true);
+    const status = getThreeWayOverrideStatus({
+      production: prod,
+      override: match,
+      lifecycle: 'missing',
+      carrierBSI: { commission: 175 },
+      carrierUploaded: true,
+    });
+    expect(status).toBe('paid');
   });
 
   test('lifecycle currently-paid does not also emit Missing', () => {

@@ -31,7 +31,7 @@ describe('overrideGapAudit', () => {
         client_full_name: 'Milagros Cambas De Rivas',
         carrier: 'Aetna',
         commission: -80,
-        classification: 'Chargeback',
+        classification: 'Agency Override Chargeback',
         payee: 'THE',
       },
     ];
@@ -94,8 +94,20 @@ describe('overrideGapAudit', () => {
     expect(summary.never_paid).toBe(1);
   });
 
-  test('isOverrideLikeRow includes chargebacks', () => {
-    expect(isOverrideLikeRow({ classification: 'Chargeback', payee: 'THE' })).toBe(true);
+  test('isOverrideLikeRow includes agency / remittance chargebacks, not agent CBs', () => {
+    expect(isOverrideLikeRow({ classification: 'Agency Override Chargeback', payee: 'THE' })).toBe(true);
+    expect(
+      isOverrideLikeRow({
+        classification: 'Chargeback',
+        upload_name: 'Medicare Statement -THE-March.pdf',
+      })
+    ).toBe(true);
+    expect(
+      isOverrideLikeRow({
+        classification: 'Chargeback',
+        upload_name: 'KR_UHC STATEMENT_FEBRUARY_2026.xlsx',
+      })
+    ).toBe(false);
     expect(sumBySign([{ commission: 80 }, { commission: -80 }])).toEqual({
       paid: 80,
       chargeback: -80,

@@ -58,17 +58,39 @@ function dedupeProductionSales(rows) {
 }
 
 /**
+ * Remittance uploads (BSI→THE) — plain Chargeback on these is house clawback.
+ * Agent KR/UHC statements also use Chargeback for agent commission — exclude those.
+ */
+function isRemittanceUploadName(name) {
+  const f = String(name || '')
+    .toLowerCase()
+    .replace(/[\s()]/g, '_');
+  if (!f) return false;
+  return (
+    /t\.?h\.?e[_.-]*statements?/.test(f) ||
+    /the_statements?/.test(f) ||
+    /thei_statement_bsi/.test(f) ||
+    (/thei_statement/.test(f) && /bsi/.test(f)) ||
+    /medicare[_-]?statement/.test(f)
+  );
+}
+
+/**
  * BSI→THEI override / chargeback rows only.
- * Do NOT include every payee=THE commission line — that exploded lifecycle
- * history into thousands of rows and crashed Agency Override Recon.
+ * Do NOT include agent New Business / Renewal / agent Chargeback lines —
+ * those inflated nets (e.g. Karl Brown −$347 agent CB → false Chase BSI)
+ * and exploded lifecycle history.
  */
 function isOverrideStatementRow(row) {
   const c = String(row?.classification || '').toLowerCase();
   if (!c) return false;
-  if (c.includes('chargeback')) return true;
   if (c.includes('agency override')) return true;
-  // bare "Override" / "override commission" — not Agent Commission
-  if (c.includes('override') && !c.includes('agent')) return true;
+  if (c.includes('override') && !c.includes('agent') && !c.includes('chargeback')) return true;
+  if (c.includes('chargeback')) {
+    if (c.includes('agency')) return true;
+    const upload = row.upload_name || row.upload_original_name || row.original_name || '';
+    return isRemittanceUploadName(upload);
+  }
   return false;
 }
 
