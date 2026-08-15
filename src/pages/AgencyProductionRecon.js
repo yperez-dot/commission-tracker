@@ -6,6 +6,7 @@ import { normName, normalizeCarrier, carriersMatch } from '../matchingNormalize'
 import { findOverrideMatch, isOverridePaid, expandOverrideLifecycle } from '../agencyOverrideReconMatch';
 import { fetchAllPages, truncationMessage } from '../fetchAllPages';
 import TruncationBanner from '../components/TruncationBanner';
+import { expectedAgencyOverride, expectedOverrideLabel } from '../utils/agencyOverrideExpected';
 
 // Version: 2026-08-15 — shared matchingNormalize (Omaha ≠ UHC, empty-carrier safe)
 
@@ -116,6 +117,30 @@ function formatPeriodLabel(period) {
 // Use standardized MM-DD-YYYY format
 function formatDate(dateStr) {
   return formatDateUtil(dateStr);
+}
+
+/** Expected BSI→THEI cell — same visual language as Sales Recon Expected. */
+function ExpectedOverrideCell({ production, asTd = true }) {
+  const meta = expectedAgencyOverride(production || {});
+  const label = expectedOverrideLabel(meta);
+  const inner = (
+    <>
+      {meta.amount == null ? (
+        <span style={{ color: 'var(--text-muted)' }}>—</span>
+      ) : (
+        <span style={{ fontWeight: 600, color: 'var(--text)' }}>{fmt(meta.amount)}</span>
+      )}
+      <div style={{ fontSize: 10, marginTop: 2, lineHeight: 1.35, color: 'var(--text-muted)' }}>
+        {label}
+      </div>
+    </>
+  );
+  if (!asTd) return <div style={{ textAlign: 'right', fontSize: 12 }}>{inner}</div>;
+  return (
+    <td style={{ textAlign: 'right', fontSize: 12, verticalAlign: 'top', padding: '8px 10px', borderBottom: '1px solid var(--border)' }}>
+      {inner}
+    </td>
+  );
 }
 
 function normalizeName(name) {
@@ -532,7 +557,13 @@ export default function AgencyProductionRecon() {
       else if (sortCol === 'bsi_thei') { va = parseFloat(a.override?.commission || 0); vb = parseFloat(b.override?.commission || 0); }
       else if (sortCol === 'c_bsi')    { va = parseFloat(a.carrierBSI?.commission || 0); vb = parseFloat(b.carrierBSI?.commission || 0); }
       else if (sortCol === 'eff_date') { va = a.production.effective_date || ''; vb = b.production.effective_date || ''; }
-    else if (sortCol === 'status')   { va = _getThreeWayStatus(a); vb = _getThreeWayStatus(b); }
+      else if (sortCol === 'expected') {
+        va = expectedAgencyOverride(a.production).amount;
+        vb = expectedAgencyOverride(b.production).amount;
+        va = va == null ? -1 : va;
+        vb = vb == null ? -1 : vb;
+      }
+      else if (sortCol === 'status')   { va = _getThreeWayStatus(a); vb = _getThreeWayStatus(b); }
       else                             { va = ''; vb = ''; }
       if (typeof va === 'number') return sortDir === 'asc' ? va - vb : vb - va;
       return sortDir === 'asc' ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
@@ -586,7 +617,7 @@ export default function AgencyProductionRecon() {
     }
     
     const carrierBSIAmt = (m) => m.carrierBSI ? parseFloat(m.carrierBSI.commission || 0) : null;
-    const headers = ['Agent', 'Client', 'Carrier', 'State', 'Effective Date', 'BSI→THEI Amt', 'Carrier→BSI Amt', 'Status', 'Override Status'];
+    const headers = ['Agent', 'Client', 'Carrier', 'State', 'Effective Date', 'Expected THEI', 'Expected Note', 'BSI→THEI Amt', 'Carrier→BSI Amt', 'Status', 'Override Status'];
     const rows = dataToExport.map(m => {
       const agentName = m.production.agent_name || '—';
       const clientName = m.production.client_name || '—';
@@ -594,6 +625,9 @@ export default function AgencyProductionRecon() {
       const hd = _getHoldDetail(m);
       const state = (hd && hd.state) || m.production.state || '—';
       const effectiveDate = m.production.effective_date ? formatDate(m.production.effective_date) : '—';
+      const exp = expectedAgencyOverride(m.production);
+      const expectedAmt = exp.amount == null ? '—' : exp.amount;
+      const expectedNote = expectedOverrideLabel(exp);
       const bsiThei = m.override ? (m.override.commission || m.override.commission_amount || '0') : '—';
       const cBSI = carrierBSIAmt(m) !== null ? carrierBSIAmt(m).toFixed(2) : '—';
       const enrollStatus = m.production.status || '—';
@@ -605,6 +639,8 @@ export default function AgencyProductionRecon() {
         carrier,
         state,
         effectiveDate,
+        expectedAmt,
+        expectedNote,
         bsiThei,
         cBSI,
         enrollStatus,
@@ -941,7 +977,10 @@ export default function AgencyProductionRecon() {
       )}
 
       <div className="page-header">
-        <div className="page-title">🏢 Agency Override Reconciliation</div>
+        <div className="page-title">Agency Override Reconciliation</div>
+        <div className="page-sub">
+          Expected BSI→THEI is THEI&apos;s 50% of the carrier×state override pot (Initial/Renewal). Matches Sales Recon clarity — rate table, not $347 agent commission.
+        </div>
       </div>
 
       <div className="page-body">
@@ -1222,14 +1261,15 @@ export default function AgencyProductionRecon() {
                 <div style={{ overflowY: 'auto', maxHeight: 'calc(100vh - 280px)' }}>
                   <table style={{ tableLayout: 'fixed', width: '100%', borderCollapse: 'collapse' }}>
                     <colgroup>
-                      <col style={{ width: '14%' }} />
-                      <col style={{ width: '14%' }} />
                       <col style={{ width: '12%' }} />
-                      <col style={{ width: '9%' }} />
+                      <col style={{ width: '13%' }} />
+                      <col style={{ width: '10%' }} />
                       <col style={{ width: '8%' }} />
+                      <col style={{ width: '11%' }} />
                       <col style={{ width: '9%' }} />
-                      <col style={{ width: '17%' }} />
-                      <col style={{ width: '17%' }} />
+                      <col style={{ width: '9%' }} />
+                      <col style={{ width: '16%' }} />
+                      <col style={{ width: '12%' }} />
                     </colgroup>
                     <thead style={{ position: 'sticky', top: 0, background: 'var(--bg)', zIndex: 1 }}>
                       <tr>
@@ -1238,8 +1278,9 @@ export default function AgencyProductionRecon() {
                           ['Member Name','left','member'],
                           ['Carrier','left','carrier'],
                           ['Eff Date','left','eff_date'],
-                          ['BSI→THEI','center','bsi_thei'],
-                          ['Carrier→BSI','center','c_bsi'],
+                          ['Expected','right','expected'],
+                          ['BSI→THEI','right','bsi_thei'],
+                          ['Carrier→BSI','right','c_bsi'],
                           ['Override Status','center','status'],
                           ['Actions','center',null]
                         ].map(([label, align, col], i) => (
@@ -1247,7 +1288,7 @@ export default function AgencyProductionRecon() {
                             padding: '8px 10px', textAlign: align, fontSize: 11, fontWeight: 600,
                             whiteSpace: 'normal', wordWrap: 'break-word', overflowWrap: 'break-word',
                             verticalAlign: 'top', borderBottom: '2px solid var(--border)',
-                            background: i >= 4 && i <= 5 ? 'var(--accent-light, #EDE9FE)' : 'var(--bg)',
+                            background: (i === 4 || i === 5 || i === 6) ? 'var(--accent-light, #EDE9FE)' : 'var(--bg)',
                             cursor: col ? 'pointer' : 'default', userSelect: 'none'
                           }}>
                             <span style={{ display:'inline-flex', alignItems:'center', gap:3 }}>
@@ -1333,7 +1374,7 @@ export default function AgencyProductionRecon() {
                         return (
                           <tr key={m.rowKey || `${m.production.id}-${m.lifecycle || 'row'}`}>
                             <td style={tdBase}>{m.production.agent_name || '—'}</td>
-                            <td style={{ ...tdBase, fontWeight: 500 }}>
+                            <td style={{ ...tdBase, fontWeight: 500, fontSize: 12 }}>
                               <a href="#" onClick={e => { e.preventDefault(); setSelectedProduction(m.production); }}
                                 style={{ color:'var(--blue)',textDecoration:'none',borderBottom:'1px dashed var(--blue)' }}
                                 onMouseOver={e=>e.currentTarget.style.borderBottom='1px solid var(--blue)'}
@@ -1341,14 +1382,15 @@ export default function AgencyProductionRecon() {
                               >{m.production.client_name}</a>
 
                             </td>
-                            <td style={tdBase}>{formatCarrier(m.production.carrier)}</td>
-                            <td style={{ ...tdBase, fontSize: 11, color: 'var(--text-muted)' }}>
+                            <td style={{ ...tdBase, fontSize: 12 }}>{formatCarrier(m.production.carrier)}</td>
+                            <td style={{ ...tdBase, fontSize: 12, color: 'var(--text-muted)' }}>
                               {m.production.effective_date ? formatDate(m.production.effective_date) : '—'}
                             </td>
+                            <ExpectedOverrideCell production={m.production} />
                             <td style={{ ...tdBase, textAlign: 'right' }}>
                               {m.override
                                 ? <span
-                                    style={{ color: overrideColor, fontWeight:600 }}
+                                    style={{ color: overrideColor, fontWeight:600, fontSize: 12 }}
                                     title={
                                       m.lifecycle === 'chargeback'
                                         ? (m.override.payment_period || m.override.source || 'Chargeback')
