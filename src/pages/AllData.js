@@ -338,9 +338,11 @@ export default function AllData({ user, initialFilters = {} }) {
     setPage(0); // Reset to first page when sorting
   }
 
+  const pageClientTotal = clients.reduce((s, r) => s + (parseFloat(r.commission_total) || 0), 0);
   const grandTotal = listMode === 'clients'
-    ? clients.reduce((s, r) => s + (parseFloat(r.commission_total) || 0), 0)
+    ? (filterSums ? parseFloat(filterSums.commission) || 0 : pageClientTotal)
     : (filterSums ? parseFloat(filterSums.commission) || 0 : records.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0));
+  const pagePaymentCount = clients.reduce((s, c) => s + (c.payment_count || 0), 0);
   const sumMoney = (key) => {
     if (filterSums && filterSums[key] != null) return parseFloat(filterSums[key]) || 0;
     return records.reduce((s, r) => s + (parseFloat(r[key]) || 0), 0);
@@ -1023,9 +1025,20 @@ export default function AllData({ user, initialFilters = {} }) {
                   <tfoot>
                     <tr style={{ background: 'var(--bg-subtle)', fontWeight: 500 }}>
                       <td colSpan={6} style={{ padding: '10px 12px', fontSize: 13 }}>Page total ({clients.length} clients)</td>
-                      <td style={{ padding: '10px 12px', fontSize: 13 }}>{clients.reduce((s, c) => s + (c.payment_count || 0), 0)}</td>
+                      <td style={{ padding: '10px 12px', fontSize: 13 }}>{pagePaymentCount}</td>
                       <td colSpan={2}></td>
-                      <td style={{ padding: '10px 12px', fontSize: 13, color: grandTotal < 0 ? 'var(--red)' : 'var(--green)' }}>{fmt(grandTotal)}</td>
+                      <td style={{ padding: '10px 12px', fontSize: 13, color: pageClientTotal < 0 ? 'var(--red)' : 'var(--green)' }}>{fmt(pageClientTotal)}</td>
+                      <td></td>
+                    </tr>
+                    <tr style={{ background: 'var(--accent-light, #F5EDD4)', fontWeight: 700 }}>
+                      <td colSpan={6} style={{ padding: '10px 12px', fontSize: 13 }}>
+                        All filtered ({total.toLocaleString()} {total === 1 ? 'client' : 'clients'})
+                      </td>
+                      <td style={{ padding: '10px 12px', fontSize: 13 }}>
+                        {filterSums?.payment_count != null ? Number(filterSums.payment_count).toLocaleString() : '—'}
+                      </td>
+                      <td colSpan={2}></td>
+                      <td style={{ padding: '10px 12px', fontSize: 14, color: grandTotal < 0 ? 'var(--red)' : 'var(--green)' }}>{fmt(grandTotal)}</td>
                       <td></td>
                     </tr>
                   </tfoot>
