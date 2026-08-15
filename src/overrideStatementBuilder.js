@@ -168,12 +168,16 @@ function classifyOverrideLine(row, statementType) {
     case STATEMENT_TYPES.INTEGRITY: {
       if (!clsOverride) return null;
       if (!isIntegrityAgent(row.agent_name)) return null;
-      const amount = num(row.producer_payable);
+      // Prefer producer_payable (correct field). Fall back to sub_agent_override for
+      // legacy NHP rows that wrongly stored Chris/Horacio cuts there.
+      const payable = num(row.producer_payable);
+      const legacy = num(row.sub_agent_override);
+      const amount = payable !== 0 ? payable : legacy;
       if (amount === 0 && num(row.commission) === 0) return null;
       const pot = overridePot(row);
       return {
         payee: row.agent_name,
-        amountField: 'producer_payable',
+        amountField: payable !== 0 ? 'producer_payable' : (legacy !== 0 ? 'sub_agent_override' : 'producer_payable'),
         amount,
         pot,
         shareLabel: sharePct(amount, pot) || '50%',

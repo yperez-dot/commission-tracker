@@ -1397,9 +1397,11 @@ const {
   extractPeriodFromStatementMonth,
   resolveNhpPaymentPeriod,
 } = require('../src/nhpPeriod');
+const { splitNhpMedicareOverride } = require('../src/nhpOverrideSplit');
 
 function parseNHPRows(wb, uploadPeriod) {
   const records = [];
+  const marcoDeductedPolicies = new Set();
   const ws = wb.Sheets[wb.SheetNames[0]];
   const range = XLSX.utils.decode_range(ws['!ref']);
 
@@ -1552,59 +1554,26 @@ function parseNHPRows(wb, uploadPeriod) {
         producerPayable = grossCommission;
         recordType = 'Agent Commission';
       }
-      // Agency override rows
+      // Agency override rows — Integrity → producer_payable; Marco → sub_agent_override
       else {
         recordType = 'Agency Override';
-        
-        // Christian Munoz & Horacio Mendieta special handling
-        // Fixed rates on UHC/Doctors/Solis/HealthSun NEW BUSINESS only
-        // Gross NHP pots (see OVERRIDE_RATE_TABLE): Doctors 175, HealthSun 157.50,
-        // Solis 210/140, UHC honor 165 → these fixed cuts come off before 50/50.
-        const agentLower = agent.toLowerCase();
-        const carrierLower = carrier.toLowerCase();
-        const isChristianOrHoracio = agentLower.includes('christian munoz') || agentLower.includes('horacio mendieta');
-        const isSpecialCarrier = carrierLower.includes('unitedhealthcare') || carrierLower.includes('united healthcare') || carrierLower.includes('doctors') || carrierLower.includes('solis') || carrierLower.includes('healthsun');
-        const isNewBusiness = commClassLower.includes('new') || commClassLower.includes('initial') || (!commClassLower.includes('renewal') && !commClassLower.includes('carry'));
-        
-        if (isChristianOrHoracio && isSpecialCarrier && isNewBusiness && grossCommission > 0) {
-          // Determine fixed rate
-          let fixedRate = 0;
-          if (carrierLower.includes('unitedhealthcare') || carrierLower.includes('united healthcare')) fixedRate = 82.50; // half of $165 honor
-          else if (carrierLower.includes('doctors')) fixedRate = 50;       // from $175 pot
-          else if (carrierLower.includes('solis')) fixedRate = 62.50;      // from $210 Initial pot
-          else if (carrierLower.includes('healthsun')) fixedRate = 52.50;  // from $157.50 pot
-          
-          subAgentOverride = fixedRate;
-          // After deducting sub-agent payment, split the remainder with BSI if eligible
-          const remainingOverride = Math.max(0, grossCommission - subAgentOverride);
-          
-          if (isBsiEligible) {
-            splitApplies = true;
-            theiShare = Math.round(remainingOverride * 0.5 * 100) / 100;
-            bsiShare = Math.round(remainingOverride * 0.5 * 100) / 100;
-            producerPayable = 0;
-          } else {
-            splitApplies = false;
-            theiShare = remainingOverride;
-            bsiShare = 0;
-            producerPayable = 0;
-          }
-        }
-        // Standard agency override (no sub-agent special rate)
-        else {
-          if (isBsiEligible) {
-            splitApplies = true;
-            theiShare = Math.round(grossCommission * 0.5 * 100) / 100;
-            bsiShare = Math.round(grossCommission * 0.5 * 100) / 100;
-            producerPayable = 0;
-          } else {
-            // Pre-9/1/2025: THEI keeps 100%
-            splitApplies = false;
-            theiShare = grossCommission;
-            bsiShare = 0;
-            producerPayable = 0;
-          }
-        }
+        const policyKey = String(policyNumber || '').trim().toLowerCase();
+        const alreadyDeducted = policyKey ? marcoDeductedPolicies.has(policyKey) : false;
+        const split = splitNhpMedicareOverride({
+          pot: grossCommission,
+          agentName: agent,
+          carrier,
+          classification: commClass || commType,
+          paymentPeriod: period,
+          isBsiEligible,
+          alreadyDeducted,
+        });
+        if (split.subAgentOverride && policyKey) marcoDeductedPolicies.add(policyKey);
+        splitApplies = split.splitApplies;
+        theiShare = split.theiShare;
+        bsiShare = split.bsiShare;
+        producerPayable = split.producerPayable;
+        subAgentOverride = split.subAgentOverride;
       }
     }
 
