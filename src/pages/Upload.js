@@ -268,7 +268,7 @@ export default function Upload({ user, onNavigate }) {
 
       <UploadPageShell
         title="Commission Statements"
-        subtitle="Direct carrier statements and BSI→THE remittance CSVs. Carrier→BSI feeds belong under Uploads → BSI Statements."
+        subtitle="THEI production, NHP house, and BSI→THE remittance. Agent pay files (Tailored / Jill / other ACA producers) → Uploads → Agent Payout Uploads. Carrier→BSI feeds → BSI Statements."
       >
         <UploadDropZone
           dragOver={dragOver}
