@@ -1,13 +1,17 @@
 'use strict';
 
 /**
- * AARP Medicare Supplement (UHC) Age 65+ agent commission — Year 1 rates.
+ * Medicare Supplement agent commission — Year 1 rates.
  *
- * Source: UnitedHealthcare Agent Agreement Med Supp schedule (Drive packet),
- * FL amendment app sig ≥ Jun 4, 2025 / effective ≥ Jul 1, 2025;
- * other states from Jun 1, 2025 national replacement table.
+ * Carriers:
+ * - UHC / AARP: fixed Year-1 schedule by state/area/plan (Drive packet).
+ * - HealthSpring / CNHIC / HNHIC / Cigna Med Supp: as-earned rate derived from
+ *   AgentView Commission Report (THEI, period 08/01–08/14/2026, agent CB142243):
+ *     Silvia Mushkin 60Y0436424 Plan G FL — Comm Paid $55.59 (modal book $118)
+ *     Julius Mushkin 60Y0436880 Plan G FL — Comm Paid $55.86
+ *   Year-1 expected = monthly_premium × (55.59 / 118) × 12.
+ *   Default monthly premium when unknown = $118 (statement Mode Rate).
  *
- * PDF columns: Year 1 | Years 2–6 | Years 7–10 | Years 11+
  * Sales Recon expected = Year 1 (not MA $347 calendar proration).
  */
 
@@ -51,6 +55,17 @@ const YEAR1_BY_STATE_PLAN = {
   },
 };
 
+/** AgentView book modal used for Silvia Mushkin Plan G (Aug 2026 statement). */
+const HS_AGENTVIEW_MODAL_PREMIUM = 118;
+/** Silvia Mushkin Comm Paid 08/14/2026 — primary calibration point. */
+const HS_AGENTVIEW_MONTHLY_PAID = 55.59;
+/** As-earned monthly commission ÷ modal premium. */
+const HS_EARN_RATE = HS_AGENTVIEW_MONTHLY_PAID / HS_AGENTVIEW_MODAL_PREMIUM;
+
+function round2(n) {
+  return Math.round(n * 100) / 100;
+}
+
 function normPlan(planName) {
   const s = String(planName || '').toUpperCase().replace(/\s+/g, ' ').trim();
   if (!s) return null;
@@ -89,9 +104,72 @@ function resolveTableKey(state, area, { defaultFl = true } = {}) {
 }
 
 /**
- * Year-1 expected agent commission for an AARP/UHC Med Supp sale.
+ * Route Med Supp sale to carrier schedule family.
+ * HealthSpring / CNHIC / HNHIC / Cigna Med Supp → AgentView-derived %.
+ * Everything else (incl. unknown) → UHC AARP fixed table.
  */
-function lookupMedSuppYear1(sale = {}) {
+function detectMedSuppCarrierFamily(sale = {}) {
+  const blob = [
+    sale.carrier,
+    sale.company,
+    sale.plan_name,
+    sale.plan,
+    sale.marketing_name,
+    sale.product,
+  ].filter(Boolean).join(' ').toUpperCase();
+
+  if (/HEALTH\s*SPRING|\bCNHIC\b|\bHNHIC\b|\bCIGNA\b/.test(blob)) {
+    return 'healthspring';
+  }
+  return 'uhc_aarp';
+}
+
+function resolveMonthlyPremium(sale = {}) {
+  const raw = sale.monthly_premium ?? sale.premium ?? sale.modal_premium ?? sale.mode_rate;
+  const n = Number(raw);
+  if (Number.isFinite(n) && n > 0) return n;
+  return HS_AGENTVIEW_MODAL_PREMIUM;
+}
+
+/**
+ * HealthSpring / CNHIC Year-1 from AgentView as-earned calibration.
+ */
+function lookupHealthSpringYear1(sale = {}) {
+  const plan = normPlan(sale.plan_name || sale.plan || sale.policy_type || sale.product);
+  const premium = resolveMonthlyPremium(sale);
+  const usedDefaultPremium = !(
+    Number(sale.monthly_premium) > 0
+    || Number(sale.premium) > 0
+    || Number(sale.modal_premium) > 0
+    || Number(sale.mode_rate) > 0
+  );
+  const monthlyCommission = round2(premium * HS_EARN_RATE);
+  const amount = round2(monthlyCommission * 12);
+
+  const notes = [
+    `HS AgentView ${(HS_EARN_RATE * 100).toFixed(2)}% of modal`,
+    `$${premium}/mo${usedDefaultPremium ? ' book default' : ''}`,
+  ];
+  if (plan) notes.push(`Plan ${plan}`);
+
+  return {
+    amount,
+    monthlyCommission,
+    monthlyPremium: premium,
+    plan,
+    tableKey: 'HS-AGENTVIEW',
+    note: notes.join(' · '),
+    source: 'healthspring_agentview_derived',
+    usedDefaultFlArea: false,
+    usedDefaultFlState: false,
+    usedDefaultPremium,
+  };
+}
+
+/**
+ * Year-1 expected agent commission for a Med Supp sale (UHC AARP or HealthSpring).
+ */
+function lookupUhcAarpYear1(sale = {}) {
   const plan = normPlan(sale.plan_name || sale.plan || sale.policy_type || sale.product);
   const explicitState = sale.state || sale.member_state || sale.applicant_state;
   const tableKey = resolveTableKey(
@@ -157,10 +235,25 @@ function lookupMedSuppYear1(sale = {}) {
   };
 }
 
+/**
+ * Year-1 expected agent commission for a Med Supp sale.
+ */
+function lookupMedSuppYear1(sale = {}) {
+  const family = detectMedSuppCarrierFamily(sale);
+  if (family === 'healthspring') {
+    return lookupHealthSpringYear1(sale);
+  }
+  return lookupUhcAarpYear1(sale);
+}
+
 module.exports = {
   YEAR1_BY_STATE_PLAN,
+  HS_AGENTVIEW_MODAL_PREMIUM,
+  HS_AGENTVIEW_MONTHLY_PAID,
+  HS_EARN_RATE,
   normPlan,
   normState,
   resolveTableKey,
+  detectMedSuppCarrierFamily,
   lookupMedSuppYear1,
 };

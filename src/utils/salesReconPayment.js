@@ -36,8 +36,8 @@ export function remainingCalendarMonths(effectiveDate) {
  * Med Supp / PDP do not — those tables are separate.
  */
 export function detectSaleProductFamily(sale) {
-  const s = `${sale?.policy_type || ''} ${sale?.plan_name || ''} ${sale?.product || ''} ${sale?.lob || ''}`.toLowerCase();
-  if (/med\s*supp|medigap|supplement/.test(s)) return 'MED_SUPP';
+  const s = `${sale?.policy_type || ''} ${sale?.plan_name || ''} ${sale?.product || ''} ${sale?.lob || ''} ${sale?.marketing_name || ''} ${sale?.carrier || ''}`.toLowerCase();
+  if (/med\s*supp|medsup|medigap|supplement/.test(s)) return 'MED_SUPP';
   if (/mapd|medicare\s+advantage|(^|\s)ma(\s|$)/.test(s)) return 'MA_MAPD';
   if (/\bpdp\b|prescription\s+drug/.test(s)) return 'PDP';
   return 'UNKNOWN';
@@ -46,7 +46,8 @@ export function detectSaleProductFamily(sale) {
 /**
  * Expected agent commission for a MedicarePro sale.
  * Medicare Advantage NB: calendar-prorated $347 (July = 6/12, not $347).
- * Med Supp: UHC AARP Year-1 schedule by state/area/plan (not $347).
+ * Med Supp: UHC AARP Year-1 by state/area/plan, or HealthSpring/CNHIC
+ * AgentView-derived as-earned Year-1 (not $347).
  */
 export function expectedSaleCommission(sale) {
   const family = detectSaleProductFamily(sale);

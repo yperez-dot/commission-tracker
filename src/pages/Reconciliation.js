@@ -775,7 +775,7 @@ export default function Reconciliation({ user }) {
     <div>
       <div className="page-header">
         <div className="page-title">Sales Reconciliation</div>
-        <div className="page-sub">Medicare Advantage expected is calendar-prorated ($347 full year). Medicare Supplement uses UHC AARP Year-1 rates by plan (FL Area 1 default when state/area unknown) — not $347.</div>
+        <div className="page-sub">Medicare Advantage expected is calendar-prorated ($347 full year). Medicare Supplement: UHC AARP Year-1 by plan/area; HealthSpring/CNHIC from AgentView as-earned (~47% of modal × 12) — not $347.</div>
       </div>
       <div className="page-body">
 
