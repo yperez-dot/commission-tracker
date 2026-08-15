@@ -74,6 +74,41 @@ async function backfillNhpSourceFromUploads(pool) {
   return result.rowCount || 0;
 }
 
+/** Tailored ACA was sometimes booked as THEI override — move to agent pay. */
+async function backfillTailoredAcaToAgentPay(pool) {
+  const result = await pool.query(`
+    UPDATE commission_records
+    SET
+      producer_payable = CASE
+        WHEN COALESCE(producer_payable, 0) <> 0 THEN producer_payable
+        WHEN COALESCE(thei_share, 0) <> 0 THEN thei_share
+        WHEN COALESCE(commission, 0) <> 0 THEN commission
+        ELSE COALESCE(gross_commission, 0)
+      END,
+      thei_share = 0,
+      bsi_share = 0,
+      commission = 0,
+      classification = CASE
+        WHEN COALESCE(
+          NULLIF(producer_payable, 0),
+          NULLIF(thei_share, 0),
+          NULLIF(commission, 0),
+          NULLIF(gross_commission, 0),
+          0
+        ) < 0 THEN 'ACA Agent Chargeback'
+        ELSE 'ACA Agent Commission'
+      END
+    WHERE LOWER(agent_name) LIKE '%tailored%'
+      AND UPPER(COALESCE(lob, '')) = 'ACA'
+      AND (
+        COALESCE(thei_share, 0) <> 0
+        OR classification ILIKE '%aca%override%'
+        OR classification ILIKE '%agency override%'
+      )
+  `);
+  return result.rowCount || 0;
+}
+
 async function fetchOverrideRows(pool, period, type) {
   const params = [];
   // THEI/BSI: Agency Override rows PLUS Alba rate-peeled agent-production shares.

@@ -1494,6 +1494,10 @@ const {
   resolveNhpPaymentPeriod,
 } = require('../src/nhpPeriod');
 const { splitNhpMedicareOverride } = require('../src/nhpOverrideSplit');
+const {
+  isTailoredInsuranceAgent,
+  resolveTailoredAcaPay,
+} = require('../src/tailoredAcaPay');
 
 function parseNHPRows(wb, uploadPeriod, filename = '') {
   const records = [];
@@ -1633,9 +1637,15 @@ function parseNHPRows(wb, uploadPeriod, filename = '') {
       }
       splitApplies = false;
       bsiShare = 0;
-      
-      // Check which COLUMN has the value (ignore Comm Class label)
-      if (commissionAmount !== 0) {
+
+      // Tailored Insurance ACA → agent pay ("pay her"), never THEI house override
+      if (isTailoredInsuranceAgent(agent)) {
+        const tailored = resolveTailoredAcaPay({ commissionAmount, overrideAmount });
+        theiShare = tailored.theiShare;
+        producerPayable = tailored.producerPayable;
+        recordType = tailored.recordType;
+        splitApplies = tailored.splitApplies;
+      } else if (commissionAmount !== 0) {
         // Money in COMMISSION column → Agent gets 100% (positive OR negative)
         theiShare = 0;
         producerPayable = commissionAmount;
@@ -1693,7 +1703,10 @@ function parseNHPRows(wb, uploadPeriod, filename = '') {
       effectiveDate,
       premium: 0,
       commission: theiShare,
-      classification: grossCommission < 0 ? 'Chargeback' : recordType,
+      classification: (() => {
+        if (String(recordType || '').toLowerCase().includes('aca')) return recordType;
+        return grossCommission < 0 ? 'Chargeback' : recordType;
+      })(),
       period: period || 'Unknown',
       policyNumber,
       payee: 'NHP',
