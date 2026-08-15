@@ -132,6 +132,29 @@ describe('overrideStatementBuilder', () => {
     expect(bundle.grandTotal).toBe(100);
   });
 
+  it('Integrity falls back to legacy NHP sub_agent_override when producer_payable is 0', () => {
+    const legacy = [{
+      id: 501,
+      agent_name: 'Horacio Mendieta',
+      client_full_name: 'Legacy Client',
+      policy_number: 'LEG1',
+      carrier: 'UnitedHealthcare',
+      effective_date: '2026-01-01',
+      payment_period: '202601',
+      classification: 'Agency Override',
+      commission: 41.25,
+      gross_commission: 165,
+      thei_share: 41.25,
+      bsi_share: 41.25,
+      producer_payable: 0,
+      sub_agent_override: 82.5,
+      source: 'NHP',
+    }];
+    const bundle = buildOverrideStatements(legacy, STATEMENT_TYPES.INTEGRITY, { period: '202601' });
+    expect(bundle.grandTotal).toBe(82.5);
+    expect(bundle.statements[0].lines[0].amount_field).toBe('sub_agent_override');
+  });
+
   it('formats effective dates on statement lines and CSV', () => {
     const bundle = buildOverrideStatements(rows, STATEMENT_TYPES.THEI_OVERRIDE, { period: '202601' });
     expect(bundle.statements[0].lines[0].effective_date).toBe('01/01/2026');
