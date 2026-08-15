@@ -83,17 +83,27 @@ function extractMemberState(prod, raw) {
 }
 
 function yearTypeFromProduction(prod, raw) {
+  // Only use true Initial/Renewal signals — do NOT map Enrollment_Type /
+  // App_Status into salesEvent (e.g. "Active" was wrongly treated as Renewal
+  // → Humana Expected $37.50 instead of Initial $75).
   const fromEngine = resolveYearType({
-    compType: raw['Comp Type'] || raw.Comp_Type,
-    firstYearRenewal: raw['First Year/Renewal'] || raw['First Year / Renewal'],
-    salesEvent: raw['Sales Event'] || raw.Sales_Event || raw['Enrollment_Type'],
-    commissionAction: raw['Commission Action'] || raw.Commission_Action,
+    compType: raw['Comp Type'] || raw.Comp_Type || null,
+    firstYearRenewal:
+      raw['First Year/Renewal'] ||
+      raw['First Year / Renewal'] ||
+      raw['First_Year_Renewal'] ||
+      null,
+    salesEvent: raw['Sales Event'] || raw.Sales_Event || null,
+    commissionAction: raw['Commission Action'] || raw.Commission_Action || null,
   });
   if (fromEngine) return fromEngine;
 
-  const blob = `${prod?.enrollment_type || ''} ${prod?.status || ''} ${prod?.policy_type || ''}`.toLowerCase();
-  if (blob.includes('renew')) return 'Renewal';
-  // Active / Future production enrollments default to Initial for expected display
+  const blob = `${prod?.enrollment_type || ''} ${prod?.status || ''} ${prod?.policy_type || ''} ${raw['Enrollment_Type'] || ''}`.toLowerCase();
+  if (/\brenew/.test(blob)) return 'Renewal';
+  if (/\b(new|initial|pronew|nb)\b/.test(blob)) return 'Initial';
+
+  // Agency production rows are enrollments we expect first-year override on
+  // unless a renewal signal is present.
   return 'Initial';
 }
 

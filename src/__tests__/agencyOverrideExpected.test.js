@@ -35,6 +35,32 @@ describe('agencyOverrideExpected', () => {
     expect(meta.amount).toBe(22.5);
   });
 
+  test('Humana Active production defaults to Initial (not Renewal $37.50)', () => {
+    const meta = expectedAgencyOverride({
+      carrier: 'Humana',
+      state: 'FL',
+      status: 'Active',
+      enrollment_type: 'AEP',
+      effective_date: '2026-08-01',
+      raw_data: { Enrollment_Type: 'AEP', Status: 'Active' },
+    });
+    expect(meta.yearType).toBe('Initial');
+    // Humana National Initial pot 150 → THEI 75
+    expect(meta.pot).toBe(150);
+    expect(meta.amount).toBe(75);
+  });
+
+  test('Humana explicit renewal stays Renewal $37.50', () => {
+    const meta = expectedAgencyOverride({
+      carrier: 'Humana',
+      state: 'TX',
+      raw_data: { 'First Year/Renewal': 'Renewal Year' },
+    });
+    expect(meta.yearType).toBe('Renewal');
+    expect(meta.pot).toBe(75);
+    expect(meta.amount).toBe(37.5);
+  });
+
   test('Aetna FL HMO plan uses Florida HMO_CSNP Initial', () => {
     const meta = expectedAgencyOverride({
       carrier: 'Aetna',
