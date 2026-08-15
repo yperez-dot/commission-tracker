@@ -336,7 +336,14 @@ router.post('/send-statement', requireAuth, requireAdmin, async (req, res) => {
     const filename = statementFilename(agentName, periodLabel, isBSI);
     const fromEmail =
       process.env.RESEND_FROM_EMAIL || 'commissions@healthexps.com';
-    const firstName = agentName.split(/\s+/)[0] || agentName;
+    const firstName = String(agentName.split(/\s+/)[0] || agentName)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+    const safePeriod = String(periodLabel)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
 
     const { Resend } = require('resend');
     const resend = new Resend(apiKey);
@@ -346,7 +353,7 @@ router.post('/send-statement', requireAuth, requireAdmin, async (req, res) => {
       subject: `Your Commission Statement — ${periodLabel}`,
       html: `
         <p>Hi ${firstName},</p>
-        <p>Please find your commission statement for <strong>${periodLabel}</strong> attached.</p>
+        <p>Please find your commission statement for <strong>${safePeriod}</strong> attached.</p>
         <p>Questions? Reply to this email or call 1-800-380-6821.</p>
         <br/>
         <p>The Health Experts Insurance</p>
