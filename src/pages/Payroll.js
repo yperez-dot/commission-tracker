@@ -414,6 +414,7 @@ function HouseOverridesPanel() {
   const [ovLoading, setOvLoading] = useState(false);
   const [ovError, setOvError] = useState('');
   const [autoLoaded, setAutoLoaded] = useState(false);
+  const [showSourceUploads, setShowSourceUploads] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -528,6 +529,7 @@ function HouseOverridesPanel() {
               onChange={(e) => {
                 setOvType(e.target.value);
                 setPreview(null);
+                setShowSourceUploads(false);
                 setAutoLoaded(false);
               }}
               style={{ minWidth: 220 }}
@@ -547,6 +549,7 @@ function HouseOverridesPanel() {
               onChange={(e) => {
                 setOvPeriod(e.target.value);
                 setPreview(null);
+                setShowSourceUploads(false);
                 setAutoLoaded(false);
               }}
               style={{ minWidth: 160 }}
@@ -600,11 +603,27 @@ function HouseOverridesPanel() {
           </div>
           {(preview.sourceUploads || []).length > 0 && (
             <div style={{ padding: '10px 14px', borderBottom: '0.5px solid var(--border)', fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.45 }}>
-              <div style={{ fontWeight: 600, color: 'var(--text)', marginBottom: 4 }}>
-                Source uploads in this period ({preview.sourceUploads.length})
-              </div>
-              {preview.sourceUploads.map((u) => (
-                <div key={u.id}>
+              <button
+                type="button"
+                onClick={() => setShowSourceUploads((v) => !v)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  padding: 0,
+                  cursor: 'pointer',
+                  fontWeight: 600,
+                  color: 'var(--text)',
+                  fontSize: 12,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                }}
+              >
+                <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{showSourceUploads ? '▾' : '▸'}</span>
+                Source uploads ({preview.sourceUploads.length})
+              </button>
+              {showSourceUploads && preview.sourceUploads.map((u) => (
+                <div key={u.id} style={{ marginTop: 4 }}>
                   {u.original_name} — {u.row_count} rows
                 </div>
               ))}
