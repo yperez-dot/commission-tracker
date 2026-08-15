@@ -6,6 +6,8 @@ export const PAYMENT_TOLERANCE = 1.0;
 /** Full-year Medicare NB rate used in Sales Recon (Jan effective). Mid-year is prorated. */
 export const FULL_YEAR_NB = 347;
 
+const { lookupMedSuppYear1 } = require('../medSuppCommissionSchedule');
+
 function round2(n) {
   return Math.round(n * 100) / 100;
 }
@@ -44,7 +46,7 @@ export function detectSaleProductFamily(sale) {
 /**
  * Expected agent commission for a MedicarePro sale.
  * Medicare Advantage NB: calendar-prorated $347 (July = 6/12, not $347).
- * Med Supp: no expected until the supplement compensation table is wired.
+ * Med Supp: UHC AARP Year-1 schedule by state/area/plan (not $347).
  */
 export function expectedSaleCommission(sale) {
   const family = detectSaleProductFamily(sale);
@@ -52,14 +54,29 @@ export function expectedSaleCommission(sale) {
   const renewal = blob.includes('renewal');
 
   if (family === 'MED_SUPP') {
+    // Renewals use years 2–6+ bands later; for now Year-1 table is NB expected only.
+    if (renewal) {
+      return {
+        amount: null,
+        remainingMonths: remainingCalendarMonths(sale?.effective_date),
+        fullYear: null,
+        prorated: false,
+        kind: 'med_supp',
+        family,
+        note: 'Med Supp renewal bands not applied yet — Year-1 table is NB only',
+        medSupp: null,
+      };
+    }
+    const med = lookupMedSuppYear1(sale);
     return {
-      amount: null,
+      amount: med.amount,
       remainingMonths: remainingCalendarMonths(sale?.effective_date),
-      fullYear: null,
+      fullYear: med.amount,
       prorated: false,
       kind: 'med_supp',
       family,
-      note: 'Med Supp schedule TBD — not $347 MA',
+      note: med.note,
+      medSupp: med,
     };
   }
 

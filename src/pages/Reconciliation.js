@@ -323,10 +323,24 @@ function DepositTimeline({ deposits }) {
 function ExpectedCell({ meta, amount }) {
   const kind = meta?.kind;
   if (kind === 'med_supp') {
+    if (amount == null) {
+      return (
+        <td style={{ textAlign: 'right', fontSize: 12, color: 'var(--text-muted)' }}>
+          —
+          <div style={{ fontSize: 10, marginTop: 2, lineHeight: 1.35 }}>
+            {meta?.note || 'Med Supp (need plan/state)'}
+          </div>
+        </td>
+      );
+    }
     return (
       <td style={{ textAlign: 'right', fontSize: 12, color: 'var(--text-muted)' }}>
-        —
-        <div style={{ fontSize: 10, marginTop: 2, lineHeight: 1.35 }}>Med Supp (table TBD)</div>
+        {fmt(amount)}
+        <div style={{ fontSize: 10, marginTop: 2, lineHeight: 1.35 }}>
+          {meta?.medSupp?.tableKey
+            ? `Med Supp Y1 · ${meta.medSupp.tableKey} · Plan ${meta.medSupp.plan || '?'}`
+            : 'Med Supp Year 1'}
+        </div>
       </td>
     );
   }
@@ -761,7 +775,7 @@ export default function Reconciliation({ user }) {
     <div>
       <div className="page-header">
         <div className="page-title">Sales Reconciliation</div>
-        <div className="page-sub">Medicare Advantage expected is calendar-prorated ($347 full year). Medicare Supplement uses a different table — not $347 — pending your compensation schedule.</div>
+        <div className="page-sub">Medicare Advantage expected is calendar-prorated ($347 full year). Medicare Supplement uses UHC AARP Year-1 rates by plan (FL Area 1 default when state/area unknown) — not $347.</div>
       </div>
       <div className="page-body">
 

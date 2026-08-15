@@ -30,14 +30,38 @@ describe('salesReconPayment', () => {
     expect(tl[1].amount).toBe(292);
   });
 
-  test('Med Supp does not use the $347 MA schedule', () => {
+  test('Med Supp uses UHC AARP Year-1 schedule — not $347 MA', () => {
+    const ms = expectedSaleCommission({
+      effective_date: '2026-07-01',
+      policy_type: 'Medicare Supplement',
+      plan_name: 'Plan G',
+      state: 'FL',
+    });
+    expect(ms.kind).toBe('med_supp');
+    expect(ms.amount).toBe(582);
+    expect(ms.fullYear).toBe(582);
+    expect(ms.medSupp.tableKey).toBe('FL-1');
+    expect(resolveSalePaymentStatus({ expected: ms.amount, actualNet: 55, fullYear: ms.fullYear }).id).toBe('partial');
+    expect(resolveSalePaymentStatus({ expected: ms.amount, actualNet: 582, fullYear: ms.fullYear }).id).toBe('paid');
+  });
+
+  test('Med Supp Plan N FL Area 2', () => {
+    const ms = expectedSaleCommission({
+      policy_type: 'Medicare Supplement',
+      plan_name: 'AARP Med Supp Plan N',
+      state: 'FL',
+      area: 2,
+    });
+    expect(ms.amount).toBe(320.5);
+  });
+
+  test('Med Supp without plan letter stays null (Received)', () => {
     const ms = expectedSaleCommission({
       effective_date: '2026-07-01',
       policy_type: 'Medicare Supplement',
     });
     expect(ms.kind).toBe('med_supp');
     expect(ms.amount).toBeNull();
-    expect(resolveSalePaymentStatus({ expected: ms.amount, actualNet: 55 }).id).toBe('paid');
     expect(resolveSalePaymentStatus({ expected: ms.amount, actualNet: 55 }).label).toBe('Received');
   });
 
