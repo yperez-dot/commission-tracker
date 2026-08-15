@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../api';
-import { normName, nameVariants, normCarrier } from '../matchingNormalize';
+import { normName, nameVariants, normCarrier } from '../matchingNormalizeEs';
 
 function fmt(n) {
   const num = parseFloat(String(n || '0').replace(/[$,]/g, ''));
