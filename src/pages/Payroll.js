@@ -2,6 +2,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { apiFetch, apiDownload } from '../api';
 import LOAStatements from '../components/LOAStatements';
 import { formatDate } from '../utils/dateFormat';
+import { fetchAllPages } from '../fetchAllPages';
+import TruncationBanner from '../components/TruncationBanner';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -586,6 +588,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
   const [linaBusy, setLinaBusy] = useState(false);
   const [linaError, setLinaError] = useState('');
   const [statusBusy, setStatusBusy] = useState(false);
+  const [truncationWarning, setTruncationWarning] = useState(null);
   const isBSI = (user.agency || '').toLowerCase().includes('broker society');
   const agencyParam = encodeURIComponent(user.agency || 'thei');
 
@@ -665,13 +668,15 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
     if (!period) return;
     setLoading(true);
     setLoadError('');
+    setTruncationWarning(null);
     try {
-      const url =
+      const path =
         period === 'all'
-          ? `/records?limit=5000`
-          : `/records?period=${encodeURIComponent(period)}&limit=5000`;
-      const data = await apiFetch(url);
-      let allRecs = data.records || [];
+          ? `/records`
+          : `/records?period=${encodeURIComponent(period)}`;
+      const page = await fetchAllPages(path, { pageSize: 5000 }, apiFetch);
+      let allRecs = page.items || [];
+      setTruncationWarning(page.warning);
 
       if (isBSI) {
         allRecs = allRecs.filter((r) => {
@@ -952,6 +957,8 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
                 {loadError}
               </div>
             )}
+
+            <TruncationBanner message={truncationWarning} />
 
             {!selectedPeriod ? (
               <div className="card">
