@@ -14,6 +14,11 @@ const { collapseInternalDuplicates } = require('../src/uploadBatchDedupe');
 const { resolvePassThroughLiableAgent } = require('../src/writerPassThroughAgents');
 const { ensurePassThroughSchema } = require('./pass-through');
 const { safeUploadFilename, isAllowedUploadName } = require('./uploadSafe');
+const {
+  isAgentViewCommissionReport,
+  parseAgentViewCommissionReportPDF,
+  tryParseAgentViewUpload,
+} = require('../src/agentViewCommissionReport');
 let pdfParse;
 try { pdfParse = require('pdf-parse'); } catch(e) { console.log('pdf-parse not installed'); }
 
@@ -4112,13 +4117,39 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
       if (f.includes('commissiondata') || f.includes('humana')) return 'Humana';
       if (f.includes('devoted')) return 'Devoted';
       if (f.includes('aetna') || f.includes('producerstatement')) return 'Aetna';
+      if (f.includes('agentview') || f.includes('agentcommissionreport') || f.includes('cnhic')) return 'Direct';
       return 'Direct';
     };
     const defaultPayee = determinePayee(req.file.originalname);
 
     let records;
 
-    if (isMOOExcel(req.file.originalname)) {
+    // AgentView CNHIC / HealthSpring — filename OR PDF text sniff
+    {
+      const agentViewRows = await tryParseAgentViewUpload(
+        req.file.path,
+        req.file.originalname,
+        pdfParse
+      );
+      if (agentViewRows) {
+        console.log('[UPLOAD] Using AgentView CNHIC Commission Report PDF parser');
+        if (!pdfParse) {
+          try { fs.unlinkSync(req.file.path); } catch(e) {}
+          return res.status(500).json({ error: 'PDF parsing not available on server.' });
+        }
+        records = agentViewRows;
+        if (!records.length) {
+          try { fs.unlinkSync(req.file.path); } catch(e) {}
+          return res.status(400).json({
+            error: 'No earnings rows found in AgentView Commission Report. Confirm CNHIC/HealthSpring Med Supp earnings are on the PDF.',
+          });
+        }
+      }
+    }
+
+    if (records) {
+      // already parsed (AgentView)
+    } else if (isMOOExcel(req.file.originalname)) {
       const wb = XLSX.readFile(req.file.path);
       records = parseMOOExcelRows(wb, req.file.originalname);
       if (!records.length) {
