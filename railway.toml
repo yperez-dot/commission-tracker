@@ -1,5 +1,8 @@
 [build]
 builder = "NIXPACKS"
+# Frontend ships on Netlify. Railway only runs the API (node server.js).
+# Skipping CRA build avoids false failures from frontend webpack/eslint.
+buildCommand = "echo 'Skipping frontend build — Netlify hosts the UI'"
 
 [deploy]
 startCommand = "node server.js"
