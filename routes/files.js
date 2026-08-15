@@ -1491,14 +1491,18 @@ const {
 
 const { applyBsiBookAgentProduction } = require('../src/bsiBookAttribution');
 const {
-  extractPeriodFromStatementMonth,
   resolveNhpPaymentPeriod,
 } = require('../src/nhpPeriod');
 const { splitNhpMedicareOverride } = require('../src/nhpOverrideSplit');
 
-function parseNHPRows(wb, uploadPeriod) {
+function parseNHPRows(wb, uploadPeriod, filename = '') {
   const records = [];
   const marcoDeductedPolicies = new Set();
+  // One NHP file = one payment-cycle batch (deposit/statement), not coverage month.
+  const cyclePeriod = resolveNhpPaymentPeriod({
+    filename,
+    uploadPeriod,
+  });
   const ws = wb.Sheets[wb.SheetNames[0]];
   const range = XLSX.utils.decode_range(ws['!ref']);
 
@@ -1570,8 +1574,9 @@ function parseNHPRows(wb, uploadPeriod) {
     const effectiveDateRaw = row[effectiveDateIdx + shift];
     const effectiveDate = formatDate(effectiveDateRaw);
     
-    // Prefer Carrier-Statement Month (coverage month); fall back to upload-date batch
-    const period = resolveNhpPaymentPeriod(carrierRaw, uploadPeriod);
+    // House/payroll period = payment CYCLE for this file (not coverage month).
+    const period = cyclePeriod;
+    // Coverage month stays on statement_month for audit / display.
     
     const commType = String(row[commTypeIdx + shift] || '').trim();
     const commClass = String(row[commClassIdx + shift] || '').trim();
@@ -3674,20 +3679,15 @@ async function parseNHPAgencyStatementPDF(filePath, filename) {
     const text = data.text;
     const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
 
-    // Derive batch from upload date
+    // Payment cycle batch for this statement file (not per-row commission coverage date).
     const now = new Date();
-    const batch = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-
-    // Helper: parse "May 1, 2026" → "202605" (YYYYMM)
-    const parseCommissionDateToPeriod = (dateStr) => {
-      try {
-        const d = new Date(dateStr);
-        if (isNaN(d)) return null;
-        return `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}`;
-      } catch (err) {
-        return null;
-      }
-    };
+    const uploadPeriod = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const cyclePeriod = resolveNhpPaymentPeriod({
+      filename,
+      statementDate: (text.match(/Statement\s*Date[:\s]+([A-Za-z]+\s+\d{1,2},?\s+20\d{2}|\d{1,2}\/\d{1,2}\/20\d{2})/i) || [])[1],
+      cycleDate: (text.match(/Payment\s*Cycle[:\s]+([A-Za-z]+\s+\d{1,2},?\s+20\d{2}|\d{1,2}\/\d{1,2}\/20\d{2})/i) || [])[1],
+      uploadPeriod,
+    });
 
     // Helper: Title Case
     const toTitleCase = (str) =>
@@ -3729,15 +3729,6 @@ async function parseNHPAgencyStatementPDF(filePath, filename) {
       if (line.startsWith('Agent subtotal') || line.startsWith('Generated ') || line.startsWith('Agency Statement')) continue;
 
       // Parse concatenated row: OSC75522291-01May 1, 2026Michelle DayFL2$7.00$7.00
-      // Format: POLICY + DATE + CLIENT + STATE + LIVES + $AMOUNT + $TOTAL
-      // Policy: OSC########-##
-      // Date: "May 1, 2026" or "Apr 1, 2026"
-      // Client: Name (may include spaces, hyphens)
-      // State: 2-letter
-      // Lives: digit(s)
-      // Commission: $#.##
-      // Total: $#.## (we'll use Commission column)
-      
       const rowMatch = line.match(/^(OSC\d{8}-\d{2})([A-Za-z]{3}\s+\d{1,2},\s+\d{4})(.+?)([A-Z]{2})(\d+)\$([\d,]+\.\d{2})\$([\d,]+\.\d{2})$/);
       
       if (rowMatch) {
@@ -3748,10 +3739,8 @@ async function parseNHPAgencyStatementPDF(filePath, filename) {
         const members = parseInt(rowMatch[5].trim());
         const amount = parseFloat(rowMatch[6].replace(/,/g, ''));
 
-        const paymentPeriod = parseCommissionDateToPeriod(commDate);
-
-        if (!paymentPeriod) {
-          console.log(`[NHP] Skip - invalid date: ${commDate}`);
+        if (!cyclePeriod || cyclePeriod === 'Unknown') {
+          console.log(`[NHP] Skip - no payment cycle period for ${filename}`);
           continue;
         }
 
@@ -3772,17 +3761,18 @@ async function parseNHPAgencyStatementPDF(filePath, filename) {
           premium: 0,
           commission: amount,
           classification: 'Agency Override',
-          period: paymentPeriod,
+          period: cyclePeriod,
           policyNumber: policy,
           payee: 'NHP',
+          source: 'NHP',
+          statementMonth: commDate, // coverage / commission date on the row
           raw: {}
         });
       }
     }
 
     const totalCommission = records.reduce((sum, r) => sum + (r.commission || 0), 0);
-    console.log(`[NHP] Total records parsed: ${records.length}`);
-    console.log(`[NHP] Returning ${records.length} records, total: $${totalCommission.toFixed(2)}`);
+    console.log(`[NHP] Cycle period ${cyclePeriod} — parsed ${records.length} records, total: $${totalCommission.toFixed(2)}`);
   } catch (err) {
     console.error('parseNHPAgencyStatementPDF error:', err.message);
   }
@@ -4341,15 +4331,15 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
       } else if (isMolinaACAFile(req.file.originalname)) {
         records = parseMolinaACARows(wb, req.file.originalname);
       } else if (isNHPFile(req.file.originalname)) {
-        // Fallback only — each row prefers Carrier-Statement Month via resolveNhpPaymentPeriod
+        // One file = one NHP payment-cycle batch (deposit/statement), not coverage month.
         const now = new Date();
         const uploadPeriod = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
-        records = parseNHPRows(wb, uploadPeriod);
+        records = parseNHPRows(wb, uploadPeriod, req.file.originalname);
         const periods = {};
         for (const r of records) {
           periods[r.period] = (periods[r.period] || 0) + 1;
         }
-        console.log('[UPLOAD] NHP payment_period breakdown:', periods);
+        console.log('[UPLOAD] NHP payment-cycle period breakdown:', periods);
       } else if (isYourFMOFile(req.file.originalname)) {
         records = parseYourFMORows(wb, req.file.originalname);
       } else if (isHumanaFile(req.file.originalname)) {

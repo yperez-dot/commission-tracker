@@ -27,6 +27,7 @@ const {
   ALBA_DISPLAY_NAME,
 } = require('./payeeSchedules');
 const { formatEffectiveDate } = require('./effectiveDateFormat');
+const { formatNhpCyclePeriodLabel } = require('./nhpPeriod');
 
 function num(v) {
   const n = parseFloat(v);
@@ -35,6 +36,8 @@ function num(v) {
 
 function formatPeriodLabel(p) {
   if (!p) return '';
+  const cycle = formatNhpCyclePeriodLabel(p);
+  if (cycle && cycle !== String(p).trim()) return cycle;
   const s = String(p).trim();
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   if (/^\d{6}$/.test(s)) {
