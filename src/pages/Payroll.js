@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { apiFetch, apiDownload } from '../api';
 import LOAStatements from '../components/LOAStatements';
 import { formatDate } from '../utils/dateFormat';
+import { countSplitDepositClients, groupClientDeposits } from '../utils/salesReconPayment';
 import { fetchAllPages } from '../fetchAllPages';
 import TruncationBanner from '../components/TruncationBanner';
 
@@ -148,6 +149,10 @@ function PayoutRow({ p, isPaid, paidDate, onTogglePaid, onExport, exportLabel })
   const negCount = p.records.filter((r) => recordAmount(r) < 0).length;
   const negSum = p.records.filter((r) => recordAmount(r) < 0).reduce((s, r) => s + recordAmount(r), 0);
   const isLina = p.agent === 'Lina Hernandez';
+  const splitClients = isLina
+    ? countSplitDepositClients(p.records, (r) => parseFloat(r.producer_payable || 0))
+    : 0;
+  const clientGroups = isLina && expanded ? groupClientDeposits(p.records, (r) => parseFloat(r.producer_payable || 0)) : [];
 
   return (
     <div style={{ borderBottom: '1px solid var(--border)' }}>
@@ -187,6 +192,11 @@ function PayoutRow({ p, isPaid, paidDate, onTogglePaid, onExport, exportLabel })
                 · {negCount} chargeback{negCount !== 1 ? 's' : ''} ({fmt(negSum)})
               </span>
             )}
+            {splitClients > 0 && (
+              <span style={{ marginLeft: 8, color: '#854D0E', fontWeight: 500 }}>
+                · {splitClients} client{splitClients !== 1 ? 's' : ''} with split deposits
+              </span>
+            )}
             {isPaid && paidDate && (
               <span style={{ color: 'var(--green)', marginLeft: 8, fontWeight: 500 }}>· Paid {paidDate}</span>
             )}
@@ -210,6 +220,36 @@ function PayoutRow({ p, isPaid, paidDate, onTogglePaid, onExport, exportLabel })
       </div>
       {expanded && (
         <div style={{ background: 'var(--bg-subtle)', padding: '0 14px 12px 54px' }}>
+          {isLina && splitClients > 0 && (
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', padding: '8px 0', borderBottom: '0.5px solid var(--border)', marginBottom: 8 }}>
+              Clients paid in multiple statement periods are grouped below (same logic as Sales Reconciliation partial tracking).
+            </div>
+          )}
+          {isLina && splitClients > 0 ? (
+            <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse', marginBottom: 12 }}>
+              <thead>
+                <tr>
+                  {['Client', 'Policy', 'Deposits', 'Net'].map((h) => (
+                    <th key={h} style={{ textAlign: h === 'Net' ? 'right' : 'left', padding: '6px 8px', color: 'var(--text-muted)', fontWeight: 500, fontSize: 11, borderBottom: '0.5px solid var(--border)' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {clientGroups.filter(g => g.deposits.length > 1).map((g, i) => (
+                  <tr key={i} style={{ borderBottom: '0.5px solid var(--border)' }}>
+                    <td style={{ padding: '6px 8px' }}>{g.client}</td>
+                    <td style={{ padding: '6px 8px', fontSize: 11, color: 'var(--text-muted)' }}>{g.policy || '—'}</td>
+                    <td style={{ padding: '6px 8px', fontSize: 11 }}>
+                      {g.deposits.map((d, j) => (
+                        <div key={j}>{d.period}: {fmt(d.amount)}</div>
+                      ))}
+                    </td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 600 }}>{fmt(g.total)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          ) : null}
           <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
             <thead>
               <tr>

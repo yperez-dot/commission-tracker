@@ -1,6 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../api';
 import { formatDate as formatDateUtil } from '../utils/dateFormat';
+import {
+  buildDepositTimeline,
+  expectedSaleCommission,
+  resolveSalePaymentStatus,
+  sumCommissionNet,
+} from '../utils/salesReconPayment';
 import { THEI_DIRECT_AGENTS, isTheiDirectAgent, directAgentsLabel } from '../theiPrincipalAgents';
 import { normName, normalizeCarrier, carriersMatch } from '../matchingNormalize';
 import { fetchAllPages, truncationMessage } from '../fetchAllPages';
@@ -176,19 +182,6 @@ function monthsSinceEnrollment(effectiveDate, paymentPeriod) {
   }
 }
 
-// Calculate expected commission based on declining schedule
-// Medicare Advantage: $347 initial, declines $28.92/month, floors at $28.92 renewal
-function expectedCommission(months) {
-  const initial = 347;
-  const decline = 28.92;
-  const floor = 28.92; // renewal rate
-  
-  if (months === 0) return initial; // Month 0 = enrollment month
-  
-  const calculated = initial - (months * decline);
-  return Math.max(calculated, floor);
-}
-
 // Find ALL matching commissions for a sale and return net amount
 // Period-agnostic: If commission exists for client + carrier, count as Paid
 // Returns object with all matches and net commission (e.g., Karl Brown: 6 records = +$352.47 net)
@@ -241,14 +234,15 @@ function findMatch(sale, commissions, manualPayments = []) {
   if (matches.length === 0) {
     return null;  // No matches found
   }
-  
-  // Calculate net commission (sum of all matching records)
-  // Example: Karl Brown (UHC 933986247) has 6 records:
-  //   Sale: +$318.09, +$347.00, -$347.00
-  //   Override: +$75.00, -$75.00, +$34.38
-  //   Net: +$352.47 (not -$28.91 from partial data)
-  const netCommission = matches.reduce((sum, m) => sum + parseFloat(m.commission || 0), 0);
-  const hasChargeback = matches.some(m => parseFloat(m.commission || 0) < 0);
+
+  const saleMatches = matches.filter(m => {
+    const c = (m.classification || '').toLowerCase();
+    return !c.includes('override');
+  });
+  const netMatches = saleMatches.length ? saleMatches : matches;
+
+  const netCommission = sumCommissionNet(netMatches, { saleSideOnly: false });
+  const hasChargeback = netMatches.some(m => parseFloat(m.commission || 0) < 0);
   
   // Determine classification based on net
   let classification;
@@ -263,13 +257,101 @@ function findMatch(sale, commissions, manualPayments = []) {
   // Return first match as primary (for display compatibility)
   // but include full matches array + net for detailed views
   return {
-    ...matches[0],  // Spread first match for backward compatibility
+    ...netMatches[0],
     allMatches: matches,
-    matchCount: matches.length,
+    saleMatches: netMatches,
+    matchCount: netMatches.length,
     netCommission,
     hasChargeback,
     classification
   };
+}
+
+function DepositTimeline({ deposits }) {
+  if (!deposits?.length) return <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>—</span>;
+  return (
+    <div style={{ fontSize: 11, lineHeight: 1.5 }}>
+      {deposits.map((d, i) => (
+        <div key={i} style={{ color: d.amount < 0 ? 'var(--red)' : 'var(--text-muted)' }}>
+          {d.period}: {fmt(d.amount)}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ExpectedCell({ meta, amount }) {
+  const kind = meta?.kind;
+  if (kind === 'med_supp') {
+    if (amount == null) {
+      return (
+        <td style={{ textAlign: 'right', fontSize: 12, color: 'var(--text-muted)' }}>
+          —
+          <div style={{ fontSize: 10, marginTop: 2, lineHeight: 1.35 }}>
+            {meta?.note || 'Med Supp (need plan/state)'}
+          </div>
+        </td>
+      );
+    }
+    return (
+      <td style={{ textAlign: 'right', fontSize: 12, color: 'var(--text-muted)' }}>
+        {fmt(amount)}
+        <div style={{ fontSize: 10, marginTop: 2, lineHeight: 1.35 }}>
+          {meta?.medSupp?.tableKey
+            ? `Med Supp Y1 · ${meta.medSupp.tableKey} · Plan ${meta.medSupp.plan || '?'}`
+            : 'Med Supp Year 1'}
+        </div>
+      </td>
+    );
+  }
+  if (kind === 'pdp') {
+    return (
+      <td style={{ textAlign: 'right', fontSize: 12, color: 'var(--text-muted)' }}>
+        —
+        <div style={{ fontSize: 10, marginTop: 2, lineHeight: 1.35 }}>PDP (no MA $347)</div>
+      </td>
+    );
+  }
+  const prorated = meta?.prorated;
+  return (
+    <td style={{ textAlign: 'right', fontSize: 12, color: 'var(--text-muted)' }}>
+      {fmt(amount)}
+      <div style={{ fontSize: 10, marginTop: 2, lineHeight: 1.35 }}>
+        {prorated
+          ? `MA prorated ${meta.remainingMonths}/12 mo`
+          : meta?.kind === 'renewal'
+            ? 'MA renewal floor'
+            : 'MA full year (Jan)'}
+      </div>
+    </td>
+  );
+}
+
+function PaymentStatusBadge({ status }) {
+  const styles = {
+    unpaid: { bg: '#FEF3C7', color: '#92400E', label: 'Unpaid' },
+    partial: { bg: '#FEF9C3', color: '#854D0E', label: 'Partial' },
+    paid: { bg: '#EAF3DE', color: '#3B6D11', label: 'Paid in full' },
+    overpaid: { bg: '#E6F1FB', color: '#0C447C', label: 'Overpaid' },
+    manual: { bg: '#E6F1FB', color: '#0C447C', label: 'Marked paid' },
+    reversed: { bg: '#F3F4F6', color: '#374151', label: 'Net zero' },
+  };
+  const s = styles[status?.id] || styles.unpaid;
+  return (
+    <span
+      style={{
+        background: s.bg,
+        color: s.color,
+        borderRadius: 4,
+        padding: '2px 8px',
+        fontSize: 10,
+        fontWeight: 600,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {status?.label || s.label}
+    </span>
+  );
 }
 
 export default function Reconciliation({ user }) {
@@ -363,37 +445,59 @@ export default function Reconciliation({ user }) {
   // Match sales to commissions
   const matches = filteredSales.map(sale => {
     const commission = findMatch(sale, commissions, manualPayments);
-    
-    // Calculate expected commission based on months since enrollment
-    // Use commission period if available, otherwise use current date
+
     const period = commission?.payment_period || new Date().toISOString().slice(0, 7).replace('-', '');
     const months = monthsSinceEnrollment(sale.effective_date, period);
-    const expected = expectedCommission(months);
-    
+    const expect = expectedSaleCommission(sale);
+    const expected = expect.amount;
+    const actualNet = commission
+      ? (commission.isManual
+          ? (expected != null ? expected : (commission.netCommission || 0))
+          : (commission.netCommission ?? parseFloat(commission.commission || 0)))
+      : 0;
+    const deposits = commission?.isManual
+      ? []
+      : buildDepositTimeline(commission?.saleMatches || commission?.allMatches || []);
+    const paymentStatus = resolveSalePaymentStatus({
+      expected,
+      actualNet,
+      isManual: !!commission?.isManual,
+      fullYear: expect.fullYear,
+    });
+
     return {
       sale,
       commission,
       expectedCommission: expected,
+      expectedMeta: expect,
       monthsSinceEnrollment: months,
-      actualCommission: commission ? parseFloat(commission.commission || 0) : 0,
-      difference: commission ? (parseFloat(commission.commission || 0) - expected) : -expected
+      actualCommission: actualNet,
+      difference: expected != null ? actualNet - expected : 0,
+      deposits,
+      paymentStatus,
     };
   });
 
-  const paid = matches.filter(m => m.commission);
-  const unpaid = matches.filter(m => !m.commission);
+  const unpaid = matches.filter(m => m.paymentStatus.id === 'unpaid');
+  const partial = matches.filter(m => m.paymentStatus.id === 'partial');
+  const paid = matches.filter(m =>
+    ['paid', 'overpaid', 'manual', 'reversed'].includes(m.paymentStatus.id)
+  );
 
   // Apply filters
   let filteredPaid = paid;
+  let filteredPartial = partial;
   let filteredUnpaid = unpaid;
 
   if (filterAgent !== 'all') {
     filteredPaid = paid.filter(m => (m.sale.agent_name || m.sale.agent) === filterAgent);
+    filteredPartial = partial.filter(m => (m.sale.agent_name || m.sale.agent) === filterAgent);
     filteredUnpaid = unpaid.filter(m => (m.sale.agent_name || m.sale.agent) === filterAgent);
   }
 
   if (filterCarrier !== 'all') {
     filteredPaid = filteredPaid.filter(m => normalizeCarrier(m.sale.carrier) === normalizeCarrier(filterCarrier));
+    filteredPartial = filteredPartial.filter(m => normalizeCarrier(m.sale.carrier) === normalizeCarrier(filterCarrier));
     filteredUnpaid = filteredUnpaid.filter(m => normalizeCarrier(m.sale.carrier) === normalizeCarrier(filterCarrier));
   }
 
@@ -437,22 +541,21 @@ export default function Reconciliation({ user }) {
     };
     
     filteredPaid = filteredPaid.filter(m => filterPeriodMonth(m.sale.effective_date));
+    filteredPartial = filteredPartial.filter(m => filterPeriodMonth(m.sale.effective_date));
     filteredUnpaid = filteredUnpaid.filter(m => filterPeriodMonth(m.sale.effective_date));
   }
 
   // Apply search term
   if (searchTerm.trim()) {
     const search = searchTerm.toLowerCase();
-    filteredPaid = filteredPaid.filter(m => 
+    const matchSearch = (m) =>
       (m.sale.client_name || '').toLowerCase().includes(search) ||
       (m.sale.agent || '').toLowerCase().includes(search) ||
-      (m.sale.carrier || '').toLowerCase().includes(search)
-    );
-    filteredUnpaid = filteredUnpaid.filter(m => 
-      (m.sale.client_name || '').toLowerCase().includes(search) ||
-      (m.sale.agent || '').toLowerCase().includes(search) ||
-      (m.sale.carrier || '').toLowerCase().includes(search)
-    );
+      (m.sale.carrier || '').toLowerCase().includes(search);
+
+    filteredPaid = filteredPaid.filter(matchSearch);
+    filteredPartial = filteredPartial.filter(matchSearch);
+    filteredUnpaid = filteredUnpaid.filter(matchSearch);
   }
 
   // Sort data
@@ -492,6 +595,7 @@ export default function Reconciliation({ user }) {
   };
 
   filteredPaid = sortData(filteredPaid);
+  filteredPartial = sortData(filteredPartial);
   filteredUnpaid = sortData(filteredUnpaid);
 
   // Handle column header click for sorting
@@ -523,11 +627,14 @@ export default function Reconciliation({ user }) {
     if (tab === 'paid') {
       dataToExport = filteredPaid;
       filename = `reconciliation-paid-${new Date().toISOString().split('T')[0]}.csv`;
+    } else if (tab === 'partial') {
+      dataToExport = filteredPartial;
+      filename = `reconciliation-partial-${new Date().toISOString().split('T')[0]}.csv`;
     } else if (tab === 'unpaid') {
       dataToExport = filteredUnpaid;
       filename = `reconciliation-unpaid-${new Date().toISOString().split('T')[0]}.csv`;
     } else {
-      dataToExport = [...filteredPaid, ...filteredUnpaid];
+      dataToExport = [...filteredUnpaid, ...filteredPartial, ...filteredPaid];
       filename = `reconciliation-all-${new Date().toISOString().split('T')[0]}.csv`;
     }
     
@@ -537,32 +644,30 @@ export default function Reconciliation({ user }) {
     }
     
     // Build CSV
-    const headers = ['Agent', 'Client', 'Carrier', 'Policy Type', 'Effective Date', 'Status', 'Months Since Enrollment', 'Expected Commission', 'Actual Commission', 'Difference', 'Paid'];
+    const headers = [
+      'Agent', 'Client', 'Carrier', 'Policy Type', 'Effective Date', 'BOB Status',
+      'Payment Status', 'Expected (prorated NB)', 'Full-year $347', 'Prorated months',
+      'Actual (net)', 'Remaining vs prorated', 'Deposit Count', 'Deposits',
+    ];
     const rows = dataToExport.map(m => {
       const agentName = m.sale.agent_name || m.sale.agent || '—';
       const clientName = m.sale.client_name || '—';
       const carrier = m.sale.carrier || '—';
       const policyType = m.sale.policy_type || '—';
       const effectiveDate = m.sale.effective_date ? formatDate(m.sale.effective_date) : '—';
-      const status = resolveStatus(m.sale);
-      const monthsSince = m.monthsSinceEnrollment || 0;
-      const expected = m.expectedCommission ? m.expectedCommission.toFixed(2) : '0.00';
-      const actual = m.actualCommission ? m.actualCommission.toFixed(2) : '0.00';
-      const diff = m.difference ? m.difference.toFixed(2) : '0.00';
-      const paid = m.commission ? 'Yes' : 'No';
-      
+      const bobStatus = resolveStatus(m.sale);
+      const payStatus = m.paymentStatus?.label || '—';
+      const expected = (m.expectedCommission || 0).toFixed(2);
+      const fullYear = (m.expectedMeta?.fullYear || 347).toFixed(2);
+      const months = m.expectedMeta?.remainingMonths ?? '';
+      const actual = (m.actualCommission || 0).toFixed(2);
+      const remaining = Math.max(0, (m.expectedCommission || 0) - (m.actualCommission || 0)).toFixed(2);
+      const depositCount = m.deposits?.length || 0;
+      const deposits = (m.deposits || []).map(d => `${d.period}:${d.amount.toFixed(2)}`).join(' | ');
+
       return [
-        agentName,
-        clientName,
-        carrier,
-        policyType,
-        effectiveDate,
-        status,
-        monthsSince,
-        expected,
-        actual,
-        diff,
-        paid
+        agentName, clientName, carrier, policyType, effectiveDate, bobStatus,
+        payStatus, expected, fullYear, months, actual, remaining, depositCount, deposits,
       ].map(val => `"${String(val).replace(/"/g, '""')}"`).join(',');
     });
     
@@ -625,7 +730,7 @@ export default function Reconciliation({ user }) {
     <div>
       <div className="page-header">
         <div className="page-title">Sales Reconciliation</div>
-        <div className="page-sub">Cross-check MedicarePro Sales vs Commission Records</div>
+        <div className="page-sub">Medicare Advantage expected is calendar-prorated ($347 full year). Medicare Supplement: UHC AARP Year-1 by plan/area; HealthSpring/CNHIC from AgentView as-earned (~47% of modal × 12) — not $347.</div>
       </div>
       <div className="page-body">
 
@@ -714,27 +819,33 @@ export default function Reconciliation({ user }) {
           </div>
         ) : (
           <div>
-            {/* KPI Cards - Show only Paid and Unpaid */}
-            <div className="kpi-grid" style={{marginBottom:14, gridTemplateColumns:'repeat(2, 1fr)'}}>
+            {/* KPI Cards */}
+            <div className="kpi-grid" style={{marginBottom:14, gridTemplateColumns:'repeat(3, 1fr)'}}>
               <div className="kpi-card">
-                <div className="kpi-label">⏳ Unpaid</div>
+                <div className="kpi-label">Unpaid</div>
                 <div className="kpi-value red">{filteredUnpaid.length}</div>
-                <div className="kpi-sub">{filteredPaid.length + filteredUnpaid.length > 0 ? ((filteredUnpaid.length / (filteredPaid.length + filteredUnpaid.length)) * 100).toFixed(1) : '0.0'}%</div>
               </div>
               <div className="kpi-card">
-                <div className="kpi-label">✅ Paid</div>
+                <div className="kpi-label">Partial</div>
+                <div className="kpi-value" style={{ color: '#854D0E' }}>{filteredPartial.length}</div>
+                <div className="kpi-sub">Split deposits / short vs expected</div>
+              </div>
+              <div className="kpi-card">
+                <div className="kpi-label">Paid in full</div>
                 <div className="kpi-value green">{filteredPaid.length}</div>
-                <div className="kpi-sub">{filteredPaid.length + filteredUnpaid.length > 0 ? ((filteredPaid.length / (filteredPaid.length + filteredUnpaid.length)) * 100).toFixed(1) : '0.0'}%</div>
               </div>
             </div>
 
             {/* Tabs */}
             <div style={{display:'flex', gap:8, marginBottom:12, borderBottom:'1px solid var(--border)', overflowX:'auto'}}>
               <button style={tabStyle('unpaid')} onClick={() => setTab('unpaid')}>
-                ⏳ Unpaid ({filteredUnpaid.length})
+                Unpaid ({filteredUnpaid.length})
+              </button>
+              <button style={tabStyle('partial')} onClick={() => setTab('partial')}>
+                Partial ({filteredPartial.length})
               </button>
               <button style={tabStyle('paid')} onClick={() => setTab('paid')}>
-                ✅ Paid ({filteredPaid.length})
+                Paid in full ({filteredPaid.length})
               </button>
             </div>
 
@@ -762,7 +873,8 @@ export default function Reconciliation({ user }) {
                           <th onClick={() => handleSort('effective_date')} style={{cursor:'pointer', userSelect:'none'}}>
                             Effective Date{sortIndicator('effective_date')}
                           </th>
-                          <th>Status</th>
+                          <th style={{textAlign:'right'}}>Expected</th>
+                          <th>BOB</th>
                           <th style={{textAlign:'center'}}>Actions</th>
                         </tr>
                       </thead>
@@ -775,6 +887,7 @@ export default function Reconciliation({ user }) {
                             <td style={{fontSize:12, color:'var(--text-muted)'}}>
                               {formatDate(m.sale.effective_date)}
                             </td>
+                            <ExpectedCell meta={m.expectedMeta} amount={m.expectedCommission} />
                             <td>
                               <span className={`badge ${resolveStatus(m.sale) === 'Deceased' || resolveStatus(m.sale) === 'Termed' ? 'badge-red' : 'badge-amber'}`}>
                                 {resolveStatus(m.sale)}
@@ -782,15 +895,65 @@ export default function Reconciliation({ user }) {
                             </td>
                             <td style={{textAlign:'center'}}>
                               {resolveStatus(m.sale) !== 'Deceased' && resolveStatus(m.sale) !== 'Termed' && (
-                                <button 
+                                <button
                                   className="btn btn-sm btn-primary"
                                   onClick={() => handleMarkPaid(m.sale)}
                                   style={{fontSize:11, padding:'4px 10px'}}
                                 >
-                                  💰 Mark Paid
+                                  Mark paid
                                 </button>
                               )}
                             </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Partial Tab */}
+            {tab === 'partial' && (
+              <div className="card" style={{padding:0}}>
+                {filteredPartial.length === 0 ? (
+                  <div className="empty-state">
+                    <div className="empty-title">No partial payments match your filters</div>
+                    <div className="empty-sub">Upload the next carrier statement when the remaining deposit arrives</div>
+                  </div>
+                ) : (
+                  <div className="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Client</th>
+                          <th>Agent</th>
+                          <th>Carrier</th>
+                          <th style={{textAlign:'right'}}>Expected</th>
+                          <th style={{textAlign:'right'}}>Received (net)</th>
+                          <th style={{textAlign:'right'}}>Still owed</th>
+                          <th>Deposits</th>
+                          <th>Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredPartial.map((m, i) => (
+                          <tr key={i}>
+                            <td style={{fontWeight:500}}>{m.sale.client_name}</td>
+                            <td>{m.sale.agent_name || m.sale.agent || '—'}</td>
+                            <td style={{fontSize:12}}>{m.sale.carrier}</td>
+                            <ExpectedCell meta={m.expectedMeta} amount={m.expectedCommission} />
+                            <td style={{textAlign:'right', fontWeight:600, color:'#854D0E'}}>
+                              {fmt(m.actualCommission)}
+                              {m.deposits.length > 1 && (
+                                <div style={{fontSize:10, marginTop:2}}>{m.deposits.length} deposits</div>
+                              )}
+                            </td>
+                            <td style={{textAlign:'right', fontWeight:600, color:'var(--red)'}}>
+                              {fmt(m.paymentStatus.remaining ?? Math.max(0, m.expectedCommission - m.actualCommission))}
+                            </td>
+                            <td><DepositTimeline deposits={m.deposits} /></td>
+                            <td><PaymentStatusBadge status={m.paymentStatus} /></td>
                           </tr>
                         ))}
                       </tbody>
@@ -805,7 +968,7 @@ export default function Reconciliation({ user }) {
               <div className="card" style={{padding:0}}>
                 {filteredPaid.length === 0 ? (
                   <div className="empty-state">
-                    <div className="empty-title">No paid sales match your filters</div>
+                    <div className="empty-title">No paid-in-full sales match your filters</div>
                   </div>
                 ) : (
                   <div className="table-wrap">
@@ -825,9 +988,10 @@ export default function Reconciliation({ user }) {
                             Effective Date{sortIndicator('effective_date')}
                           </th>
                           <th style={{textAlign:'right'}}>Expected</th>
-                          <th style={{textAlign:'right'}}>Actual</th>
+                          <th style={{textAlign:'right'}}>Actual (net)</th>
                           <th style={{textAlign:'right'}}>Difference</th>
-                          <th>Payment Period</th>
+                          <th>Deposits</th>
+                          <th>Status</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -839,103 +1003,19 @@ export default function Reconciliation({ user }) {
                             <td style={{fontSize:12, color:'var(--text-muted)'}}>
                               {formatDate(m.sale.effective_date)}
                             </td>
-                            <td style={{textAlign:'right', fontSize:12, color:'var(--text-muted)'}}>
-                              {fmt(m.expectedCommission)}
-                              <div style={{fontSize:10, marginTop:2}}>Month {m.monthsSinceEnrollment}</div>
-                            </td>
-                            <td style={{textAlign:'right', fontWeight:600, color: m.actualCommission >= m.expectedCommission ? 'var(--green)' : 'var(--red)'}}>
-                              {m.commission.isManual ? (
-                                <span>
-                                  Manual
-                                  <span className="badge badge-blue" style={{marginLeft:6, fontSize:10}}>
-                                    ✓ Marked
-                                  </span>
-                                </span>
-                              ) : (
-                                fmt(m.actualCommission)
-                              )}
+                            <ExpectedCell meta={m.expectedMeta} amount={m.expectedCommission} />
+                            <td style={{textAlign:'right', fontWeight:600, color: m.actualCommission >= m.expectedCommission ? 'var(--green)' : 'var(--text)'}}>
+                              {m.commission?.isManual ? 'Manual' : fmt(m.actualCommission)}
                             </td>
                             <td style={{
-                              textAlign:'right', 
+                              textAlign:'right',
                               fontWeight:500,
                               color: m.difference >= 0 ? 'var(--green)' : 'var(--red)'
                             }}>
                               {m.difference >= 0 ? '+' : ''}{fmt(Math.abs(m.difference))}
-                              {m.difference < -1 && (
-                                <div style={{fontSize:10, marginTop:2}}>⚠️ Short payment</div>
-                              )}
                             </td>
-                            <td style={{fontSize:12}}>
-                              {m.commission.isManual ? (
-                                m.commission.payment_date || '—'
-                              ) : (
-                                m.commission.payment_period || '—'
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Unpaid Tab */}
-            {tab === 'unpaid' && (
-              <div className="card" style={{padding:0}}>
-                {filteredUnpaid.length === 0 ? (
-                  <div className="empty-state">
-                    <div className="empty-icon">🎉</div>
-                    <div className="empty-title">All sales are paid!</div>
-                    <div className="empty-sub">No unpaid sales match your filters</div>
-                  </div>
-                ) : (
-                  <div className="table-wrap">
-                    <table>
-                      <thead>
-                        <tr>
-                          <th onClick={() => handleSort('client')} style={{cursor:'pointer', userSelect:'none'}}>
-                            Client{sortIndicator('client')}
-                          </th>
-                          <th onClick={() => handleSort('agent')} style={{cursor:'pointer', userSelect:'none'}}>
-                            Agent{sortIndicator('agent')}
-                          </th>
-                          <th onClick={() => handleSort('carrier')} style={{cursor:'pointer', userSelect:'none'}}>
-                            Carrier{sortIndicator('carrier')}
-                          </th>
-                          <th onClick={() => handleSort('effective_date')} style={{cursor:'pointer', userSelect:'none'}}>
-                            Effective Date{sortIndicator('effective_date')}
-                          </th>
-                          <th>Status</th>
-                          <th style={{textAlign:'center'}}>Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredUnpaid.map((m, i) => (
-                          <tr key={i}>
-                            <td style={{fontWeight:500}}>{m.sale.client_name}</td>
-                            <td>{m.sale.agent_name || m.sale.agent || '—'}</td>
-                            <td style={{fontSize:12}}>{m.sale.carrier}</td>
-                            <td style={{fontSize:12, color:'var(--text-muted)'}}>
-                              {formatDate(m.sale.effective_date)}
-                            </td>
-                            <td>
-                              <span className={`badge ${resolveStatus(m.sale) === 'Deceased' || resolveStatus(m.sale) === 'Termed' ? 'badge-red' : 'badge-amber'}`}>
-                                {resolveStatus(m.sale)}
-                              </span>
-                            </td>
-                            <td style={{textAlign:'center'}}>
-                              {resolveStatus(m.sale) !== 'Deceased' && resolveStatus(m.sale) !== 'Termed' && (
-                                <button 
-                                  className="btn btn-sm btn-primary"
-                                  onClick={() => handleMarkPaid(m.sale)}
-                                  style={{fontSize:11, padding:'4px 10px'}}
-                                >
-                                  💰 Mark Paid
-                                </button>
-                              )}
-                            </td>
+                            <td><DepositTimeline deposits={m.deposits} /></td>
+                            <td><PaymentStatusBadge status={m.paymentStatus} /></td>
                           </tr>
                         ))}
                       </tbody>
