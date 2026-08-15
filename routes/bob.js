@@ -9,10 +9,12 @@ const { requireAuth, requireAdmin } = require('./auth');
 const { normalizeAgentName } = require('./normalize');
 const {
   buildMissingRenewalRows,
+  buildMissingRenewalsPeriodOptions,
   isTheiPrincipalAgent,
   normName,
   normCarrier,
   normPeriod,
+  MIN_STATEMENT_MONTH_RECORDS,
 } = require('../src/missingRenewalsLogic');
 const UPLOADS_DIR = path.join('/tmp', 'uploads');
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
@@ -861,6 +863,29 @@ router.put('/policy-status', requireAuth, async (req, res) => {
   }
 });
 
+// ─── GET /api/bob/missing-renewals-periods ─────────────────────────────────
+// Statement months with commission volume. Defaults to latest viable month
+// (>= MIN_STATEMENT_MONTH_RECORDS) so stub periods (Aug/Sep with 1–2 rows)
+// do not make every renewal look missing.
+router.get('/missing-renewals-periods', requireAuth, async (req, res) => {
+  try {
+    const pool = getPool();
+    const result = await pool.query(
+      `SELECT payment_period, COUNT(*)::int AS record_count
+       FROM commission_records
+       WHERE payment_period IS NOT NULL
+         AND TRIM(payment_period) <> ''
+         AND payment_period <> 'Unknown'
+       GROUP BY payment_period`
+    );
+    const payload = buildMissingRenewalsPeriodOptions(result.rows);
+    res.json(payload);
+  } catch (err) {
+    console.error('[BOB] missing-renewals-periods error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── GET /api/bob/missing-renewals-check ───────────────────────────────────
 // Proper Missing Renewals engine: Yahoska/Katy active BOB × period commissions.
 // Replaces fragile client-side /records?limit=10000 matching.
@@ -961,6 +986,9 @@ router.get('/missing-renewals-check', requireAuth, async (req, res) => {
       heldKeySet,
       policyStatusMap,
     });
+
+    payload.sparsePeriod = periodRecords.length < MIN_STATEMENT_MONTH_RECORDS;
+    payload.minStatementRecords = MIN_STATEMENT_MONTH_RECORDS;
 
     res.json(payload);
   } catch (err) {

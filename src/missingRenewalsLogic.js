@@ -153,6 +153,43 @@ function isHeldClassification(classification) {
   return String(classification || '').toLowerCase() === 'held';
 }
 
+/** Stub months (1–2 stray rows) are not real statement months for renewals. */
+const MIN_STATEMENT_MONTH_RECORDS = 50;
+
+/**
+ * Collapse raw payment_period strings into YYYYMM counts and pick a default.
+ * @param {Array<{ payment_period?: string, period?: string, record_count?: number, count?: number, n?: number }>} rows
+ * @returns {{ periods: Array<{ period: string, label: string, recordCount: number, viable: boolean }>, defaultPeriod: string|null }}
+ */
+function buildMissingRenewalsPeriodOptions(rows) {
+  const counts = new Map();
+  for (const row of rows || []) {
+    const raw = row.payment_period || row.period;
+    const period = normPeriod(raw);
+    if (!period) continue;
+    const n = Number(row.record_count ?? row.count ?? row.n ?? 0) || 0;
+    counts.set(period, (counts.get(period) || 0) + n);
+  }
+
+  const periods = [...counts.entries()]
+    .map(([period, recordCount]) => ({
+      period,
+      label: formatPeriodLabel(period),
+      recordCount,
+      viable: recordCount >= MIN_STATEMENT_MONTH_RECORDS,
+    }))
+    .sort((a, b) => b.period.localeCompare(a.period));
+
+  const viable = periods.filter((p) => p.viable);
+  const defaultPeriod = viable.length
+    ? viable[0].period
+    : periods.length
+      ? [...periods].sort((a, b) => b.recordCount - a.recordCount)[0].period
+      : null;
+
+  return { periods, defaultPeriod, minRecords: MIN_STATEMENT_MONTH_RECORDS };
+}
+
 /**
  * @param {object} opts
  * @param {Array} opts.bobClients - active BOB rows (already scoped)
@@ -294,7 +331,9 @@ module.exports = {
   nameVariants,
   namesLooseMatch,
   buildMissingRenewalRows,
+  buildMissingRenewalsPeriodOptions,
   isTheiPrincipalAgent,
   monthsBetweenPeriods,
   formatPeriodLabel,
+  MIN_STATEMENT_MONTH_RECORDS,
 };

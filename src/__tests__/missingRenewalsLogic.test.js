@@ -6,6 +6,7 @@ const {
   nameVariants,
   namesLooseMatch,
   buildMissingRenewalRows,
+  buildMissingRenewalsPeriodOptions,
   monthsBetweenPeriods,
   isTheiPrincipalAgent,
 } = require('../missingRenewalsLogic');
@@ -137,5 +138,17 @@ describe('missingRenewalsLogic', () => {
     });
     expect(result.rows[0].isMissing).toBe(true);
     expect(result.rows[0].isHeld).toBe(true);
+  });
+
+  test('buildMissingRenewalsPeriodOptions skips stub months for default', () => {
+    const { periods, defaultPeriod } = buildMissingRenewalsPeriodOptions([
+      { payment_period: '202609', record_count: 2 },
+      { payment_period: '202608', record_count: 1 },
+      { payment_period: '202607', record_count: 570 },
+      { payment_period: '202606', record_count: 744 },
+    ]);
+    expect(defaultPeriod).toBe('202607');
+    expect(periods.find((p) => p.period === '202609').viable).toBe(false);
+    expect(periods.find((p) => p.period === '202607').viable).toBe(true);
   });
 });
