@@ -447,7 +447,9 @@ function isNHPFile(filename) {
   return f.includes('the_health_experts_insurance_statement') ||
     f.includes('the_health_experst_insurance') ||
     (f.includes('the_health_experts') && f.includes('statement')) ||
-    (f.includes('yahoska') && f.includes('katy') && f.includes('statement'));
+    (f.includes('yahoska') && f.includes('katy') && f.includes('statement')) ||
+    (f.includes('nhp') && f.includes('commission') && f.includes('tailored')) ||
+    (f.includes('nhp_commission_report'));
 }
 
 function isMolinaACAFile(filename) {
@@ -1523,15 +1525,31 @@ function parseNHPRows(wb, uploadPeriod, filename = '') {
     cycleDate: tailoredMeta.paymentStatementDate,
   });
   let headerRow = -1;
-  for (let r = range.s.r; r <= Math.min(range.s.r + 20, range.e.r); r++) {
+  for (let r = range.s.r; r <= Math.min(range.s.r + 40, range.e.r); r++) {
+    let hasOverride = false;
+    let hasLob = false;
+    let hasAgentName = false;
+    let hasCommClass = false;
+    let hasCarrierStatement = false;
     for (let c = range.s.c; c <= range.e.c; c++) {
       const cell = ws[XLSX.utils.encode_cell({ r, c })];
-      if (cell && String(cell.v || '').toLowerCase().trim() === 'override') {
-        headerRow = r;
-        break;
-      }
+      const h = String(cell?.v || '').toLowerCase().trim();
+      if (!h) continue;
+      if (h === 'override') hasOverride = true;
+      if (h === 'lob') hasLob = true;
+      if (h.includes('agent name')) hasAgentName = true;
+      if (h.includes('comm class')) hasCommClass = true;
+      if (h.includes('carrier') && h.includes('statement')) hasCarrierStatement = true;
     }
-    if (headerRow >= 0) break;
+    // Standard NHP Medicare sheets have an Override column.
+    // Tailored ACA (Jill Taylor) commission-only sheets do not — detect via LOB + agent/comm headers.
+    if (
+      hasOverride ||
+      (hasLob && (hasAgentName || hasCommClass || hasCarrierStatement))
+    ) {
+      headerRow = r;
+      break;
+    }
   }
   if (headerRow < 0) return records;
   
@@ -1616,10 +1634,16 @@ function parseNHPRows(wb, uploadPeriod, filename = '') {
     const isCommissionRow = commClassLower.includes('commission') || commTypeLower.includes('commission');
     const isOverrideRow = commClassLower.includes('override') || commTypeLower.includes('override');
     
-    // Get the dollar amount - handle shifted columns
-    const commissionAmount = commissionIdx >= 0 ? (parseFloat(row[commissionIdx + shift]) || 0) : 0;
-    const overrideAmount = overrideIdx >= 0 ? (parseFloat(row[overrideIdx + shift]) || 0) : 0;
-    const feeAmount = feeIdx >= 0 ? (parseFloat(row[feeIdx + shift]) || 0) : 0;
+    // Get the dollar amount - handle shifted columns and "$27.00" strings from CSV
+    const parseAmt = (v) => {
+      if (v == null || v === '') return 0;
+      if (typeof v === 'number' && Number.isFinite(v)) return v;
+      const n = parseFloat(String(v).replace(/[$,\s]/g, ''));
+      return Number.isFinite(n) ? n : 0;
+    };
+    const commissionAmount = commissionIdx >= 0 ? parseAmt(row[commissionIdx + shift]) : 0;
+    const overrideAmount = overrideIdx >= 0 ? parseAmt(row[overrideIdx + shift]) : 0;
+    const feeAmount = feeIdx >= 0 ? parseAmt(row[feeIdx + shift]) : 0;
     
     const grossCommission = isCommissionRow ? commissionAmount : (isOverrideRow ? overrideAmount : (commissionAmount + overrideAmount + feeAmount));
     
