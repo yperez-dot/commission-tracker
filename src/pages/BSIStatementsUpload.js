@@ -133,6 +133,12 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
                 Records imported: {uploadResult.rowCount ?? uploadResult.recordsImported}
               </div>
             )}
+            {uploadResult.internalDuplicatesRemoved > 0 && (
+              <div style={{ marginTop: 4 }}>
+                Skipped {uploadResult.internalDuplicatesRemoved} exact duplicate line
+                {uploadResult.internalDuplicatesRemoved === 1 ? '' : 's'} within this file
+              </div>
+            )}
             {uploadResult.resolvedRenewalsCount > 0 && (
               <div style={{ marginTop: 8, fontWeight: 500 }}>
                 {uploadResult.resolvedRenewalsCount} chased/pending renewal
