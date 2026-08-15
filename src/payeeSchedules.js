@@ -100,6 +100,27 @@ function isNhpSource(source) {
   return normalizeSource(source) === 'NHP';
 }
 
+/**
+ * Row belongs on THEI — NHP sales (source, payee, or upload filename).
+ * Older uploads sometimes landed as direct_carrier with payee NHP / NHP filename.
+ */
+function isNhpHouseRow(row = {}) {
+  if (isNhpSource(row.source)) return true;
+  if (normalizeSource(row.payee) === 'NHP') return true;
+  const fn = String(row.upload_original_name || row.original_name || '')
+    .toLowerCase()
+    .replace(/[\s()]/g, '_');
+  if (!fn) return false;
+  return (
+    fn.includes('the_health_experts_insurance_statement') ||
+    fn.includes('the_health_experst_insurance') ||
+    (fn.includes('the_health_experts') && fn.includes('statement')) ||
+    (fn.includes('yahoska') && fn.includes('katy')) ||
+    (fn.includes('agency') && fn.includes('statement') && fn.includes('health_experts')) ||
+    /(^|_)nhp(_|$)/.test(fn)
+  );
+}
+
 /** BSI remittance / BSI payee feeds — money BSI pays THEI. */
 function isBsiRemitSource(source) {
   const s = normalizeSource(source);
@@ -126,6 +147,7 @@ module.exports = {
   isAlbaAgentCommission,
   isAgencyOverride,
   isNhpSource,
+  isNhpHouseRow,
   isBsiRemitSource,
   isTheiHouseType,
   normName,

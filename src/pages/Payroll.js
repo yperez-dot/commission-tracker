@@ -509,7 +509,7 @@ function HouseOverridesPanel() {
         <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14, lineHeight: 1.45 }}>
           THEI NHP sales and THEI BSI remittance are separate reports. Marco (Swan) $10 agency peel, and Integrity / CAM / Chris producer shares.
           Lina’s agent production is under <strong>Agent Payouts</strong> — not here.
-          {' '}One period (e.g. January) combines every NHP file for that month — upload each statement NHP sends (same portal filename is OK).
+          {' '}One calendar month = one period (all January NHP commission uploads combine). Open preview to see every source file included.
         </div>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <div>
