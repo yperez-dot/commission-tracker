@@ -22,6 +22,7 @@ const {
 const {
   resolveNhpUploadOriginalName,
 } = require('../src/nhpUploadName');
+const { classifyTHECarrierTransaction } = require('../src/theCarrierStatementClassify');
 let pdfParse;
 try { pdfParse = require('pdf-parse'); } catch(e) { console.log('pdf-parse not installed'); }
 
@@ -1205,12 +1206,11 @@ function parseTHECarrierStatementRows(wb, filename) {
       if (!policyNumber || !isValidClientName(client) || commission === 0) continue;
 
       const transactionType = String(row[transactionIdx] || '').trim();
-      const transactionTypeLower = transactionType.toLowerCase();
-      let classification = 'Agent Commission';
-      if (commission < 0) classification = 'Chargeback';
-      else if (transactionTypeLower.includes('override')) classification = 'Agency Override';
-      else if (transactionTypeLower.includes('new business')) classification = 'New Business';
-      else if (transactionTypeLower.includes('renewal')) classification = 'Renewal';
+      let classification = classifyTHECarrierTransaction({
+        transactionType,
+        commission,
+        carrier,
+      });
 
       const product = String(row[productIdx] || '').trim();
       records.push({
@@ -3952,20 +3952,18 @@ function parseYourFMOXLSXRows(wb) {
     
     if (!policy || !client || client === '') continue;
     
-    let classification;
-    if (commission < 0) {
-      classification = 'Chargeback';
-    } else if (transType.toLowerCase().includes('override')) {
-      classification = 'Agency Override';
-    } else if (transType.toLowerCase().includes('adjustment')) {
-      classification = 'Adjustment';
-    } else {
-      classification = 'Agent Commission';
-    }
-    
     let carrier = 'Humana';
     if (product.toLowerCase().includes('devoted')) carrier = 'Devoted';
-    
+
+    let classification = classifyTHECarrierTransaction({
+      transactionType: transType,
+      commission,
+      carrier,
+    });
+    if (classification === 'Agent Commission' && transType.toLowerCase().includes('adjustment')) {
+      classification = 'Adjustment';
+    }
+
     const planType = derivePlanType(carrier, product, policy, '');
     
     let period = '';
@@ -4801,6 +4799,20 @@ router.get('/uploads', requireAuth, async (req, res) => {
     const pool = getPool();
     const agency = getAgency(req);
     const category = req.query.category; // Filter by category if provided
+
+    // Best-effort: THEI Devoted principal rows mislabeled Agency Override → Agent Commission
+    if (!category || category === 'commission_statement') {
+      try {
+        const { backfillDevotedAgentCommission } = require('../src/theCarrierStatementClassify');
+        const devotedFixed = await backfillDevotedAgentCommission(pool);
+        if (devotedFixed) {
+          console.log(`[uploads] reclassified ${devotedFixed} Devoted Agency Override → Agent Commission`);
+        }
+      } catch (e) {
+        console.warn('[uploads] Devoted agent-commission backfill', e.message);
+      }
+    }
+
     let query, params = [];
     
     if (category === 'bsi_statement') {
