@@ -30,6 +30,14 @@ function formatPeriodLabel(p) {
   if (!p) return p;
   const s = String(p).trim();
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  // NHP payment-cycle days: 20260615 → "Jun 15, 2026 cycle"
+  if (s.match(/^\d{8}$/)) {
+    const m = parseInt(s.slice(4, 6), 10);
+    const d = parseInt(s.slice(6, 8), 10);
+    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
+      return `${months[m - 1]} ${d}, ${s.slice(0, 4)} cycle`;
+    }
+  }
   if (s.match(/^\d{6}$/)) return months[parseInt(s.slice(4, 6), 10) - 1] + ' ' + s.slice(0, 4);
   if (s.match(/^\d{2}\/\d{4}$/)) return months[parseInt(s.slice(0, 2), 10) - 1] + ' ' + s.slice(3);
   if (s.match(/^\d{2}\/\d{2}\/\d{4}$/)) return months[parseInt(s.slice(0, 2), 10) - 1] + ' ' + s.slice(6);
@@ -509,7 +517,7 @@ function HouseOverridesPanel() {
         <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14, lineHeight: 1.45 }}>
           THEI NHP sales and THEI BSI remittance are separate reports. Marco (Swan) $10 agency peel, and Integrity / CAM / Chris producer shares.
           Lina’s agent production is under <strong>Agent Payouts</strong> — not here.
-          {' '}One calendar month = one period (all January NHP commission uploads combine). Open preview to see every source file included.
+          {' '}NHP periods are <strong>payment cycles</strong> (deposit/statement batch), not coverage month — e.g. May 30 vs Jun 15 are separate. Rename files with the cycle date when possible (`…_2026-06-15.xlsx`).
         </div>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <div>
