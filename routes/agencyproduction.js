@@ -679,6 +679,71 @@ router.get('/uploads', requireAuth, async (req, res) => {
   }
 });
 
+/**
+ * GET /api/agency-production/uploads/:id/export?format=xlsx|csv
+ */
+router.get('/uploads/:id/export', requireAuth, async (req, res) => {
+  try {
+    const {
+      sendTabularExport,
+      AGENCY_PRODUCTION_EXPORT_COLUMNS,
+    } = require('../src/uploadDataExport');
+    const pool = getPool();
+    const uploadId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(uploadId)) {
+      return res.status(400).json({ error: 'Invalid upload id' });
+    }
+    const uploadResult = await pool.query(
+      `SELECT id, filename, carrier, upload_batch, uploaded_at
+       FROM agency_production_uploads WHERE id = $1`,
+      [uploadId]
+    );
+    if (!uploadResult.rows.length) {
+      return res.status(404).json({ error: 'Upload not found' });
+    }
+    const upload = uploadResult.rows[0];
+    let records = await pool.query(
+      `SELECT agent_name, client_name, carrier, plan_name, policy_type, policy_number,
+              effective_date, status, upload_batch
+       FROM agency_production
+       WHERE upload_id = $1
+       ORDER BY id`,
+      [uploadId]
+    );
+    if (!records.rows.length) {
+      // Legacy rows before upload_id backfill
+      const uploadTime = new Date(upload.uploaded_at);
+      const beforeTime = new Date(uploadTime.getTime() - 5 * 60 * 1000);
+      const afterTime = new Date(uploadTime.getTime() + 5 * 60 * 1000);
+      records = await pool.query(
+        `SELECT agent_name, client_name, carrier, plan_name, policy_type, policy_number,
+                effective_date, status, upload_batch
+         FROM agency_production
+         WHERE upload_id IS NULL
+           AND carrier = $1
+           AND upload_batch = $2
+           AND uploaded_at >= $3
+           AND uploaded_at <= $4
+         ORDER BY id`,
+        [upload.carrier, upload.upload_batch, beforeTime, afterTime]
+      );
+    }
+    if (!records.rows.length) {
+      return res.status(404).json({ error: 'No production records found for this upload' });
+    }
+    return sendTabularExport(res, {
+      rows: records.rows,
+      columns: AGENCY_PRODUCTION_EXPORT_COLUMNS,
+      originalName: upload.filename || `${upload.carrier}_${upload.upload_batch}`,
+      format: req.query.format,
+      sheetName: 'Agency Production',
+    });
+  } catch (err) {
+    console.error('[agency-production] upload export', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // DELETE /api/agency-production/upload/:id - Delete a single upload
 router.delete('/upload/:id', requireAuth, requireAdmin, async (req, res) => {
   try {

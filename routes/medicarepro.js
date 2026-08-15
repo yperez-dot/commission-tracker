@@ -341,6 +341,52 @@ router.get('/uploads', requireAuth, async (req, res) => {
   }
 });
 
+/**
+ * GET /api/medicarepro/uploads/:id/export?format=xlsx|csv
+ */
+router.get('/uploads/:id/export', requireAuth, async (req, res) => {
+  try {
+    const {
+      sendTabularExport,
+      MEDICAREPRO_EXPORT_COLUMNS,
+    } = require('../src/uploadDataExport');
+    const pool = getPool();
+    const uploadId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(uploadId)) {
+      return res.status(400).json({ error: 'Invalid upload id' });
+    }
+    const uploadResult = await pool.query(
+      `SELECT id, filename, upload_batch FROM medicarepro_uploads WHERE id = $1`,
+      [uploadId]
+    );
+    if (!uploadResult.rows.length) {
+      return res.status(404).json({ error: 'Upload not found' });
+    }
+    const upload = uploadResult.rows[0];
+    const records = await pool.query(
+      `SELECT client_name, agent_name, carrier, policy_type, plan_name, policy_number,
+              effective_date, status, upload_batch
+       FROM medicarepro_sales
+       WHERE upload_batch = $1
+       ORDER BY id`,
+      [upload.upload_batch]
+    );
+    if (!records.rows.length) {
+      return res.status(404).json({ error: 'No sales records found for this upload' });
+    }
+    return sendTabularExport(res, {
+      rows: records.rows,
+      columns: MEDICAREPRO_EXPORT_COLUMNS,
+      originalName: upload.filename || upload.upload_batch,
+      format: req.query.format,
+      sheetName: 'MedicarePro Sales',
+    });
+  } catch (err) {
+    console.error('[medicarepro] upload export', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 // DELETE /api/medicarepro/batch/:batch - Delete a batch and all its records
 router.delete('/batch/:batch', requireAuth, requireAdmin, async (req, res) => {
   try {

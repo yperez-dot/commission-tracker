@@ -9,6 +9,7 @@ import {
 } from '../utils/uploadDestination';
 import { setPendingUpload, takePendingUpload } from '../utils/pendingUpload';
 import { UploadPageShell, UploadDropZone, UploadAlert, UploadHistoryCard } from '../components/UploadPageLayout';
+import { commissionUploadExportPath, exportUploadFile } from '../utils/exportUpload';
 
 export default function BSIStatementsUpload({ user, onNavigate }) {
   const [uploads, setUploads] = useState([]);
@@ -17,6 +18,7 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
   const [error, setError] = useState('');
   const [dragOver, setDragOver] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
+  const [exportingId, setExportingId] = useState(null);
   const [routeConfirm, setRouteConfirm] = useState(null);
 
   const loadUploads = useCallback(async () => {
@@ -78,6 +80,22 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
       console.error(e);
     } finally {
       setDeletingId(null);
+    }
+  }
+
+  async function exportUpload(u) {
+    if (!u?.id) return;
+    setExportingId(u.id);
+    setError('');
+    try {
+      await exportUploadFile({
+        path: commissionUploadExportPath(u.id, 'xlsx'),
+        fallbackName: `${String(u.original_name || 'bsi_statement').replace(/\.[^.]+$/, '')}_export.xlsx`,
+      });
+    } catch (e) {
+      setError(e.message || 'Export failed');
+    } finally {
+      setExportingId(null);
     }
   }
 
@@ -258,16 +276,26 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
                       {u.row_count || 0}
                     </td>
                     <td style={{ padding: 12, textAlign: 'right' }}>
-                      {user.role === 'admin' && (
+                      <div style={{ display: 'inline-flex', gap: 6 }}>
                         <button
-                          onClick={() => deleteUpload(u.id)}
-                          disabled={deletingId === u.id}
-                          className="btn btn-danger"
+                          onClick={() => exportUpload(u)}
+                          disabled={exportingId === u.id}
+                          className="btn"
                           style={{ fontSize: 12, padding: '4px 12px' }}
                         >
-                          {deletingId === u.id ? 'Deleting...' : 'Delete'}
+                          {exportingId === u.id ? 'Exporting...' : 'Export'}
                         </button>
-                      )}
+                        {user.role === 'admin' && (
+                          <button
+                            onClick={() => deleteUpload(u.id)}
+                            disabled={deletingId === u.id}
+                            className="btn btn-danger"
+                            style={{ fontSize: 12, padding: '4px 12px' }}
+                          >
+                            {deletingId === u.id ? 'Deleting...' : 'Delete'}
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
