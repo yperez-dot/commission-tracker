@@ -239,6 +239,12 @@ router.get('/preview', requireAuth, async (req, res) => {
       } catch (e) {
         console.warn('[override-statements] NHP source backfill', e.message);
       }
+      try {
+        const n = await backfillTailoredAcaToAgentPay(pool);
+        if (n) console.log(`[override-statements] moved ${n} Tailored ACA rows to agent pay`);
+      } catch (e) {
+        console.warn('[override-statements] Tailored ACA backfill', e.message);
+      }
     }
     const rows = await fetchOverrideRows(pool, period, type);
     const bundle = buildOverrideStatements(rows, type, { period });
