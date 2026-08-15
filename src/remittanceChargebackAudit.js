@@ -8,7 +8,16 @@
  * already $0 (or the new CB exceeds remaining net).
  */
 
-const { clientCarrierKey, normPeriod } = require('./missingRenewalsLogic');
+const { clientNameKey } = require('./clientNameKey');
+const { normCarrier } = require('./matchingNormalize.cjs');
+const { normPeriod } = require('./missingRenewalsLogic');
+
+function clientCarrierKey(clientName, carrier) {
+  const nk = clientNameKey(clientName);
+  const ck = normCarrier(carrier);
+  if (!nk || !ck) return '';
+  return `${nk}|${ck}`;
+}
 
 function round2(n) {
   return Math.round((Number(n) || 0) * 100) / 100;
