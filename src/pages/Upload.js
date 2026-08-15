@@ -286,6 +286,12 @@ export default function Upload({ user, onNavigate }) {
         {uploadResult && (
           <UploadAlert kind="success" title={`Upload successful — ${uploadResult.filename}`}>
             {uploadResult.rowCount} records imported · {fmt(uploadResult.commissionSum)} total · Carriers: {(uploadResult.carriers || []).join(', ')}
+            {uploadResult.internalDuplicatesRemoved > 0 && (
+              <div style={{ marginTop: 8 }}>
+                Skipped {uploadResult.internalDuplicatesRemoved} exact duplicate line
+                {uploadResult.internalDuplicatesRemoved === 1 ? '' : 's'} within this file
+              </div>
+            )}
             {uploadResult.resolvedRenewalsCount > 0 && (
               <div style={{ marginTop: 8, fontWeight: 500 }}>
                 {uploadResult.resolvedRenewalsCount} previously chased/pending renewal

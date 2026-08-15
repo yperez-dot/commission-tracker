@@ -10,6 +10,7 @@ const { requireAuth, requireAdmin } = require('./auth');
 const { normalizeAgentName } = require('./normalize');
 const { detectPlanChanges } = require('./planChanges');
 const { resolveChasedRenewals } = require('../src/renewalsAutoResolve');
+const { collapseInternalDuplicates } = require('../src/uploadBatchDedupe');
 const { resolvePassThroughLiableAgent } = require('../src/writerPassThroughAgents');
 const { ensurePassThroughSchema } = require('./pass-through');
 const { safeUploadFilename, isAllowedUploadName } = require('./uploadSafe');
@@ -4027,41 +4028,9 @@ function parseGoldKidneyRows(wb, filename) {
 
 // ─── Duplicate Detection ──────────────────────────────────────────────────────
 
-// Check for duplicates WITHIN the current upload batch (before DB check)
+// Within-batch: src/uploadBatchDedupe.js (keep first exact duplicate line)
 function findInternalDuplicates(records) {
-  if (!records.length) return [];
-  
-  const seen = new Map(); // key -> first occurrence
-  const duplicates = [];
-  
-  for (const r of records) {
-    if (!r.client || !r.carrier || !r.effectiveDate) continue;
-    
-    // Match key: client + carrier + effective_date + payment_period + classification + commission
-    // Include commission to preserve pay/chargeback pairs (same client but different amounts)
-    const key = `${r.client.toLowerCase()}|${r.carrier.toLowerCase()}|${r.effectiveDate}|${r.period || ''}|${(r.classification || '').toLowerCase()}|${r.commission}`;
-    
-    if (seen.has(key)) {
-      // This is a duplicate within the batch
-      const first = seen.get(key);
-      duplicates.push({
-        client: r.client,
-        carrier: r.carrier,
-        date: r.effectiveDate,
-        amount: r.commission,
-        agent: r.agent,
-        period: r.period,
-        type: r.classification,
-        firstAmount: first.commission,
-        isDuplicate: true
-      });
-    } else {
-      seen.set(key, r);
-    }
-  }
-  
-  console.log(`[INTERNAL-DUPS] Checked ${records.length} records, found ${duplicates.length} internal duplicates`);
-  return duplicates;
+  return require('../src/uploadBatchDedupe').findInternalDuplicates(records);
 }
 
 // Check for duplicates against EXISTING database records
@@ -4490,8 +4459,18 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
 
     if (!records.length) return res.status(400).json({ error: 'No records found in file' });
 
-    // Internal deduplication removed - every record in commission statements is a real payment/chargeback
-    // Only duplicate protection: filename check (above) + database check (below) with 4-field key
+    // Collapse exact duplicate lines within this file (Upload 374 class).
+    // Commission is part of the key so pay/chargeback pairs with different amounts are kept.
+    const beforeInternal = records.length;
+    const collapsed = collapseInternalDuplicates(records);
+    records = collapsed.records;
+    const internalDuplicatesRemoved = collapsed.removedCount;
+    if (internalDuplicatesRemoved > 0) {
+      console.warn(
+        `[UPLOAD] Collapsed ${internalDuplicatesRemoved} within-batch duplicate(s) ` +
+        `(${beforeInternal} → ${records.length})`
+      );
+    }
 
     // Duplicate detection against database (policy + client + date + amount)
     const skipDuplicates = req.body.skipDuplicates === 'true';
@@ -4629,6 +4608,7 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
       preview: records.slice(0, 5),
       resolvedRenewals,
       resolvedRenewalsCount: resolvedRenewals.length,
+      internalDuplicatesRemoved: internalDuplicatesRemoved || 0,
     };
     
     res.json(response);
@@ -5268,6 +5248,22 @@ router.post('/upload-bsi-statement', requireAuth, requireAdmin, upload.single('f
     // Agency Override / Held stay under Broker Society; other agents unchanged.
     applyBsiBookAgentProduction(records);
 
+    const beforeInternal = records.length;
+    const collapsed = collapseInternalDuplicates(records);
+    records = collapsed.records;
+    const internalDuplicatesRemoved = collapsed.removedCount;
+    if (internalDuplicatesRemoved > 0) {
+      console.warn(
+        `[BSI-UPLOAD] Collapsed ${internalDuplicatesRemoved} within-batch duplicate(s) ` +
+        `(${beforeInternal} → ${records.length})`
+      );
+    }
+
+    if (!records.length) {
+      try { fs.unlinkSync(req.file.path); } catch (e) {}
+      return res.status(400).json({ error: 'No records left after within-batch dedupe.' });
+    }
+
     const commissionSum = records.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0);
     const carriers = [...new Set(records.map(r => r.carrier).filter(Boolean))];
 
@@ -5373,6 +5369,7 @@ router.post('/upload-bsi-statement', requireAuth, requireAdmin, upload.single('f
       preview: records.slice(0, 5),
       resolvedRenewals,
       resolvedRenewalsCount: resolvedRenewals.length,
+      internalDuplicatesRemoved: internalDuplicatesRemoved || 0,
     });
 
   } catch (err) {
