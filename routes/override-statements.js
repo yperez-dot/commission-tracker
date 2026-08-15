@@ -38,10 +38,41 @@ function requireAdmin(req, res, next) {
 }
 
 const SELECT_COLS = `
-  id, agent_name, client_full_name, policy_number, carrier, effective_date,
-  payment_period, classification, commission, gross_commission, thei_share, bsi_share,
-  producer_payable, sub_agent_override, payee, source
+  cr.id, cr.agent_name, cr.client_full_name, cr.policy_number, cr.carrier, cr.effective_date,
+  cr.payment_period, cr.classification, cr.commission, cr.gross_commission, cr.thei_share, cr.bsi_share,
+  cr.producer_payable, cr.sub_agent_override, cr.payee, cr.source,
+  u.original_name AS upload_original_name
 `;
+
+async function backfillNhpSourceFromUploads(pool) {
+  const result = await pool.query(`
+    UPDATE commission_records cr
+    SET source = 'NHP'
+    FROM uploads u
+    WHERE cr.upload_id = u.id
+      AND (
+        cr.source IS NULL
+        OR TRIM(cr.source) = ''
+        OR LOWER(cr.source) IN ('direct_carrier', 'direct')
+      )
+      AND (
+        LOWER(REPLACE(u.original_name, ' ', '_')) LIKE '%the_health_experts_insurance_statement%'
+        OR LOWER(REPLACE(u.original_name, ' ', '_')) LIKE '%the_health_experst_insurance%'
+        OR (
+          LOWER(REPLACE(u.original_name, ' ', '_')) LIKE '%the_health_experts%'
+          AND LOWER(REPLACE(u.original_name, ' ', '_')) LIKE '%statement%'
+        )
+        OR (
+          LOWER(u.original_name) LIKE '%yahoska%'
+          AND LOWER(u.original_name) LIKE '%katy%'
+        )
+        OR LOWER(REPLACE(u.original_name, ' ', '_')) LIKE '%_nhp_%'
+        OR LOWER(REPLACE(u.original_name, ' ', '_')) LIKE 'nhp_%'
+        OR LOWER(COALESCE(cr.payee, '')) = 'nhp'
+      )
+  `);
+  return result.rowCount || 0;
+}
 
 async function fetchOverrideRows(pool, period, type) {
   const params = [];
@@ -51,21 +82,25 @@ async function fetchOverrideRows(pool, period, type) {
   const includeAlbaPeel = isTheiHouseType(type) || type === STATEMENT_TYPES.BSI_OVERRIDE;
   let where = includeAlbaPeel
     ? `WHERE (
-         classification ILIKE '%override%'
+         cr.classification ILIKE '%override%'
          OR (
-           (agent_name ILIKE '%alba%hernandez%' OR agent_name ILIKE '%lina%hernandez%' OR agent_name ILIKE '%alba%ritela%')
-           AND classification NOT ILIKE '%override%'
-           AND classification NOT ILIKE '%held%'
-           AND (COALESCE(thei_share,0) <> 0 OR COALESCE(bsi_share,0) <> 0)
+           (cr.agent_name ILIKE '%alba%hernandez%' OR cr.agent_name ILIKE '%lina%hernandez%' OR cr.agent_name ILIKE '%alba%ritela%')
+           AND cr.classification NOT ILIKE '%override%'
+           AND cr.classification NOT ILIKE '%held%'
+           AND (COALESCE(cr.thei_share,0) <> 0 OR COALESCE(cr.bsi_share,0) <> 0)
          )
        )`
-    : `WHERE classification ILIKE '%override%'`;
+    : `WHERE cr.classification ILIKE '%override%'`;
   if (period && period !== 'all') {
     params.push(period);
-    where += ` AND payment_period = $${params.length}`;
+    where += ` AND cr.payment_period = $${params.length}`;
   }
   const result = await pool.query(
-    `SELECT ${SELECT_COLS} FROM commission_records ${where} ORDER BY payment_period, agent_name, id`,
+    `SELECT ${SELECT_COLS}
+     FROM commission_records cr
+     LEFT JOIN uploads u ON u.id = cr.upload_id
+     ${where}
+     ORDER BY cr.payment_period, cr.agent_name, cr.id`,
     params
   );
   return result.rows;
@@ -159,6 +194,17 @@ router.get('/preview', requireAuth, async (req, res) => {
       return res.status(400).json({ error: `Invalid type. Use one of: ${OVERRIDE_UI_TYPES.join(', ')}` });
     }
     const pool = getPool();
+    let nhpSourceBackfilled = 0;
+    if (type === STATEMENT_TYPES.THEI_NHP) {
+      try {
+        nhpSourceBackfilled = await backfillNhpSourceFromUploads(pool);
+        if (nhpSourceBackfilled) {
+          console.log(`[override-statements] backfilled source=NHP on ${nhpSourceBackfilled} rows`);
+        }
+      } catch (e) {
+        console.warn('[override-statements] NHP source backfill', e.message);
+      }
+    }
     const rows = await fetchOverrideRows(pool, period, type);
     const bundle = buildOverrideStatements(rows, type, { period });
 
@@ -169,7 +215,14 @@ router.get('/preview', requireAuth, async (req, res) => {
         const params = period && period !== 'all' ? [period] : [];
         const sourceFilter =
           type === STATEMENT_TYPES.THEI_NHP
-            ? `AND (cr.source = 'NHP' OR u.original_name ILIKE '%nhp%' OR u.original_name ILIKE '%health_experts_insurance_statement%')`
+            ? `AND (
+                 UPPER(COALESCE(cr.source,'')) = 'NHP'
+                 OR LOWER(COALESCE(cr.payee,'')) = 'nhp'
+                 OR LOWER(REPLACE(u.original_name, ' ', '_')) LIKE '%the_health_experts_insurance_statement%'
+                 OR LOWER(REPLACE(u.original_name, ' ', '_')) LIKE '%health_experts%statement%'
+                 OR (LOWER(u.original_name) LIKE '%yahoska%' AND LOWER(u.original_name) LIKE '%katy%')
+                 OR LOWER(REPLACE(u.original_name, ' ', '_')) LIKE '%nhp%'
+               )`
             : type === STATEMENT_TYPES.THEI_BSI
               ? `AND (cr.source IN ('BSI','BSI_PAYEE') OR u.category = 'bsi_statement')`
               : '';
@@ -179,7 +232,7 @@ router.get('/preview', requireAuth, async (req, res) => {
                   COALESCE(SUM(COALESCE(cr.bsi_share,0)),0)::float AS bsi_sum
            FROM commission_records cr
            JOIN uploads u ON u.id = cr.upload_id
-           WHERE classification ILIKE '%override%'
+           WHERE cr.classification ILIKE '%override%'
              ${periodClause}
              ${sourceFilter}
            GROUP BY u.id, u.original_name
@@ -200,6 +253,7 @@ router.get('/preview', requireAuth, async (req, res) => {
       grandTotal: bundle.grandTotal,
       exportFormat: 'xlsx',
       sourceUploads,
+      nhpSourceBackfilled,
       statements: bundle.statements.map((s) => ({
         payee: s.payee,
         lineCount: s.lineCount,
@@ -237,6 +291,9 @@ router.get('/export-xlsx', requireAuth, requireAdmin, async (req, res) => {
       });
     }
     const pool = getPool();
+    if (type === STATEMENT_TYPES.THEI_NHP) {
+      try { await backfillNhpSourceFromUploads(pool); } catch (e) { /* best-effort */ }
+    }
     const rows = await fetchOverrideRows(pool, period, type);
     const bundle = buildOverrideStatements(rows, type, { period });
     const stmt = pickPayeeStatement(bundle, payee);

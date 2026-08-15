@@ -22,6 +22,7 @@ const {
   isAlbaAgentCommission,
   isAgencyOverride,
   isNhpSource,
+  isNhpHouseRow,
   isBsiRemitSource,
   ALBA_DISPLAY_NAME,
 } = require('./payeeSchedules');
@@ -122,7 +123,7 @@ function classifyOverrideLine(row, statementType) {
     case STATEMENT_TYPES.THEI_OVERRIDE:
       return classifyTheiShareLine(row);
     case STATEMENT_TYPES.THEI_NHP: {
-      if (!isNhpSource(row.source)) return null;
+      if (!isNhpHouseRow(row)) return null;
       return classifyTheiShareLine(row);
     }
     case STATEMENT_TYPES.THEI_BSI: {

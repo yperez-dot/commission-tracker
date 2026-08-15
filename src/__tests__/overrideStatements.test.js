@@ -111,6 +111,23 @@ describe('overrideStatementBuilder', () => {
     expect(classifyOverrideLine(sourced[2], STATEMENT_TYPES.THEI_BSI)).toBeNull();
   });
 
+  it('THEI NHP includes mistagged direct_carrier rows from NHP upload filenames', () => {
+    const mistagged = {
+      ...rows[0],
+      id: 88,
+      source: 'direct_carrier',
+      payee: 'NHP',
+      upload_original_name: 'The_Health_Experts_Insurance_Statement.xlsx',
+      thei_share: 90,
+      bsi_share: 90,
+    };
+    const hit = classifyOverrideLine(mistagged, STATEMENT_TYPES.THEI_NHP);
+    expect(hit).not.toBeNull();
+    expect(hit.amount).toBe(90);
+    const bundle = buildOverrideStatements([mistagged], STATEMENT_TYPES.THEI_NHP, { period: '202601' });
+    expect(bundle.grandTotal).toBe(90);
+  });
+
   it('BSI override statement uses bsi_share', () => {
     const bundle = buildOverrideStatements(rows, STATEMENT_TYPES.BSI_OVERRIDE, { period: '202601' });
     expect(bundle.grandTotal).toBe(245);
