@@ -187,7 +187,7 @@ function parseEffDate(d) {
 }
 
 export default function MissingRenewals({ user }) {
-  const [periods, setPeriods] = useState([]);
+  const [periods, setPeriods] = useState([]); // [{period, label, recordCount, viable}]
   const [selectedPeriod, setSelectedPeriod] = useState('');
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
@@ -206,6 +206,7 @@ export default function MissingRenewals({ user }) {
   const [sortCol, setSortCol] = useState('isMissing'); // Default: sort by missing status
   const [sortDir, setSortDir] = useState('desc'); // Missing first
   const [loadError, setLoadError] = useState('');
+  const [checkMeta, setCheckMeta] = useState(null); // { periodRecordCount, sparsePeriod, summary }
 
   // Toast notification helper
   function showToast(message, type = 'success') {
@@ -299,22 +300,35 @@ export default function MissingRenewals({ user }) {
   }
 
   useEffect(() => {
-    apiFetch('/records/filters').then(d => {
-      const valid = (d.periods || []).filter(p => {
-        if (!p || p === 'Unknown') return false;
-        const s = String(p);
-        return s.match(/^\d{6}$/) || s.match(/^\d{2}\/\d{4}$/) || s.match(/^\d{2}\/\d{2}\/\d{4}$/);
+    apiFetch('/bob/missing-renewals-periods')
+      .then((d) => {
+        const list = (d.periods || []).filter((p) => p && p.period && p.label);
+        setPeriods(list);
+        if (d.defaultPeriod) setSelectedPeriod(d.defaultPeriod);
+        else if (list.length > 0) setSelectedPeriod(list[0].period);
+      })
+      .catch((err) => {
+        console.error(err);
+        // Fallback to legacy filters list if periods endpoint fails
+        apiFetch('/records/filters')
+          .then((d) => {
+            const valid = (d.periods || []).filter((p) => {
+              if (!p || p === 'Unknown') return false;
+              const s = String(p);
+              return s.match(/^\d{6}$/) || s.match(/^\d{2}\/\d{4}$/) || s.match(/^\d{2}\/\d{2}\/\d{4}$/);
+            });
+            const seen = new Set();
+            const deduped = valid.filter((p) => {
+              const label = formatPeriodLabel(p);
+              if (!label || seen.has(label)) return false;
+              seen.add(label);
+              return true;
+            });
+            setPeriods(deduped.map((p) => ({ period: p, label: formatPeriodLabel(p), recordCount: null, viable: true })));
+            if (deduped.length > 0) setSelectedPeriod(deduped[0]);
+          })
+          .catch(console.error);
       });
-      const seen = new Set();
-      const deduped = valid.filter(p => {
-        const label = formatPeriodLabel(p);
-        if (!label || seen.has(label)) return false;
-        seen.add(label);
-        return true;
-      });
-      setPeriods(deduped);
-      if (deduped.length > 0) setSelectedPeriod(deduped[0]);
-    }).catch(console.error);
   }, []);
 
   async function runCheck() {
@@ -324,6 +338,7 @@ export default function MissingRenewals({ user }) {
     setCoverageWarning(null);
     setShowCoverageWarning(true);
     setLoadError('');
+    setCheckMeta(null);
     try {
       const targetNorm = normPeriod(selectedPeriod) || selectedPeriod;
 
@@ -338,6 +353,12 @@ export default function MissingRenewals({ user }) {
         `/bob/missing-renewals-check?period=${encodeURIComponent(targetNorm)}`
       );
       setRows(data.rows || []);
+      setCheckMeta({
+        periodRecordCount: data.periodRecordCount,
+        sparsePeriod: !!data.sparsePeriod,
+        summary: data.summary || null,
+        minStatementRecords: data.minStatementRecords,
+      });
     } catch (e) {
       console.error(e);
       setLoadError(e.message || 'Missing renewals check failed');
@@ -574,11 +595,15 @@ export default function MissingRenewals({ user }) {
         <div style={{ display:'flex',alignItems:'flex-end',gap:10,flexWrap:'wrap',marginBottom:14,background:'var(--bg)',padding:'12px 14px',borderRadius:8,border:'0.5px solid var(--border)' }}>
           <div>
             <div className="form-label" style={{ marginBottom:4 }}>Statement month</div>
-            <select className="filter-select" value={selectedPeriod} onChange={e => { setSelectedPeriod(e.target.value); setRows([]); }} style={{ minWidth:160,fontSize:13 }}>
+            <select className="filter-select" value={selectedPeriod} onChange={e => { setSelectedPeriod(e.target.value); setRows([]); setCheckMeta(null); }} style={{ minWidth:160,fontSize:13 }}>
               <option value="">Select month...</option>
               {periods.map(p => {
-                const label = formatPeriodLabel(p);
-                return label ? <option key={p} value={p}>{label}</option> : null;
+                const value = p.period || p;
+                const label = p.label || formatPeriodLabel(value);
+                if (!label) return null;
+                const countLabel = p.recordCount != null ? ` · ${p.recordCount} rows` : '';
+                const stub = p.viable === false ? ' (stub)' : '';
+                return <option key={value} value={value}>{label}{countLabel}{stub}</option>;
               })}
             </select>
           </div>
@@ -627,6 +652,25 @@ export default function MissingRenewals({ user }) {
 
         {rows.length > 0 && (
           <>
+            {checkMeta?.sparsePeriod && (
+              <div style={{
+                background: '#FEF2F2',
+                border: '0.5px solid #FECACA',
+                borderRadius: 8,
+                padding: '12px 16px',
+                marginBottom: 12,
+                fontSize: 13,
+                color: '#991B1B'
+              }}>
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                  This month only has {checkMeta.periodRecordCount} commission row{checkMeta.periodRecordCount === 1 ? '' : 's'} — not a real statement month
+                </div>
+                <div style={{ fontSize: 12, opacity: 0.9 }}>
+                  Pick a month with at least {checkMeta.minStatementRecords || 50} uploaded rows (e.g. Jul 2026). Stub months make every renewal look Missing.
+                </div>
+              </div>
+            )}
+
             {/* Statement Coverage Warning/Confirmation */}
             {coverageWarning && showCoverageWarning && (
               <div style={{
