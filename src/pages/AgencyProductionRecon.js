@@ -287,8 +287,24 @@ function _getThreeWayStatus(m) {
 }
 
 function _getCategory(m) {
-  if (m.categoryHint) return m.categoryHint;
+  // Manual override wins bucket placement (No Pay Expected must not sit in Missing).
+  const manual = m.production?.manual_override_status || null;
+  if (manual === 'no_pay_expected') return 'cancelled';
+  if (manual === 'paid') return 'paid';
+  if (manual === 'chase_bsi') return 'chase';
+
+  if (m.lifecycle === 'chargeback' || m.categoryHint === 'cancelled') return 'cancelled';
+  if (m.lifecycle === 'paid' || m.categoryHint === 'paid') return 'paid';
+  if (m.categoryHint && m.categoryHint !== 'missing') return m.categoryHint;
+
   if (isOverridePaid(m.override)) return 'paid';
+
+  // Auto no-pay production statuses — same as three-way, keep out of Missing
+  const prodStatus = (m.production.status || '').toUpperCase().trim();
+  if (['WITHDRAWN', 'IN PROGRESS', 'CANCELLED', 'DENIED'].includes(prodStatus)) {
+    return 'cancelled';
+  }
+
   const status = m.production.status?.toLowerCase() || '';
   if (status.includes('plan denied') || status.includes('plan_denied') || status.includes('denied')) return 'plandenied';
   if (status.includes('plan change') || status.includes('plan_change')) return 'planchange';
