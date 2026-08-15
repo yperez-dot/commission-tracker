@@ -9,6 +9,7 @@ const { getPool } = require('../db/database');
 const { requireAuth, requireAdmin } = require('./auth');
 const { normalizeAgentName } = require('./normalize');
 const { detectPlanChanges } = require('./planChanges');
+const { resolveChasedRenewals } = require('../src/renewalsAutoResolve');
 const { resolvePassThroughLiableAgent } = require('../src/writerPassThroughAgents');
 const { ensurePassThroughSchema } = require('./pass-through');
 const { safeUploadFilename, isAllowedUploadName } = require('./uploadSafe');
@@ -4601,6 +4602,19 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
 
     try { fs.unlinkSync(req.file.path); } catch (e) {}
     
+    // Auto-resolve chased/pending Missing Renewals when this upload pays them
+    let resolvedRenewals = [];
+    try {
+      const resolvedBy = req.user?.email || req.user?.name || 'system';
+      const result = await resolveChasedRenewals(pool, uploadId, resolvedBy);
+      resolvedRenewals = result.resolved || [];
+      if (resolvedRenewals.length) {
+        console.log(`[UPLOAD] Auto-resolved ${resolvedRenewals.length} chased/pending renewals`);
+      }
+    } catch (err) {
+      console.error('[UPLOAD] Renewals auto-resolve failed:', err.message);
+    }
+
     // Run plan change detection asynchronously (don't block response)
     detectPlanChanges(pool, uploadId).catch(err => {
       console.error('[UPLOAD] Plan change detection failed:', err.message);
@@ -4612,7 +4626,9 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
       rowCount: records.length, 
       commissionSum, 
       carriers, 
-      preview: records.slice(0, 5) 
+      preview: records.slice(0, 5),
+      resolvedRenewals,
+      resolvedRenewalsCount: resolvedRenewals.length,
     };
     
     res.json(response);
@@ -5330,6 +5346,22 @@ router.post('/upload-bsi-statement', requireAuth, requireAdmin, upload.single('f
 
     try { fs.unlinkSync(req.file.path); } catch (e) {}
 
+    let resolvedRenewals = [];
+    try {
+      const resolvedBy = req.user?.email || req.user?.name || 'system';
+      const result = await resolveChasedRenewals(pool, uploadId, resolvedBy);
+      resolvedRenewals = result.resolved || [];
+      if (resolvedRenewals.length) {
+        console.log(`[BSI-UPLOAD] Auto-resolved ${resolvedRenewals.length} chased/pending renewals`);
+      }
+    } catch (err) {
+      console.error('[BSI-UPLOAD] Renewals auto-resolve failed:', err.message);
+    }
+
+    detectPlanChanges(pool, uploadId).catch(err => {
+      console.error('[BSI-UPLOAD] Plan change detection failed:', err.message);
+    });
+
     res.json({
       success: true,
       message: `BSI statement uploaded: ${records.length} records imported`,
@@ -5338,7 +5370,9 @@ router.post('/upload-bsi-statement', requireAuth, requireAdmin, upload.single('f
       rowCount: records.length,
       commissionSum,
       carriers,
-      preview: records.slice(0, 5)
+      preview: records.slice(0, 5),
+      resolvedRenewals,
+      resolvedRenewalsCount: resolvedRenewals.length,
     });
 
   } catch (err) {

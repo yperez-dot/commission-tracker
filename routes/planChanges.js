@@ -273,7 +273,8 @@ router.post('/:id/confirm', requireAuth, requireAdmin, async (req, res) => {
     
     // Get candidate details
     const candidate = await pool.query(
-      `SELECT bob_id, status FROM plan_change_candidates WHERE id = $1`,
+      `SELECT bob_id, status, client_name, agent_name, old_carrier, new_carrier
+       FROM plan_change_candidates WHERE id = $1`,
       [id]
     );
     
@@ -285,7 +286,8 @@ router.post('/:id/confirm', requireAuth, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'Candidate already processed' });
     }
     
-    const bobId = candidate.rows[0].bob_id;
+    const row = candidate.rows[0];
+    const bobId = row.bob_id;
     
     // Start transaction
     await pool.query('BEGIN');
@@ -297,6 +299,16 @@ router.post('/:id/confirm', requireAuth, requireAdmin, async (req, res) => {
          SET status = 'plan_change', updated_at = NOW()
          WHERE id = $1`,
         [bobId]
+      );
+
+      // Cascade to policy_status so Missing Renewals hides the old carrier book
+      const note = `Plan change confirmed → ${row.new_carrier || 'new carrier'}`;
+      await pool.query(
+        `INSERT INTO policy_status (client_full_name, carrier, agent_name, status, notes, updated_by, updated_at)
+         VALUES ($1, $2, $3, 'plan_change', $4, $5, NOW())
+         ON CONFLICT (client_full_name, carrier, agent_name)
+         DO UPDATE SET status = 'plan_change', notes = $4, updated_by = $5, updated_at = NOW()`,
+        [row.client_name, row.old_carrier, row.agent_name, note, userId]
       );
       
       // Update candidate status
