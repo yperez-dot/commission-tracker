@@ -509,6 +509,7 @@ function HouseOverridesPanel() {
         <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14, lineHeight: 1.45 }}>
           THEI NHP sales and THEI BSI remittance are separate reports. Marco (Swan) $10 agency peel, and Integrity / CAM / Chris producer shares.
           Lina’s agent production is under <strong>Agent Payouts</strong> — not here.
+          {' '}One period (e.g. January) combines every NHP file for that month — upload each statement NHP sends (same portal filename is OK).
         </div>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <div>
@@ -589,6 +590,18 @@ function HouseOverridesPanel() {
             </span>
             <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--green)' }}>{fmt(preview.grandTotal)}</span>
           </div>
+          {(preview.sourceUploads || []).length > 0 && (
+            <div style={{ padding: '10px 14px', borderBottom: '0.5px solid var(--border)', fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.45 }}>
+              <div style={{ fontWeight: 600, color: 'var(--text)', marginBottom: 4 }}>
+                Source uploads in this period ({preview.sourceUploads.length})
+              </div>
+              {preview.sourceUploads.map((u) => (
+                <div key={u.id}>
+                  {u.original_name} — {u.row_count} rows
+                </div>
+              ))}
+            </div>
+          )}
           {(preview.statements || []).length === 0 ? (
             <div className="empty-state">
               <div className="empty-title">No override lines for this type/period</div>

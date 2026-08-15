@@ -161,6 +161,37 @@ router.get('/preview', requireAuth, async (req, res) => {
     const pool = getPool();
     const rows = await fetchOverrideRows(pool, period, type);
     const bundle = buildOverrideStatements(rows, type, { period });
+
+    let sourceUploads = [];
+    if (type === STATEMENT_TYPES.THEI_NHP || type === STATEMENT_TYPES.THEI_BSI || type === STATEMENT_TYPES.BSI_OVERRIDE) {
+      try {
+        const periodClause = period && period !== 'all' ? 'AND cr.payment_period = $1' : '';
+        const params = period && period !== 'all' ? [period] : [];
+        const sourceFilter =
+          type === STATEMENT_TYPES.THEI_NHP
+            ? `AND (cr.source = 'NHP' OR u.original_name ILIKE '%nhp%' OR u.original_name ILIKE '%health_experts_insurance_statement%')`
+            : type === STATEMENT_TYPES.THEI_BSI
+              ? `AND (cr.source IN ('BSI','BSI_PAYEE') OR u.category = 'bsi_statement')`
+              : '';
+        const up = await pool.query(
+          `SELECT u.id, u.original_name, COUNT(cr.id)::int AS row_count,
+                  COALESCE(SUM(COALESCE(cr.thei_share,0)),0)::float AS thei_sum,
+                  COALESCE(SUM(COALESCE(cr.bsi_share,0)),0)::float AS bsi_sum
+           FROM commission_records cr
+           JOIN uploads u ON u.id = cr.upload_id
+           WHERE classification ILIKE '%override%'
+             ${periodClause}
+             ${sourceFilter}
+           GROUP BY u.id, u.original_name
+           ORDER BY u.id DESC`,
+          params
+        );
+        sourceUploads = up.rows;
+      } catch (e) {
+        console.warn('[override-statements] sourceUploads', e.message);
+      }
+    }
+
     res.json({
       type: bundle.type,
       period: bundle.period,
@@ -168,6 +199,7 @@ router.get('/preview', requireAuth, async (req, res) => {
       statementCount: bundle.statementCount,
       grandTotal: bundle.grandTotal,
       exportFormat: 'xlsx',
+      sourceUploads,
       statements: bundle.statements.map((s) => ({
         payee: s.payee,
         lineCount: s.lineCount,
