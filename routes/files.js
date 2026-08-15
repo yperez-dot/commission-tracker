@@ -1495,21 +1495,33 @@ const {
 } = require('../src/nhpPeriod');
 const { splitNhpMedicareOverride } = require('../src/nhpOverrideSplit');
 const {
-  isTailoredInsuranceAgent,
+  isTailoredAcaPassThrough,
   resolveTailoredAcaPay,
+  extractTailoredStatementMeta,
 } = require('../src/tailoredAcaPay');
 
 function parseNHPRows(wb, uploadPeriod, filename = '') {
   const records = [];
   const marcoDeductedPolicies = new Set();
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const range = XLSX.utils.decode_range(ws['!ref']);
+
+  // Preamble (title + PAYMENT/STATEMENT DATE) before the Override header
+  const preambleRows = XLSX.utils.sheet_to_json(ws, {
+    raw: false,
+    defval: '',
+    header: 1,
+    range: 0,
+  }).slice(0, 30);
+  const tailoredMeta = extractTailoredStatementMeta(preambleRows);
+
   // One NHP file = one payment-cycle batch (deposit/statement), not coverage month.
   const cyclePeriod = resolveNhpPaymentPeriod({
     filename,
     uploadPeriod,
+    statementDate: tailoredMeta.paymentStatementDate,
+    cycleDate: tailoredMeta.paymentStatementDate,
   });
-  const ws = wb.Sheets[wb.SheetNames[0]];
-  const range = XLSX.utils.decode_range(ws['!ref']);
-
   let headerRow = -1;
   for (let r = range.s.r; r <= Math.min(range.s.r + 20, range.e.r); r++) {
     for (let c = range.s.c; c <= range.e.c; c++) {
@@ -1570,6 +1582,7 @@ function parseNHPRows(wb, uploadPeriod, filename = '') {
     
     const lobRaw = hasLOB ? String(lobValue).trim() : '';
     const carrierRaw = String(row[carrierIdx + shift] || '').trim();
+    const agencyRaw = agencyIdx >= 0 ? String(row[agencyIdx + shift] || '').trim() : '';
     const agentRaw = String(row[agentNameIdx + shift] || '').trim();
     const agent = normalizeAgentName(agentRaw);
     const client = String(row[clientIdx + shift] || '').trim();
@@ -1620,6 +1633,7 @@ function parseNHPRows(wb, uploadPeriod, filename = '') {
     const isBsiEligible = lob === 'MA' && effectiveDate && effectiveDate >= BSI_SPLIT_START_DATE;
     
     let splitApplies, theiShare, bsiShare, producerPayable, recordType, subAgentOverride = 0;
+    let mga = '';
 
     // ACA LOGIC: Determine by which COLUMN has money, not by Comm Class label
     if (lob === 'ACA') {
@@ -1638,13 +1652,19 @@ function parseNHPRows(wb, uploadPeriod, filename = '') {
       splitApplies = false;
       bsiShare = 0;
 
-      // Tailored Insurance ACA → agent pay ("pay her"), never THEI house override
-      if (isTailoredInsuranceAgent(agent)) {
+      // Tailored Insurance Solutions AGCY (Jill Taylor, etc.) → agent pay, not THEI house
+      const tailoredPass = isTailoredAcaPassThrough({
+        agentName: agent,
+        agency: agencyRaw,
+        statementTitle: tailoredMeta.statementTitle,
+      });
+      if (tailoredPass || tailoredMeta.isTailoredStatement) {
         const tailored = resolveTailoredAcaPay({ commissionAmount, overrideAmount });
         theiShare = tailored.theiShare;
         producerPayable = tailored.producerPayable;
         recordType = tailored.recordType;
         splitApplies = tailored.splitApplies;
+        mga = tailored.mga;
       } else if (commissionAmount !== 0) {
         // Money in COMMISSION column → Agent gets 100% (positive OR negative)
         theiShare = 0;
@@ -1721,6 +1741,7 @@ function parseNHPRows(wb, uploadPeriod, filename = '') {
       lob,
       subAgentOverride,
       statementMonth: carrierRaw,
+      mga: mga || '',
       raw: row,
     });
   }

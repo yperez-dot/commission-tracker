@@ -98,7 +98,14 @@ async function backfillTailoredAcaToAgentPay(pool) {
         ) < 0 THEN 'ACA Agent Chargeback'
         ELSE 'ACA Agent Commission'
       END
-    WHERE LOWER(agent_name) LIKE '%tailored%'
+    WHERE (
+        LOWER(agent_name) LIKE '%tailored%'
+        OR LOWER(COALESCE(mga, '')) LIKE '%tailored%'
+        OR (
+          LOWER(agent_name) LIKE '%jill taylor%'
+          AND UPPER(COALESCE(lob, '')) = 'ACA'
+        )
+      )
       AND UPPER(COALESCE(lob, '')) = 'ACA'
       AND (
         COALESCE(thei_share, 0) <> 0
