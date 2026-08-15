@@ -4457,14 +4457,19 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
       const fnNorm = fnLc.replace(/\s+/g, '_');
       const payeeLc = String(defaultPayee || '').toLowerCase();
       let inferredSource = 'direct_carrier';
-      // Use space-normalized filename so "Statement-health experts" → BSI, not direct_carrier.
+      // NHP agency statements BEFORE BSI patterns — "Agency-Statement-The_Health_Experts…"
+      // previously matched /statement-the/ and was mistagged BSI (Oscar/ACA landed on BSI house).
       if (
+        payeeLc === 'nhp' ||
+        /agency[-_]statement.*health_experts|the_health_experts_insurance_statement|the_health_experst|\/nhp|nhp_commission|(^|_)nhp(_|$)/.test(fnNorm) ||
+        (fnNorm.includes('health_experts') && fnNorm.includes('statement') && !/statement-health_experts|statement_health_experts/.test(fnNorm))
+      ) {
+        inferredSource = 'NHP';
+      } else if (
         payeeLc === 'bsi' ||
-        /statement-the|statement_-the|broker_society|bsi|statement-health_experts|statement_health_experts/.test(fnNorm)
+        /statement-the(?![_\s-]?health)|statement_-the(?![_\s-]?health)|broker_society|(^|_)bsi(_|$)|statement-health_experts|statement_health_experts/.test(fnNorm)
       ) {
         inferredSource = 'BSI';
-      } else if (payeeLc === 'nhp' || /the_health_experts_insurance_statement|nhp/.test(fnNorm)) {
-        inferredSource = 'NHP';
       }
 
       // Build overrideSet for agent-direct pass-through detection (mirrors /backfill-business-rules logic)
@@ -4600,7 +4605,8 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
 
         return {
           ...r,
-          source: inferredSource,
+          // Keep parser-set source (e.g. NHP Agency Statement PDF) over filename inference.
+          source: r.source || inferredSource,
           policyWrittenDate: r.policyWrittenDate || r.effectiveDate || null,
           grossCommission,
           theiShare,

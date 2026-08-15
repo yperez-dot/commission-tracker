@@ -95,6 +95,19 @@ function normalizeSource(source) {
   return String(source || '').toUpperCase().trim();
 }
 
+/**
+ * Oscar + all ACA LOBs live on NHP house statements — never BSI remittance / BSI Overrides.
+ */
+function isAcaNhpHouseRow(row = {}) {
+  const lob = String(row.lob || '').toUpperCase().trim();
+  if (lob === 'ACA') return true;
+  const carrier = String(row.carrier || '').toLowerCase();
+  if (/\boscar\b/.test(carrier)) return true;
+  const plan = String(row.plan_type || row.planType || '').toLowerCase();
+  if (plan.includes('aca') || /\boscar\b/.test(plan)) return true;
+  return false;
+}
+
 /** NHP agency commission statements uploaded as source = NHP. */
 function isNhpSource(source) {
   return normalizeSource(source) === 'NHP';
@@ -103,8 +116,10 @@ function isNhpSource(source) {
 /**
  * Row belongs on THEI — NHP sales (source, payee, or upload filename).
  * Older uploads sometimes landed as direct_carrier with payee NHP / NHP filename.
+ * ACA / Oscar always belong here even if source was mistagged BSI.
  */
 function isNhpHouseRow(row = {}) {
+  if (isAcaNhpHouseRow(row)) return true;
   if (isNhpSource(row.source)) return true;
   if (normalizeSource(row.payee) === 'NHP') return true;
   const fn = String(row.upload_original_name || row.original_name || '')
@@ -121,8 +136,9 @@ function isNhpHouseRow(row = {}) {
   );
 }
 
-/** BSI remittance / BSI payee feeds — money BSI pays THEI. */
-function isBsiRemitSource(source) {
+/** BSI remittance / BSI payee feeds — money BSI pays THEI (never ACA/Oscar). */
+function isBsiRemitSource(source, row = null) {
+  if (row && isAcaNhpHouseRow(row)) return false;
   const s = normalizeSource(source);
   return s === 'BSI' || s === 'BSI_PAYEE';
 }
@@ -146,6 +162,7 @@ module.exports = {
   isAlbaHernandez,
   isAlbaAgentCommission,
   isAgencyOverride,
+  isAcaNhpHouseRow,
   isNhpSource,
   isNhpHouseRow,
   isBsiRemitSource,

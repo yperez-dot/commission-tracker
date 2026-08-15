@@ -128,6 +128,41 @@ describe('overrideStatementBuilder', () => {
     expect(bundle.grandTotal).toBe(90);
   });
 
+  it('Oscar / ACA override rows stay on THEI NHP and never on BSI house statements', () => {
+    const oscarMistaggedBsi = {
+      id: 901,
+      agent_name: 'Eduardo Pernia',
+      client_full_name: 'Michelle Day',
+      policy_number: 'OSC75522291-01',
+      carrier: 'Oscar Health',
+      lob: 'ACA',
+      effective_date: '05/01/2026',
+      payment_period: '202606',
+      classification: 'Agency Override',
+      commission: 7,
+      thei_share: 7,
+      bsi_share: 0,
+      producer_payable: 0,
+      sub_agent_override: 0,
+      source: 'BSI',
+      payee: 'NHP',
+      upload_original_name: 'Agency-Statement-The_Health_Experts_Insurance-June_15_2026.pdf',
+    };
+    const floridaBlue = {
+      ...oscarMistaggedBsi,
+      id: 902,
+      carrier: 'Florida Blue',
+      policy_number: 'FB1',
+      source: 'NHP',
+    };
+    expect(classifyOverrideLine(oscarMistaggedBsi, STATEMENT_TYPES.THEI_NHP)?.amount).toBe(7);
+    expect(classifyOverrideLine(floridaBlue, STATEMENT_TYPES.THEI_NHP)?.amount).toBe(7);
+    expect(classifyOverrideLine(oscarMistaggedBsi, STATEMENT_TYPES.THEI_BSI)).toBeNull();
+    expect(classifyOverrideLine(floridaBlue, STATEMENT_TYPES.THEI_BSI)).toBeNull();
+    expect(classifyOverrideLine(oscarMistaggedBsi, STATEMENT_TYPES.BSI_OVERRIDE)).toBeNull();
+    expect(classifyOverrideLine(floridaBlue, STATEMENT_TYPES.BSI_OVERRIDE)).toBeNull();
+  });
+
   it('BSI override statement uses bsi_share', () => {
     const bundle = buildOverrideStatements(rows, STATEMENT_TYPES.BSI_OVERRIDE, { period: '202601' });
     expect(bundle.grandTotal).toBe(245);

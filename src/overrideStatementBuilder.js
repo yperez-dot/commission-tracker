@@ -21,6 +21,7 @@ const {
   isAlbaHernandez,
   isAlbaAgentCommission,
   isAgencyOverride,
+  isAcaNhpHouseRow,
   isNhpSource,
   isNhpHouseRow,
   isBsiRemitSource,
@@ -130,10 +131,13 @@ function classifyOverrideLine(row, statementType) {
       return classifyTheiShareLine(row);
     }
     case STATEMENT_TYPES.THEI_BSI: {
-      if (!isBsiRemitSource(row.source)) return null;
+      if (isAcaNhpHouseRow(row)) return null;
+      if (!isBsiRemitSource(row.source, row)) return null;
       return classifyTheiShareLine(row);
     }
     case STATEMENT_TYPES.BSI_OVERRIDE: {
+      // ACA / Oscar are NHP-book only — never BSI Overrides.
+      if (isAcaNhpHouseRow(row)) return null;
       if (!clsOverride && !albaPeeled) return null;
       const amount = num(row.bsi_share);
       if (amount === 0 && num(row.commission) === 0) return null;

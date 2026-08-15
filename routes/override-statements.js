@@ -40,7 +40,7 @@ function requireAdmin(req, res, next) {
 const SELECT_COLS = `
   cr.id, cr.agent_name, cr.client_full_name, cr.policy_number, cr.carrier, cr.effective_date,
   cr.payment_period, cr.classification, cr.commission, cr.gross_commission, cr.thei_share, cr.bsi_share,
-  cr.producer_payable, cr.sub_agent_override, cr.payee, cr.source,
+  cr.producer_payable, cr.sub_agent_override, cr.payee, cr.source, cr.lob, cr.plan_type,
   u.original_name AS upload_original_name
 `;
 
@@ -116,6 +116,21 @@ async function backfillTailoredAcaToAgentPay(pool) {
   return result.rowCount || 0;
 }
 
+/** Oscar + ACA mistagged as BSI (Agency Statement PDF filename bug) → NHP. */
+async function backfillAcaOscarToNhpSource(pool) {
+  const result = await pool.query(`
+    UPDATE commission_records
+    SET source = 'NHP'
+    WHERE (
+        UPPER(COALESCE(lob, '')) = 'ACA'
+        OR LOWER(COALESCE(carrier, '')) LIKE '%oscar%'
+        OR LOWER(COALESCE(plan_type, '')) LIKE '%aca%'
+      )
+      AND UPPER(COALESCE(source, '')) IN ('BSI', 'BSI_PAYEE')
+  `);
+  return result.rowCount || 0;
+}
+
 async function fetchOverrideRows(pool, period, type) {
   const params = [];
   // THEI/BSI: Agency Override rows PLUS Alba rate-peeled agent-production shares.
@@ -168,14 +183,14 @@ router.get('/types', requireAuth, (_req, res) => {
         id: STATEMENT_TYPES.THEI_NHP,
         label: 'THEI — NHP sales',
         amountField: 'thei_share',
-        description: 'THEI share of NHP agency statement sales only',
+        description: 'THEI share of NHP agency statement sales only (includes Oscar + all ACA)',
         exportFormat: 'xlsx',
       },
       {
         id: STATEMENT_TYPES.THEI_BSI,
         label: 'THEI — BSI remittance',
         amountField: 'thei_share',
-        description: 'THEI share of what BSI pays us (BSI remittance)',
+        description: 'THEI share of what BSI pays us (Medicare remittance — not Oscar/ACA)',
         exportFormat: 'xlsx',
       },
       {
@@ -237,9 +252,24 @@ router.get('/preview', requireAuth, async (req, res) => {
     }
     const pool = getPool();
     let nhpSourceBackfilled = 0;
+    if (
+      type === STATEMENT_TYPES.THEI_NHP ||
+      type === STATEMENT_TYPES.THEI_BSI ||
+      type === STATEMENT_TYPES.BSI_OVERRIDE
+    ) {
+      try {
+        const acaFixed = await backfillAcaOscarToNhpSource(pool);
+        if (acaFixed) {
+          console.log(`[override-statements] moved ${acaFixed} ACA/Oscar rows from BSI → NHP source`);
+          nhpSourceBackfilled += acaFixed;
+        }
+      } catch (e) {
+        console.warn('[override-statements] ACA/Oscar NHP backfill', e.message);
+      }
+    }
     if (type === STATEMENT_TYPES.THEI_NHP) {
       try {
-        nhpSourceBackfilled = await backfillNhpSourceFromUploads(pool);
+        nhpSourceBackfilled += await backfillNhpSourceFromUploads(pool);
         if (nhpSourceBackfilled) {
           console.log(`[override-statements] backfilled source=NHP on ${nhpSourceBackfilled} rows`);
         }
@@ -272,7 +302,9 @@ router.get('/preview', requireAuth, async (req, res) => {
                  OR LOWER(REPLACE(u.original_name, ' ', '_')) LIKE '%nhp%'
                )`
             : type === STATEMENT_TYPES.THEI_BSI
-              ? `AND (cr.source IN ('BSI','BSI_PAYEE') OR u.category = 'bsi_statement')`
+              ? `AND (cr.source IN ('BSI','BSI_PAYEE') OR u.category = 'bsi_statement')
+                 AND UPPER(COALESCE(cr.lob,'')) <> 'ACA'
+                 AND LOWER(COALESCE(cr.carrier,'')) NOT LIKE '%oscar%'`
               : '';
         const up = await pool.query(
           `SELECT u.id, u.original_name, COUNT(cr.id)::int AS row_count,
