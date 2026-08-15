@@ -20,7 +20,6 @@ const {
   tryParseAgentViewUpload,
 } = require('../src/agentViewCommissionReport');
 const {
-  isNhpUploadName,
   resolveNhpUploadOriginalName,
 } = require('../src/nhpUploadName');
 let pdfParse;
