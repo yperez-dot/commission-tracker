@@ -46,7 +46,6 @@ export default function AdpExport({ user }) {
 
   useEffect(() => {
     load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [year]);
 
   const producers = data?.producers || [];
