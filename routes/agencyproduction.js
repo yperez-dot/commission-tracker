@@ -5,6 +5,7 @@ const XLSX = require('xlsx');
 const { getPool } = require('../db/database');
 const { requireAuth, requireAdmin } = require('./auth');
 const { isAetnaActivePolicy } = require('../src/agencyOverrideReconMatch.cjs');
+const { auditOverrideGaps } = require('../src/overrideGapAudit');
 
 // str() — safe Excel cell coercion: null/undefined → '', numbers/booleans → String, Dates → ISO date
 // Prevents TypeError when a numeric or null Excel cell value hits .trim() or .substring()
@@ -665,6 +666,39 @@ router.get('/uploads', requireAuth, async (req, res) => {
 
   } catch (err) {
     console.error('Upload history error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/agency-production/override-gap-audit
+// Find Milagros-style gaps: production clients with clawed-back overrides (or never paid).
+router.get('/override-gap-audit', requireAuth, async (req, res) => {
+  try {
+    const pool = getPool();
+    const productionResult = await pool.query(
+      `SELECT id, client_name, agent_name, carrier, effective_date, status,
+              policy_number, upload_batch, manual_override_status
+       FROM agency_production
+       ORDER BY id DESC`
+    );
+
+    // Same universe as Agency Override Recon: exclude carrier→BSI statement feeds
+    const overrideResult = await pool.query(
+      `SELECT cr.id, cr.client_full_name, cr.carrier, cr.commission, cr.classification,
+              cr.payee, cr.source, cr.payment_period, cr.policy_number, cr.agent_name
+       FROM commission_records cr
+       LEFT JOIN uploads u ON u.id = cr.upload_id
+       WHERE u.category IS DISTINCT FROM 'bsi_statement'`
+    );
+
+    const report = auditOverrideGaps(productionResult.rows, overrideResult.rows);
+    return res.json({
+      success: true,
+      generated_at: new Date().toISOString(),
+      ...report,
+    });
+  } catch (err) {
+    console.error('Override gap audit error:', err);
     return res.status(500).json({ error: err.message });
   }
 });

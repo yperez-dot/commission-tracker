@@ -287,6 +287,10 @@ export default function AgencyProductionRecon() {
   const [editingMatch, setEditingMatch] = useState(null); // row opened via Edit button
   const [overrideSaving, setOverrideSaving] = useState(null); // id of row currently saving
   const [truncationWarning, setTruncationWarning] = useState(null);
+  const [gapAudit, setGapAudit] = useState(null);
+  const [gapAuditLoading, setGapAuditLoading] = useState(false);
+  const [gapAuditError, setGapAuditError] = useState(null);
+  const [gapAuditFilter, setGapAuditFilter] = useState('returnee_clawback');
 
   useEffect(() => {
     loadData();
@@ -313,6 +317,55 @@ export default function AgencyProductionRecon() {
     } finally {
       setOverrideSaving(null);
     }
+  }
+
+  async function runGapAudit() {
+    setGapAuditLoading(true);
+    setGapAuditError(null);
+    try {
+      const data = await apiFetch('/agency-production/override-gap-audit');
+      setGapAudit(data);
+      setGapAuditFilter('returnee_clawback');
+    } catch (err) {
+      setGapAuditError(err.message || 'Audit failed');
+    } finally {
+      setGapAuditLoading(false);
+    }
+  }
+
+  function exportGapAuditCsv() {
+    if (!gapAudit?.gaps?.length) return;
+    const rows = gapAuditFilter === 'all'
+      ? gapAudit.gaps
+      : gapAudit.gaps.filter((g) => g.gap_type === gapAuditFilter);
+    const headers = [
+      'Gap Type', 'Client', 'Agent', 'Carrier', 'Eff Date', 'Status',
+      'Override Net', 'Paid Total', 'Chargeback Total', 'Paid Count', 'Chargeback Count', 'Reason',
+    ];
+    const lines = [headers.join(',')];
+    rows.forEach((g) => {
+      lines.push([
+        g.gap_type,
+        g.client_name,
+        g.agent_name,
+        g.carrier,
+        g.effective_date,
+        g.status,
+        g.override_net,
+        g.paid_total,
+        g.chargeback_total,
+        g.paid_count,
+        g.chargeback_count,
+        g.reason,
+      ].map((v) => `"${String(v ?? '').replace(/"/g, '""')}"`).join(','));
+    });
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `override-gap-audit-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   async function loadData() {
@@ -993,6 +1046,14 @@ export default function AgencyProductionRecon() {
                   📤 Export BSI Recon
                 </button>
               </div>
+              <button
+                className="btn btn-secondary"
+                onClick={runGapAudit}
+                disabled={loading || gapAuditLoading}
+                title="Scan all production vs overrides for Milagros-style clawback gaps and never-paid rows"
+              >
+                {gapAuditLoading ? 'Auditing…' : '🔎 Audit gaps'}
+              </button>
               <button className="btn btn-primary" onClick={loadData} disabled={loading}>
                 {loading ? 'Loading...' : '🔄 Refresh'}
               </button>
@@ -1007,6 +1068,98 @@ export default function AgencyProductionRecon() {
         )}
 
         <TruncationBanner message={truncationWarning} />
+
+        {gapAuditError && (
+          <div className="card" style={{ marginBottom: 14, background: 'var(--red-light)', border: '1px solid var(--red)', padding: 14, fontSize: 13 }}>
+            Audit failed: {gapAuditError}
+          </div>
+        )}
+
+        {gapAudit && (
+          <div className="card" style={{ marginBottom: 14, padding: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', alignItems: 'flex-start' }}>
+              <div>
+                <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4 }}>Override gap audit</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                  Scanned {gapAudit.summary?.production_clients ?? 0} production clients ·{' '}
+                  {gapAudit.summary?.override_rows_scanned ?? 0} override rows
+                  {gapAudit.generated_at ? ` · ${new Date(gapAudit.generated_at).toLocaleString()}` : ''}
+                </div>
+              </div>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button className="btn btn-secondary" style={{ fontSize: 12 }} onClick={exportGapAuditCsv}>
+                  Export CSV
+                </button>
+                <button className="btn btn-secondary" style={{ fontSize: 12 }} onClick={() => setGapAudit(null)}>
+                  Close
+                </button>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12 }}>
+              {[
+                ['returnee_clawback', `Returnee clawback (${gapAudit.summary?.returnee_clawback ?? 0})`],
+                ['never_paid', `Never paid (${gapAudit.summary?.never_paid ?? 0})`],
+                ['chargeback_only', `Chargeback only (${gapAudit.summary?.chargeback_only ?? 0})`],
+                ['net_zero', `Net zero (${gapAudit.summary?.net_zero ?? 0})`],
+                ['all', `All gaps (${gapAudit.summary?.gap_total ?? 0})`],
+              ].map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setGapAuditFilter(id)}
+                  style={{
+                    fontSize: 12,
+                    padding: '5px 10px',
+                    borderRadius: 6,
+                    border: gapAuditFilter === id ? '1.5px solid var(--accent, #6D28D9)' : '1px solid var(--border)',
+                    background: gapAuditFilter === id ? 'var(--accent-light, #EDE9FE)' : 'var(--bg)',
+                    fontWeight: gapAuditFilter === id ? 700 : 500,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div style={{ marginTop: 10, fontSize: 12, color: 'var(--text-muted)' }}>
+              Start with <strong>Returnee clawback</strong> — same pattern as Milagros (paid → chargeback → still in production, no open override).
+            </div>
+            <div style={{ marginTop: 12, maxHeight: 280, overflow: 'auto', border: '1px solid var(--border)', borderRadius: 6 }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-subtle, #fafafa)' }}>
+                  <tr>
+                    {['Client', 'Agent', 'Carrier', 'Paid', 'Chargeback', 'Net', 'Reason'].map((h) => (
+                      <th key={h} style={{ textAlign: 'left', padding: '8px 10px', borderBottom: '1px solid var(--border)', fontWeight: 600 }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {(gapAuditFilter === 'all'
+                    ? gapAudit.gaps
+                    : gapAudit.gaps.filter((g) => g.gap_type === gapAuditFilter)
+                  ).map((g, i) => (
+                    <tr key={`${g.gap_type}-${g.client_name}-${g.carrier}-${i}`}>
+                      <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--border)', fontWeight: 600 }}>{g.client_name}</td>
+                      <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--border)' }}>{g.agent_name || '—'}</td>
+                      <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--border)' }}>{formatCarrier(g.carrier)}</td>
+                      <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--border)', color: 'var(--green)' }}>{fmt(g.paid_total || 0)}</td>
+                      <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--border)', color: 'var(--red)' }}>{fmt(g.chargeback_total || 0)}</td>
+                      <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--border)', fontWeight: 600 }}>{g.override_net == null ? '—' : fmt(g.override_net)}</td>
+                      <td style={{ padding: '7px 10px', borderBottom: '1px solid var(--border)', color: 'var(--text-muted)', maxWidth: 320 }}>{g.reason}</td>
+                    </tr>
+                  ))}
+                  {(gapAuditFilter === 'all' ? gapAudit.gaps : gapAudit.gaps.filter((g) => g.gap_type === gapAuditFilter)).length === 0 && (
+                    <tr>
+                      <td colSpan={7} style={{ padding: 20, textAlign: 'center', color: 'var(--text-muted)' }}>
+                        No gaps in this bucket.
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
         {!loading && (
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
