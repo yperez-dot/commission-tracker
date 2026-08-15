@@ -449,6 +449,7 @@ function isNHPFile(filename) {
     (f.includes('the_health_experts') && f.includes('statement')) ||
     (f.includes('yahoska') && f.includes('katy') && f.includes('statement')) ||
     (f.includes('nhp') && f.includes('commission') && f.includes('tailored')) ||
+    (f.includes('nhp') && f.includes('commission') && f.includes('jill')) ||
     (f.includes('nhp_commission_report'));
 }
 
@@ -4666,9 +4667,15 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
     const commissionSum = records.reduce((s, r) => s + (r.commission || 0), 0);
     const carriers = [...new Set(records.map(r => r.carrier).filter(Boolean))];
 
+    // Optional category from form: commission_statement (default) | agent_payout
+    const rawCategory = String(req.body?.category || '').toLowerCase().trim();
+    const uploadCategory = rawCategory === 'agent_payout' ? 'agent_payout' : 'commission_statement';
+
+    try { await pool.query(`ALTER TABLE uploads ADD COLUMN IF NOT EXISTS category TEXT`); } catch (e) {}
+
     const uploadResult = await pool.query(
-      'INSERT INTO uploads (filename, original_name, carrier, row_count, commission_sum, uploaded_by) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
-      [req.file.filename, storedOriginalName, carriers.join(', '), records.length, commissionSum, req.user.id]
+      'INSERT INTO uploads (filename, original_name, carrier, row_count, commission_sum, uploaded_by, category) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id',
+      [req.file.filename, storedOriginalName, carriers.join(', '), records.length, commissionSum, req.user.id, uploadCategory]
     );
     const uploadId = uploadResult.rows[0].id;
 
@@ -4793,6 +4800,8 @@ router.get('/uploads', requireAuth, async (req, res) => {
     if (category === 'bsi_statement') {
       // BSI Statements only
       query = `SELECT u.*, usr.name as uploaded_by_name FROM uploads u LEFT JOIN users usr ON u.uploaded_by = usr.id WHERE u.category = 'bsi_statement' ORDER BY u.uploaded_at DESC`;
+    } else if (category === 'agent_payout') {
+      query = `SELECT u.*, usr.name as uploaded_by_name FROM uploads u LEFT JOIN users usr ON u.uploaded_by = usr.id WHERE u.category = 'agent_payout' ORDER BY u.uploaded_at DESC`;
     } else if (req.user.role === 'agent') {
       query = `SELECT u.*, usr.name as uploaded_by_name FROM uploads u LEFT JOIN users usr ON u.uploaded_by = usr.id WHERE u.uploaded_by = $1 AND (u.category IS NULL OR u.category = 'commission_statement') ORDER BY u.uploaded_at DESC`;
       params = [req.user.id];

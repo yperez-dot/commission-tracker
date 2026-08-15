@@ -919,7 +919,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
   const pageMeta = {
     payroll: {
       title: 'Agent Payouts',
-      sub: 'Pay producers from production (ACA + Lina) — Tailored/Jill Taylor Molina ACA → Agent Payouts; Marco / Integrity peels under House Statements',
+      sub: 'Pay producers (ACA + Lina). Upload Tailored/Jill and other ACA pay statements under Uploads → Agent Payout Uploads. Marco / Integrity peels stay under House Statements.',
     },
     overrides: {
       title: 'House Statements',

@@ -13,6 +13,7 @@ import MedicareProUpload from './pages/MedicareProUpload';
 import AgencyProductionUpload from './pages/AgencyProductionUpload';
 import AgencyProductionRecon from './pages/AgencyProductionRecon';
 import BSIStatementsUpload from './pages/BSIStatementsUpload';
+import AgentPayoutUploads from './pages/AgentPayoutUploads';
 import PassThroughChargebacks from './pages/PassThroughChargebacks';
 import AdpExport from './pages/AdpExport';
 import './App.css';
@@ -23,6 +24,7 @@ const THEI_ONLY_PAGES = new Set([
   'medicarepro-upload',
   'agency-production-upload',
   'agency-production-recon',
+  'agent-payout-uploads',
   'direct-recon',
   'renewals',
   'pass-through-chargebacks',
@@ -130,6 +132,7 @@ export default function App() {
   const uploadChildren = [
     { id: 'upload', label: 'Commission Statements' },
     ...(!isBSI ? [
+      { id: 'agent-payout-uploads', label: 'Agent Payout Uploads' },
       { id: 'medicarepro-upload', label: 'MedicarePro Sales' },
       { id: 'agency-production-upload', label: 'Agency Production' },
     ] : []),
@@ -183,6 +186,7 @@ export default function App() {
     'medicarepro-upload': <MedicareProUpload key={agencyView} user={effectiveUser} onNavigate={navigate} />,
     'agency-production-upload': <AgencyProductionUpload key={agencyView} user={effectiveUser} onNavigate={navigate} />,
     'bsi-statements-upload': <BSIStatementsUpload key={agencyView} user={effectiveUser} onNavigate={navigate} />,
+    'agent-payout-uploads': <AgentPayoutUploads key={agencyView} user={effectiveUser} onNavigate={navigate} />,
     'agency-production-recon': <AgencyProductionRecon key={agencyView} user={effectiveUser} />,
     alldata: <AllData key={`${agencyView}-${JSON.stringify(pageParams)}`} user={effectiveUser} initialFilters={pageParams} />,
     bob: <BookOfBusiness key={agencyView} user={effectiveUser} />,

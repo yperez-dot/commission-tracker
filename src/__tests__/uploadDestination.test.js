@@ -31,6 +31,20 @@ describe('uploadDestination', () => {
     expect(detectUploadDestination('The_Health_Experts_Insurance_Statement_202601.xlsx').id).toBe(
       'commission_statement'
     );
+    expect(
+      detectUploadDestination(
+        'THE HEALTH EXPERST INSURANCE - YAHOSKA PEREZ principal - KATY ROBLES- NHP Commission Report.xlsx'
+      ).id
+    ).toBe('commission_statement');
+  });
+
+  test('routes Tailored / Jill NHP reports to Agent Payout Uploads', () => {
+    const tailored = detectUploadDestination(
+      'THE_HEALTH_EXPERST_INSURANCE_-_TAILORED_INSURANCE_SOLUTIONS_AGCY_-_JILL_TAYLOR_-_NHP_Commission_Report-_Jun_15th__2026.xlsx'
+    );
+    expect(tailored.id).toBe('agent_payout');
+    expect(tailored.confidence).toBe('high');
+    expect(detectUploadDestination('Jill_Taylor_NHP_Commission_Report_May.xlsx').id).toBe('agent_payout');
   });
 
   test('routes AgentView CNHIC reports to Commission Statements', () => {
@@ -43,11 +57,14 @@ describe('uploadDestination', () => {
   test('destinationMatchesTab only matches exact tab', () => {
     expect(destinationMatchesTab('bsi_statement', 'commission_statement')).toBe(false);
     expect(destinationMatchesTab('bsi_statement', 'bsi_statement')).toBe(true);
+    expect(destinationMatchesTab('agent_payout', 'commission_statement')).toBe(false);
+    expect(destinationMatchesTab('agent_payout', 'agent_payout')).toBe(true);
     expect(destinationMatchesTab('unknown', 'commission_statement')).toBe(true);
   });
 
   test('UPLOAD_PAGE_BY_DEST maps destinations to pages', () => {
     expect(UPLOAD_PAGE_BY_DEST.commission_statement).toBe('upload');
     expect(UPLOAD_PAGE_BY_DEST.bsi_statement).toBe('bsi-statements-upload');
+    expect(UPLOAD_PAGE_BY_DEST.agent_payout).toBe('agent-payout-uploads');
   });
 });

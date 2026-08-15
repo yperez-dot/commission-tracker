@@ -15,7 +15,7 @@ function norm(filename) {
 
 /**
  * @returns {{
- *   id: 'commission_statement'|'bsi_statement'|'medicarepro'|'agency_production'|'unknown',
+ *   id: 'commission_statement'|'bsi_statement'|'agent_payout'|'medicarepro'|'agency_production'|'unknown',
  *   label: string,
  *   reason: string,
  *   confidence: 'high'|'medium'|'low'
@@ -99,7 +99,27 @@ export function detectUploadDestination(filename) {
     };
   }
 
-  // NHP agency statements → Commission Statements
+  // Agent payout NHP / Tailored ACA (before generic THEI NHP — filenames also include THE HEALTH EXPERST)
+  const isTheiPrincipalNhp =
+    (f.includes('yahoska') && f.includes('katy')) ||
+    f.includes('principal') ||
+    (f.includes('yahoska_perez') && f.includes('nhp'));
+  if (
+    f.includes('tailored') ||
+    f.includes('jill_taylor') ||
+    f.includes('jill-taylor') ||
+    ((f.includes('nhp_commission_report') || (f.includes('nhp') && f.includes('commission'))) &&
+      !isTheiPrincipalNhp)
+  ) {
+    return {
+      id: 'agent_payout',
+      label: 'Agent Payout Uploads',
+      reason: 'Looks like a producer payout statement (Tailored / writing-agent NHP report)',
+      confidence: 'high',
+    };
+  }
+
+  // NHP agency statements → Commission Statements (THEI house / principal)
   if (
     f.includes('the_health_experts_insurance_statement') ||
     f.includes('the_health_experst_insurance') ||
@@ -181,6 +201,7 @@ export function detectUploadDestination(filename) {
 export const UPLOAD_PAGE_BY_DEST = {
   commission_statement: 'upload',
   bsi_statement: 'bsi-statements-upload',
+  agent_payout: 'agent-payout-uploads',
   medicarepro: 'medicarepro-upload',
   agency_production: 'agency-production-upload',
 };
@@ -189,6 +210,7 @@ export function destinationMatchesTab(detectedId, currentTabId) {
   if (!detectedId || detectedId === 'unknown') return true;
   if (currentTabId === 'commission_statement') return detectedId === 'commission_statement';
   if (currentTabId === 'bsi_statement') return detectedId === 'bsi_statement';
+  if (currentTabId === 'agent_payout') return detectedId === 'agent_payout';
   if (currentTabId === 'medicarepro') return detectedId === 'medicarepro';
   if (currentTabId === 'agency_production') return detectedId === 'agency_production';
   return true;
