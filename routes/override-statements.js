@@ -16,6 +16,7 @@ const {
   buildOverrideExcelWorkbook,
   filenameForOverrideExcel,
 } = require('../src/overrideExcelStatement');
+const { backfillDevotedAgentCommission } = require('../src/theCarrierStatementClassify');
 
 /** Override Statements tab — Lina/agent production is Agent Payouts only. */
 const OVERRIDE_UI_TYPES = [
@@ -252,6 +253,14 @@ router.get('/preview', requireAuth, async (req, res) => {
     }
     const pool = getPool();
     let nhpSourceBackfilled = 0;
+    try {
+      const devotedFixed = await backfillDevotedAgentCommission(pool);
+      if (devotedFixed) {
+        console.log(`[override-statements] reclassified ${devotedFixed} Devoted Agency Override → Agent Commission`);
+      }
+    } catch (e) {
+      console.warn('[override-statements] Devoted agent-commission backfill', e.message);
+    }
     if (
       type === STATEMENT_TYPES.THEI_NHP ||
       type === STATEMENT_TYPES.THEI_BSI ||
