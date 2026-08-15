@@ -4243,6 +4243,7 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
     const defaultPayee = determinePayee(req.file.originalname);
 
     let records;
+    let isTheRemittanceUpload = false;
 
     // AgentView CNHIC / HealthSpring — filename OR PDF text sniff
     {
@@ -4359,6 +4360,7 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
       if (isTheRemittanceStatement(wb, req.file.originalname)) {
         console.log('[UPLOAD] Using BSI→THE remittance statement parser');
         records = parseTheRemittanceStatement(wb, req.file.originalname);
+        isTheRemittanceUpload = true;
       } else if (isYourFMOXLSX(req.file.originalname)) {
         console.log('[UPLOAD] Using YourFMO XLSX parser');
         records = parseYourFMOXLSXRows(wb);
@@ -4778,6 +4780,33 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
       internalDuplicatesRemoved: internalDuplicatesRemoved || 0,
       nhpRenamed: storedOriginalName !== req.file.originalname,
     };
+
+    // Guard: flag remittance chargebacks that exceed prior THEI remittance net (BSI double CB)
+    try {
+      const {
+        auditRemittanceUploadChargebacks,
+        isLikelyTheRemittanceUploadName,
+      } = require('../src/remittanceChargebackAudit');
+      if (isTheRemittanceUpload || isLikelyTheRemittanceUploadName(storedOriginalName) || isLikelyTheRemittanceUploadName(req.file.originalname)) {
+        const audit = await auditRemittanceUploadChargebacks(pool, uploadId);
+        if (audit) {
+          response.remittanceChargebackAudit = {
+            summary: audit.summary,
+            problems: audit.problems,
+            warning: audit.problems.length
+              ? `${audit.problems.length} remittance chargeback(s) look like double/over clawbacks vs prior THEI remittance net — do not treat as new THEI debt until BSI confirms (OliComm did not invent these; they came from the remittance file).`
+              : null,
+          };
+          if (audit.problems.length) {
+            console.warn(
+              `[UPLOAD] Remittance chargeback audit: ${audit.problems.length} problem(s), $${audit.summary.problemAmount}`
+            );
+          }
+        }
+      }
+    } catch (auditErr) {
+      console.warn('[UPLOAD] remittance chargeback audit failed:', auditErr.message);
+    }
     
     res.json(response);
 

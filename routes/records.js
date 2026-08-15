@@ -391,6 +391,58 @@ router.get('/client-history', requireAuth, async (req, res) => {
   }
 });
 
+// ─── GET /remittance-chargeback-audit — flag BSI double/over THEI remittance CBs
+router.get('/remittance-chargeback-audit', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const pool = getPool();
+    const {
+      auditRemittanceUploadChargebacks,
+      isLikelyTheRemittanceUploadName,
+    } = require('../src/remittanceChargebackAudit');
+
+    let uploadId = req.query.uploadId ? parseInt(req.query.uploadId, 10) : null;
+    if (!uploadId && req.query.filename) {
+      const found = await pool.query(
+        `SELECT id, original_name FROM uploads WHERE original_name ILIKE $1 ORDER BY id DESC LIMIT 1`,
+        [`%${req.query.filename}%`]
+      );
+      if (!found.rows.length) return res.status(404).json({ error: 'Upload not found' });
+      uploadId = found.rows[0].id;
+    }
+    if (!uploadId) {
+      // Default: audit latest remittance-like uploads (May/Jun/Jul pattern)
+      const recent = await pool.query(
+        `SELECT id, original_name FROM uploads
+         WHERE original_name ILIKE '%thei_statement_BSI%'
+            OR original_name ILIKE '%T.H.E_STATEMENTS%'
+            OR (original_name ILIKE '%Medicare Statement%' AND original_name ILIKE '%THE%')
+         ORDER BY id DESC LIMIT 5`
+      );
+      const audits = [];
+      for (const u of recent.rows) {
+        if (!isLikelyTheRemittanceUploadName(u.original_name)) continue;
+        const a = await auditRemittanceUploadChargebacks(pool, u.id);
+        if (a) audits.push(a);
+      }
+      return res.json({
+        audits,
+        totals: {
+          uploads: audits.length,
+          problems: audits.reduce((s, a) => s + a.summary.problems, 0),
+          problemAmount: audits.reduce((s, a) => s + a.summary.problemAmount, 0),
+        },
+      });
+    }
+
+    const audit = await auditRemittanceUploadChargebacks(pool, uploadId);
+    if (!audit) return res.status(404).json({ error: 'Upload not found' });
+    res.json(audit);
+  } catch (err) {
+    console.error('remittance-chargeback-audit error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.delete('/:id', requireAuth, requireAdmin, async (req, res) => {
   try {
     const pool = getPool();
