@@ -284,6 +284,7 @@ export default function AgencyProductionRecon() {
   const [sortDir, setSortDir] = useState('asc');
   const [selectedOverride, setSelectedOverride] = useState(null);
   const [selectedProduction, setSelectedProduction] = useState(null);
+  const [editingMatch, setEditingMatch] = useState(null); // row opened via Edit button
   const [overrideSaving, setOverrideSaving] = useState(null); // id of row currently saving
   const [truncationWarning, setTruncationWarning] = useState(null);
 
@@ -306,6 +307,7 @@ export default function AgencyProductionRecon() {
                     manual_override_at: status ? new Date().toISOString() : null }
           : p
       ));
+      setEditingMatch(null);
     } catch (err) {
       alert('Failed to save override: ' + err.message);
     } finally {
@@ -787,6 +789,104 @@ export default function AgencyProductionRecon() {
         </div>
       )}
 
+      {editingMatch && (
+        <div
+          onClick={() => setEditingMatch(null)}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: 'white',
+              borderRadius: 12,
+              maxWidth: 420,
+              width: '90%',
+              boxShadow: '0 10px 40px rgba(0,0,0,0.3)',
+            }}
+          >
+            <div
+              style={{
+                padding: '16px 20px',
+                borderBottom: '1px solid var(--border)',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+              }}
+            >
+              <div>
+                <h2 style={{ margin: 0, fontSize: 16, color: 'var(--text)', fontWeight: 600 }}>
+                  Edit override status
+                </h2>
+                <p style={{ margin: '4px 0 0', fontSize: 12, color: 'var(--text-muted)' }}>
+                  {editingMatch.production.client_name}
+                  {' · '}
+                  {formatCarrier(editingMatch.production.carrier)}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingMatch(null)}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  fontSize: 20,
+                  cursor: 'pointer',
+                  color: 'var(--text-muted)',
+                  padding: 4,
+                }}
+              >
+                ×
+              </button>
+            </div>
+            <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {[
+                { value: null, label: '— Auto (clear manual)' },
+                { value: 'paid', label: 'Paid' },
+                { value: 'chase_bsi', label: 'Chase BSI' },
+                { value: 'request_audit', label: 'Request Audit' },
+                { value: 'held_licensing', label: 'Held – Licensing' },
+                { value: 'no_pay_expected', label: 'No Pay Expected' },
+                { value: 'pending', label: 'Pending' },
+              ].map((opt) => {
+                const current = editingMatch.production.manual_override_status || null;
+                const selected = current === opt.value;
+                const saving = overrideSaving === editingMatch.production.id;
+                return (
+                  <button
+                    key={String(opt.value)}
+                    type="button"
+                    disabled={saving}
+                    onClick={() => saveOverride(editingMatch.production.id, opt.value)}
+                    style={{
+                      textAlign: 'left',
+                      padding: '10px 12px',
+                      borderRadius: 6,
+                      border: selected ? '1.5px solid var(--accent, #6D28D9)' : '1px solid var(--border)',
+                      background: selected ? 'var(--accent-light, #EDE9FE)' : 'var(--bg)',
+                      color: 'var(--text)',
+                      fontSize: 13,
+                      fontWeight: selected ? 600 : 500,
+                      cursor: saving ? 'wait' : 'pointer',
+                    }}
+                  >
+                    {opt.label}
+                    {selected ? ' · current' : ''}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="page-header">
         <div className="page-title">🏢 Agency Override Reconciliation</div>
       </div>
@@ -1123,33 +1223,21 @@ export default function AgencyProductionRecon() {
                               {m.isHistory ? (
                                 <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>—</span>
                               ) : (
-                              <select
-                                value={m.production.manual_override_status || ''}
-                                disabled={overrideSaving === m.production.id}
-                                onChange={e => {
-                                  const val = e.target.value || null;
-                                  saveOverride(m.production.id, val);
-                                }}
-                                title={isManual && m.production.manual_override_by
-                                  ? `Manually set by ${m.production.manual_override_by}`
-                                  : 'Set manual override'}
-                                style={{
-                                  fontSize: 11, padding: '3px 5px', borderRadius: 4,
-                                  border: isManual ? '1.5px solid var(--accent)' : '1px solid var(--border)',
-                                  background: isManual ? 'var(--accent-light, #EDE9FE)' : 'var(--bg)',
-                                  color: isManual ? 'var(--accent-dark)' : 'var(--text)',
-                                  cursor: 'pointer', width: '100%', maxWidth: 110,
-                                  fontWeight: isManual ? 600 : 400
-                                }}
-                              >
-                                <option value="">{overrideSaving === m.production.id ? 'Saving…' : '— auto'}</option>
-                                <option value="paid">🟢 Paid</option>
-                                <option value="chase_bsi">🔴 Chase BSI</option>
-                                <option value="request_audit">🟡 Request Audit</option>
-                                <option value="held_licensing">🔒 Held – Licensing</option>
-                                <option value="no_pay_expected">⛔ No Pay Expected</option>
-                                <option value="pending">⚪ Pending</option>
-                              </select>
+                                <button
+                                  type="button"
+                                  className="btn btn-secondary"
+                                  onClick={() => setEditingMatch(m)}
+                                  disabled={overrideSaving === m.production.id}
+                                  title={isManual ? 'Edit manual override status' : 'Edit override status'}
+                                  style={{
+                                    fontSize: 11,
+                                    padding: '4px 12px',
+                                    fontWeight: 600,
+                                    minWidth: 64,
+                                  }}
+                                >
+                                  {overrideSaving === m.production.id ? '…' : 'Edit'}
+                                </button>
                               )}
                             </td>
                           </tr>
