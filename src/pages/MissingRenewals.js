@@ -494,14 +494,21 @@ export default function MissingRenewals({ user }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {clientRecords.map((r,i) => (
-                      <tr key={i} style={{ borderBottom:'1px solid var(--border)' }}>
-                        <td style={{ padding:'8px 14px' }}>{r.payment_period||'—'}</td>
+                    {clientRecords.map((r,i) => {
+                      const rowPeriod = normPeriod(r.payment_period);
+                      const isSelectedMonth = rowPeriod && selectedPeriod && rowPeriod === normPeriod(selectedPeriod);
+                      return (
+                      <tr key={i} style={{ borderBottom:'1px solid var(--border)', background: isSelectedMonth ? '#FFF8E6' : undefined }}>
+                        <td style={{ padding:'8px 14px' }}>
+                          {formatPeriodLabel(r.payment_period) || r.payment_period || '—'}
+                          {isSelectedMonth && <span style={{ marginLeft:6,fontSize:10,color:'#856404' }}>← checking</span>}
+                        </td>
                         <td style={{ padding:'8px 14px',color:'var(--text-muted)' }}>{r.carrier}</td>
                         <td style={{ padding:'8px 14px',fontWeight:500,color:parseFloat(r.commission)<0?'var(--red)':'var(--green)' }}>{fmt(r.commission)}</td>
                         <td style={{ padding:'8px 14px',color:'var(--text-muted)' }}>{r.classification}</td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               )}
@@ -774,7 +781,7 @@ export default function MissingRenewals({ user }) {
                         </td>
                         <td style={{ fontSize:12,color:'var(--text-muted)' }}>
                           {!r.lastPaidPeriod
-                            ? <span className="badge badge-blue">New</span>
+                            ? <span className="badge badge-blue" title="No renewal payment found in BOB or uploaded statements">No last paid</span>
                             : <span style={{ color: r.monthsMissing > 0 ? 'var(--red)' : 'var(--text-muted)', fontWeight: r.monthsMissing > 0 ? 500 : 400 }}>
                                 {r.monthsMissing} mo
                               </span>

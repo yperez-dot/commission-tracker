@@ -7,8 +7,14 @@ const {
   namesLooseMatch,
   buildMissingRenewalRows,
   buildMissingRenewalsPeriodOptions,
+  buildLastPaidLookup,
   monthsBetweenPeriods,
   isTheiPrincipalAgent,
+  normPeriod,
+  countsAsRenewalPaid,
+  clientCarrierKey,
+  heldIdentityKey,
+  dedupeBobClients,
 } = require('../missingRenewalsLogic');
 
 describe('missingRenewalsLogic', () => {
@@ -35,15 +41,32 @@ describe('missingRenewalsLogic', () => {
     expect(normCarrier('Doctors HealthCare Plans')).toBe('doctors healthcare');
   });
 
+  test('normPeriod accepts YYYYMM, slash, ISO date, and named months', () => {
+    expect(normPeriod('202605')).toBe('202605');
+    expect(normPeriod('05/2026')).toBe('202605');
+    expect(normPeriod('2026-04-01')).toBe('202604');
+    expect(normPeriod('May 2026')).toBe('202605');
+    expect(normPeriod(new Date(Date.UTC(2026, 3, 1)))).toBe('202604');
+  });
+
   test('monthsBetweenPeriods', () => {
     expect(monthsBetweenPeriods('202501', '202603')).toBe(14);
     expect(monthsBetweenPeriods('202603', '202601')).toBe(0);
+    expect(monthsBetweenPeriods('2026-04-01', '202605')).toBe(1);
   });
 
   test('isTheiPrincipalAgent', () => {
     expect(isTheiPrincipalAgent('Yahoska Perez')).toBe(true);
     expect(isTheiPrincipalAgent('Katy Robles')).toBe(true);
     expect(isTheiPrincipalAgent('Alan Elchami')).toBe(false);
+  });
+
+  test('countsAsRenewalPaid excludes Override / Chargeback / Held', () => {
+    expect(countsAsRenewalPaid('Renewal')).toBe(true);
+    expect(countsAsRenewalPaid('Held')).toBe(false);
+    expect(countsAsRenewalPaid('Agency Override')).toBe(false);
+    expect(countsAsRenewalPaid('Chargeback')).toBe(false);
+    expect(countsAsRenewalPaid('Agent Chargeback')).toBe(false);
   });
 
   test('buildMissingRenewalRows marks missing vs paid and skips first-year', () => {
@@ -144,6 +167,163 @@ describe('missingRenewalsLogic', () => {
     expect(result.rows[0].commission).toBe(32.34);
   });
 
+  test('later-month BOB last paid does NOT clear an earlier unpaid month', () => {
+    const bobClients = [
+      {
+        id: 1,
+        client_full_name: 'BEVERLY SWITZ',
+        agent_name: 'Yahoska Perez',
+        carrier: 'UnitedHealthcare',
+        effective_date: '2023-09-01',
+        last_commission_date: '202607',
+        last_commission_amount: 36.63,
+      },
+    ];
+    const result = buildMissingRenewalRows({
+      bobClients,
+      periodRecords: [],
+      period: '202605',
+      heldKeySet: new Set(),
+      policyStatusMap: {},
+    });
+    expect(result.rows[0].isMissing).toBe(true);
+    expect(result.rows[0].lastPaidPeriod).toBe('202607');
+    // months missing is 0 because last paid is after the check month
+    expect(result.rows[0].monthsMissing).toBe(0);
+  });
+
+  test('live lastPaidByKey enriches New badge data without clearing May gap', () => {
+    const bobClients = [
+      {
+        id: 1,
+        client_full_name: 'BEVERLY SWITZ',
+        agent_name: 'Yahoska Perez',
+        carrier: 'UnitedHealthcare',
+        effective_date: '2023-09-01',
+        last_commission_date: null,
+        last_commission_amount: 0,
+      },
+    ];
+    const lastPaidByKey = buildLastPaidLookup([
+      {
+        client_full_name: 'SWITZ, BEVERLY',
+        carrier: 'UnitedHealthcare',
+        payment_period: '202606',
+        commission: 32.34,
+        classification: 'Renewal',
+      },
+      {
+        client_full_name: 'SWITZ, BEVERLY',
+        carrier: 'UnitedHealthcare',
+        payment_period: '202606',
+        commission: 4.29,
+        classification: 'Renewal',
+      },
+      {
+        client_full_name: 'SWITZ, BEVERLY',
+        carrier: 'UnitedHealthcare',
+        payment_period: '202607',
+        commission: 32.34,
+        classification: 'Renewal',
+      },
+    ]);
+    const result = buildMissingRenewalRows({
+      bobClients,
+      periodRecords: [],
+      period: '202605',
+      heldKeySet: new Set(),
+      policyStatusMap: {},
+      lastPaidByKey,
+    });
+    expect(result.rows[0].isMissing).toBe(true);
+    expect(result.rows[0].lastPaidPeriod).toBe('202607');
+    expect(result.rows[0].lastKnownCommission).toBe(32.34);
+    expect(result.summary.estimatedMissing).toBe(32.34);
+  });
+
+  test('Agency Override alone does not count as renewal paid', () => {
+    const bobClients = [
+      {
+        id: 1,
+        client_full_name: 'Darren Rodgers',
+        agent_name: 'Yahoska Perez',
+        carrier: 'UnitedHealthcare',
+        effective_date: '2023-01-01',
+        last_commission_date: '202604',
+        last_commission_amount: 4,
+      },
+    ];
+    const periodRecords = [
+      {
+        id: 1,
+        client_full_name: 'Darren Rodgers',
+        carrier: 'UnitedHealthcare',
+        commission: 4,
+        classification: 'Agency Override',
+        payment_period: '202605',
+      },
+    ];
+    const result = buildMissingRenewalRows({
+      bobClients,
+      periodRecords,
+      period: '202605',
+      heldKeySet: new Set(),
+      policyStatusMap: {},
+    });
+    expect(result.rows[0].isMissing).toBe(true);
+  });
+
+  test('Held key matches across LAST, FIRST formats via clientNameKey', () => {
+    const bobClients = [
+      {
+        id: 1,
+        client_full_name: 'WOODCOCK TIM M',
+        agent_name: 'Yahoska Perez',
+        carrier: 'Humana',
+        effective_date: '2023-03-01',
+        last_commission_date: '202604',
+        last_commission_amount: 28.91,
+      },
+    ];
+    const heldKey = heldIdentityKey('WOODCOCK, TIM M', 'Humana');
+    const result = buildMissingRenewalRows({
+      bobClients,
+      periodRecords: [],
+      period: '202605',
+      heldKeySet: new Set([heldKey]),
+      policyStatusMap: {},
+    });
+    expect(result.rows[0].isMissing).toBe(true);
+    expect(result.rows[0].isHeld).toBe(true);
+  });
+
+  test('dedupeBobClients collapses WOODCOCK TIM M / TIM WOODCOCK', () => {
+    const { clients, collapsedDuplicates } = dedupeBobClients([
+      {
+        id: 1,
+        client_full_name: 'WOODCOCK TIM M',
+        carrier: 'Humana',
+        effective_date: '2023-03-01',
+        last_commission_date: '202604',
+        last_commission_amount: 28.91,
+      },
+      {
+        id: 2,
+        client_full_name: 'TIM WOODCOCK',
+        carrier: 'Humana',
+        effective_date: '2025-04-01',
+        last_commission_date: null,
+        last_commission_amount: 0,
+      },
+    ]);
+    expect(collapsedDuplicates).toBe(1);
+    expect(clients).toHaveLength(1);
+    expect(clients[0].id).toBe(1);
+    expect(clientCarrierKey('WOODCOCK TIM M', 'Humana')).toBe(
+      clientCarrierKey('TIM WOODCOCK', 'Humana')
+    );
+  });
+
   test('Held-only match stays missing/held, not paid', () => {
     const bobClients = [
       {
@@ -171,7 +351,7 @@ describe('missingRenewalsLogic', () => {
       bobClients,
       periodRecords,
       period: '202601',
-      heldKeySet: new Set([`${normName('Held Client')}|${normCarrier('UnitedHealthcare')}`]),
+      heldKeySet: new Set([heldIdentityKey('Held Client', 'UnitedHealthcare')]),
       policyStatusMap: {},
     });
     expect(result.rows[0].isMissing).toBe(true);
