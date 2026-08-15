@@ -73,8 +73,8 @@ describe('agencyOverrideReconMatch', () => {
     const { expandOverrideLifecycle } = require('../agencyOverrideReconMatch.cjs');
     const prod = { id: 42, client_name: 'Milagros Cambas De Rivas', carrier: 'Aetna' };
     const overrides = [
-      { id: 1, client_full_name: 'Milagros Cambas De Rivas', carrier: 'Aetna', commission: 80 },
-      { id: 2, client_full_name: 'Milagros Cambas De Rivas', carrier: 'Aetna', commission: -80 },
+      { id: 1, client_full_name: 'Milagros Cambas De Rivas', carrier: 'Aetna', commission: 80, classification: 'Agency Override' },
+      { id: 2, client_full_name: 'Milagros Cambas De Rivas', carrier: 'Aetna', commission: -80, classification: 'Chargeback' },
     ];
     const rows = expandOverrideLifecycle(prod, overrides);
     expect(rows.map((r) => r.lifecycle).sort()).toEqual(['chargeback', 'missing', 'paid']);
@@ -90,7 +90,7 @@ describe('agencyOverrideReconMatch', () => {
     const { expandOverrideLifecycle } = require('../agencyOverrideReconMatch.cjs');
     const prod = { id: 7, client_name: 'Jane Doe', carrier: 'Aetna' };
     const overrides = [
-      { id: 9, client_full_name: 'Jane Doe', carrier: 'Aetna', commission: 150 },
+      { id: 9, client_full_name: 'Jane Doe', carrier: 'Aetna', commission: 150, classification: 'Agency Override' },
     ];
     const rows = expandOverrideLifecycle(prod, overrides);
     expect(rows).toHaveLength(1);
@@ -141,5 +141,34 @@ describe('agencyOverrideReconMatch', () => {
       },
     ]);
     expect(rows).toHaveLength(2);
+  });
+
+  test('lifecycle ignores New Business payee=THE rows (crash guard)', () => {
+    const { expandOverrideLifecycle, isOverrideStatementRow } = require('../agencyOverrideReconMatch.cjs');
+    expect(isOverrideStatementRow({ classification: 'New Business', payee: 'THE' })).toBe(false);
+    const prod = { id: 9, client_name: 'Flood Client', carrier: 'Aetna' };
+    const overrides = [];
+    for (let i = 0; i < 200; i++) {
+      overrides.push({
+        id: i,
+        client_full_name: 'Flood Client',
+        carrier: 'Aetna',
+        commission: 10,
+        classification: 'New Business',
+        payee: 'THE',
+      });
+    }
+    overrides.push({
+      id: 999,
+      client_full_name: 'Flood Client',
+      carrier: 'Aetna',
+      commission: 80,
+      classification: 'Agency Override',
+    });
+    const rows = expandOverrideLifecycle(prod, overrides);
+    // Only the Agency Override expands — not 200 NB lines
+    expect(rows).toHaveLength(1);
+    expect(rows[0].lifecycle).toBe('paid');
+    expect(rows[0].override.override_net).toBe(80);
   });
 });

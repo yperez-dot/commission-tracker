@@ -55,6 +55,21 @@ export function dedupeProductionSales(rows) {
 }
 
 /**
+ * BSI→THEI override / chargeback rows only.
+ * Do NOT include every payee=THE commission line — that exploded lifecycle
+ * history into thousands of rows and crashed Agency Override Recon.
+ */
+export function isOverrideStatementRow(row) {
+  const c = String(row?.classification || '').toLowerCase();
+  if (!c) return false;
+  if (c.includes('chargeback')) return true;
+  if (c.includes('agency override')) return true;
+  // bare "Override" / "override commission" — not Agent Commission
+  if (c.includes('override') && !c.includes('agent')) return true;
+  return false;
+}
+
+/**
  * Match agency production → BSI→THEI override commission rows.
  * Nets ALL matching rows for client+carrier so +$80 override and −$80
  * chargeback → override_net 0 → Missing (not falsely Paid).
@@ -124,7 +139,9 @@ function wrapSingleOverride(row) {
  */
 export function expandOverrideLifecycle(production, overrides) {
   const prodId = production?.id != null ? String(production.id) : 'unknown';
-  const bundled = findOverrideMatch(production, overrides);
+  // Never expand agent NB/renewal lines into history — override/chargeback only.
+  const overrideOnly = (overrides || []).filter(isOverrideStatementRow);
+  const bundled = findOverrideMatch(production, overrideOnly);
 
   if (!bundled) {
     return [

@@ -1,10 +1,9 @@
 'use strict';
 
-/**
- * CJS bridge for Node (routes, Jest). Keep in sync with agencyOverrideReconMatch.js.
- */
+/** CJS bridge — keep in sync with agencyOverrideReconMatch.js */
 const { normName, normalizeCarrier, carriersMatch, namesLooseMatch } = require('./matchingNormalize.cjs');
 
+/** Token-sorted client key (same idea as clientNameKey). */
 function saleClientKey(name) {
   if (!name) return '';
   const noAccents = String(name)
@@ -19,6 +18,10 @@ function saleClientKey(name) {
     .join('|');
 }
 
+/**
+ * Identity of one sale across rolling 90-day production uploads.
+ * Same client + carrier + eff date + policy = same sale (not a new enrollment).
+ */
 function productionSaleKey(prod) {
   const client = saleClientKey(prod?.client_name);
   const carrier = normalizeCarrier(prod?.carrier);
@@ -36,6 +39,10 @@ function productionRecency(prod) {
   return t * 1e6 + id;
 }
 
+/**
+ * Collapse rolling production duplicates to one row per true sale.
+ * Keeps the newest upload when the same sale repeats across batches.
+ */
 function dedupeProductionSales(rows) {
   const map = new Map();
   for (const p of rows || []) {
@@ -50,6 +57,26 @@ function dedupeProductionSales(rows) {
   return [...map.values()];
 }
 
+/**
+ * BSI→THEI override / chargeback rows only.
+ * Do NOT include every payee=THE commission line — that exploded lifecycle
+ * history into thousands of rows and crashed Agency Override Recon.
+ */
+function isOverrideStatementRow(row) {
+  const c = String(row?.classification || '').toLowerCase();
+  if (!c) return false;
+  if (c.includes('chargeback')) return true;
+  if (c.includes('agency override')) return true;
+  // bare "Override" / "override commission" — not Agent Commission
+  if (c.includes('override') && !c.includes('agent')) return true;
+  return false;
+}
+
+/**
+ * Match agency production → BSI→THEI override commission rows.
+ * Nets ALL matching rows for client+carrier so +$80 override and −$80
+ * chargeback → override_net 0 → Missing (not falsely Paid).
+ */
 function findOverrideMatch(production, overrides) {
   const prodClient = production.client_name;
   const prodClientNorm = normName(prodClient);
@@ -85,6 +112,7 @@ function findOverrideMatch(production, overrides) {
   };
 }
 
+/** Paid only when net override dollars remain after chargebacks. */
 function isOverridePaid(overrideMatch) {
   if (!overrideMatch) return false;
   const net =
@@ -107,9 +135,16 @@ function wrapSingleOverride(row) {
   };
 }
 
+/**
+ * Expand one production row into lifecycle history rows so recon buckets
+ * show the full story: Paid (+override), Cancelled (chargeback/left),
+ * and Missing again when she returns with no open override.
+ */
 function expandOverrideLifecycle(production, overrides) {
   const prodId = production?.id != null ? String(production.id) : 'unknown';
-  const bundled = findOverrideMatch(production, overrides);
+  // Never expand agent NB/renewal lines into history — override/chargeback only.
+  const overrideOnly = (overrides || []).filter(isOverrideStatementRow);
+  const bundled = findOverrideMatch(production, overrideOnly);
 
   if (!bundled) {
     return [
@@ -151,6 +186,7 @@ function expandOverrideLifecycle(production, overrides) {
     }
   });
 
+  // Return / clawed-back: still in production but no open paid override.
   if (!isOverridePaid(bundled)) {
     rows.push({
       production,
@@ -165,12 +201,18 @@ function expandOverrideLifecycle(production, overrides) {
   return rows;
 }
 
+/**
+ * Aetna returnee-safe active check.
+ * If Enroll_Status is Active / Future Active, keep even when Exit/Term still
+ * says Voluntary from a prior disenrollment (client came back to the plan).
+ */
 function isAetnaActivePolicy(row) {
   const str = (v) => String(v == null ? '' : v);
   const enrollStatus = str(row.Enroll_Status || row.enroll_status || row.status).trim().toUpperCase();
   const exitStatus = str(row.Exit_Status || row.exit_status).trim().toUpperCase();
   const termStatus = str(row.Term_Status || row.term_status).trim().toUpperCase();
 
+  // Current enroll wins over stale exit/term from a prior leave (returnees).
   if (enrollStatus.includes('CANCEL')) return false;
   if (enrollStatus.includes('ACTIVE') || enrollStatus.includes('FUTURE')) return true;
   if (exitStatus.includes('VOLUNTARY') || exitStatus.includes('CANCEL')) return false;
@@ -185,4 +227,5 @@ module.exports = {
   isAetnaActivePolicy,
   productionSaleKey,
   dedupeProductionSales,
+  isOverrideStatementRow,
 };

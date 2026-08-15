@@ -3,7 +3,7 @@ import { apiFetch } from '../api';
 import { formatCarrier } from '../utils/formatCarrier';
 import { formatDate as formatDateUtil } from '../utils/dateFormat';
 import { normName, normalizeCarrier, carriersMatch } from '../matchingNormalize';
-import { findOverrideMatch, isOverridePaid, expandOverrideLifecycle, dedupeProductionSales } from '../agencyOverrideReconMatch';
+import { findOverrideMatch, isOverridePaid, expandOverrideLifecycle, dedupeProductionSales, isOverrideStatementRow } from '../agencyOverrideReconMatch';
 import { fetchAllPages, truncationMessage } from '../fetchAllPages';
 import TruncationBanner from '../components/TruncationBanner';
 import { expectedAgencyOverride, expectedOverrideLabel } from '../utils/agencyOverrideExpected';
@@ -121,8 +121,13 @@ function formatDate(dateStr) {
 
 /** Expected BSI→THEI cell — same visual language as Sales Recon Expected. */
 function ExpectedOverrideCell({ production, asTd = true }) {
-  const meta = expectedAgencyOverride(production || {});
-  const label = expectedOverrideLabel(meta);
+  let meta;
+  try {
+    meta = expectedAgencyOverride(production || {});
+  } catch {
+    meta = { amount: null, note: 'Rate lookup failed', kind: 'unknown' };
+  }
+  const label = expectedOverrideLabel(meta) || meta.note || '';
   const inner = (
     <>
       {meta.amount == null ? (
@@ -409,20 +414,7 @@ export default function AgencyProductionRecon() {
         { pageSize: 5000 },
         apiFetch
       );
-      const overrideStatements = (overridePage.items || []).filter(r => {
-        const classification = r.classification?.toLowerCase() || '';
-        const payee = r.payee?.toUpperCase() || '';
-        const source = r.source?.toUpperCase() || '';
-        // Include chargebacks so +override/−chargeback nets to Missing (returnees).
-        return classification.includes('agency override') ||
-               classification.includes('override') ||
-               classification.includes('chargeback') ||
-               payee === 'BSI' ||
-               payee === 'NHP' ||
-               payee === 'THE' ||
-               source === 'BSI' ||
-               source === 'NHP';
-      });
+      const overrideStatements = (overridePage.items || []).filter(isOverrideStatementRow);
       setOverrides(overrideStatements);
 
       const carrierPage = await fetchAllPages(
@@ -560,8 +552,13 @@ export default function AgencyProductionRecon() {
       else if (sortCol === 'c_bsi')    { va = parseFloat(a.carrierBSI?.commission || 0); vb = parseFloat(b.carrierBSI?.commission || 0); }
       else if (sortCol === 'eff_date') { va = a.production.effective_date || ''; vb = b.production.effective_date || ''; }
       else if (sortCol === 'expected') {
-        va = expectedAgencyOverride(a.production).amount;
-        vb = expectedAgencyOverride(b.production).amount;
+        try {
+          va = expectedAgencyOverride(a.production).amount;
+          vb = expectedAgencyOverride(b.production).amount;
+        } catch {
+          va = -1;
+          vb = -1;
+        }
         va = va == null ? -1 : va;
         vb = vb == null ? -1 : vb;
       }

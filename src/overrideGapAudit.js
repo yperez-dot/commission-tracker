@@ -10,22 +10,11 @@ const {
   isOverridePaid,
   dedupeProductionSales,
   productionSaleKey,
+  isOverrideStatementRow,
 } = require('./agencyOverrideReconMatch.cjs');
 
 function isOverrideLikeRow(row) {
-  const classification = String(row.classification || '').toLowerCase();
-  const payee = String(row.payee || '').toUpperCase();
-  const source = String(row.source || '').toUpperCase();
-  return (
-    classification.includes('agency override') ||
-    classification.includes('override') ||
-    classification.includes('chargeback') ||
-    payee === 'BSI' ||
-    payee === 'NHP' ||
-    payee === 'THE' ||
-    source === 'BSI' ||
-    source === 'NHP'
-  );
+  return isOverrideStatementRow(row);
 }
 
 function sumBySign(rows) {
