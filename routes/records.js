@@ -293,9 +293,31 @@ router.get('/by-client', requireAuth, async (req, res) => {
       params
     );
 
+    // Full filtered totals (all pages) — not just the LIMIT page
+    const sumsResult = await pool.query(
+      `SELECT
+         COALESCE(SUM(g.commission_total), 0)::float AS commission,
+         COALESCE(SUM(g.producer_payable_total), 0)::float AS producer_payable,
+         COALESCE(SUM(g.payment_count), 0)::int AS payment_count
+       FROM (
+         SELECT
+           COALESCE(SUM(cr.commission), 0)::float AS commission_total,
+           COALESCE(SUM(cr.producer_payable), 0)::float AS producer_payable_total,
+           COUNT(*)::int AS payment_count,
+           BOOL_OR(${IS_TERMED_SQL}) AS is_termed
+         FROM commission_records cr
+         ${uploadJoin}
+         ${wc}
+         GROUP BY ${nameKeyExpr}, LOWER(TRIM(cr.carrier))
+       ) g
+       ${hideTermed === 'true' || hideTermed === '1' ? 'WHERE g.is_termed IS NOT TRUE' : ''}`,
+      params
+    );
+
     res.json({
       clients: grouped.rows,
       total: countResult.rows[0]?.count || 0,
+      sums: sumsResult.rows[0] || null,
     });
   } catch (err) {
     console.error('by-client error:', err);

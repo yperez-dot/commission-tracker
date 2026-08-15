@@ -242,7 +242,7 @@ export default function AllData({ user, initialFilters = {} }) {
       setClients(data.clients || []);
       setRecords([]);
       setTotal(data.total || 0);
-      setFilterSums(null);
+      setFilterSums(data.sums || null);
       setSelected(new Set());
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
