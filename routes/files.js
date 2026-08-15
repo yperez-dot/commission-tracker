@@ -19,6 +19,10 @@ const {
   parseAgentViewCommissionReportPDF,
   tryParseAgentViewUpload,
 } = require('../src/agentViewCommissionReport');
+const {
+  isNhpUploadName,
+  resolveNhpUploadOriginalName,
+} = require('../src/nhpUploadName');
 let pdfParse;
 try { pdfParse = require('pdf-parse'); } catch(e) { console.log('pdf-parse not installed'); }
 
@@ -1519,7 +1523,13 @@ function parseNHPRows(wb, uploadPeriod) {
   
   // Find column indices
   const lobIdx = headerRowData.findIndex(h => String(h).toLowerCase().includes('lob'));
-  const carrierIdx = headerRowData.findIndex(h => String(h).toLowerCase().includes('carrier'));
+  // Prefer "Carrier-Statement Month" (has month) over a bare "Carrier" column
+  const carrierStatementIdx = headerRowData.findIndex(h =>
+    /carrier.*statement|statement.*month/i.test(String(h || ''))
+  );
+  const carrierIdx = carrierStatementIdx >= 0
+    ? carrierStatementIdx
+    : headerRowData.findIndex(h => String(h).toLowerCase().includes('carrier'));
   const agencyIdx = headerRowData.findIndex(h => String(h).toLowerCase().includes('agency'));
   const agentNpnIdx = headerRowData.findIndex(h => String(h).toLowerCase().includes('agent npn'));
   const agentNameIdx = headerRowData.findIndex(h => String(h).toLowerCase().includes('agent name'));
@@ -4151,10 +4161,16 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
     }
 
     const pool = getPool();
-    const existing = await pool.query('SELECT id FROM uploads WHERE original_name = $1', [req.file.originalname]);
+    let storedOriginalName = req.file.originalname;
+    const existing = await pool.query('SELECT id FROM uploads WHERE original_name = $1', [storedOriginalName]);
     if (existing.rows.length > 0) {
-      try { fs.unlinkSync(req.file.path); } catch (e) {}
-      return res.status(409).json({ error: `"${req.file.originalname}" has already been uploaded. Delete it first.` });
+      const renamed = resolveNhpUploadOriginalName(storedOriginalName, true);
+      if (!renamed) {
+        try { fs.unlinkSync(req.file.path); } catch (e) {}
+        return res.status(409).json({ error: `"${storedOriginalName}" has already been uploaded. Delete it first.` });
+      }
+      console.log(`[UPLOAD] NHP duplicate filename — storing as ${renamed}`);
+      storedOriginalName = renamed;
     }
 
     const determinePayee = (filename) => {
@@ -4605,7 +4621,7 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
 
     const uploadResult = await pool.query(
       'INSERT INTO uploads (filename, original_name, carrier, row_count, commission_sum, uploaded_by) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id',
-      [req.file.filename, req.file.originalname, carriers.join(', '), records.length, commissionSum, req.user.id]
+      [req.file.filename, storedOriginalName, carriers.join(', '), records.length, commissionSum, req.user.id]
     );
     const uploadId = uploadResult.rows[0].id;
 
@@ -4693,7 +4709,8 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
     
     const response = { 
       uploadId, 
-      filename: req.file.originalname, 
+      filename: storedOriginalName,
+      originalFilename: req.file.originalname,
       rowCount: records.length, 
       commissionSum, 
       carriers, 
@@ -4701,6 +4718,7 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
       resolvedRenewals,
       resolvedRenewalsCount: resolvedRenewals.length,
       internalDuplicatesRemoved: internalDuplicatesRemoved || 0,
+      nhpRenamed: storedOriginalName !== req.file.originalname,
     };
     
     res.json(response);
