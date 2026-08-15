@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { apiFetch } from '../api';
 import { formatCarrier } from '../utils/formatCarrier';
 import { lobCardMetrics } from '../lobCardMetrics';
@@ -259,6 +259,9 @@ export default function Dashboard({ user, onNavigate }) {
   const [selLOBs, setSelLOBs] = useState([]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [quickActionsOpen, setQuickActionsOpen] = useState(false);
+  // Wait for default YTD periods before first stats fetch — avoids all-time vs YTD race on refresh.
+  const [filtersReady, setFiltersReady] = useState(false);
+  const loadSeqRef = useRef(0);
   const [viewMode, setViewMode] = useState(() => {
     const saved = localStorage.getItem('olicomm_dashboard_view_mode');
     return saved === 'agent' ? 'agent' : 'agency';
@@ -291,6 +294,8 @@ export default function Dashboard({ user, onNavigate }) {
   }, [selAgents, selCarriers, selPeriods, selTypes, selPlanTypes, selLOBs, viewMode, allFilters.agents]);
 
   const loadData = useCallback(async () => {
+    if (!filtersReady) return;
+    const seq = ++loadSeqRef.current;
     setLoading(true);
     try {
       const params = buildParams();
@@ -304,6 +309,7 @@ export default function Dashboard({ user, onNavigate }) {
         fetches.push(apiFetch(`/records/agency-summary?${ap}`));
       }
       const results = await Promise.all(fetches);
+      if (seq !== loadSeqRef.current) return; // stale response — ignore
       const s = results[0];
       const k = results[1];
       setSummary(s);
@@ -314,10 +320,13 @@ export default function Dashboard({ user, onNavigate }) {
         setPeriodData(sorted.slice(-chartRange));
       }
     } catch(e){ console.error(e); }
-    finally { setLoading(false); }
-  }, [buildParams, agencyView, chartRange, user.role, viewMode, selPeriods]);
+    finally {
+      if (seq === loadSeqRef.current) setLoading(false);
+    }
+  }, [buildParams, agencyView, chartRange, user.role, viewMode, selPeriods, filtersReady]);
 
   useEffect(() => {
+    setFiltersReady(false);
     setSelAgents([]); setSelCarriers([]); setSelTypes([]); setSelPlanTypes([]); setSelLOBs([]);
     apiFetch('/records/filters').then(d => {
       setAllFilters(d);
@@ -326,7 +335,11 @@ export default function Dashboard({ user, onNavigate }) {
         String(p).match(/^\d{6}$/) && String(p).startsWith(currentYear)
       );
       setSelPeriods(currentYearPeriods);
-    }).catch(console.error);
+      setFiltersReady(true);
+    }).catch((err) => {
+      console.error(err);
+      setFiltersReady(true); // still allow load rather than hang forever
+    });
   }, [agencyView]);
 
   useEffect(() => { loadData(); }, [loadData]);
