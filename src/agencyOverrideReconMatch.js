@@ -176,8 +176,8 @@ export function getOverrideReconCategory(m) {
   const manual = m.production?.manual_override_status || null;
   if (manual === 'no_pay_expected') return 'cancelled';
   if (manual === 'paid') return 'paid';
-  if (manual === 'chase_bsi') return 'chase';
-  if (manual === 'not_paid_to_bsi') return 'not_on_bsi';
+  // Manual chase / not-on-BSI still live under Missing (status badge shows which).
+  if (manual === 'chase_bsi' || manual === 'not_paid_to_bsi') return 'missing';
 
   if (m.lifecycle === 'chargeback' || m.categoryHint === 'cancelled') return 'cancelled';
   if (m.lifecycle === 'paid' || m.categoryHint === 'paid') return 'paid';
@@ -198,11 +198,8 @@ export function getOverrideReconCategory(m) {
   }
   if (status.includes('plan change') || status.includes('plan_change')) return 'planchange';
   if (status.includes('cancel') || status.includes('terminated')) return 'cancelled';
-  if (status.includes('chase') || status.includes('chasing')) return 'chase';
 
-  const tw = getThreeWayOverrideStatus(m);
-  if (tw === 'chase_bsi') return 'chase';
-  if (tw === 'not_paid_to_bsi') return 'not_on_bsi';
+  // chase_bsi / not_paid_to_bsi / pending → Missing tab; badge shows the tag.
   return 'missing';
 }
 
