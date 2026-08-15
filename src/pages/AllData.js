@@ -79,16 +79,25 @@ function MultiSelect({ label, options, selected, onChange }) {
   );
 }
 
+function listFromInitial(filters, singularKey, pluralKey) {
+  if (Array.isArray(filters[pluralKey]) && filters[pluralKey].length) {
+    return filters[pluralKey].filter(Boolean);
+  }
+  if (filters[singularKey]) return [filters[singularKey]];
+  return [];
+}
+
 export default function AllData({ user, initialFilters = {} }) {
   const [records, setRecords] = useState([]);
   const [total, setTotal] = useState(0);
   const [filterOptions, setFilterOptions] = useState({ agents: [], carriers: [], periods: [], planTypes: [], classifications: [], lobs: [] });
-  const [selAgents, setSelAgents] = useState(initialFilters.agent ? [initialFilters.agent] : []);
-  const [selCarriers, setSelCarriers] = useState(initialFilters.carrier ? [initialFilters.carrier] : []);
-  const [selPeriods, setSelPeriods] = useState(initialFilters.period ? [initialFilters.period] : []);
-  const [selTypes, setSelTypes] = useState(initialFilters.classification ? [initialFilters.classification] : []);
+  const [selAgents, setSelAgents] = useState(() => listFromInitial(initialFilters, 'agent', 'agents'));
+  const [selCarriers, setSelCarriers] = useState(() => listFromInitial(initialFilters, 'carrier', 'carriers'));
+  const [selPeriods, setSelPeriods] = useState(() => listFromInitial(initialFilters, 'period', 'periods'));
+  const [selTypes, setSelTypes] = useState(() => listFromInitial(initialFilters, 'classification', 'classifications'));
   const [selPayees, setSelPayees] = useState([]);
-  const [selLOB, setSelLOB] = useState(initialFilters.lob ? [initialFilters.lob] : []);
+  const [selLOB, setSelLOB] = useState(() => listFromInitial(initialFilters, 'lob', 'lobs'));
+  const [amountSign, setAmountSign] = useState(initialFilters.amountSign || '');
   const [search, setSearch] = useState('');
   const [sortCol, setSortCol] = useState('');
   const [sortDir, setSortDir] = useState('asc');
@@ -112,17 +121,26 @@ export default function AllData({ user, initialFilters = {} }) {
   useEffect(() => {
     apiFetch('/records/filters').then(d => setFilterOptions(d)).catch(console.error);
     setSelAgents([]); setSelCarriers([]); setSelPeriods([]); setSelTypes([]); setSelPayees([]); setSelLOB([]);
+    setAmountSign('');
     setPage(0);
   }, [user.agency]);
 
   useEffect(() => {
-    if (initialFilters.agent) setSelAgents([initialFilters.agent]);
-    if (initialFilters.carrier) setSelCarriers([initialFilters.carrier]);
-    if (initialFilters.period) setSelPeriods([initialFilters.period]);
-    if (initialFilters.classification) setSelTypes([initialFilters.classification]);
-    if (initialFilters.lob) setSelLOB([initialFilters.lob]);
+    setSelAgents(listFromInitial(initialFilters, 'agent', 'agents'));
+    setSelCarriers(listFromInitial(initialFilters, 'carrier', 'carriers'));
+    setSelPeriods(listFromInitial(initialFilters, 'period', 'periods'));
+    setSelTypes(listFromInitial(initialFilters, 'classification', 'classifications'));
+    setSelLOB(listFromInitial(initialFilters, 'lob', 'lobs'));
+    setAmountSign(initialFilters.amountSign || '');
     setPage(0);
-  }, [initialFilters.agent, initialFilters.carrier, initialFilters.period, initialFilters.classification, initialFilters.lob]);
+  }, [
+    initialFilters.agent, initialFilters.agents,
+    initialFilters.carrier, initialFilters.carriers,
+    initialFilters.period, initialFilters.periods,
+    initialFilters.classification, initialFilters.classifications,
+    initialFilters.lob, initialFilters.lobs,
+    initialFilters.amountSign,
+  ]);
 
   const loadRecords = useCallback(async (offset = 0) => {
     setLoading(true);
@@ -139,6 +157,7 @@ export default function AllData({ user, initialFilters = {} }) {
       if (selPayees.length === 1) params.set('payee', selPayees[0]);
       if (selLOB.length === 1) params.set('lob', selLOB[0]);
       if (selLOB.length > 1) params.set('lobs', selLOB.join(','));
+      if (amountSign === 'negative' || amountSign === 'positive') params.set('amountSign', amountSign);
       if (search.trim()) params.set('search', search.trim());
       if (sortCol) params.set('sortCol', sortCol);
       if (sortDir) params.set('sortDir', sortDir);
@@ -157,12 +176,12 @@ export default function AllData({ user, initialFilters = {} }) {
       setSelected(new Set());
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
-  }, [selAgents, selCarriers, selPeriods, selTypes, selPayees, selLOB, search, sortCol, sortDir, hideTermed, user.agency]);
+  }, [selAgents, selCarriers, selPeriods, selTypes, selPayees, selLOB, amountSign, search, sortCol, sortDir, hideTermed, user.agency]);
 
   useEffect(() => { 
     setPage(0); 
     loadRecords(0); 
-  }, [selAgents, selCarriers, selPeriods, selTypes, selPayees, selLOB, search, sortCol, sortDir, hideTermed, user.agency]);  // loadRecords intentionally omitted to prevent double-trigger
+  }, [selAgents, selCarriers, selPeriods, selTypes, selPayees, selLOB, amountSign, search, sortCol, sortDir, hideTermed, user.agency]);  // loadRecords intentionally omitted to prevent double-trigger
 
   function handlePage(dir) {
     const next = page + dir;
@@ -171,7 +190,8 @@ export default function AllData({ user, initialFilters = {} }) {
   }
 
   function clearAll() {
-    setSelAgents([]); setSelCarriers([]); setSelPeriods([]); setSelTypes([]); setSelPayees([]); setSearch('');
+    setSelAgents([]); setSelCarriers([]); setSelPeriods([]); setSelTypes([]); setSelPayees([]); setSelLOB([]);
+    setAmountSign(''); setSearch('');
     setPage(0);
   }
 
@@ -210,7 +230,7 @@ export default function AllData({ user, initialFilters = {} }) {
   }
 
   const grandTotal = records.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0);
-  const hasFilters = selAgents.length || selCarriers.length || selPeriods.length || selTypes.length || selPayees.length || selLOB.length || search.trim();
+  const hasFilters = selAgents.length || selCarriers.length || selPeriods.length || selTypes.length || selPayees.length || selLOB.length || amountSign || search.trim();
 
   async function exportCSV() {
     try {
@@ -225,6 +245,9 @@ export default function AllData({ user, initialFilters = {} }) {
       if (selPeriods.length > 1) params.set('periods', selPeriods.join(','));
       if (selTypes.length > 1) params.set('classifications', selTypes.join(','));
       if (selPayees.length === 1) params.set('payee', selPayees[0]);
+      if (selLOB.length === 1) params.set('lob', selLOB[0]);
+      if (selLOB.length > 1) params.set('lobs', selLOB.join(','));
+      if (amountSign === 'negative' || amountSign === 'positive') params.set('amountSign', amountSign);
       if (search.trim()) params.set('search', search.trim());
       
       // Fetch ALL records (set high limit to override default 100)
@@ -532,6 +555,19 @@ export default function AllData({ user, initialFilters = {} }) {
           <MultiSelect label="Types" options={filterOptions.classifications || []} selected={selTypes} onChange={setSelTypes} />
           <MultiSelect label="LOB" options={filterOptions.lobs || []} selected={selLOB} onChange={setSelLOB} />
           <MultiSelect label="Payee" options={filterOptions.payees || []} selected={selPayees} onChange={setSelPayees} />
+          <button
+            type="button"
+            onClick={() => setAmountSign(s => s === 'negative' ? '' : 'negative')}
+            style={{
+              padding: '6px 10px', borderRadius: 6, border: '0.5px solid var(--border)', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap',
+              background: amountSign === 'negative' ? 'var(--accent)' : 'var(--bg)',
+              color: amountSign === 'negative' ? 'var(--sidebar-bg)' : 'var(--text)',
+              fontWeight: amountSign === 'negative' ? 500 : 400,
+            }}
+            title="Show only negative commission rows (chargebacks)"
+          >
+            Chargebacks only
+          </button>
           <input
             type="text"
             placeholder="Search client, agent..."
@@ -571,9 +607,15 @@ export default function AllData({ user, initialFilters = {} }) {
 
         {hasFilters && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
-            {[...selAgents, ...selCarriers, ...selPeriods, ...selTypes, ...selPayees].map(f => (
+            {[...selAgents, ...selCarriers, ...selPeriods, ...selTypes, ...selLOB, ...selPayees].map(f => (
               <span key={f} style={{ background: 'var(--accent)', color: 'var(--sidebar-bg)', borderRadius: 4, padding: '2px 10px', fontSize: 11, fontWeight: 500 }}>{f}</span>
             ))}
+            {amountSign === 'negative' && (
+              <span style={{ background: '#F5EAE4', color: '#7A3D1F', borderRadius: 4, padding: '2px 10px', fontSize: 11, fontWeight: 500 }}>Chargebacks only</span>
+            )}
+            {amountSign === 'positive' && (
+              <span style={{ background: 'var(--accent-light)', color: 'var(--accent-dark)', borderRadius: 4, padding: '2px 10px', fontSize: 11, fontWeight: 500 }}>Credits only</span>
+            )}
           </div>
         )}
 

@@ -63,7 +63,7 @@ function normalizeAgentKey(name) {
 router.get('/', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
-    const { agent, agents, carrier, carriers, period, periods, classification, classifications, lob, lobs, planType, payee, search, upload_id, upload_category, exclude_upload_category, sortCol, sortDir = 'asc', limit = 100, offset = 0 } = req.query;
+    const { agent, agents, carrier, carriers, period, periods, classification, classifications, lob, lobs, planType, payee, search, upload_id, upload_category, exclude_upload_category, amountSign, sortCol, sortDir = 'asc', limit = 100, offset = 0 } = req.query;
     let where = [], params = [], idx = 1;
 
     if (req.user.role === 'agent') {
@@ -87,6 +87,8 @@ router.get('/', requireAuth, async (req, res) => {
     if (upload_category) { where.push(`u.category = $${idx++}`); params.push(upload_category); }
     if (exclude_upload_category) { where.push(`(u.category IS NULL OR u.category != $${idx++})`); params.push(exclude_upload_category); }
     if (payee) { where.push(`cr.payee = $${idx++}`); params.push(payee); }
+    if (amountSign === 'negative') { where.push('cr.commission < 0'); }
+    else if (amountSign === 'positive') { where.push('cr.commission >= 0'); }
     if (search) { where.push(`(cr.client_full_name ILIKE $${idx} OR cr.agent_name ILIKE $${idx} OR cr.carrier ILIKE $${idx})`); params.push(`%${search}%`); idx++; }
 
     const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
