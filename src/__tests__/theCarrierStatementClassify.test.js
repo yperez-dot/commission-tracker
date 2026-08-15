@@ -1,6 +1,9 @@
 'use strict';
 
-const { classifyTHECarrierTransaction } = require('../theCarrierStatementClassify');
+const {
+  classifyTHECarrierTransaction,
+  classifyHumanaDevotedBSITransaction,
+} = require('../theCarrierStatementClassify');
 
 describe('classifyTHECarrierTransaction', () => {
   test('Devoted Transaction Type Override → Agent Commission (not Agency Override)', () => {
@@ -55,5 +58,16 @@ describe('classifyTHECarrierTransaction', () => {
         carrier: 'Devoted',
       })
     ).toBe('Agent Commission');
+  });
+});
+
+describe('classifyHumanaDevotedBSITransaction', () => {
+  test('BSI Devoted/Humana positive amounts are Agency Override (not New Business)', () => {
+    expect(classifyHumanaDevotedBSITransaction({ commission: 81.25 })).toBe('Agency Override');
+    expect(classifyHumanaDevotedBSITransaction({ commission: 48.75 })).toBe('Agency Override');
+  });
+
+  test('negative amounts are Chargeback', () => {
+    expect(classifyHumanaDevotedBSITransaction({ commission: -10 })).toBe('Chargeback');
   });
 });
