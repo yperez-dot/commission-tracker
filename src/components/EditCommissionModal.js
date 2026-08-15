@@ -1,12 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import axios from 'axios';
+import { apiFetch } from '../api';
 import './EditCommissionModal.css';
 
 /**
- * EditCommissionModal
- * 
- * Manual edit modal for commission records with full audit trail
- * 
+ * EditCommissionModal — manual edit with audit trail (admin).
+ *
  * Props:
  *   record: the commission record to edit
  *   onClose: callback when modal closes
@@ -26,22 +24,24 @@ const EditCommissionModal = ({ record, onClose, onSave }) => {
   const [error, setError] = useState('');
   const [showAudit, setShowAudit] = useState(false);
 
-  // Fetch audit history on mount
   useEffect(() => {
     fetchAuditHistory();
   }, [record.id]);
 
   const fetchAuditHistory = async () => {
     try {
-      const response = await axios.get(
-        `${process.env.REACT_APP_API_URL || 'http://localhost:3001'}/api/commission/${record.id}/audit`,
-        {
-          headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
-        }
-      );
-      setAuditHistory(response.data.auditHistory || []);
+      const data = await apiFetch(`/commission/${record.id}/audit`);
+      setAuditHistory(data.auditHistory || []);
     } catch (err) {
       console.error('Failed to fetch audit history:', err);
+    }
+  };
+
+  const currentUserEmail = () => {
+    try {
+      return JSON.parse(localStorage.getItem('he_user') || '{}').email || 'unknown';
+    } catch {
+      return 'unknown';
     }
   };
 
@@ -51,30 +51,24 @@ const EditCommissionModal = ({ record, onClose, onSave }) => {
     setError('');
 
     try {
-      const user = JSON.parse(localStorage.getItem('user'));
-      
-      const response = await axios.put(
-        `${process.env.REACT_APP_API_URL || 'http://localhost:3001'}/api/commission/${record.id}/edit`,
-        {
+      const data = await apiFetch(`/commission/${record.id}/edit`, {
+        method: 'PUT',
+        body: JSON.stringify({
           commission: parseFloat(formData.commission),
           theiShare: parseFloat(formData.theiShare),
           bsiShare: parseFloat(formData.bsiShare),
           classification: formData.classification,
-          editedBy: user?.email || 'unknown',
+          editedBy: currentUserEmail(),
           notes: formData.notes
-        },
-        {
-          headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
-        }
-      );
+        })
+      });
 
-      if (response.data.success) {
-        alert(response.data.message);
-        if (onSave) onSave(response.data.record);
+      if (data.success) {
+        if (onSave) onSave(data.record);
         onClose();
       }
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to save changes');
+      setError(err.message || 'Failed to save changes');
     } finally {
       setLoading(false);
     }
@@ -89,26 +83,20 @@ const EditCommissionModal = ({ record, onClose, onSave }) => {
     setError('');
 
     try {
-      const user = JSON.parse(localStorage.getItem('user'));
-      
-      const response = await axios.post(
-        `${process.env.REACT_APP_API_URL || 'http://localhost:3001'}/api/commission/${record.id}/revert`,
-        {
-          editedBy: user?.email || 'unknown',
+      const data = await apiFetch(`/commission/${record.id}/revert`, {
+        method: 'POST',
+        body: JSON.stringify({
+          editedBy: currentUserEmail(),
           notes: 'User-requested reversion'
-        },
-        {
-          headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
-        }
-      );
+        })
+      });
 
-      if (response.data.success) {
-        alert(response.data.message);
-        if (onSave) onSave(response.data.record);
+      if (data.success) {
+        if (onSave) onSave(data.record);
         onClose();
       }
     } catch (err) {
-      setError(err.response?.data?.error || 'Failed to revert changes');
+      setError(err.message || 'Failed to revert changes');
     } finally {
       setLoading(false);
     }
@@ -119,11 +107,10 @@ const EditCommissionModal = ({ record, onClose, onSave }) => {
       <div className="modal-content edit-commission-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <h2>Edit Commission Record</h2>
-          <button className="close-btn" onClick={onClose}>&times;</button>
+          <button type="button" className="close-btn" onClick={onClose}>&times;</button>
         </div>
 
         <div className="modal-body">
-          {/* Record Info */}
           <div className="record-info">
             <div><strong>Client:</strong> {record.client_full_name}</div>
             <div><strong>Agent:</strong> {record.agent_name}</div>
@@ -131,10 +118,9 @@ const EditCommissionModal = ({ record, onClose, onSave }) => {
             <div><strong>Period:</strong> {record.payment_period}</div>
           </div>
 
-          {/* Show original values if manually edited */}
           {record.is_manually_edited && (
             <div className="original-values-box">
-              <h4>⚠️ Original Parsed Values (Evidence Retention)</h4>
+              <h4>Original Parsed Values (Evidence Retention)</h4>
               <div className="original-values-grid">
                 <div>
                   <label>Commission:</label>
@@ -159,7 +145,6 @@ const EditCommissionModal = ({ record, onClose, onSave }) => {
             </div>
           )}
 
-          {/* Edit Form */}
           <form onSubmit={handleSubmit}>
             <div className="form-grid">
               <div className="form-group">
@@ -231,7 +216,7 @@ const EditCommissionModal = ({ record, onClose, onSave }) => {
               <button type="submit" className="btn-primary" disabled={loading}>
                 {loading ? 'Saving...' : 'Save Changes'}
               </button>
-              
+
               {record.is_manually_edited && (
                 <button type="button" className="btn-secondary" onClick={handleRevert} disabled={loading}>
                   Revert to Original
@@ -248,7 +233,6 @@ const EditCommissionModal = ({ record, onClose, onSave }) => {
             </div>
           </form>
 
-          {/* Audit History */}
           {showAudit && auditHistory.length > 0 && (
             <div className="audit-history">
               <h4>Audit Trail</h4>

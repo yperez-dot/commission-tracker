@@ -980,7 +980,7 @@ router.get('/missing-renewals-check', requireAuth, async (req, res) => {
     }
 
     const psResult = await pool.query(
-      `SELECT client_full_name, carrier, agent_name, status, termed_date
+      `SELECT client_full_name, carrier, agent_name, status, termed_date, notes
        FROM policy_status`
     );
     const policyStatusMap = {};

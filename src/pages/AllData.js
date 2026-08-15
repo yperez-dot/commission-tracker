@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { apiFetch } from '../api';
 import { formatCarrier } from '../utils/formatCarrier';
 import { formatDate } from '../utils/dateFormat';
+import EditCommissionModal from '../components/EditCommissionModal';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -92,6 +93,7 @@ export default function AllData({ user, initialFilters = {} }) {
   const [hideTermed, setHideTermed] = useState(false);
   const PAGE_SIZE = 100;
   const [policyModal, setPolicyModal] = useState(null);
+  const [editRecord, setEditRecord] = useState(null);
 
   useEffect(() => {
     apiFetch('/records/filters').then(d => setFilterOptions(d)).catch(console.error);
@@ -520,8 +522,23 @@ export default function AllData({ user, initialFilters = {} }) {
                           {hasSubAgentOverride && <td style={{ fontSize: 12, fontWeight: 500, color: parseFloat(r.sub_agent_override) > 0 ? 'var(--amber)' : 'var(--text-muted)' }}>{r.sub_agent_override && r.sub_agent_override > 0 ? fmt(r.sub_agent_override) : '—'}</td>}
                           {hasMGA && <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.mga || '—'}</td>}
                           {user.role === 'admin' && (
-                            <td>
-                              <button onClick={() => { setDeleteTarget(r); setConfirmDelete('single'); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14, padding: '2px 6px' }}>✕</button>
+                            <td style={{ whiteSpace: 'nowrap' }}>
+                              <button
+                                type="button"
+                                title="Edit"
+                                onClick={() => setEditRecord(r)}
+                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--accent-dark)', fontSize: 12, padding: '2px 6px', fontWeight: 500 }}
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                title="Delete"
+                                onClick={() => { setDeleteTarget(r); setConfirmDelete('single'); }}
+                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14, padding: '2px 6px' }}
+                              >
+                                ✕
+                              </button>
                             </td>
                           )}
                         </tr>
@@ -551,6 +568,18 @@ export default function AllData({ user, initialFilters = {} }) {
           )}
         </div>
       </div>
+      {editRecord && (
+        <EditCommissionModal
+          record={editRecord}
+          onClose={() => setEditRecord(null)}
+          onSave={(updated) => {
+            if (updated) {
+              setRecords(prev => prev.map(r => (r.id === updated.id ? { ...r, ...updated } : r)));
+            }
+            setEditRecord(null);
+          }}
+        />
+      )}
     </>
   );
 }
