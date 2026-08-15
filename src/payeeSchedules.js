@@ -30,8 +30,12 @@ const MARCO_AGENTS = Object.freeze([
 const MARCO_JENDY_CUTOFF = '202606';
 
 const STATEMENT_TYPES = Object.freeze({
-  /** THEI's share of Agency Override rows (BSI→THEI remittance view). */
+  /** Combined THEI share (NHP + BSI) — kept for scripts; House Statements UI uses the split types. */
   THEI_OVERRIDE: 'thei_override',
+  /** THEI house — NHP agency statement sales / overrides only. */
+  THEI_NHP: 'thei_nhp',
+  /** THEI house — what BSI remits to THEI (BSI→THEI pay). */
+  THEI_BSI: 'thei_bsi',
   /** BSI's share of Agency Override rows (house / residual view). */
   BSI_OVERRIDE: 'bsi_override',
   /** Marco $10 sub_agent_override rollup — IRS Swan agency peel (display name Marco), not an agent. */
@@ -87,6 +91,29 @@ function isAgencyOverride(classification) {
   return String(classification || '').toLowerCase().includes('override');
 }
 
+function normalizeSource(source) {
+  return String(source || '').toUpperCase().trim();
+}
+
+/** NHP agency commission statements uploaded as source = NHP. */
+function isNhpSource(source) {
+  return normalizeSource(source) === 'NHP';
+}
+
+/** BSI remittance / BSI payee feeds — money BSI pays THEI. */
+function isBsiRemitSource(source) {
+  const s = normalizeSource(source);
+  return s === 'BSI' || s === 'BSI_PAYEE';
+}
+
+function isTheiHouseType(statementType) {
+  return (
+    statementType === STATEMENT_TYPES.THEI_OVERRIDE ||
+    statementType === STATEMENT_TYPES.THEI_NHP ||
+    statementType === STATEMENT_TYPES.THEI_BSI
+  );
+}
+
 module.exports = {
   INTEGRITY_AGENTS,
   MARCO_AGENTS,
@@ -98,5 +125,8 @@ module.exports = {
   isAlbaHernandez,
   isAlbaAgentCommission,
   isAgencyOverride,
+  isNhpSource,
+  isBsiRemitSource,
+  isTheiHouseType,
   normName,
 };

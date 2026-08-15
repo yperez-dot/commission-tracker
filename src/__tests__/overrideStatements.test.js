@@ -4,6 +4,8 @@ const {
   STATEMENT_TYPES,
   buildOverrideStatements,
   classifyOverrideLine,
+  statementToCsv,
+  formatEffectiveDate,
 } = require('../overrideStatementBuilder');
 const { isMarcoAgent, isIntegrityAgent, isAlbaHernandez } = require('../payeeSchedules');
 
@@ -93,6 +95,22 @@ describe('overrideStatementBuilder', () => {
     expect(bundle.statements[0].lines[0].override_pot).toBe(300); // thei+bsi for first row
   });
 
+  it('THEI NHP statement includes only NHP source rows', () => {
+    const sourced = [
+      { ...rows[0], source: 'NHP', thei_share: 80, bsi_share: 80 },
+      { ...rows[1], id: 21, source: 'BSI', thei_share: 45, bsi_share: 45 },
+      { ...rows[2], id: 22, source: 'direct_carrier', thei_share: 50, bsi_share: 50 },
+    ];
+    const nhp = buildOverrideStatements(sourced, STATEMENT_TYPES.THEI_NHP, { period: '202601' });
+    expect(nhp.grandTotal).toBe(80);
+    expect(nhp.statements[0].lineCount).toBe(1);
+    const bsi = buildOverrideStatements(sourced, STATEMENT_TYPES.THEI_BSI, { period: '202601' });
+    expect(bsi.grandTotal).toBe(45);
+    expect(bsi.statements[0].lineCount).toBe(1);
+    expect(classifyOverrideLine(sourced[2], STATEMENT_TYPES.THEI_NHP)).toBeNull();
+    expect(classifyOverrideLine(sourced[2], STATEMENT_TYPES.THEI_BSI)).toBeNull();
+  });
+
   it('BSI override statement uses bsi_share', () => {
     const bundle = buildOverrideStatements(rows, STATEMENT_TYPES.BSI_OVERRIDE, { period: '202601' });
     expect(bundle.grandTotal).toBe(245);
@@ -112,6 +130,46 @@ describe('overrideStatementBuilder', () => {
     expect(bundle.statements).toHaveLength(1);
     expect(bundle.statements[0].payee).toBe('Christian Munoz');
     expect(bundle.grandTotal).toBe(100);
+  });
+
+  it('Integrity falls back to legacy NHP sub_agent_override when producer_payable is 0', () => {
+    const legacy = [{
+      id: 501,
+      agent_name: 'Horacio Mendieta',
+      client_full_name: 'Legacy Client',
+      policy_number: 'LEG1',
+      carrier: 'UnitedHealthcare',
+      effective_date: '2026-01-01',
+      payment_period: '202601',
+      classification: 'Agency Override',
+      commission: 41.25,
+      gross_commission: 165,
+      thei_share: 41.25,
+      bsi_share: 41.25,
+      producer_payable: 0,
+      sub_agent_override: 82.5,
+      source: 'NHP',
+    }];
+    const bundle = buildOverrideStatements(legacy, STATEMENT_TYPES.INTEGRITY, { period: '202601' });
+    expect(bundle.grandTotal).toBe(82.5);
+    expect(bundle.statements[0].lines[0].amount_field).toBe('sub_agent_override');
+  });
+
+  it('formats effective dates on statement lines and CSV', () => {
+    const bundle = buildOverrideStatements(rows, STATEMENT_TYPES.THEI_OVERRIDE, { period: '202601' });
+    expect(bundle.statements[0].lines[0].effective_date).toBe('01/01/2026');
+    const csv = statementToCsv(bundle, bundle.statements[0]);
+    expect(csv).toMatch(/"Effective"/);
+    expect(csv).toMatch(/"01-01-2026"/);
+  });
+
+  it('formatEffectiveDate normalizes ISO, slash, and Date values', () => {
+    expect(formatEffectiveDate('2026-07-01')).toBe('07-01-2026');
+    expect(formatEffectiveDate('2026-07-01T00:00:00.000Z')).toBe('07-01-2026');
+    expect(formatEffectiveDate('01/15/2026')).toBe('01-15-2026');
+    expect(formatEffectiveDate('7-1-2026')).toBe('07-01-2026');
+    expect(formatEffectiveDate(new Date(Date.UTC(2026, 6, 1)))).toBe('07-01-2026');
+    expect(formatEffectiveDate('')).toBe('');
   });
 
   it('THEI/BSI statements include Alba rate-peeled production shares (not just Agency Override class)', () => {

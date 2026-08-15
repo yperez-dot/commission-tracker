@@ -1,0 +1,201 @@
+
+
+Description:  Shows all advance and commission transactions for selected agent ID(s) during specified report period
+Agent Name:  THE HEALTH EXPERTS INSURANCE                     
+                     
+AgentView Commission Report
+Report Period:  08/01/26 - to - 08/14/26
+Agent ID(s): CB142243,CNHIC;
+Agent IDCompanyPolicy Number
+Advances
+
+Description:  Shows all advance and commission transactions for selected agent ID(s) during specified report period
+Agent Name:  THE HEALTH EXPERTS INSURANCE                     
+                     
+AgentView Commission Report
+Report Period:  08/01/26 - to - 08/14/26
+Agent ID(s): CB142243,CNHIC;
+Insured NameEff DatePlanMarketing 
+Name
+Mode
+
+Description:  Shows all advance and commission transactions for selected agent ID(s) during specified report period
+Agent Name:  THE HEALTH EXPERTS INSURANCE                     
+                     
+AgentView Commission Report
+Report Period:  08/01/26 - to - 08/14/26
+Agent ID(s): CB142243,CNHIC;
+RateComm PremiumAdv AmtDescComm Paid
+Total Comm Paid
+
+Description:  Shows all advance and commission transactions for selected agent ID(s) during specified report period
+Agent Name:  THE HEALTH EXPERTS INSURANCE                     
+                     
+AgentView Commission Report
+Report Period:  08/01/26 - to - 08/14/26
+Agent ID(s): CB142243,CNHIC;
+Cycle DateWriting AgentWriting Agent 
+Name
+Under Writing 
+Class
+Commission 
+Option Code
+Internal 
+Replacement 
+Indicator
+
+Description:  Shows all advance and commission transactions for selected agent ID(s) during specified report period
+Agent Name:  THE HEALTH EXPERTS INSURANCE                     
+                     
+AgentView Commission Report
+Report Period:  08/01/26 - to - 08/14/26
+Agent ID(s): CB142243,CNHIC;
+Issue StatePolicy Advance 
+Balance
+Group NameTransaction Desc
+
+Description:  Shows all advance and commission transactions for selected agent ID(s) during specified report period
+Agent Name:  THE HEALTH EXPERTS INSURANCE                     
+                     
+AgentView Commission Report
+Report Period:  08/01/26 - to - 08/14/26
+Agent ID(s): CB142243,CNHIC;
+CompanyAgt IdFirst Year
+CNHICCB142243                $111.45
+Totals$111.45
+Earnings Summary
+
+Description:  Shows all advance and commission transactions for selected agent ID(s) during specified report period
+Agent Name:  THE HEALTH EXPERTS INSURANCE                     
+                     
+AgentView Commission Report
+Report Period:  08/01/26 - to - 08/14/26
+Agent ID(s): CB142243,CNHIC;
+Renewals
+$0.00
+$0.00
+
+Description:  Shows all advance and commission transactions for selected agent ID(s) during specified report period
+Agent Name:  THE HEALTH EXPERTS INSURANCE                     
+                     
+AgentView Commission Report
+Report Period:  08/01/26 - to - 08/14/26
+Agent ID(s): CB142243,CNHIC;
+
+Description:  Shows all advance and commission transactions for selected agent ID(s) during specified report period
+Agent Name:  THE HEALTH EXPERTS INSURANCE                     
+                     
+AgentView Commission Report
+Report Period:  08/01/26 - to - 08/14/26
+Agent ID(s): CB142243,CNHIC;
+
+Description:  Shows all advance and commission transactions for selected agent ID(s) during specified report period
+Agent Name:  THE HEALTH EXPERTS INSURANCE                     
+                     
+AgentView Commission Report
+Report Period:  08/01/26 - to - 08/14/26
+Agent ID(s): CB142243,CNHIC;
+
+Description:  Shows all advance and commission transactions for selected agent ID(s) during specified report period
+Agent Name:  THE HEALTH EXPERTS INSURANCE                     
+                     
+AgentView Commission Report
+Report Period:  08/01/26 - to - 08/14/26
+Agent ID(s): CB142243,CNHIC;
+
+Description:  Shows all advance and commission transactions for selected agent ID(s) during specified report period
+Agent Name:  THE HEALTH EXPERTS INSURANCE                     
+                     
+AgentView Commission Report
+Report Period:  08/01/26 - to - 08/14/26
+Agent ID(s): CB142243,CNHIC;
+
+Description:  Shows all advance and commission transactions for selected agent ID(s) during specified report period
+Agent Name:  THE HEALTH EXPERTS INSURANCE                     
+                     
+AgentView Commission Report
+Report Period:  08/01/26 - to - 08/14/26
+Agent ID(s): CB142243,CNHIC;
+
+Description:  Shows all advance and commission transactions for selected agent ID(s) during specified report period
+Agent Name:  THE HEALTH EXPERTS INSURANCE                     
+                     
+AgentView Commission Report
+Report Period:  08/01/26 - to - 08/14/26
+Agent ID(s): CB142243,CNHIC;
+
+Description:  Shows all advance and commission transactions for selected agent ID(s) during specified report period
+Agent Name:  THE HEALTH EXPERTS INSURANCE                     
+                     
+AgentView Commission Report
+Report Period:  08/01/26 - to - 08/14/26
+Agent ID(s): CB142243,CNHIC;
+
+Description:  Shows all advance and commission transactions for selected agent ID(s) during specified report period
+Agent Name:  THE HEALTH EXPERTS INSURANCE                     
+                     
+AgentView Commission Report
+Report Period:  08/01/26 - to - 08/14/26
+Agent ID(s): CB142243,CNHIC;
+Agent IDCompanyPolicy NumberInsured Name
+CB142243CNHIC60Y0436424MUSHKIN, SILVIA
+CB142243CNHIC60Y0436880MUSHKIN, JULIUS
+Earnings
+
+Description:  Shows all advance and commission transactions for selected agent ID(s) during specified report period
+Agent Name:  THE HEALTH EXPERTS INSURANCE                     
+                     
+AgentView Commission Report
+Report Period:  08/01/26 - to - 08/14/26
+Agent ID(s): CB142243,CNHIC;
+Prem Due DateDur YrEff DatePlanMarketing 
+Name
+ModeRate
+08/01/2026107/01/2026MIM20BM60GHNHIC MEDSUP 
+STD PLAN G 
+(ISSUE AGE)     
+118.00
+08/01/2026107/01/2026MIM20BM60GHNHIC MEDSUP 
+STD PLAN G 
+(ISSUE AGE)     
+118.00
+
+Description:  Shows all advance and commission transactions for selected agent ID(s) during specified report period
+Agent Name:  THE HEALTH EXPERTS INSURANCE                     
+                     
+AgentView Commission Report
+Report Period:  08/01/26 - to - 08/14/26
+Agent ID(s): CB142243,CNHIC;
+ Comm PremiumEarningsDescComm PaidCycle Date
+$308.82$55.59Earnings Paid$55.5908/14/2026
+$310.31$55.86Earnings Paid$55.8608/14/2026
+Total Commission Paid$111.45
+
+Description:  Shows all advance and commission transactions for selected agent ID(s) during specified report period
+Agent Name:  THE HEALTH EXPERTS INSURANCE                     
+                     
+AgentView Commission Report
+Report Period:  08/01/26 - to - 08/14/26
+Agent ID(s): CB142243,CNHIC;
+Writing AgtWriting Agt NameUnder Writing 
+Class
+Commission 
+Option Code
+Internal 
+Replacement 
+Indicator
+SYSCB142243PEREZ,YAHOSKAOE01NO
+SYSCB142243PEREZ,YAHOSKAOE01NO
+
+Description:  Shows all advance and commission transactions for selected agent ID(s) during specified report period
+Agent Name:  THE HEALTH EXPERTS INSURANCE                     
+                     
+AgentView Commission Report
+Report Period:  08/01/26 - to - 08/14/26
+Agent ID(s): CB142243,CNHIC;
+Issue StatePolicy Advance 
+Balance
+Group NameTransaction Desc
+FL0.00             
+FL0.00             
+0.00

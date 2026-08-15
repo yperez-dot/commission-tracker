@@ -2,9 +2,18 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { apiFetch } from '../api';
 import { formatCarrier } from '../utils/formatCarrier';
 import { formatDate } from '../utils/dateFormat';
+import EditCommissionModal from '../components/EditCommissionModal';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function formatPeriodLabel(p) {
+  if (!p) return '—';
+  const s = String(p).trim();
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  if (s.match(/^\d{6}$/)) return months[parseInt(s.slice(4, 6), 10) - 1] + ' ' + s.slice(0, 4);
+  return s;
 }
 
 function MultiSelect({ label, options, selected, onChange }) {
@@ -70,16 +79,25 @@ function MultiSelect({ label, options, selected, onChange }) {
   );
 }
 
+function listFromInitial(filters, singularKey, pluralKey) {
+  if (Array.isArray(filters[pluralKey]) && filters[pluralKey].length) {
+    return filters[pluralKey].filter(Boolean);
+  }
+  if (filters[singularKey]) return [filters[singularKey]];
+  return [];
+}
+
 export default function AllData({ user, initialFilters = {} }) {
   const [records, setRecords] = useState([]);
   const [total, setTotal] = useState(0);
   const [filterOptions, setFilterOptions] = useState({ agents: [], carriers: [], periods: [], planTypes: [], classifications: [], lobs: [] });
-  const [selAgents, setSelAgents] = useState(initialFilters.agent ? [initialFilters.agent] : []);
-  const [selCarriers, setSelCarriers] = useState(initialFilters.carrier ? [initialFilters.carrier] : []);
-  const [selPeriods, setSelPeriods] = useState(initialFilters.period ? [initialFilters.period] : []);
-  const [selTypes, setSelTypes] = useState(initialFilters.classification ? [initialFilters.classification] : []);
+  const [selAgents, setSelAgents] = useState(() => listFromInitial(initialFilters, 'agent', 'agents'));
+  const [selCarriers, setSelCarriers] = useState(() => listFromInitial(initialFilters, 'carrier', 'carriers'));
+  const [selPeriods, setSelPeriods] = useState(() => listFromInitial(initialFilters, 'period', 'periods'));
+  const [selTypes, setSelTypes] = useState(() => listFromInitial(initialFilters, 'classification', 'classifications'));
   const [selPayees, setSelPayees] = useState([]);
-  const [selLOB, setSelLOB] = useState(initialFilters.lob ? [initialFilters.lob] : []);
+  const [selLOB, setSelLOB] = useState(() => listFromInitial(initialFilters, 'lob', 'lobs'));
+  const [amountSign, setAmountSign] = useState(initialFilters.amountSign || '');
   const [search, setSearch] = useState('');
   const [sortCol, setSortCol] = useState('');
   const [sortDir, setSortDir] = useState('asc');
@@ -92,21 +110,37 @@ export default function AllData({ user, initialFilters = {} }) {
   const [hideTermed, setHideTermed] = useState(false);
   const PAGE_SIZE = 100;
   const [policyModal, setPolicyModal] = useState(null);
+  const [editRecord, setEditRecord] = useState(null);
+  const [clientHistory, setClientHistory] = useState(null); // { client, carrier, agent }
+  const [clientHistoryData, setClientHistoryData] = useState([]);
+  const [clientHistoryTotals, setClientHistoryTotals] = useState(null);
+  const [clientHistoryLoading, setClientHistoryLoading] = useState(false);
+  const [clientHistoryError, setClientHistoryError] = useState('');
+  const [clientHistorySameAgent, setClientHistorySameAgent] = useState(true);
 
   useEffect(() => {
     apiFetch('/records/filters').then(d => setFilterOptions(d)).catch(console.error);
     setSelAgents([]); setSelCarriers([]); setSelPeriods([]); setSelTypes([]); setSelPayees([]); setSelLOB([]);
+    setAmountSign('');
     setPage(0);
   }, [user.agency]);
 
   useEffect(() => {
-    if (initialFilters.agent) setSelAgents([initialFilters.agent]);
-    if (initialFilters.carrier) setSelCarriers([initialFilters.carrier]);
-    if (initialFilters.period) setSelPeriods([initialFilters.period]);
-    if (initialFilters.classification) setSelTypes([initialFilters.classification]);
-    if (initialFilters.lob) setSelLOB([initialFilters.lob]);
+    setSelAgents(listFromInitial(initialFilters, 'agent', 'agents'));
+    setSelCarriers(listFromInitial(initialFilters, 'carrier', 'carriers'));
+    setSelPeriods(listFromInitial(initialFilters, 'period', 'periods'));
+    setSelTypes(listFromInitial(initialFilters, 'classification', 'classifications'));
+    setSelLOB(listFromInitial(initialFilters, 'lob', 'lobs'));
+    setAmountSign(initialFilters.amountSign || '');
     setPage(0);
-  }, [initialFilters.agent, initialFilters.carrier, initialFilters.period, initialFilters.classification, initialFilters.lob]);
+  }, [
+    initialFilters.agent, initialFilters.agents,
+    initialFilters.carrier, initialFilters.carriers,
+    initialFilters.period, initialFilters.periods,
+    initialFilters.classification, initialFilters.classifications,
+    initialFilters.lob, initialFilters.lobs,
+    initialFilters.amountSign,
+  ]);
 
   const loadRecords = useCallback(async (offset = 0) => {
     setLoading(true);
@@ -123,6 +157,7 @@ export default function AllData({ user, initialFilters = {} }) {
       if (selPayees.length === 1) params.set('payee', selPayees[0]);
       if (selLOB.length === 1) params.set('lob', selLOB[0]);
       if (selLOB.length > 1) params.set('lobs', selLOB.join(','));
+      if (amountSign === 'negative' || amountSign === 'positive') params.set('amountSign', amountSign);
       if (search.trim()) params.set('search', search.trim());
       if (sortCol) params.set('sortCol', sortCol);
       if (sortDir) params.set('sortDir', sortDir);
@@ -141,12 +176,12 @@ export default function AllData({ user, initialFilters = {} }) {
       setSelected(new Set());
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
-  }, [selAgents, selCarriers, selPeriods, selTypes, selPayees, selLOB, search, sortCol, sortDir, hideTermed, user.agency]);
+  }, [selAgents, selCarriers, selPeriods, selTypes, selPayees, selLOB, amountSign, search, sortCol, sortDir, hideTermed, user.agency]);
 
   useEffect(() => { 
     setPage(0); 
     loadRecords(0); 
-  }, [selAgents, selCarriers, selPeriods, selTypes, selPayees, selLOB, search, sortCol, sortDir, hideTermed, user.agency]);  // loadRecords intentionally omitted to prevent double-trigger
+  }, [selAgents, selCarriers, selPeriods, selTypes, selPayees, selLOB, amountSign, search, sortCol, sortDir, hideTermed, user.agency]);  // loadRecords intentionally omitted to prevent double-trigger
 
   function handlePage(dir) {
     const next = page + dir;
@@ -155,7 +190,8 @@ export default function AllData({ user, initialFilters = {} }) {
   }
 
   function clearAll() {
-    setSelAgents([]); setSelCarriers([]); setSelPeriods([]); setSelTypes([]); setSelPayees([]); setSearch('');
+    setSelAgents([]); setSelCarriers([]); setSelPeriods([]); setSelTypes([]); setSelPayees([]); setSelLOB([]);
+    setAmountSign(''); setSearch('');
     setPage(0);
   }
 
@@ -194,7 +230,7 @@ export default function AllData({ user, initialFilters = {} }) {
   }
 
   const grandTotal = records.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0);
-  const hasFilters = selAgents.length || selCarriers.length || selPeriods.length || selTypes.length || selPayees.length || selLOB.length || search.trim();
+  const hasFilters = selAgents.length || selCarriers.length || selPeriods.length || selTypes.length || selPayees.length || selLOB.length || amountSign || search.trim();
 
   async function exportCSV() {
     try {
@@ -209,6 +245,9 @@ export default function AllData({ user, initialFilters = {} }) {
       if (selPeriods.length > 1) params.set('periods', selPeriods.join(','));
       if (selTypes.length > 1) params.set('classifications', selTypes.join(','));
       if (selPayees.length === 1) params.set('payee', selPayees[0]);
+      if (selLOB.length === 1) params.set('lob', selLOB[0]);
+      if (selLOB.length > 1) params.set('lobs', selLOB.join(','));
+      if (amountSign === 'negative' || amountSign === 'positive') params.set('amountSign', amountSign);
       if (search.trim()) params.set('search', search.trim());
       
       // Fetch ALL records (set high limit to override default 100)
@@ -252,6 +291,33 @@ export default function AllData({ user, initialFilters = {} }) {
     selected: { title: `Delete ${selected.size} selected records?`, sub: 'These records will be permanently deleted.', btn: `Delete ${selected.size} records` },
     single: { title: 'Delete this record?', sub: deleteTarget ? `${deleteTarget.client_full_name} · ${deleteTarget.carrier} · ${fmt(deleteTarget.commission)}` : '', btn: 'Delete' }
   };
+
+  async function loadClientHistory(r, sameAgent = clientHistorySameAgent) {
+    if (!r?.client_full_name || !r?.carrier) return;
+    setClientHistory({
+      client_full_name: r.client_full_name,
+      carrier: r.carrier,
+      agent_name: r.agent_name,
+    });
+    setClientHistoryLoading(true);
+    setClientHistoryError('');
+    setClientHistoryData([]);
+    setClientHistoryTotals(null);
+    try {
+      const params = new URLSearchParams({
+        client: r.client_full_name,
+        carrier: r.carrier,
+      });
+      if (sameAgent && r.agent_name) params.set('agent', r.agent_name);
+      const data = await apiFetch(`/records/client-history?${params}`);
+      setClientHistoryData(data.rows || []);
+      setClientHistoryTotals(data.totals || null);
+    } catch (e) {
+      setClientHistoryError(e.message || 'Failed to load history');
+    } finally {
+      setClientHistoryLoading(false);
+    }
+  }
 
   const hasMGA = records.some(r => r.mga && r.mga.trim());
   const hasCommSplit = records.some(r => {
@@ -353,6 +419,109 @@ export default function AllData({ user, initialFilters = {} }) {
           </div>
         </div>
       )}
+
+      {clientHistory && (
+        <div
+          onClick={() => setClientHistory(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: 'var(--bg)', borderRadius: 12, padding: 24, width: 720, maxWidth: '96vw',
+              maxHeight: '85vh', overflowY: 'auto', border: '0.5px solid var(--border)',
+              boxShadow: '0 8px 32px rgba(0,0,0,0.15)'
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12, gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 4 }}>
+                  Commission history
+                </div>
+                <div style={{ fontSize: 17, fontWeight: 600 }}>{clientHistory.client_full_name}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+                  {formatCarrier(clientHistory.carrier)}
+                  {clientHistory.agent_name ? ` · ${clientHistory.agent_name}` : ''}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setClientHistory(null)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: 'var(--text-muted)' }}
+              >
+                ×
+              </button>
+            </div>
+
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-muted)', marginBottom: 14, cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={clientHistorySameAgent}
+                onChange={(e) => {
+                  const next = e.target.checked;
+                  setClientHistorySameAgent(next);
+                  loadClientHistory(clientHistory, next);
+                }}
+              />
+              Same agent only
+            </label>
+
+            {clientHistoryLoading ? (
+              <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>Loading…</div>
+            ) : clientHistoryError ? (
+              <div style={{ padding: 12, borderRadius: 8, background: '#F5EAE4', color: '#7A3D1F', fontSize: 13 }}>{clientHistoryError}</div>
+            ) : clientHistoryData.length === 0 ? (
+              <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No commission rows found</div>
+            ) : (
+              <>
+                <div style={{ display: 'flex', gap: 16, marginBottom: 12, flexWrap: 'wrap', fontSize: 12 }}>
+                  <span><strong>{clientHistoryTotals?.count ?? clientHistoryData.length}</strong> rows</span>
+                  <span>Commission total: <strong style={{ color: 'var(--green)' }}>{fmt(clientHistoryTotals?.commission)}</strong></span>
+                  {(clientHistoryTotals?.producer_payable || 0) !== 0 && (
+                    <span>Producer payable: <strong>{fmt(clientHistoryTotals.producer_payable)}</strong></span>
+                  )}
+                </div>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                  <thead>
+                    <tr>
+                      {['Period', 'Type', 'Amount', 'Policy', 'LOB', 'Agent'].map((h) => (
+                        <th
+                          key={h}
+                          style={{
+                            textAlign: 'left', padding: '6px 8px',
+                            borderBottom: '0.5px solid var(--border)', color: 'var(--text-muted)', fontSize: 11
+                          }}
+                        >
+                          {h}
+                        </th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {clientHistoryData.map((row) => {
+                      const payable = parseFloat(row.producer_payable || 0);
+                      const amt = payable !== 0 ? payable : (parseFloat(row.commission) || 0);
+                      return (
+                        <tr key={row.id} style={{ borderBottom: '0.5px solid var(--border)' }}>
+                          <td style={{ padding: '6px 8px' }}>{formatPeriodLabel(row.payment_period)}</td>
+                          <td style={{ padding: '6px 8px' }}>{row.classification || '—'}</td>
+                          <td style={{ padding: '6px 8px', fontWeight: 500, color: amt < 0 ? 'var(--red)' : 'var(--green)' }}>
+                            {fmt(amt)}
+                          </td>
+                          <td style={{ padding: '6px 8px', color: 'var(--text-muted)' }}>{row.policy_number || '—'}</td>
+                          <td style={{ padding: '6px 8px' }}>{row.lob || '—'}</td>
+                          <td style={{ padding: '6px 8px' }}>{row.agent_name || '—'}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="page-header">
         <div className="page-title">All Data</div>
         <div className="page-sub">All commission records across all carriers and periods</div>
@@ -386,6 +555,19 @@ export default function AllData({ user, initialFilters = {} }) {
           <MultiSelect label="Types" options={filterOptions.classifications || []} selected={selTypes} onChange={setSelTypes} />
           <MultiSelect label="LOB" options={filterOptions.lobs || []} selected={selLOB} onChange={setSelLOB} />
           <MultiSelect label="Payee" options={filterOptions.payees || []} selected={selPayees} onChange={setSelPayees} />
+          <button
+            type="button"
+            onClick={() => setAmountSign(s => s === 'negative' ? '' : 'negative')}
+            style={{
+              padding: '6px 10px', borderRadius: 6, border: '0.5px solid var(--border)', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap',
+              background: amountSign === 'negative' ? 'var(--accent)' : 'var(--bg)',
+              color: amountSign === 'negative' ? 'var(--sidebar-bg)' : 'var(--text)',
+              fontWeight: amountSign === 'negative' ? 500 : 400,
+            }}
+            title="Show only negative commission rows (chargebacks)"
+          >
+            Chargebacks only
+          </button>
           <input
             type="text"
             placeholder="Search client, agent..."
@@ -425,9 +607,15 @@ export default function AllData({ user, initialFilters = {} }) {
 
         {hasFilters && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
-            {[...selAgents, ...selCarriers, ...selPeriods, ...selTypes, ...selPayees].map(f => (
+            {[...selAgents, ...selCarriers, ...selPeriods, ...selTypes, ...selLOB, ...selPayees].map(f => (
               <span key={f} style={{ background: 'var(--accent)', color: 'var(--sidebar-bg)', borderRadius: 4, padding: '2px 10px', fontSize: 11, fontWeight: 500 }}>{f}</span>
             ))}
+            {amountSign === 'negative' && (
+              <span style={{ background: '#F5EAE4', color: '#7A3D1F', borderRadius: 4, padding: '2px 10px', fontSize: 11, fontWeight: 500 }}>Chargebacks only</span>
+            )}
+            {amountSign === 'positive' && (
+              <span style={{ background: 'var(--accent-light)', color: 'var(--accent-dark)', borderRadius: 4, padding: '2px 10px', fontSize: 11, fontWeight: 500 }}>Credits only</span>
+            )}
           </div>
         )}
 
@@ -480,7 +668,20 @@ export default function AllData({ user, initialFilters = {} }) {
                               : '—'}
                           </td>
                           <td style={{ fontSize: 13 }}>
-                            {r.client_full_name || '—'}
+                            {r.client_full_name ? (
+                              <button
+                                type="button"
+                                onClick={() => loadClientHistory(r)}
+                                title="View commission history"
+                                style={{
+                                  background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                                  color: 'var(--accent-dark)', fontWeight: 500, fontSize: 13, textDecoration: 'underline',
+                                  textAlign: 'left'
+                                }}
+                              >
+                                {r.client_full_name}
+                              </button>
+                            ) : '—'}
                             {r.is_termed && (
                               <span style={{
                                 marginLeft: 6,
@@ -520,8 +721,23 @@ export default function AllData({ user, initialFilters = {} }) {
                           {hasSubAgentOverride && <td style={{ fontSize: 12, fontWeight: 500, color: parseFloat(r.sub_agent_override) > 0 ? 'var(--amber)' : 'var(--text-muted)' }}>{r.sub_agent_override && r.sub_agent_override > 0 ? fmt(r.sub_agent_override) : '—'}</td>}
                           {hasMGA && <td style={{ fontSize: 11, color: 'var(--text-muted)' }}>{r.mga || '—'}</td>}
                           {user.role === 'admin' && (
-                            <td>
-                              <button onClick={() => { setDeleteTarget(r); setConfirmDelete('single'); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14, padding: '2px 6px' }}>✕</button>
+                            <td style={{ whiteSpace: 'nowrap' }}>
+                              <button
+                                type="button"
+                                title="Edit"
+                                onClick={() => setEditRecord(r)}
+                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--accent-dark)', fontSize: 12, padding: '2px 6px', fontWeight: 500 }}
+                              >
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                title="Delete"
+                                onClick={() => { setDeleteTarget(r); setConfirmDelete('single'); }}
+                                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: 14, padding: '2px 6px' }}
+                              >
+                                ✕
+                              </button>
                             </td>
                           )}
                         </tr>
@@ -551,6 +767,18 @@ export default function AllData({ user, initialFilters = {} }) {
           )}
         </div>
       </div>
+      {editRecord && (
+        <EditCommissionModal
+          record={editRecord}
+          onClose={() => setEditRecord(null)}
+          onSave={(updated) => {
+            if (updated) {
+              setRecords(prev => prev.map(r => (r.id === updated.id ? { ...r, ...updated } : r)));
+            }
+            setEditRecord(null);
+          }}
+        />
+      )}
     </>
   );
 }

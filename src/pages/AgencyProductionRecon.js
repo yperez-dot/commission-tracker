@@ -2,8 +2,11 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { apiFetch } from '../api';
 import { formatCarrier } from '../utils/formatCarrier';
 import { formatDate as formatDateUtil } from '../utils/dateFormat';
+import { normName, normalizeCarrier, carriersMatch } from '../matchingNormalize';
+import { fetchAllPages, truncationMessage } from '../fetchAllPages';
+import TruncationBanner from '../components/TruncationBanner';
 
-// Version: 2026-06-19-18:50 - Added multi-select filters
+// Version: 2026-08-15 — shared matchingNormalize (Omaha ≠ UHC, empty-carrier safe)
 
 // Multi-select dropdown component
 function MultiSelect({ label, options, selected, onChange, formatOption }) {
@@ -119,75 +122,6 @@ function normalizeName(name) {
   return name.toLowerCase().trim().replace(/\s+/g, ' ');
 }
 
-// Normalize name to match database normalized_name logic (same as Missing Renewals / Our Sales)
-function normName(name) {
-  if (!name) return '';
-  const s = String(name).trim();
-  
-  // Helper: Convert to Title Case
-  function toTitleCase(str) {
-    return str.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
-  }
-  
-  // Handle comma-separated "LAST, FIRST" format
-  // Everything before the comma is the full surname (handles compound surnames)
-  if (s.includes(',')) {
-    let [last, first] = s.split(',').map(p => p.trim());
-    
-    // Extract and save suffix from surname
-    let suffix = '';
-    const suffixMatch = last.match(/\b(JR|SR|III|II|IV|V)\.?$/i);
-    if (suffixMatch) {
-      suffix = suffixMatch[1].toUpperCase().replace(/\./g, ''); // "JR", "SR", etc.
-      last = last.replace(/\b(JR|SR|III|II|IV|V)\.?$/i, '').trim();
-    }
-    
-    // Strip middle initials from first name (handles single or multiple initials)
-    // Removes trailing single-letter words with optional periods: "A.", "B", etc.
-    first = first.replace(/(\s+[A-Z]\.?)+$/i, '').trim();
-    
-    // Reassemble: "FIRST LAST SUFFIX" in Title Case
-    let normalized = `${first} ${last}`;
-    if (suffix) {
-      normalized += ` ${suffix}`;
-    }
-    normalized = normalized.replace(/\s+/g, ' ').trim();
-    return toTitleCase(normalized);
-  }
-  
-  // For non-comma format, strip trailing middle initials and normalize
-  let normalized = s.replace(/\s+/g, ' ').trim();
-  normalized = normalized.replace(/(\s+[A-Z]\.?)+$/i, '').trim();
-  return toTitleCase(normalized);
-}
-
-function normalizeCarrier(carrier) {
-  if (!carrier) return '';
-  const c = carrier.toLowerCase().trim();
-
-  if (c.includes('humana')) return 'humana';
-  if (c.includes('aetna')) return 'aetna';
-  if (c.includes('uhc') || c.includes('united')) return 'unitedhealthcare';
-  if (c.includes('doctors')) return 'doctors';
-  if (c.includes('careplus') || c.includes('care plus')) return 'careplus';
-  if (c.includes('devoted')) return 'devoted';
-  if (c.includes('solis')) return 'solis';
-  if (c.includes('healthsun') || c.includes('health sun')) return 'healthsun';
-  if (c.includes('oscar')) return 'oscar health';
-  if (c.includes('molina')) return 'molina';
-  if (c.includes('wellcare')) return 'wellcare';
-  if (c.includes('florida blue') || c.includes('bcbs') || c.includes('blue cross')) return 'florida blue';
-  if (c.includes('cigna')) return 'cigna';
-  if (c.includes('avmed')) return 'avmed';
-  if (c.includes('simply')) return 'simply';
-  if (c.includes('gold kidney') || c.includes('goldkidney')) return 'gold kidney';
-  if (c.includes('elevance') || c.includes('anthem')) return 'elevance medicare';
-  if (c.includes('freedom')) return 'freedom';
-  if (c.includes('nhp')) return 'nhp';
-
-  return c;
-}
-
 function parseClientName(name) {
   if (!name) return { first: '', last: '' };
   const trimmed = name.trim();
@@ -262,10 +196,8 @@ function findOverrideMatch(production, overrides) {
     // Client name match using normName() (handles "LAST FIRST" vs "FIRST LAST")
     const clientMatch = prodClientNorm === overrideClientNorm;
     
-    // Carrier match
-    const carrierMatch = prodCarrier === overrideCarrier || 
-                        prodCarrier.includes(overrideCarrier) || 
-                        overrideCarrier.includes(prodCarrier);
+    // Carrier match (exact canonical — empty never matches)
+    const carrierMatch = carriersMatch(prodCarrier, overrideCarrier);
     
     // Match if client + carrier match (period-agnostic, like Our Sales)
     if (clientMatch && carrierMatch) {
@@ -319,9 +251,7 @@ function _findHeldRecord(prod, carrierRecords) {
   return carrierRecords.find(r =>
     r.classification === 'Held' &&
     normName(r.client_full_name) === prodClientNorm &&
-    (normalizeCarrier(r.carrier) === prodCarrier ||
-     normalizeCarrier(r.carrier).includes(prodCarrier) ||
-     prodCarrier.includes(normalizeCarrier(r.carrier)))
+    carriersMatch(r.carrier, prodCarrier)
   ) || null;
 }
 
@@ -373,6 +303,7 @@ export default function AgencyProductionRecon() {
   const [selectedOverride, setSelectedOverride] = useState(null);
   const [selectedProduction, setSelectedProduction] = useState(null);
   const [overrideSaving, setOverrideSaving] = useState(null); // id of row currently saving
+  const [truncationWarning, setTruncationWarning] = useState(null);
 
   useEffect(() => {
     loadData();
@@ -403,14 +334,20 @@ export default function AgencyProductionRecon() {
   async function loadData() {
     setLoading(true);
     setError(null);
+    setTruncationWarning(null);
     try {
-      // Load agency production (Hector's reports)
-      const prodData = await apiFetch('/agency-production?limit=5000');
-      setProduction(prodData.production || []);
+      const prodPage = await fetchAllPages('/agency-production', {
+        itemsKey: 'production',
+        pageSize: 5000,
+      }, apiFetch);
+      setProduction(prodPage.items || []);
 
-      // Load BSI→THEI override statements (EXCLUDE carrier→BSI statement uploads)
-      const overrideData = await apiFetch('/records?limit=5000&exclude_upload_category=bsi_statement');
-      const overrideStatements = (overrideData.records || []).filter(r => {
+      const overridePage = await fetchAllPages(
+        '/records?exclude_upload_category=bsi_statement',
+        { pageSize: 5000 },
+        apiFetch
+      );
+      const overrideStatements = (overridePage.items || []).filter(r => {
         const classification = r.classification?.toLowerCase() || '';
         const payee = r.payee?.toUpperCase() || '';
         const source = r.source?.toUpperCase() || '';
@@ -424,9 +361,18 @@ export default function AgencyProductionRecon() {
       });
       setOverrides(overrideStatements);
 
-      // Load Carrier→BSI records (only from bsi_statement uploads)
-      const carrierData = await apiFetch('/records?limit=5000&upload_category=bsi_statement');
-      setCarrierBSIRecords(carrierData.records || []);
+      const carrierPage = await fetchAllPages(
+        '/records?upload_category=bsi_statement',
+        { pageSize: 5000 },
+        apiFetch
+      );
+      setCarrierBSIRecords(carrierPage.items || []);
+
+      setTruncationWarning(truncationMessage([
+        prodPage.warning ? `Agency production: ${prodPage.warning}` : null,
+        overridePage.warning ? `Override statements: ${overridePage.warning}` : null,
+        carrierPage.warning ? `Carrier→BSI: ${carrierPage.warning}` : null,
+      ]));
 
       // Build set of uploaded carrier+period keys so we know what's been uploaded
       const bsiUploadsData = await apiFetch('/files/uploads?category=bsi_statement');
@@ -962,9 +908,11 @@ export default function AgencyProductionRecon() {
 
         {error && (
           <div className="card" style={{ marginTop: 20, background: 'var(--red-light)', border: '1px solid var(--red)', padding: 16 }}>
-            ❌ {error}
+            {error}
           </div>
         )}
+
+        <TruncationBanner message={truncationWarning} />
 
         {!loading && (
           <div className="card" style={{ padding: 0, overflow: 'hidden' }}>

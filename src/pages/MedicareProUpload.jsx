@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch, apiUpload } from '../api';
 import { formatDate } from '../utils/dateFormat';
+import { UploadPageShell, UploadDropZone, UploadAlert, UploadHistoryCard } from '../components/UploadPageLayout';
 export default function MedicareProUpload() {
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState([]);
@@ -48,7 +49,7 @@ export default function MedicareProUpload() {
 
   async function handleDeleteBatch(batch) {
     const confirmDelete = window.confirm(
-      `⚠️ Delete batch ${batch}?\n\nThis will permanently delete:\n- All upload logs for this batch\n- All sales records for this batch\n\nThis cannot be undone.`
+      `Delete batch ${batch}?\n\nThis will permanently delete:\n- All upload logs for this batch\n- All sales records for this batch\n\nThis cannot be undone.`
     );
 
     if (!confirmDelete) return;
@@ -58,12 +59,12 @@ export default function MedicareProUpload() {
         method: 'DELETE'
       });
 
-      alert(`✅ Deleted batch ${batch}\n\n${result.deleted_sales} sales records deleted\n${result.deleted_uploads} upload logs deleted`);
+      alert(`Deleted batch ${batch}\n\n${result.deleted_sales} sales records deleted\n${result.deleted_uploads} upload logs deleted`);
 
       // Reload history
       await loadUploadHistory();
     } catch (err) {
-      alert(`❌ Error deleting batch: ${err.message}`);
+      alert(`Error deleting batch: ${err.message}`);
     }
   }
 
@@ -87,7 +88,7 @@ export default function MedicareProUpload() {
 
   async function handleFileSelect(selectedFile) {
     if (!selectedFile.name.toLowerCase().endsWith('.csv')) {
-      setError('❌ File must be CSV format');
+      setError('File must be CSV format');
       return;
     }
     setFile(selectedFile);
@@ -100,7 +101,7 @@ export default function MedicareProUpload() {
         const rows = parseCSV(csv);
         setPreview(rows.slice(0, 5));
       } catch (err) {
-        setError('❌ Error reading CSV: ' + err.message);
+      setError('Error reading CSV: ' + err.message);
       }
     };
     reader.readAsText(selectedFile);
@@ -108,7 +109,7 @@ export default function MedicareProUpload() {
 
   async function handleUpload() {
     if (!file) {
-      setError('❌ Please select a file');
+      setError('Please select a file');
       return;
     }
     setLoading(true);
@@ -121,90 +122,52 @@ export default function MedicareProUpload() {
 
       const result = await apiUpload('/medicarepro/upload', formData);
 
-      setSuccess(`✅ Upload successful! ${result.message || ''}`);
+      setSuccess(`Upload successful! ${result.message || ''}`);
       setFile(null);
       setPreview([]);
       // Reload upload history
       await loadUploadHistory();
     } catch (err) {
-      setError('❌ Error: ' + err.message);
+      setError('Error: ' + err.message);
     } finally {
       setLoading(false);
     }
   }
 
-  function handleDragOver(e) {
-    e.preventDefault();
-    setDragOver(true);
-  }
-
-  function handleDragLeave() {
-    setDragOver(false);
-  }
-
-  function handleDrop(e) {
-    e.preventDefault();
-    setDragOver(false);
-    if (e.dataTransfer.files[0]) {
-      handleFileSelect(e.dataTransfer.files[0]);
-    }
-  }
-
   return (
-    <div>
-      <div className="page-header">
-        <div className="page-title">MedicarePro Sales</div>
-        <div className="page-sub">Import your monthly client list from MedicarePro</div>
-      </div>
+    <UploadPageShell
+      title="MedicarePro Sales"
+      subtitle="Import your monthly client list from MedicarePro for Sales Reconciliation."
+    >
+        <UploadDropZone
+          dragOver={dragOver}
+          setDragOver={setDragOver}
+          onDropFiles={(files) => { if (files[0]) handleFileSelect(files[0]); }}
+          uploading={loading}
+          dropTitle="Drop MedicarePro CSV here"
+          dropHint="CSV export from MedicarePro"
+          accept=".csv"
+          processingLabel="Uploading..."
+          processingHint="Importing sales records"
+        />
 
-      <div className="page-body">
-        <div
-          className="card"
-          style={{
-            border: dragOver ? '2px dashed var(--blue)' : '2px dashed var(--border)',
-            background: dragOver ? 'var(--blue-light)' : 'transparent',
-            padding: '40px',
-            textAlign: 'center',
-            cursor: 'pointer',
-            transition: 'all 0.2s'
-          }}
-          onDragOver={handleDragOver}
-          onDragLeave={handleDragLeave}
-          onDrop={handleDrop}
-        >
-          <div style={{ fontSize: 48, marginBottom: 12 }}>📁</div>
-          <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>
-            Drag & drop your MedicarePro CSV here
-          </div>
-          <div style={{ fontSize: 13, color: 'var(--text-muted)', marginBottom: 20 }}>
-            Or click below to select a file
-          </div>
-          <label className="btn btn-primary" style={{ cursor: 'pointer' }}>
-            Choose File
-            <input
-              type="file"
-              accept=".csv"
-              onChange={(e) => e.target.files[0] && handleFileSelect(e.target.files[0])}
-              style={{ display: 'none' }}
-            />
-          </label>
-        </div>
+        {error && <UploadAlert>{error}</UploadAlert>}
+        {success && <UploadAlert kind="success">{success}</UploadAlert>}
 
         {file && (
-          <div className="card" style={{ marginTop: 20, background: 'var(--blue-light)', border: '1px solid var(--blue)' }}>
+          <div className="card" style={{ marginBottom: 16 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
-                <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--blue-dark)' }}>
-                  ✅ Selected: {file.name}
+                <div style={{ fontSize: 14, fontWeight: 600 }}>
+                  Selected: {file.name}
                 </div>
-                <div style={{ fontSize: 12, color: 'var(--blue)', marginTop: 4 }}>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
                   Size: {(file.size / 1024).toFixed(1)} KB
                 </div>
               </div>
               <button
                 className="btn btn-sm"
                 onClick={() => { setFile(null); setPreview([]); }}
-                style={{ background: 'var(--red)', color: 'white' }}
               >
                 Remove
               </button>
@@ -277,22 +240,13 @@ export default function MedicareProUpload() {
           </div>
         )}
 
-        {error && (
-          <div className="card" style={{ marginTop: 20, background: 'var(--red-light)', border: '1px solid var(--red)', color: 'var(--red-dark)' }}>
-            {error}
-          </div>
-        )}
-
-        {success && (
-          <div className="card" style={{ marginTop: 20, background: 'var(--green-light)', border: '1px solid var(--green)', color: 'var(--green-dark)', fontWeight: 500 }}>
-            {success}
-          </div>
-        )}
+        {error && <UploadAlert>{error}</UploadAlert>}
+        {success && <UploadAlert kind="success">{success}</UploadAlert>}
 
         {file && !success && (
           <div style={{ marginTop: 20, display: 'flex', gap: 12 }}>
-            <button className="btn btn-primary btn-lg" onClick={handleUpload} disabled={loading} style={{ flex: 1 }}>
-              {loading ? '⏳ Uploading...' : '🚀 Replace All Sales Data'}
+            <button className="btn btn-primary" onClick={handleUpload} disabled={loading} style={{ flex: 1 }}>
+              {loading ? 'Uploading...' : 'Replace all sales data'}
             </button>
             <button className="btn btn-secondary" onClick={() => { setFile(null); setPreview([]); }} disabled={loading}>
               Cancel
@@ -300,19 +254,16 @@ export default function MedicareProUpload() {
           </div>
         )}
 
-        <div style={{ marginTop: 30, padding: 16, background: 'var(--blue-light)', borderRadius: 6, borderLeft: '4px solid var(--blue)', color: 'var(--blue-dark)', fontSize: 13, lineHeight: 1.6 }}>
-          <div style={{ fontWeight: 600, marginBottom: 8 }}>💡 How to use:</div>
+        <div className="card" style={{ marginBottom: 16, fontSize: 13, lineHeight: 1.6, color: 'var(--text-muted)' }}>
+          <div style={{ fontWeight: 600, marginBottom: 8, color: 'var(--text)' }}>How to use</div>
           <ol style={{ paddingLeft: 20, margin: 0 }}>
             <li>Export your client list from MedicarePro as CSV</li>
             <li>Upload the file here</li>
-            <li>The Reconciliation page will automatically update</li>
-            <li>Compare with commission records to find unpaid sales</li>
+            <li>Sales Reconciliation will match these sales to commission statements</li>
           </ol>
         </div>
 
-        {/* Upload History */}
-        <div className="card" style={{ marginTop: 30 }}>
-          <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 16 }}>📋 Upload History</div>
+        <UploadHistoryCard title="Upload history">
           {loadingHistory ? (
             <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-muted)' }}>Loading history...</div>
           ) : uploadHistory.length === 0 ? (
@@ -378,7 +329,7 @@ export default function MedicareProUpload() {
                           onClick={() => handleDeleteBatch(upload.upload_batch)}
                           style={{ background: 'var(--red)', color: 'white', fontSize: 11, padding: '4px 10px' }}
                         >
-                          🗑️ Delete
+                          Delete
                         </button>
                       </td>
                     </tr>
@@ -387,7 +338,7 @@ export default function MedicareProUpload() {
               </table>
             </div>
           )}
-        </div>
+        </UploadHistoryCard>
 
         {/* Batch Data Viewer Modal */}
         {viewingBatch && (
@@ -419,7 +370,7 @@ export default function MedicareProUpload() {
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
                 <div>
-                  <div style={{ fontSize: 18, fontWeight: 600 }}>📊 Sales Data - Batch {viewingBatch}</div>
+                  <div style={{ fontSize: 16, fontWeight: 600 }}>Sales data — batch {viewingBatch}</div>
                   <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>
                     {batchData.length} records
                   </div>
@@ -500,7 +451,6 @@ export default function MedicareProUpload() {
             </div>
           </div>
         )}
-      </div>
-    </div>
+    </UploadPageShell>
   );
 }

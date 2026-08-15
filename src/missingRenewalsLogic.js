@@ -1,5 +1,14 @@
 'use strict';
 
+const { isTheiPrincipalAgent } = require('./theiPrincipalAgents');
+const {
+  normName,
+  nameVariants,
+  namesLooseMatch,
+  normCarrier,
+  normalizeCarrier,
+} = require('./matchingNormalize');
+
 /**
  * Shared Missing Renewals matching + row build logic (server-side).
  * BOB (Yahoska/Katy active) × commission_records for one statement month.
@@ -22,94 +31,6 @@ function normPeriod(p) {
   const m2 = s.match(/^(\d{1,2})\/\d{2}\/(\d{4})$/);
   if (m2) return m2[2] + m2[1].padStart(2, '0');
   return null;
-}
-
-function toTitleCase(str) {
-  return String(str || '')
-    .toLowerCase()
-    .replace(/\b\w/g, (c) => c.toUpperCase());
-}
-
-function normName(name) {
-  if (!name) return '';
-  const s = String(name).trim();
-  if (s.includes(',')) {
-    let [last, first] = s.split(',').map((p) => p.trim());
-    last = last.replace(/\b(JR|SR|III|II|IV|V)\.?$/i, '').trim();
-    first = first.replace(/(\s+[A-Za-z]\.?)+$/i, '').trim();
-    return toTitleCase(`${first} ${last}`.replace(/\s+/g, ' ').trim());
-  }
-  return toTitleCase(s.replace(/\s+/g, ' ').trim());
-}
-
-function nameVariants(name) {
-  if (!name) return [];
-  const norm = normName(name);
-  const parts = norm.split(' ').filter(Boolean);
-  const result = [norm];
-
-  if (parts.length >= 2) {
-    const noTrailingInitial = parts
-      .filter((p, i) => !(i === parts.length - 1 && /^[A-Za-z]\.?$/.test(p)))
-      .join(' ');
-    if (noTrailingInitial !== norm) result.push(noTrailingInitial);
-
-    const reversed = [...parts].reverse().join(' ');
-    if (!result.includes(reversed)) result.push(reversed);
-
-    const partsNoInitial = parts.filter(
-      (p, i) => !(i === parts.length - 1 && /^[A-Za-z]\.?$/.test(p))
-    );
-    const reversedNoInitial = [...partsNoInitial].reverse().join(' ');
-    if (!result.includes(reversedNoInitial)) result.push(reversedNoInitial);
-  }
-  return result;
-}
-
-function significantTokens(name) {
-  return normName(name)
-    .toLowerCase()
-    .split(/\s+/)
-    .map((t) => t.replace(/[^a-z]/g, ''))
-    .filter((t) => t.length > 1);
-}
-
-/** Strict fuzzy: same token multiset OR (shared surname + shared given name). */
-function namesLooseMatch(a, b) {
-  const ta = significantTokens(a);
-  const tb = significantTokens(b);
-  if (!ta.length || !tb.length) return false;
-
-  const sa = [...ta].sort().join(' ');
-  const sb = [...tb].sort().join(' ');
-  if (sa === sb) return true;
-
-  const setA = new Set(ta);
-  const setB = new Set(tb);
-  const shared = ta.filter((t) => setB.has(t));
-  if (shared.length < 2) return false;
-
-  // Require at least two shared tokens (covers "Maria Garcia Lopez" ↔ "Garcia, Maria")
-  return shared.length >= 2 && shared.length >= Math.min(ta.length, tb.length) - 1;
-}
-
-function normCarrier(c) {
-  const s = String(c || '').toLowerCase();
-  if (s.includes('united') || s.includes('uhc')) return 'unitedhealthcare';
-  if (s.includes('humana')) return 'humana';
-  if (s.includes('aetna')) return 'aetna';
-  if (s.includes('devoted')) return 'devoted health';
-  if (s.includes('cigna')) return 'cigna';
-  if (s.includes('oscar')) return 'oscar health';
-  if (s.includes('florida blue') || s.includes('bcbs')) return 'florida blue';
-  if (s.includes('gold kidney')) return 'gold kidney';
-  if (s.includes('simply')) return 'simply';
-  if (s.includes('molina')) return 'molina';
-  if (s.includes('solis')) return 'solis';
-  if (s.includes('healthsun') || s.includes('health sun')) return 'healthsun';
-  if (s.includes('doctors')) return 'doctors healthcare';
-  if (s.includes('avmed') || s.includes('av med')) return 'avmed';
-  return s.trim();
 }
 
 function periodToDate(p) {
@@ -149,6 +70,43 @@ function monthsBetweenPeriods(fromPeriod, toPeriod) {
 
 function isHeldClassification(classification) {
   return String(classification || '').toLowerCase() === 'held';
+}
+
+/** Stub months (1–2 stray rows) are not real statement months for renewals. */
+const MIN_STATEMENT_MONTH_RECORDS = 50;
+
+/**
+ * Collapse raw payment_period strings into YYYYMM counts and pick a default.
+ * @param {Array<{ payment_period?: string, period?: string, record_count?: number, count?: number, n?: number }>} rows
+ * @returns {{ periods: Array<{ period: string, label: string, recordCount: number, viable: boolean }>, defaultPeriod: string|null }}
+ */
+function buildMissingRenewalsPeriodOptions(rows) {
+  const counts = new Map();
+  for (const row of rows || []) {
+    const raw = row.payment_period || row.period;
+    const period = normPeriod(raw);
+    if (!period) continue;
+    const n = Number(row.record_count ?? row.count ?? row.n ?? 0) || 0;
+    counts.set(period, (counts.get(period) || 0) + n);
+  }
+
+  const periods = [...counts.entries()]
+    .map(([period, recordCount]) => ({
+      period,
+      label: formatPeriodLabel(period),
+      recordCount,
+      viable: recordCount >= MIN_STATEMENT_MONTH_RECORDS,
+    }))
+    .sort((a, b) => b.period.localeCompare(a.period));
+
+  const viable = periods.filter((p) => p.viable);
+  const defaultPeriod = viable.length
+    ? viable[0].period
+    : periods.length
+      ? [...periods].sort((a, b) => b.recordCount - a.recordCount)[0].period
+      : null;
+
+  return { periods, defaultPeriod, minRecords: MIN_STATEMENT_MONTH_RECORDS };
 }
 
 /**
@@ -258,6 +216,7 @@ function buildMissingRenewalRows({
       lob: paidRecs[0]?.lob || heldRecs[0]?.lob || '',
       policyStatus: psData?.status || null,
       termedDate: psData?.termed_date || null,
+      policyNotes: psData?.notes || null,
       matchCount: matchedRecs.length,
     });
   }
@@ -285,24 +244,17 @@ function buildMissingRenewalRows({
   };
 }
 
-function isTheiPrincipalAgent(agentName) {
-  const a = String(agentName || '').toLowerCase();
-  return (
-    a.includes('yahoska') ||
-    a.includes('katy') ||
-    a.includes('perez, yahoska') ||
-    a.includes('robles, katy')
-  );
-}
-
 module.exports = {
   normName,
   normCarrier,
+  normalizeCarrier,
   normPeriod,
   nameVariants,
   namesLooseMatch,
   buildMissingRenewalRows,
+  buildMissingRenewalsPeriodOptions,
   isTheiPrincipalAgent,
   monthsBetweenPeriods,
   formatPeriodLabel,
+  MIN_STATEMENT_MONTH_RECORDS,
 };

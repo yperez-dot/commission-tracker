@@ -1,8 +1,10 @@
+
+if (!process.env.DATABASE_URL) { console.error('DATABASE_URL required'); process.exit(1); }
 // Test MBI extraction against real production data in database
 const { Pool } = require('pg');
 
 const pool = new Pool({
-  connectionString: 'postgresql://postgres:LyahRMtjzhkPkaPpXtgysioPUBUVPAOi@metro.proxy.rlwy.net:24676/railway'
+  connectionString: process.env.DATABASE_URL
 });
 
 // Import validation function (FIXED - position 6 can be digit or letter)

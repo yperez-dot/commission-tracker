@@ -7,21 +7,28 @@ const fs = require('fs');
 const { getPool } = require('../db/database');
 const { requireAuth, requireAdmin } = require('./auth');
 const { normalizeAgentName } = require('./normalize');
+const { safeUploadFilename, isAllowedUploadName } = require('./uploadSafe');
 const {
   buildMissingRenewalRows,
+  buildMissingRenewalsPeriodOptions,
   isTheiPrincipalAgent,
   normName,
   normCarrier,
   normPeriod,
+  MIN_STATEMENT_MONTH_RECORDS,
 } = require('../src/missingRenewalsLogic');
 const UPLOADS_DIR = path.join('/tmp', 'uploads');
 if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
 const storage = multer.diskStorage({
   destination: UPLOADS_DIR,
-  filename: (req, file, cb) => cb(null, `${Date.now()}_${file.originalname.replace(/\s+/g, '_')}`)
+  filename: (req, file, cb) => cb(null, safeUploadFilename(file.originalname))
 });
-const upload = multer({ storage, limits: { fileSize: 20 * 1024 * 1024 } });
+const upload = multer({
+  storage,
+  limits: { fileSize: 20 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => cb(null, isAllowedUploadName(file.originalname)),
+});
 
 function formatDate(value) {
   if (!value) return '';
@@ -206,17 +213,19 @@ router.get('/', requireAuth, async (req, res) => {
 router.get('/summary', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
-    const isAdmin = req.user.role === 'admin' && !getAgency(req);
-    const af = req.user.role === 'agent'
-      ? `AND agent_name ILIKE '%${req.user.name}%'`
-      : (req.user.role === 'admin' && getAgency(req))
-        ? `AND carrier IN (SELECT DISTINCT carrier FROM commission_records WHERE ${agencyFilter(req, null)})`
-        : '';
-    const total = await pool.query(`SELECT COUNT(*) as count FROM book_of_business WHERE status = 'active' ${af}`);
-    const missing = await pool.query(`SELECT COUNT(*) as count, COALESCE(SUM(last_commission_amount),0) as at_risk FROM book_of_business WHERE months_missing > 0 AND status = 'active' ${af}`);
-    const newThis = await pool.query(`SELECT COUNT(*) as count FROM book_of_business WHERE created_at > NOW() - INTERVAL '35 days' ${af}`);
-    const byCarrier = await pool.query(`SELECT carrier, COUNT(*) as count, MAX(updated_at) as last_updated FROM book_of_business WHERE status = 'active' ${af} GROUP BY carrier ORDER BY count DESC`);
-    const bySource = await pool.query(`SELECT source, COUNT(*) as count FROM book_of_business WHERE status = 'active' ${af} GROUP BY source`);
+    const params = [];
+    let af = '';
+    if (req.user.role === 'agent') {
+      params.push(`%${req.user.name}%`);
+      af = `AND agent_name ILIKE $1`;
+    } else if (req.user.role === 'admin' && getAgency(req)) {
+      af = `AND carrier IN (SELECT DISTINCT carrier FROM commission_records WHERE ${agencyFilter(req, null)})`;
+    }
+    const total = await pool.query(`SELECT COUNT(*) as count FROM book_of_business WHERE status = 'active' ${af}`, params);
+    const missing = await pool.query(`SELECT COUNT(*) as count, COALESCE(SUM(last_commission_amount),0) as at_risk FROM book_of_business WHERE months_missing > 0 AND status = 'active' ${af}`, params);
+    const newThis = await pool.query(`SELECT COUNT(*) as count FROM book_of_business WHERE created_at > NOW() - INTERVAL '35 days' ${af}`, params);
+    const byCarrier = await pool.query(`SELECT carrier, COUNT(*) as count, MAX(updated_at) as last_updated FROM book_of_business WHERE status = 'active' ${af} GROUP BY carrier ORDER BY count DESC`, params);
+    const bySource = await pool.query(`SELECT source, COUNT(*) as count FROM book_of_business WHERE status = 'active' ${af} GROUP BY source`, params);
     res.json({
       totalActive: parseInt(total.rows[0].count),
       missingCount: parseInt(missing.rows[0].count),
@@ -229,7 +238,7 @@ router.get('/summary', requireAuth, async (req, res) => {
 });
 
 // ─── PATCH single client ──────────────────────────────────────────────────────
-router.patch('/:id', requireAuth, async (req, res) => {
+router.patch('/:id', requireAuth, requireAdmin, async (req, res) => {
   try {
     const pool = getPool();
     const { resolution, status, notes } = req.body;
@@ -292,8 +301,10 @@ router.post('/check-renewals', requireAuth, async (req, res) => {
     )`;
 
     let af = '';
+    const queryParams = [];
     if (req.user.role === 'agent') {
-      af = `AND agent_name ILIKE '%${req.user.name}%'`;
+      queryParams.push(`%${req.user.name}%`);
+      af = `AND agent_name ILIKE $1`;
     } else if (req.user.role === 'admin' && getAgency(req)) {
       af = `AND carrier IN (SELECT DISTINCT carrier FROM commission_records WHERE ${agencyFilter(req, null)})`;
     } else if (scope === 'all') {
@@ -318,7 +329,8 @@ router.post('/check-renewals', requireAuth, async (req, res) => {
     // Include ALL commission records (including chargebacks with negative amounts)
     // Netting logic needs complete picture: e.g., David Mosley Jr +$70 -$70 = $0 net (not owed)
     const allRecords = await pool.query(
-      `SELECT LOWER(TRIM(client_full_name)) as client_key, carrier, agent_name, commission, payment_period FROM commission_records WHERE 1=1 ${af}`
+      `SELECT LOWER(TRIM(client_full_name)) as client_key, carrier, agent_name, commission, payment_period FROM commission_records WHERE 1=1 ${af}`,
+      queryParams
     );
     const matchingRecords = allRecords.rows.filter(r => {
       const norm = normalizePeriod(r.payment_period);
@@ -386,7 +398,7 @@ router.post('/check-renewals', requireAuth, async (req, res) => {
       return `${surname}|${normCarrier(r.carrier)}`;
     }));
 
-    const bobClients = await pool.query(`SELECT * FROM book_of_business WHERE status = 'active' ${af}`);
+    const bobClients = await pool.query(`SELECT * FROM book_of_business WHERE status = 'active' ${af}`, queryParams);
     let missingCount = 0, recoveredCount = 0;
 
     for (const client of bobClients.rows) {
@@ -419,7 +431,7 @@ router.post('/check-renewals', requireAuth, async (req, res) => {
 });
 
 // ─── POST upload BOB export ───────────────────────────────────────────────────
-router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
+router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
   try {
     const pool = getPool();
@@ -478,15 +490,18 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
 });
 
 // ─── POST build-from-statements (upsert — safe to run multiple times) ─────────
-router.post('/build-from-statements', requireAuth, async (req, res) => {
+router.post('/build-from-statements', requireAuth, requireAdmin, async (req, res) => {
   try {
     const pool = getPool();
     const isAdmin = req.user.role === 'admin' && !getAgency(req);
-    const af = req.user.role === 'agent'
-      ? `AND agent_name ILIKE '%${req.user.name}%'`
-      : (req.user.role === 'admin' && getAgency(req))
-        ? `AND carrier IN (SELECT DISTINCT carrier FROM commission_records WHERE ${agencyFilter(req, null)})`
-        : '';
+    const queryParams = [];
+    let af = '';
+    if (req.user.role === 'agent') {
+      queryParams.push(`%${req.user.name}%`);
+      af = `AND agent_name ILIKE $1`;
+    } else if (req.user.role === 'admin' && getAgency(req)) {
+      af = `AND carrier IN (SELECT DISTINCT carrier FROM commission_records WHERE ${agencyFilter(req, null)})`;
+    }
 
     // Helper function to normalize name for dedup (removes middle initials/names)
     // "Donald A Salmon" → "donald salmon"
@@ -553,7 +568,8 @@ router.post('/build-from-statements', requireAuth, async (req, res) => {
          )),
          LOWER(carrier),
          CASE WHEN effective_date IS NOT NULL AND effective_date != '' THEN 0 ELSE 1 END,
-         created_at DESC`
+         created_at DESC`,
+      queryParams
     );
 
     let added = 0, updated = 0;
@@ -765,7 +781,7 @@ router.get('/policy-status', requireAuth, async (req, res) => {
 });
 
 // ─── PUT policy-status ────────────────────────────────────────────────────────
-router.put('/policy-status', requireAuth, async (req, res) => {
+router.put('/policy-status', requireAuth, requireAdmin, async (req, res) => {
   console.log('[BOB-API] PUT /policy-status called');
   console.log('[BOB-API] Request body:', req.body);
   
@@ -861,6 +877,29 @@ router.put('/policy-status', requireAuth, async (req, res) => {
   }
 });
 
+// ─── GET /api/bob/missing-renewals-periods ─────────────────────────────────
+// Statement months with commission volume. Defaults to latest viable month
+// (>= MIN_STATEMENT_MONTH_RECORDS) so stub periods (Aug/Sep with 1–2 rows)
+// do not make every renewal look missing.
+router.get('/missing-renewals-periods', requireAuth, async (req, res) => {
+  try {
+    const pool = getPool();
+    const result = await pool.query(
+      `SELECT payment_period, COUNT(*)::int AS record_count
+       FROM commission_records
+       WHERE payment_period IS NOT NULL
+         AND TRIM(payment_period) <> ''
+         AND payment_period <> 'Unknown'
+       GROUP BY payment_period`
+    );
+    const payload = buildMissingRenewalsPeriodOptions(result.rows);
+    res.json(payload);
+  } catch (err) {
+    console.error('[BOB] missing-renewals-periods error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── GET /api/bob/missing-renewals-check ───────────────────────────────────
 // Proper Missing Renewals engine: Yahoska/Katy active BOB × period commissions.
 // Replaces fragile client-side /records?limit=10000 matching.
@@ -941,7 +980,7 @@ router.get('/missing-renewals-check', requireAuth, async (req, res) => {
     }
 
     const psResult = await pool.query(
-      `SELECT client_full_name, carrier, agent_name, status, termed_date
+      `SELECT client_full_name, carrier, agent_name, status, termed_date, notes
        FROM policy_status`
     );
     const policyStatusMap = {};
@@ -961,6 +1000,9 @@ router.get('/missing-renewals-check', requireAuth, async (req, res) => {
       heldKeySet,
       policyStatusMap,
     });
+
+    payload.sparsePeriod = periodRecords.length < MIN_STATEMENT_MONTH_RECORDS;
+    payload.minStatementRecords = MIN_STATEMENT_MONTH_RECORDS;
 
     res.json(payload);
   } catch (err) {

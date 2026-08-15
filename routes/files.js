@@ -9,6 +9,16 @@ const { getPool } = require('../db/database');
 const { requireAuth, requireAdmin } = require('./auth');
 const { normalizeAgentName } = require('./normalize');
 const { detectPlanChanges } = require('./planChanges');
+const { resolveChasedRenewals } = require('../src/renewalsAutoResolve');
+const { collapseInternalDuplicates } = require('../src/uploadBatchDedupe');
+const { resolvePassThroughLiableAgent } = require('../src/writerPassThroughAgents');
+const { ensurePassThroughSchema } = require('./pass-through');
+const { safeUploadFilename, isAllowedUploadName } = require('./uploadSafe');
+const {
+  isAgentViewCommissionReport,
+  parseAgentViewCommissionReportPDF,
+  tryParseAgentViewUpload,
+} = require('../src/agentViewCommissionReport');
 let pdfParse;
 try { pdfParse = require('pdf-parse'); } catch(e) { console.log('pdf-parse not installed'); }
 
@@ -17,14 +27,13 @@ if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
 const storage = multer.diskStorage({
   destination: UPLOADS_DIR,
-  filename: (req, file, cb) => cb(null, `${Date.now()}_${file.originalname.replace(/\s+/g, '_')}`)
+  filename: (req, file, cb) => cb(null, safeUploadFilename(file.originalname))
 });
 const upload = multer({
   storage,
   limits: { fileSize: 20 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {
-    const allowed = /\.(xlsx|xls|csv|pdf)$/i;
-    cb(null, allowed.test(file.originalname));
+    cb(null, isAllowedUploadName(file.originalname));
   }
 });
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -292,6 +301,95 @@ function isSolisFile(filename) {
   const f = filename.toLowerCase().replace(/['\s()]/g, '_');
   if (isDoctorsFile(filename)) return false;
   return f.includes('commissions_ledger') || f.includes('solis');
+}
+
+function isHealthSpringFile(filename) {
+  const f = filename.toLowerCase().replace(/[\s().]/g, '_');
+  return f.includes('healthspring') || f.includes('healthspting') || f.includes('health_spring');
+}
+
+function isHealthSpringWb(wb) {
+  if (!wb || !wb.Sheets || !wb.SheetNames) return false;
+  const hasSummary = wb.SheetNames.some(s => s.toLowerCase() === 'summary');
+  const hasDetail = wb.SheetNames.some(s => s.toLowerCase() === 'detail');
+  if (!hasSummary || !hasDetail) return false;
+  const summaryName = wb.SheetNames.find(s => s.toLowerCase() === 'summary');
+  const ws = wb.Sheets[summaryName];
+  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+  return rows.length > 0 && String(rows[0][0] || '').toLowerCase().includes('healthsping');
+}
+
+function parseHealthSpringRows(wb, filename) {
+  const records = [];
+  try {
+    const sheetsToProcess = ['Detail', 'Legacy'].filter(s => wb.SheetNames.includes(s));
+    for (const sheetName of sheetsToProcess) {
+      const ws = wb.Sheets[sheetName];
+      const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
+      for (const row of rows) {
+        const paymentType = String(row['Payment Type'] || '').trim();
+        const paymentDesc = String(row['Payment Description'] || '').trim();
+        const writingBrokerName = String(row['Writing Broker Name'] || '').trim();
+        const memberName = String(row['Member Name'] || '').trim();
+        const memberId = row['Member ID'];
+        const mbi = String(row['Medicare Beneficiary Identifier (MBI)'] || '').trim();
+        const payPeriod = row['Pay Period'];
+        const paymentAmount = parseFloat(row['Payment Amount']) || 0;
+        const effectiveDateRaw = row['Original Effective Date'] || row['Effective Date'];
+        const planTypeRaw = String(row['Plan Type'] || '').trim();
+        if (!memberName || paymentAmount === 0) continue;
+        // Period from Pay Period
+        let period = '';
+        if (payPeriod instanceof Date) {
+          period = `${payPeriod.getFullYear()}${String(payPeriod.getMonth()+1).padStart(2,'0')}`;
+        } else if (typeof payPeriod === 'number' && payPeriod > 40000) {
+          const d = new Date((payPeriod - 25569) * 86400 * 1000);
+          period = `${d.getUTCFullYear()}${String(d.getUTCMonth()+1).padStart(2,'0')}`;
+        }
+        // Classification
+        const ptLower = paymentType.toLowerCase();
+        const pdLower = paymentDesc.toLowerCase();
+        let classification;
+        if (paymentAmount < 0 || ptLower.includes('disenroll')) {
+          classification = 'Chargeback';
+        } else if (pdLower === 'service fee') {
+          classification = 'Agency Override';
+        } else if (ptLower.includes('initial') || ptLower.includes('new')) {
+          classification = 'New Business';
+        } else if (ptLower.includes('renewal') || ptLower === 'legacy') {
+          classification = 'Renewal';
+        } else {
+          classification = 'Agent Commission';
+        }
+        // Plan type
+        const ptRaw = planTypeRaw.toUpperCase();
+        let planType = 'HealthSpring Med Adv';
+        if (ptRaw.includes('PDP')) planType = 'HealthSpring PDP';
+        // Normalize member ID (can be numeric)
+        const policyNumber = typeof memberId === 'number'
+          ? String(Math.round(memberId))
+          : String(memberId || mbi || '').trim();
+        records.push({
+          agent: normalizeAgentName(writingBrokerName) || 'The Health Experts Insurance',
+          carrier: 'HealthSpring',
+          planType,
+          client: memberName,
+          effectiveDate: formatDate(effectiveDateRaw),
+          premium: 0,
+          commission: paymentAmount,
+          classification,
+          period,
+          policyNumber: policyNumber || mbi,
+          payee: 'HealthSpring',
+          raw: row
+        });
+      }
+    }
+    console.log(`[HEALTHSPRING] Parsed ${records.length} records, total $${records.reduce((s,r)=>s+r.commission,0).toFixed(2)}`);
+  } catch (err) {
+    console.error('[HEALTHSPRING] Parser error:', err.message);
+  }
+  return records;
 }
 
 function isHealthSunFile(filename) {
@@ -1389,44 +1487,15 @@ const {
 } = require('../src/theRemittanceStatement');
 
 const { applyBsiBookAgentProduction } = require('../src/bsiBookAttribution');
-
-// Extract period from NHP "Carrier-Statement Month" column (e.g., "Cigna - April 2026" → "202604")
-function extractPeriodFromStatementMonth(statementMonth) {
-  if (!statementMonth) return null;
-  const s = String(statementMonth).toLowerCase();
-  
-  // Extract month name and year
-  const monthNames = {
-    'january': '01', 'jan': '01',
-    'february': '02', 'feb': '02',
-    'march': '03', 'mar': '03',
-    'april': '04', 'apr': '04',
-    'may': '05',
-    'june': '06', 'jun': '06',
-    'july': '07', 'jul': '07',
-    'august': '08', 'aug': '08',
-    'september': '09', 'sep': '09', 'sept': '09',
-    'october': '10', 'oct': '10',
-    'november': '11', 'nov': '11',
-    'december': '12', 'dec': '12'
-  };
-  
-  // Try to find month and year
-  const yearMatch = s.match(/\b(20\d{2})\b/);
-  if (!yearMatch) return null;
-  const year = yearMatch[1];
-  
-  for (const [monthName, monthNum] of Object.entries(monthNames)) {
-    if (s.includes(monthName)) {
-      return `${year}${monthNum}`;
-    }
-  }
-  
-  return null;
-}
+const {
+  extractPeriodFromStatementMonth,
+  resolveNhpPaymentPeriod,
+} = require('../src/nhpPeriod');
+const { splitNhpMedicareOverride } = require('../src/nhpOverrideSplit');
 
 function parseNHPRows(wb, uploadPeriod) {
   const records = [];
+  const marcoDeductedPolicies = new Set();
   const ws = wb.Sheets[wb.SheetNames[0]];
   const range = XLSX.utils.decode_range(ws['!ref']);
 
@@ -1492,8 +1561,8 @@ function parseNHPRows(wb, uploadPeriod) {
     const effectiveDateRaw = row[effectiveDateIdx + shift];
     const effectiveDate = formatDate(effectiveDateRaw);
     
-    // Use upload date as period for ALL records (one statement = one payroll batch)
-    const period = uploadPeriod || 'Unknown';
+    // Prefer Carrier-Statement Month (coverage month); fall back to upload-date batch
+    const period = resolveNhpPaymentPeriod(carrierRaw, uploadPeriod);
     
     const commType = String(row[commTypeIdx + shift] || '').trim();
     const commClass = String(row[commClassIdx + shift] || '').trim();
@@ -1579,59 +1648,26 @@ function parseNHPRows(wb, uploadPeriod) {
         producerPayable = grossCommission;
         recordType = 'Agent Commission';
       }
-      // Agency override rows
+      // Agency override rows — Integrity → producer_payable; Marco → sub_agent_override
       else {
         recordType = 'Agency Override';
-        
-        // Christian Munoz & Horacio Mendieta special handling
-        // Fixed rates on UHC/Doctors/Solis/HealthSun NEW BUSINESS only
-        // Gross NHP pots (see OVERRIDE_RATE_TABLE): Doctors 175, HealthSun 157.50,
-        // Solis 210/140, UHC honor 165 → these fixed cuts come off before 50/50.
-        const agentLower = agent.toLowerCase();
-        const carrierLower = carrier.toLowerCase();
-        const isChristianOrHoracio = agentLower.includes('christian munoz') || agentLower.includes('horacio mendieta');
-        const isSpecialCarrier = carrierLower.includes('unitedhealthcare') || carrierLower.includes('united healthcare') || carrierLower.includes('doctors') || carrierLower.includes('solis') || carrierLower.includes('healthsun');
-        const isNewBusiness = commClassLower.includes('new') || commClassLower.includes('initial') || (!commClassLower.includes('renewal') && !commClassLower.includes('carry'));
-        
-        if (isChristianOrHoracio && isSpecialCarrier && isNewBusiness && grossCommission > 0) {
-          // Determine fixed rate
-          let fixedRate = 0;
-          if (carrierLower.includes('unitedhealthcare') || carrierLower.includes('united healthcare')) fixedRate = 82.50; // half of $165 honor
-          else if (carrierLower.includes('doctors')) fixedRate = 50;       // from $175 pot
-          else if (carrierLower.includes('solis')) fixedRate = 62.50;      // from $210 Initial pot
-          else if (carrierLower.includes('healthsun')) fixedRate = 52.50;  // from $157.50 pot
-          
-          subAgentOverride = fixedRate;
-          // After deducting sub-agent payment, split the remainder with BSI if eligible
-          const remainingOverride = Math.max(0, grossCommission - subAgentOverride);
-          
-          if (isBsiEligible) {
-            splitApplies = true;
-            theiShare = Math.round(remainingOverride * 0.5 * 100) / 100;
-            bsiShare = Math.round(remainingOverride * 0.5 * 100) / 100;
-            producerPayable = 0;
-          } else {
-            splitApplies = false;
-            theiShare = remainingOverride;
-            bsiShare = 0;
-            producerPayable = 0;
-          }
-        }
-        // Standard agency override (no sub-agent special rate)
-        else {
-          if (isBsiEligible) {
-            splitApplies = true;
-            theiShare = Math.round(grossCommission * 0.5 * 100) / 100;
-            bsiShare = Math.round(grossCommission * 0.5 * 100) / 100;
-            producerPayable = 0;
-          } else {
-            // Pre-9/1/2025: THEI keeps 100%
-            splitApplies = false;
-            theiShare = grossCommission;
-            bsiShare = 0;
-            producerPayable = 0;
-          }
-        }
+        const policyKey = String(policyNumber || '').trim().toLowerCase();
+        const alreadyDeducted = policyKey ? marcoDeductedPolicies.has(policyKey) : false;
+        const split = splitNhpMedicareOverride({
+          pot: grossCommission,
+          agentName: agent,
+          carrier,
+          classification: commClass || commType,
+          paymentPeriod: period,
+          isBsiEligible,
+          alreadyDeducted,
+        });
+        if (split.subAgentOverride && policyKey) marcoDeductedPolicies.add(policyKey);
+        splitApplies = split.splitApplies;
+        theiShare = split.theiShare;
+        bsiShare = split.bsiShare;
+        producerPayable = split.producerPayable;
+        subAgentOverride = split.subAgentOverride;
       }
     }
 
@@ -4055,41 +4091,9 @@ function parseGoldKidneyRows(wb, filename) {
 
 // ─── Duplicate Detection ──────────────────────────────────────────────────────
 
-// Check for duplicates WITHIN the current upload batch (before DB check)
+// Within-batch: src/uploadBatchDedupe.js (keep first exact duplicate line)
 function findInternalDuplicates(records) {
-  if (!records.length) return [];
-  
-  const seen = new Map(); // key -> first occurrence
-  const duplicates = [];
-  
-  for (const r of records) {
-    if (!r.client || !r.carrier || !r.effectiveDate) continue;
-    
-    // Match key: client + carrier + effective_date + payment_period + classification + commission
-    // Include commission to preserve pay/chargeback pairs (same client but different amounts)
-    const key = `${r.client.toLowerCase()}|${r.carrier.toLowerCase()}|${r.effectiveDate}|${r.period || ''}|${(r.classification || '').toLowerCase()}|${r.commission}`;
-    
-    if (seen.has(key)) {
-      // This is a duplicate within the batch
-      const first = seen.get(key);
-      duplicates.push({
-        client: r.client,
-        carrier: r.carrier,
-        date: r.effectiveDate,
-        amount: r.commission,
-        agent: r.agent,
-        period: r.period,
-        type: r.classification,
-        firstAmount: first.commission,
-        isDuplicate: true
-      });
-    } else {
-      seen.set(key, r);
-    }
-  }
-  
-  console.log(`[INTERNAL-DUPS] Checked ${records.length} records, found ${duplicates.length} internal duplicates`);
-  return duplicates;
+  return require('../src/uploadBatchDedupe').findInternalDuplicates(records);
 }
 
 // Check for duplicates against EXISTING database records
@@ -4130,7 +4134,7 @@ async function findDuplicates(pool, records) {
 }
 
 // ─── Upload route ─────────────────────────────────────────────────────────────
-router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
+router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (req, res) => {
   console.log('[UPLOAD] ===== FILE RECEIVED =====');
   console.log('[UPLOAD] Filename:', req.file?.originalname);
   console.log('[UPLOAD] Mimetype:', req.file?.mimetype);
@@ -4171,13 +4175,39 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       if (f.includes('commissiondata') || f.includes('humana')) return 'Humana';
       if (f.includes('devoted')) return 'Devoted';
       if (f.includes('aetna') || f.includes('producerstatement')) return 'Aetna';
+      if (f.includes('agentview') || f.includes('agentcommissionreport') || f.includes('cnhic')) return 'Direct';
       return 'Direct';
     };
     const defaultPayee = determinePayee(req.file.originalname);
 
     let records;
 
-    if (isMOOExcel(req.file.originalname)) {
+    // AgentView CNHIC / HealthSpring — filename OR PDF text sniff
+    {
+      const agentViewRows = await tryParseAgentViewUpload(
+        req.file.path,
+        req.file.originalname,
+        pdfParse
+      );
+      if (agentViewRows) {
+        console.log('[UPLOAD] Using AgentView CNHIC Commission Report PDF parser');
+        if (!pdfParse) {
+          try { fs.unlinkSync(req.file.path); } catch(e) {}
+          return res.status(500).json({ error: 'PDF parsing not available on server.' });
+        }
+        records = agentViewRows;
+        if (!records.length) {
+          try { fs.unlinkSync(req.file.path); } catch(e) {}
+          return res.status(400).json({
+            error: 'No earnings rows found in AgentView Commission Report. Confirm CNHIC/HealthSpring Med Supp earnings are on the PDF.',
+          });
+        }
+      }
+    }
+
+    if (records) {
+      // already parsed (AgentView)
+    } else if (isMOOExcel(req.file.originalname)) {
       const wb = XLSX.readFile(req.file.path);
       records = parseMOOExcelRows(wb, req.file.originalname);
       if (!records.length) {
@@ -4296,10 +4326,15 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       } else if (isMolinaACAFile(req.file.originalname)) {
         records = parseMolinaACARows(wb, req.file.originalname);
       } else if (isNHPFile(req.file.originalname)) {
-        // Use upload date as period for all NHP records
+        // Fallback only — each row prefers Carrier-Statement Month via resolveNhpPaymentPeriod
         const now = new Date();
         const uploadPeriod = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
         records = parseNHPRows(wb, uploadPeriod);
+        const periods = {};
+        for (const r of records) {
+          periods[r.period] = (periods[r.period] || 0) + 1;
+        }
+        console.log('[UPLOAD] NHP payment_period breakdown:', periods);
       } else if (isYourFMOFile(req.file.originalname)) {
         records = parseYourFMORows(wb, req.file.originalname);
       } else if (isHumanaFile(req.file.originalname)) {
@@ -4334,6 +4369,9 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
           try { fs.unlinkSync(req.file.path); } catch(e) {}
           return res.status(400).json({ error: 'No records found in AML portal export. Verify this is a Contracts/CommissionDetails CSV.' });
         }
+      } else if (isHealthSpringFile(req.file.originalname) || isHealthSpringWb(wb)) {
+        console.log('[ROUTING] Matched HealthSpring parser for:', req.file.originalname);
+        records = parseHealthSpringRows(wb, req.file.originalname);
       } else if (isAetnaFile(req.file.originalname)) {
         console.log('[ROUTING] Matched generic Aetna parser for:', req.file.originalname);
         records = parseAetnaRows(wb, req.file.originalname);
@@ -4513,8 +4551,18 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
 
     if (!records.length) return res.status(400).json({ error: 'No records found in file' });
 
-    // Internal deduplication removed - every record in commission statements is a real payment/chargeback
-    // Only duplicate protection: filename check (above) + database check (below) with 4-field key
+    // Collapse exact duplicate lines within this file (Upload 374 class).
+    // Commission is part of the key so pay/chargeback pairs with different amounts are kept.
+    const beforeInternal = records.length;
+    const collapsed = collapseInternalDuplicates(records);
+    records = collapsed.records;
+    const internalDuplicatesRemoved = collapsed.removedCount;
+    if (internalDuplicatesRemoved > 0) {
+      console.warn(
+        `[UPLOAD] Collapsed ${internalDuplicatesRemoved} within-batch duplicate(s) ` +
+        `(${beforeInternal} → ${records.length})`
+      );
+    }
 
     // Duplicate detection against database (policy + client + date + amount)
     const skipDuplicates = req.body.skipDuplicates === 'true';
@@ -4568,8 +4616,14 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
     try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS statement_month TEXT`); } catch(e) {}
     try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS members INTEGER DEFAULT 0`); } catch(e) {}
     try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS anomaly BOOLEAN DEFAULT false`); } catch(e) {}
+    await ensurePassThroughSchema(pool);
 
     for (const r of records) {
+      const liableAgent = resolvePassThroughLiableAgent({
+        agentName: r.agent,
+        clientName: r.client,
+        commission: r.commission,
+      });
       await pool.query(
         `INSERT INTO commission_records (
            upload_id, agent_name, carrier, plan_type, client_full_name, effective_date,
@@ -4577,7 +4631,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
            raw_data,
            source, policy_written_date, gross_commission, thei_share, bsi_share,
            producer_payable, split_applies, lob, sub_agent_override, statement_month, members,
-           anomaly, member_state
+           anomaly, member_state, liable_agent
          )
          VALUES (
            $1,$2,$3,$4,$5,$6,
@@ -4585,7 +4639,7 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
            $14,
            $15,$16,$17,$18,$19,
            $20,$21,$22,$23,$24,$25,
-           $26,$27
+           $26,$27,$28
          )`,
         [
           uploadId, r.agent, r.carrier, r.planType || '', r.client, r.effectiveDate,
@@ -4612,12 +4666,26 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
           r.members || 0,
           r.anomaly === true,
           r.memberState || null,
+          liableAgent,
         ]
       );
     }
 
     try { fs.unlinkSync(req.file.path); } catch (e) {}
     
+    // Auto-resolve chased/pending Missing Renewals when this upload pays them
+    let resolvedRenewals = [];
+    try {
+      const resolvedBy = req.user?.email || req.user?.name || 'system';
+      const result = await resolveChasedRenewals(pool, uploadId, resolvedBy);
+      resolvedRenewals = result.resolved || [];
+      if (resolvedRenewals.length) {
+        console.log(`[UPLOAD] Auto-resolved ${resolvedRenewals.length} chased/pending renewals`);
+      }
+    } catch (err) {
+      console.error('[UPLOAD] Renewals auto-resolve failed:', err.message);
+    }
+
     // Run plan change detection asynchronously (don't block response)
     detectPlanChanges(pool, uploadId).catch(err => {
       console.error('[UPLOAD] Plan change detection failed:', err.message);
@@ -4629,7 +4697,10 @@ router.post('/upload', requireAuth, upload.single('file'), async (req, res) => {
       rowCount: records.length, 
       commissionSum, 
       carriers, 
-      preview: records.slice(0, 5) 
+      preview: records.slice(0, 5),
+      resolvedRenewals,
+      resolvedRenewalsCount: resolvedRenewals.length,
+      internalDuplicatesRemoved: internalDuplicatesRemoved || 0,
     };
     
     res.json(response);
@@ -4717,7 +4788,7 @@ function heuristicMapping(headers) {
   };
 }
 
-router.post('/fix-periods', requireAuth, async (req, res) => {
+router.post('/fix-periods', requireAuth, requireAdmin, async (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
   try {
     const pool = getPool();
@@ -4755,7 +4826,7 @@ router.post('/fix-periods', requireAuth, async (req, res) => {
   }
 });
 
-router.post('/apply-bsi-split', requireAuth, async (req, res) => {
+router.post('/apply-bsi-split', requireAuth, requireAdmin, async (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
   try {
     const pool = getPool();
@@ -5194,7 +5265,7 @@ function parseBSICarrierStatementRows(wb, filename) {
 module.exports = router;
 
 // BSI Statements Upload - separate from commission statements
-router.post('/upload-bsi-statement', requireAuth, upload.single('file'), async (req, res) => {
+router.post('/upload-bsi-statement', requireAuth, requireAdmin, upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
   try {
@@ -5269,6 +5340,22 @@ router.post('/upload-bsi-statement', requireAuth, upload.single('file'), async (
     // Agency Override / Held stay under Broker Society; other agents unchanged.
     applyBsiBookAgentProduction(records);
 
+    const beforeInternal = records.length;
+    const collapsed = collapseInternalDuplicates(records);
+    records = collapsed.records;
+    const internalDuplicatesRemoved = collapsed.removedCount;
+    if (internalDuplicatesRemoved > 0) {
+      console.warn(
+        `[BSI-UPLOAD] Collapsed ${internalDuplicatesRemoved} within-batch duplicate(s) ` +
+        `(${beforeInternal} → ${records.length})`
+      );
+    }
+
+    if (!records.length) {
+      try { fs.unlinkSync(req.file.path); } catch (e) {}
+      return res.status(400).json({ error: 'No records left after within-batch dedupe.' });
+    }
+
     const commissionSum = records.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0);
     const carriers = [...new Set(records.map(r => r.carrier).filter(Boolean))];
 
@@ -5289,9 +5376,15 @@ router.post('/upload-bsi-statement', requireAuth, upload.single('file'), async (
     try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS statement_month TEXT`); } catch(e) {}
     try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS members INTEGER DEFAULT 0`); } catch(e) {}
     try { await pool.query(`ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS anomaly BOOLEAN DEFAULT false`); } catch(e) {}
+    await ensurePassThroughSchema(pool);
 
     // Insert records into commission_records
     for (const r of records) {
+      const liableAgent = resolvePassThroughLiableAgent({
+        agentName: r.agent,
+        clientName: r.client,
+        commission: r.commission,
+      });
       await pool.query(
         `INSERT INTO commission_records (
            upload_id, agent_name, carrier, plan_type, client_full_name, effective_date,
@@ -5299,7 +5392,7 @@ router.post('/upload-bsi-statement', requireAuth, upload.single('file'), async (
            raw_data,
            source, policy_written_date, gross_commission, thei_share, bsi_share,
            producer_payable, split_applies, lob, sub_agent_override, statement_month, members,
-           anomaly, member_state
+           anomaly, member_state, liable_agent
          )
          VALUES (
            $1,$2,$3,$4,$5,$6,
@@ -5307,7 +5400,7 @@ router.post('/upload-bsi-statement', requireAuth, upload.single('file'), async (
            $14,
            $15,$16,$17,$18,$19,
            $20,$21,$22,$23,$24,$25,
-           $26,$27
+           $26,$27,$28
          )`,
         [
           uploadId, r.agent, r.carrier, r.planType || '', r.client, r.effectiveDate,
@@ -5334,11 +5427,28 @@ router.post('/upload-bsi-statement', requireAuth, upload.single('file'), async (
           r.members || 0,
           r.anomaly === true,
           r.memberState || null,
+          liableAgent,
         ]
       );
     }
 
     try { fs.unlinkSync(req.file.path); } catch (e) {}
+
+    let resolvedRenewals = [];
+    try {
+      const resolvedBy = req.user?.email || req.user?.name || 'system';
+      const result = await resolveChasedRenewals(pool, uploadId, resolvedBy);
+      resolvedRenewals = result.resolved || [];
+      if (resolvedRenewals.length) {
+        console.log(`[BSI-UPLOAD] Auto-resolved ${resolvedRenewals.length} chased/pending renewals`);
+      }
+    } catch (err) {
+      console.error('[BSI-UPLOAD] Renewals auto-resolve failed:', err.message);
+    }
+
+    detectPlanChanges(pool, uploadId).catch(err => {
+      console.error('[BSI-UPLOAD] Plan change detection failed:', err.message);
+    });
 
     res.json({
       success: true,
@@ -5348,7 +5458,10 @@ router.post('/upload-bsi-statement', requireAuth, upload.single('file'), async (
       rowCount: records.length,
       commissionSum,
       carriers,
-      preview: records.slice(0, 5)
+      preview: records.slice(0, 5),
+      resolvedRenewals,
+      resolvedRenewalsCount: resolvedRenewals.length,
+      internalDuplicatesRemoved: internalDuplicatesRemoved || 0,
     });
 
   } catch (err) {

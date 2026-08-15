@@ -13,9 +13,21 @@ import MedicareProUpload from './pages/MedicareProUpload';
 import AgencyProductionUpload from './pages/AgencyProductionUpload';
 import AgencyProductionRecon from './pages/AgencyProductionRecon';
 import BSIStatementsUpload from './pages/BSIStatementsUpload';
+import PassThroughChargebacks from './pages/PassThroughChargebacks';
+import AdpExport from './pages/AdpExport';
 import './App.css';
 
 const REMOVED_PAGES = new Set(['reports', 'agents', 'fix-aetna', 'fixaetna']);
+
+const THEI_ONLY_PAGES = new Set([
+  'medicarepro-upload',
+  'agency-production-upload',
+  'agency-production-recon',
+  'direct-recon',
+  'renewals',
+  'pass-through-chargebacks',
+  'reconciliation',
+]);
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -40,6 +52,7 @@ export default function App() {
     setAgencyView(val);
     localStorage.setItem('olicomm_agency_view', val);
     window.__olicomm_agency_override = val;
+    setPageParams({});
   }
 
   React.useEffect(() => {
@@ -66,6 +79,17 @@ export default function App() {
   }, []);
 
   useEffect(() => { checkAuth(); }, [checkAuth]);
+
+  const isBSI = agencyView.toLowerCase().includes('broker society');
+
+  useEffect(() => {
+    if (!user) return;
+    if (isBSI && THEI_ONLY_PAGES.has(page)) {
+      setPage('dashboard');
+      setPageParams({});
+      localStorage.setItem('he_page', 'dashboard');
+    }
+  }, [isBSI, page, user]);
 
   function handleLogin(token, userData) {
     setToken(token);
@@ -103,30 +127,11 @@ export default function App() {
 
   if (!user) return <Login onLogin={handleLogin} />;
 
-  const isBSI = agencyView.toLowerCase().includes('broker society');
-
-  const THEI_ONLY_PAGES = new Set([
-    'medicarepro-upload',
-    'agency-production-upload',
-    'agency-production-recon',
-    'direct-recon',
-    'renewals',
-    'reconciliation',
-  ]);
-
-  useEffect(() => {
-    if (isBSI && THEI_ONLY_PAGES.has(page)) {
-      setPage('dashboard');
-      setPageParams({});
-      localStorage.setItem('he_page', 'dashboard');
-    }
-  }, [isBSI, page]);
-
   const uploadChildren = [
     { id: 'upload', label: 'Commission Statements' },
     ...(!isBSI ? [
       { id: 'medicarepro-upload', label: 'MedicarePro Sales' },
-      { id: 'agency-production-upload', label: 'Agency Production Upload' },
+      { id: 'agency-production-upload', label: 'Agency Production' },
     ] : []),
     { id: 'bsi-statements-upload', label: 'BSI Statements' },
   ];
@@ -147,6 +152,7 @@ export default function App() {
         { id: 'direct-recon', label: 'Sales Reconciliation' },
         { id: 'agency-production-recon', label: 'Agency Override Recon' },
         { id: 'renewals', label: 'Missing Renewals' },
+        { id: 'pass-through-chargebacks', label: 'Writer Chargebacks' },
       ]
     }] : []),
     {
@@ -157,6 +163,7 @@ export default function App() {
         { id: 'payroll-overrides', label: 'House Statements' },
         { id: 'payroll-loa', label: 'LOA' },
         { id: 'payroll-history', label: 'Payment History' },
+        ...(user.role === 'admin' ? [{ id: 'payroll-adp', label: 'ADP / 1099' }] : []),
       ]
     },
     ...(user.role === 'admin' ? [
@@ -177,16 +184,18 @@ export default function App() {
     'agency-production-upload': <AgencyProductionUpload key={agencyView} user={effectiveUser} onNavigate={navigate} />,
     'bsi-statements-upload': <BSIStatementsUpload key={agencyView} user={effectiveUser} onNavigate={navigate} />,
     'agency-production-recon': <AgencyProductionRecon key={agencyView} user={effectiveUser} />,
-    alldata: <AllData key={agencyView} user={effectiveUser} initialFilters={pageParams} />,
+    alldata: <AllData key={`${agencyView}-${JSON.stringify(pageParams)}`} user={effectiveUser} initialFilters={pageParams} />,
     bob: <BookOfBusiness key={agencyView} user={effectiveUser} />,
     renewals: <MissingRenewals key={agencyView} user={effectiveUser} />,
     reconciliation: <Reconciliation key={agencyView} user={effectiveUser} />,
     'direct-recon': <Reconciliation key={agencyView} user={effectiveUser} />,
+    'pass-through-chargebacks': <PassThroughChargebacks key={agencyView} user={effectiveUser} />,
     payroll: <Payroll key={agencyView} user={effectiveUser} initialTab="payroll" onNavigate={navigate} />,
     'payroll-payouts': <Payroll key={`${agencyView}-payouts`} user={effectiveUser} initialTab="payroll" onNavigate={navigate} />,
     'payroll-overrides': <Payroll key={`${agencyView}-overrides`} user={effectiveUser} initialTab="overrides" onNavigate={navigate} />,
     'payroll-loa': <Payroll key={`${agencyView}-loa`} user={effectiveUser} initialTab="loa" onNavigate={navigate} />,
     'payroll-history': <Payroll key={`${agencyView}-history`} user={effectiveUser} initialTab="history" onNavigate={navigate} />,
+    'payroll-adp': <AdpExport key={`${agencyView}-adp`} user={effectiveUser} />,
     users: <AdminUsers key={agencyView} user={effectiveUser} />
   };
 

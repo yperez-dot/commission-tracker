@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+
+if (!process.env.DATABASE_URL) { console.error('DATABASE_URL required'); process.exit(1); }
 /**
  * UNDO: Change Alan Elchami back to Health Experts (except the 22 specific ones)
  */
@@ -6,7 +8,7 @@
 const { Pool } = require('pg');
 
 const pool = new Pool({
-  connectionString: 'postgresql://postgres:LyahRMtjzhkPkaPpXtgysioPUBUVPAOi@metro.proxy.rlwy.net:24676/railway',
+  connectionString: process.env.DATABASE_URL,
   ssl: false
 });
 

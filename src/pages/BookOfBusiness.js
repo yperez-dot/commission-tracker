@@ -99,10 +99,37 @@ export default function BookOfBusiness({ user }) {
   const [bulkDeleting, setBulkDeleting] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
   const [termedDatePicker, setTermedDatePicker] = useState(null); // { client, date }
+  const [planCandidates, setPlanCandidates] = useState([]);
+  const [planLoading, setPlanLoading] = useState(false);
+  const [planError, setPlanError] = useState('');
+  const [planBusyId, setPlanBusyId] = useState(null);
+  const [planStatusFilter, setPlanStatusFilter] = useState('pending');
+  const [pendingPlanCount, setPendingPlanCount] = useState(0);
 
   useEffect(() => {
     if (tab === 'setup' && !isAdmin) setTab('all');
   }, [tab, isAdmin]);
+
+  const loadPlanCandidates = useCallback(async () => {
+    setPlanLoading(true);
+    setPlanError('');
+    try {
+      const data = await apiFetch(`/plan-changes/candidates?status=${encodeURIComponent(planStatusFilter)}`);
+      setPlanCandidates(data.candidates || []);
+      if (planStatusFilter === 'pending') {
+        setPendingPlanCount((data.candidates || []).length);
+      } else {
+        const pending = await apiFetch('/plan-changes/candidates?status=pending');
+        setPendingPlanCount((pending.candidates || []).length);
+      }
+    } catch (e) {
+      console.error(e);
+      setPlanError(e.message || 'Failed to load plan change candidates');
+      setPlanCandidates([]);
+    } finally {
+      setPlanLoading(false);
+    }
+  }, [planStatusFilter]);
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -116,11 +143,18 @@ export default function BookOfBusiness({ user }) {
       setAgents((filtersData.agents || []).sort());
       setLobs((filtersData.lobs || []).sort());
       if (filtersData.periods?.length) setCheckPeriod(filtersData.periods[0]);
+      try {
+        const pending = await apiFetch('/plan-changes/candidates?status=pending');
+        setPendingPlanCount((pending.candidates || []).length);
+      } catch (_) {
+        setPendingPlanCount(0);
+      }
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
   }, []);
 
   const loadClients = useCallback(async () => {
+    if (tab === 'planchanges') return;
     try {
       // Load full list for tab counts (no status filter)
       const allData = await apiFetch('/bob');
@@ -142,6 +176,36 @@ export default function BookOfBusiness({ user }) {
 
   useEffect(() => { loadData(); }, [loadData]);
   useEffect(() => { loadClients(); }, [loadClients]);
+  useEffect(() => {
+    if (tab === 'planchanges') loadPlanCandidates();
+  }, [tab, loadPlanCandidates]);
+
+  async function confirmPlanChange(id) {
+    if (!isAdmin) return;
+    setPlanBusyId(id);
+    try {
+      await apiFetch(`/plan-changes/${id}/confirm`, { method: 'POST' });
+      await loadPlanCandidates();
+      await loadData();
+    } catch (e) {
+      alert(e.message || 'Failed to confirm plan change');
+    } finally {
+      setPlanBusyId(null);
+    }
+  }
+
+  async function dismissPlanChange(id) {
+    if (!isAdmin) return;
+    setPlanBusyId(id);
+    try {
+      await apiFetch(`/plan-changes/${id}/dismiss`, { method: 'POST' });
+      await loadPlanCandidates();
+    } catch (e) {
+      alert(e.message || 'Failed to dismiss plan change');
+    } finally {
+      setPlanBusyId(null);
+    }
+  }
 
   async function buildFromStatements() {
     setBuildStatus('building');
@@ -451,11 +515,115 @@ export default function BookOfBusiness({ user }) {
         <div style={{display:'flex',gap:8,marginBottom:12,borderBottom:'1px solid var(--border)',flexWrap:'wrap'}}>
           <button style={tabStyle('all')} onClick={()=>{setTab('all');setFilterStatus('active');}}>All active ({summary?.totalActive||0})</button>
           <button style={tabStyle('termed')} onClick={()=>{setTab('termed');setFilterStatus('termed');}}>Termed / Deceased ({termedCount})</button>
+          <button style={tabStyle('planchanges')} onClick={()=>setTab('planchanges')}>
+            Plan changes{pendingPlanCount > 0 ? ` (${pendingPlanCount})` : ''}
+          </button>
           <button style={tabStyle('carriers')} onClick={()=>setTab('carriers')}>By carrier</button>
           {isAdmin && (
             <button style={tabStyle('setup')} onClick={()=>setTab('setup')}>Setup & tools</button>
           )}
         </div>
+
+        {tab === 'planchanges' && (
+          <div>
+            <div style={{display:'flex',gap:8,marginBottom:12,alignItems:'center',flexWrap:'wrap'}}>
+              <select
+                className="filter-select"
+                value={planStatusFilter}
+                onChange={(e) => setPlanStatusFilter(e.target.value)}
+              >
+                <option value="pending">Pending review</option>
+                <option value="confirmed">Confirmed</option>
+                <option value="dismissed">Dismissed</option>
+              </select>
+              <button className="btn" onClick={loadPlanCandidates} disabled={planLoading} style={{fontSize:12}}>
+                {planLoading ? 'Loading…' : 'Refresh'}
+              </button>
+              <span style={{fontSize:12,color:'var(--text-muted)'}}>
+                Detected after statement uploads when the same agent/client appears under a new carrier.
+              </span>
+            </div>
+
+            {planError && (
+              <div className="card" style={{marginBottom:12,borderColor:'#E5C8B8',background:'#F5EAE4',color:'#7A3D1F',fontSize:13}}>
+                {planError}
+              </div>
+            )}
+
+            <div className="card" style={{padding:0}}>
+              {planLoading ? (
+                <div className="empty-state">
+                  <div className="empty-title" style={{color:'var(--text-muted)'}}>Loading candidates…</div>
+                </div>
+              ) : planCandidates.length === 0 ? (
+                <div className="empty-state">
+                  <div className="empty-title">No {planStatusFilter} plan changes</div>
+                  <div className="empty-sub">
+                    {planStatusFilter === 'pending'
+                      ? 'New candidates appear after commission uploads when detection finds a carrier switch.'
+                      : 'Nothing in this status yet.'}
+                  </div>
+                </div>
+              ) : (
+                <div className="table-wrap">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Client</th>
+                        <th>Agent</th>
+                        <th>Old carrier</th>
+                        <th>New carrier</th>
+                        <th>Old last paid / new eff</th>
+                        <th>Confidence</th>
+                        {planStatusFilter === 'pending' && isAdmin && <th style={{width:200}}>Actions</th>}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {planCandidates.map((c) => (
+                        <tr key={c.id}>
+                          <td style={{fontWeight:500}}>{c.bob_client || c.client_name}</td>
+                          <td style={{fontSize:12}}>{c.agent_name}</td>
+                          <td style={{fontSize:12}}>{formatCarrier(c.old_carrier)}</td>
+                          <td style={{fontSize:12,fontWeight:500}}>{formatCarrier(c.new_carrier)}</td>
+                          <td style={{fontSize:12,color:'var(--text-muted)'}}>
+                            {formatDate(c.old_effective_date) || '—'}
+                            {' → '}
+                            {formatDate(c.new_effective_date) || '—'}
+                          </td>
+                          <td style={{fontSize:12}}>
+                            {c.confidence_score != null ? Number(c.confidence_score).toFixed(1) : '—'}
+                          </td>
+                          {planStatusFilter === 'pending' && isAdmin && (
+                            <td>
+                              <div style={{display:'flex',gap:6}}>
+                                <button
+                                  className="btn btn-primary"
+                                  style={{fontSize:11,padding:'4px 10px'}}
+                                  disabled={planBusyId === c.id}
+                                  onClick={() => confirmPlanChange(c.id)}
+                                >
+                                  Confirm
+                                </button>
+                                <button
+                                  className="btn"
+                                  style={{fontSize:11,padding:'4px 10px'}}
+                                  disabled={planBusyId === c.id}
+                                  onClick={() => dismissPlanChange(c.id)}
+                                >
+                                  Not a change
+                                </button>
+                              </div>
+                            </td>
+                          )}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {(tab==='all' || tab==='termed') && (
           <div>

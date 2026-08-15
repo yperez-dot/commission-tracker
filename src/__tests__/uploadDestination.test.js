@@ -33,6 +33,13 @@ describe('uploadDestination', () => {
     );
   });
 
+  test('routes AgentView CNHIC reports to Commission Statements', () => {
+    const d = detectUploadDestination('AgentCommissionReport__1__68ea.pdf');
+    expect(d.id).toBe('commission_statement');
+    expect(d.confidence).toBe('high');
+    expect(detectUploadDestination('CNHIC_AgentView_Aug2026.pdf').id).toBe('commission_statement');
+  });
+
   test('destinationMatchesTab only matches exact tab', () => {
     expect(destinationMatchesTab('bsi_statement', 'commission_statement')).toBe(false);
     expect(destinationMatchesTab('bsi_statement', 'bsi_statement')).toBe(true);

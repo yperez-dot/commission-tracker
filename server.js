@@ -20,8 +20,12 @@ initSchema().then(() => {
   console.error('❌ Database init failed:', err.message);
 });
 
-// ONE-TIME AGENT NAME NORMALIZATION (runs once on startup)
+// ONE-TIME AGENT NAME NORMALIZATION (opt-in — full-table rewrite races with uploads)
 const normalizeOnStartup = async () => {
+  if (process.env.RUN_STARTUP_NORMALIZE !== 'true') {
+    console.log('⏭️  Startup agent-name normalize skipped (set RUN_STARTUP_NORMALIZE=true to enable)');
+    return;
+  }
   try {
     const { getPool } = require('./db/database');
     const { normalizeAgentName } = require('./routes/normalize');
@@ -55,6 +59,7 @@ app.use('/api/bob', require('./routes/bob'));
 const { router: planChangesRouter } = require('./routes/planChanges');
 app.use('/api/plan-changes', planChangesRouter);
 app.use('/api/payroll', require('./routes/payroll'));
+app.use('/api/pass-through', require('./routes/pass-through').router);
 app.use('/api/agent-statements', require('./routes/agent_statements'));
 app.use('/api/sales-tracker', require('./routes/sales-tracker'));
 app.use('/api/medicarepro', require('./routes/medicarepro'));
@@ -66,74 +71,17 @@ app.use('/api/lina-statements', require('./routes/lina-statements'));
 app.use('/api/manual-payments', require('./routes/manual-payments'));
 app.use('/api/admin-fixes', require('./routes/admin-fixes'));
 app.use('/api', require('./routes/edit-commission')); // Manual edit with audit trail
+app.use('/api/manual-payments', require('./routes/manual-payments'));
 
-// ─── TEMPORARY: Upload 374 Duplicate Cleanup ────────────────────────────────
-// Remove after running once
-const { getPool } = require('./db/database');
-const { requireAuth } = require('./routes/auth');
-function requireAdmin(req, res, next) {
-  if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
-  next();
-}
-
-app.delete('/api/admin/cleanup-upload-374', requireAuth, requireAdmin, async (req, res) => {
+app.get('/api/health', async (req, res) => {
   try {
-    const pool = getPool();
-    console.log('[CLEANUP-374] Starting duplicate cleanup for upload 374...');
-    
-    // First, count duplicates
-    const countResult = await pool.query(`
-      WITH duplicates AS (
-        SELECT id, ROW_NUMBER() OVER (
-          PARTITION BY client_full_name, carrier, payment_period, classification
-          ORDER BY id
-        ) as rn
-        FROM commission_records
-        WHERE upload_id = 374
-      )
-      SELECT COUNT(*) as duplicate_count
-      FROM duplicates
-      WHERE rn > 1
-    `);
-    
-    const duplicateCount = parseInt(countResult.rows[0].duplicate_count);
-    console.log(`[CLEANUP-374] Found ${duplicateCount} duplicate records`);
-    
-    if (duplicateCount === 0) {
-      return res.json({ message: 'No duplicates found', deleted: 0 });
-    }
-    
-    // Delete duplicates (keep first occurrence)
-    const deleteResult = await pool.query(`
-      WITH duplicates AS (
-        SELECT id, ROW_NUMBER() OVER (
-          PARTITION BY client_full_name, carrier, payment_period, classification
-          ORDER BY id
-        ) as rn
-        FROM commission_records
-        WHERE upload_id = 374
-      )
-      DELETE FROM commission_records
-      WHERE id IN (
-        SELECT id FROM duplicates WHERE rn > 1
-      )
-    `);
-    
-    console.log(`[CLEANUP-374] Deleted ${deleteResult.rowCount} duplicate records`);
-    
-    res.json({ 
-      success: true,
-      deleted: deleteResult.rowCount,
-      message: `Cleaned up ${deleteResult.rowCount} duplicate records from upload 374`
-    });
-  } catch (error) {
-    console.error('[CLEANUP-374] Error:', error);
-    res.status(500).json({ error: error.message });
+    const { getPool } = require('./db/database');
+    await getPool().query('SELECT 1');
+    res.json({ status: 'ok', db: 'ok', timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(503).json({ status: 'degraded', db: 'error', timestamp: new Date().toISOString() });
   }
 });
-// ─────────────────────────────────────────────────────────────────────────────
-
-app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 
 
 app.use((err, req, res, next) => {

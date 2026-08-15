@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../api';
+import { normName, nameVariants, normCarrier } from '../matchingNormalize';
 
 function fmt(n) {
   const num = parseFloat(String(n || '0').replace(/[$,]/g, ''));
@@ -27,64 +28,6 @@ function normPeriod(p) {
   return null;
 }
 
-// Normalize a name to match database normalized_name logic
-function normName(name) {
-  if (!name) return '';
-  const s = String(name).trim();
-  
-  // Helper: Convert to Title Case
-  function toTitleCase(str) {
-    return str.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
-  }
-  
-  // Handle comma-separated "LAST, FIRST" format
-  // Everything before the comma is the full surname (handles compound surnames)
-  if (s.includes(',')) {
-    let [last, first] = s.split(',').map(p => p.trim());
-    
-    // Strip common suffixes from surname
-    last = last.replace(/\b(JR|SR|III|II|IV|V)\.?$/i, '').trim();
-    // Strip trailing middle initial(s) from first-name part — same class of fix
-    // as normReconClient comma-path (backend commit 9199248).
-    // "Alfred G." → "Alfred", "Joseph M." → "Joseph"
-    first = first.replace(/(\s+[A-Za-z]\.?)+$/i, '').trim();
-    // Return "FIRST LAST" in Title Case
-    const normalized = `${first} ${last}`.replace(/\s+/g, ' ').trim();
-    return toTitleCase(normalized);
-  }
-  
-  // For non-comma format, just normalize spaces and title case
-  const normalized = s.replace(/\s+/g, ' ').trim();
-  return toTitleCase(normalized);
-}
-
-// Generate name variants to handle Humana's LASTNAME FIRSTNAME format
-function nameVariants(name) {
-  if (!name) return [];
-  const norm = normName(name);
-  const parts = norm.split(' ').filter(Boolean);
-  const result = [norm];
-
-  if (parts.length >= 2) {
-    // Strip trailing initial from end — /^[A-Za-z]\.[?]$/ catches both "G" (len 1,
-    // worked before) and "G." (len 2 with period, was silently missed by p.length===1)
-    const noTrailingInitial = parts.filter((p, i) => !(i === parts.length - 1 && /^[A-Za-z]\.?$/.test(p))).join(' ');
-    if (noTrailingInitial !== norm) result.push(noTrailingInitial);
-
-    // Reversed word order: "hector proano alcivar" → "alcivar proano hector"
-    const reversed = [...parts].reverse().join(' ');
-    if (!result.includes(reversed)) result.push(reversed);
-
-    // Reversed without trailing initial
-    const partsNoInitial = parts.filter((p, i) => !(i === parts.length - 1 && /^[A-Za-z]\.?$/.test(p)));
-    const reversedNoInitial = [...partsNoInitial].reverse().join(' ');
-    if (!result.includes(reversedNoInitial)) result.push(reversedNoInitial);
-  }
-
-  return result;
-}
-
-// Prettify date strings for display: handles YYYYMMDD, MM/DD/YYYY, YYYY-MM-DD, Excel serial numbers
 // Calculate months between last paid and termed date
 function calculateOwedMonths(lastPaidPeriod, termedDate) {
   if (!lastPaidPeriod || !termedDate) return 0;
@@ -138,25 +81,6 @@ function prettifyDate(d) {
   return s; // leave anything else as-is
 }
 
-function normCarrier(c) {
-  const s = String(c || '').toLowerCase();
-  if (s.includes('united') || s.includes('uhc')) return 'unitedhealthcare';
-  if (s.includes('humana')) return 'humana';
-  if (s.includes('aetna')) return 'aetna';
-  if (s.includes('devoted')) return 'devoted health';
-  if (s.includes('cigna')) return 'cigna';
-  if (s.includes('oscar')) return 'oscar health';
-  if (s.includes('florida blue') || s.includes('bcbs')) return 'florida blue';
-  if (s.includes('gold kidney')) return 'gold kidney';
-  if (s.includes('simply')) return 'simply';
-  if (s.includes('molina')) return 'molina';
-  if (s.includes('solis')) return 'solis';
-  if (s.includes('healthsun') || s.includes('health sun')) return 'healthsun';
-  if (s.includes('doctors')) return 'doctors healthcare';
-  if (s.includes('avmed') || s.includes('av med')) return 'avmed';
-  return s;
-}
-
 function periodToDate(p) {
   if (!p) return null;
   const s = String(p).trim();
@@ -187,7 +111,7 @@ function parseEffDate(d) {
 }
 
 export default function MissingRenewals({ user }) {
-  const [periods, setPeriods] = useState([]);
+  const [periods, setPeriods] = useState([]); // [{period, label, recordCount, viable}]
   const [selectedPeriod, setSelectedPeriod] = useState('');
   const [loading, setLoading] = useState(false);
   const [rows, setRows] = useState([]);
@@ -203,9 +127,11 @@ export default function MissingRenewals({ user }) {
   const [showCoverageWarning, setShowCoverageWarning] = useState(true);
   const [grayedRows, setGrayedRows] = useState(new Set());
   const [termedDatePicker, setTermedDatePicker] = useState(null); // { rowKey, date }
+  const [notesEditor, setNotesEditor] = useState(null); // { rowKey, row, text }
   const [sortCol, setSortCol] = useState('isMissing'); // Default: sort by missing status
   const [sortDir, setSortDir] = useState('desc'); // Missing first
   const [loadError, setLoadError] = useState('');
+  const [checkMeta, setCheckMeta] = useState(null); // { periodRecordCount, sparsePeriod, summary }
 
   // Toast notification helper
   function showToast(message, type = 'success') {
@@ -299,22 +225,35 @@ export default function MissingRenewals({ user }) {
   }
 
   useEffect(() => {
-    apiFetch('/records/filters').then(d => {
-      const valid = (d.periods || []).filter(p => {
-        if (!p || p === 'Unknown') return false;
-        const s = String(p);
-        return s.match(/^\d{6}$/) || s.match(/^\d{2}\/\d{4}$/) || s.match(/^\d{2}\/\d{2}\/\d{4}$/);
+    apiFetch('/bob/missing-renewals-periods')
+      .then((d) => {
+        const list = (d.periods || []).filter((p) => p && p.period && p.label);
+        setPeriods(list);
+        if (d.defaultPeriod) setSelectedPeriod(d.defaultPeriod);
+        else if (list.length > 0) setSelectedPeriod(list[0].period);
+      })
+      .catch((err) => {
+        console.error(err);
+        // Fallback to legacy filters list if periods endpoint fails
+        apiFetch('/records/filters')
+          .then((d) => {
+            const valid = (d.periods || []).filter((p) => {
+              if (!p || p === 'Unknown') return false;
+              const s = String(p);
+              return s.match(/^\d{6}$/) || s.match(/^\d{2}\/\d{4}$/) || s.match(/^\d{2}\/\d{2}\/\d{4}$/);
+            });
+            const seen = new Set();
+            const deduped = valid.filter((p) => {
+              const label = formatPeriodLabel(p);
+              if (!label || seen.has(label)) return false;
+              seen.add(label);
+              return true;
+            });
+            setPeriods(deduped.map((p) => ({ period: p, label: formatPeriodLabel(p), recordCount: null, viable: true })));
+            if (deduped.length > 0) setSelectedPeriod(deduped[0]);
+          })
+          .catch(console.error);
       });
-      const seen = new Set();
-      const deduped = valid.filter(p => {
-        const label = formatPeriodLabel(p);
-        if (!label || seen.has(label)) return false;
-        seen.add(label);
-        return true;
-      });
-      setPeriods(deduped);
-      if (deduped.length > 0) setSelectedPeriod(deduped[0]);
-    }).catch(console.error);
   }, []);
 
   async function runCheck() {
@@ -324,6 +263,7 @@ export default function MissingRenewals({ user }) {
     setCoverageWarning(null);
     setShowCoverageWarning(true);
     setLoadError('');
+    setCheckMeta(null);
     try {
       const targetNorm = normPeriod(selectedPeriod) || selectedPeriod;
 
@@ -338,6 +278,12 @@ export default function MissingRenewals({ user }) {
         `/bob/missing-renewals-check?period=${encodeURIComponent(targetNorm)}`
       );
       setRows(data.rows || []);
+      setCheckMeta({
+        periodRecordCount: data.periodRecordCount,
+        sparsePeriod: !!data.sparsePeriod,
+        summary: data.summary || null,
+        minStatementRecords: data.minStatementRecords,
+      });
     } catch (e) {
       console.error(e);
       setLoadError(e.message || 'Missing renewals check failed');
@@ -368,10 +314,11 @@ export default function MissingRenewals({ user }) {
     finally { setClientLoading(false); }
   }
 
-  async function updatePolicyStatus(row, status) {
+  async function updatePolicyStatus(row, status, notes) {
     try {
       const rowKey = `${row.client}|${row.carrier}|${row.agent}`;
-      
+      const notesValue = notes !== undefined ? notes : (row.policyNotes || null);
+
       await apiFetch('/bob/policy-status', {
         method: 'PUT',
         body: JSON.stringify({
@@ -379,27 +326,27 @@ export default function MissingRenewals({ user }) {
           carrier: row.carrier,
           agent: row.agent,
           status: status,
-          notes: null
+          notes: notesValue
         })
       });
-      
+
       // Update row state immediately (before refetch)
       setRows(prevRows => prevRows.map(r => {
         if (`${r.client}|${r.carrier}|${r.agent}` === rowKey) {
-          return { ...r, policyStatus: status };
+          return { ...r, policyStatus: status, policyNotes: notesValue };
         }
         return r;
       }));
-      
+
       // Refresh the data in background for consistency
       await runCheck();
-      
+
       if (status === 'termed') {
-        showToast('✅ Marked as termed — row removed from list', 'success');
+        showToast('Marked as termed — row removed from list', 'success');
       } else if (status === 'chase') {
-        showToast('✅ Marked as chasing — will stay on list with badge', 'success');
+        showToast('Marked as chasing — will stay on list with badge', 'success');
       } else if (status === 'pending') {
-        showToast('✅ Marked as pending — will stay on list with gray badge', 'success');
+        showToast('Marked as pending — will stay on list with gray badge', 'success');
       }
     } catch (err) {
       showToast(`Error: ${err.message}`, 'error');
@@ -574,11 +521,15 @@ export default function MissingRenewals({ user }) {
         <div style={{ display:'flex',alignItems:'flex-end',gap:10,flexWrap:'wrap',marginBottom:14,background:'var(--bg)',padding:'12px 14px',borderRadius:8,border:'0.5px solid var(--border)' }}>
           <div>
             <div className="form-label" style={{ marginBottom:4 }}>Statement month</div>
-            <select className="filter-select" value={selectedPeriod} onChange={e => { setSelectedPeriod(e.target.value); setRows([]); }} style={{ minWidth:160,fontSize:13 }}>
+            <select className="filter-select" value={selectedPeriod} onChange={e => { setSelectedPeriod(e.target.value); setRows([]); setCheckMeta(null); }} style={{ minWidth:160,fontSize:13 }}>
               <option value="">Select month...</option>
               {periods.map(p => {
-                const label = formatPeriodLabel(p);
-                return label ? <option key={p} value={p}>{label}</option> : null;
+                const value = p.period || p;
+                const label = p.label || formatPeriodLabel(value);
+                if (!label) return null;
+                const countLabel = p.recordCount != null ? ` · ${p.recordCount} rows` : '';
+                const stub = p.viable === false ? ' (stub)' : '';
+                return <option key={value} value={value}>{label}{countLabel}{stub}</option>;
               })}
             </select>
           </div>
@@ -627,6 +578,25 @@ export default function MissingRenewals({ user }) {
 
         {rows.length > 0 && (
           <>
+            {checkMeta?.sparsePeriod && (
+              <div style={{
+                background: '#FEF2F2',
+                border: '0.5px solid #FECACA',
+                borderRadius: 8,
+                padding: '12px 16px',
+                marginBottom: 12,
+                fontSize: 13,
+                color: '#991B1B'
+              }}>
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>
+                  This month only has {checkMeta.periodRecordCount} commission row{checkMeta.periodRecordCount === 1 ? '' : 's'} — not a real statement month
+                </div>
+                <div style={{ fontSize: 12, opacity: 0.9 }}>
+                  Pick a month with at least {checkMeta.minStatementRecords || 50} uploaded rows (e.g. Jul 2026). Stub months make every renewal look Missing.
+                </div>
+              </div>
+            )}
+
             {/* Statement Coverage Warning/Confirmation */}
             {coverageWarning && showCoverageWarning && (
               <div style={{
@@ -726,6 +696,7 @@ export default function MissingRenewals({ user }) {
                       <th onClick={() => handleSort('monthsMissing')} style={{ cursor:'pointer', userSelect:'none' }}>
                         Months missing {sortCol === 'monthsMissing' ? (sortDir === 'asc' ? '↑' : '↓') : <span style={{opacity:0.3}}>↕</span>}
                       </th>
+                      <th style={{ width:160 }}>Notes</th>
                       <th style={{ width:140 }}>Actions</th>
                     </tr>
                   </thead>
@@ -733,6 +704,7 @@ export default function MissingRenewals({ user }) {
                     {sorted.map((r, i) => {
                       const rowKey = `${r.client}|${r.carrier}|${r.agent}`;
                       const showingDatePicker = termedDatePicker && termedDatePicker.rowKey === rowKey;
+                      const showingNotesEditor = notesEditor && notesEditor.rowKey === rowKey;
                       return (<>
                       <tr key={i} style={{ 
                         background: r.isMissing ? '#FFF9E6' : 'transparent',
@@ -800,6 +772,31 @@ export default function MissingRenewals({ user }) {
                               </span>
                           }
                         </td>
+                        <td style={{ fontSize:11, maxWidth:160, color:'var(--text-muted)' }}>
+                          {r.policyNotes ? (
+                            <button
+                              type="button"
+                              title={r.policyNotes}
+                              onClick={() => setNotesEditor({ rowKey, row: r, text: r.policyNotes || '' })}
+                              style={{
+                                background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                                color: 'var(--text)', textAlign: 'left', fontSize: 11,
+                                display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+                                overflow: 'hidden', maxWidth: 150
+                              }}
+                            >
+                              {r.policyNotes}
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setNotesEditor({ rowKey, row: r, text: '' })}
+                              style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--accent-dark)', fontSize: 11 }}
+                            >
+                              Add note
+                            </button>
+                          )}
+                        </td>
                         <td style={{ fontSize:11 }}>
                           {r.isMissing && !r.isHeld && (!r.policyStatus || r.policyStatus === 'active' || r.policyStatus === 'chase') && (
                             <select
@@ -807,23 +804,20 @@ export default function MissingRenewals({ user }) {
                                 const action = e.target.value;
                                 if (!action) return;
                                 e.target.value = ''; // Reset dropdown immediately
-                                
-                                const rowKey = `${r.client}|${r.carrier}|${r.agent}`;
-                                
+
                                 if (action === 'termed') {
-                                  // Show date picker inline
                                   const today = new Date().toISOString().split('T')[0];
                                   setTermedDatePicker({ rowKey, clientName: r.client, date: today, row: r });
                                 } else if (action === 'chase') {
-                                  // Chase saves immediately (no undo needed)
                                   await updatePolicyStatus(r, 'chase');
                                 } else if (action === 'ignore') {
-                                  // Ignore saves to database (permanent)
                                   await updatePolicyStatus(r, 'ignore');
                                 } else if (action === 'clear') {
                                   await updatePolicyStatus(r, 'active');
                                 } else if (action === 'plan_change') {
                                   await updatePolicyStatus(r, 'plan_change');
+                                } else if (action === 'note') {
+                                  setNotesEditor({ rowKey, row: r, text: r.policyNotes || '' });
                                 }
                               }}
                               style={{
@@ -838,20 +832,84 @@ export default function MissingRenewals({ user }) {
                               }}
                             >
                               <option value="">Update Status</option>
-                              <option value="termed">🔴 Termed</option>
-                              <option value="chase">🟠 Chase Payment</option>
-                              <option value="plan_change">🔄 Plan Change</option>
-                              <option value="ignore">⚫ Ignore (hide permanently)</option>
+                              <option value="termed">Termed</option>
+                              <option value="chase">Chase Payment</option>
+                              <option value="plan_change">Plan Change</option>
+                              <option value="ignore">Ignore (hide permanently)</option>
+                              <option value="note">Edit note</option>
                               {r.policyStatus === 'chase' && (
-                                <option value="clear">✅ Clear Chase</option>
+                                <option value="clear">Clear Chase</option>
                               )}
                             </select>
                           )}
                         </td>
                       </tr>
+                        {showingNotesEditor && (
+                          <tr key={`${i}-notes-editor`}>
+                            <td colSpan="12" style={{ padding: '12px 16px', background: '#F0F4FF', borderLeft: '3px solid var(--accent-dark, #452068)' }}>
+                              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12 }}>
+                                <strong style={{ fontSize: 13, whiteSpace: 'nowrap', paddingTop: 6 }}>
+                                  Note — {notesEditor.row.client}
+                                </strong>
+                                <textarea
+                                  value={notesEditor.text}
+                                  onChange={e => setNotesEditor({ ...notesEditor, text: e.target.value })}
+                                  rows={2}
+                                  placeholder="Chase call notes, plan-change details, etc."
+                                  style={{
+                                    flex: 1,
+                                    padding: '6px 10px',
+                                    fontSize: 13,
+                                    border: '1px solid var(--border)',
+                                    borderRadius: 4,
+                                    background: 'white',
+                                    resize: 'vertical'
+                                  }}
+                                />
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    const { row, text } = notesEditor;
+                                    const status = row.policyStatus || 'active';
+                                    await updatePolicyStatus(row, status, text.trim() || null);
+                                    setNotesEditor(null);
+                                    showToast('Note saved', 'success');
+                                  }}
+                                  style={{
+                                    padding: '6px 12px',
+                                    fontSize: 12,
+                                    fontWeight: 600,
+                                    background: 'var(--accent-dark, #452068)',
+                                    color: 'white',
+                                    border: 'none',
+                                    borderRadius: 4,
+                                    cursor: 'pointer'
+                                  }}
+                                >
+                                  Save note
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setNotesEditor(null)}
+                                  style={{
+                                    padding: '6px 12px',
+                                    fontSize: 12,
+                                    background: 'transparent',
+                                    color: 'var(--text-muted)',
+                                    border: '1px solid var(--border)',
+                                    borderRadius: 4,
+                                    cursor: 'pointer'
+                                  }}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
                         {showingDatePicker && (
                           <tr key={`${i}-date-picker`}>
-                            <td colSpan="11" style={{ padding: '12px 16px', background: '#FFF3CD', borderLeft: '3px solid #FFC107' }}>
+                            <td colSpan="12" style={{ padding: '12px 16px', background: '#FFF3CD', borderLeft: '3px solid #FFC107' }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
                                 <strong style={{ fontSize: 13, color: '#856404' }}>
                                   {termedDatePicker.clientName} — When did they term?
@@ -872,11 +930,11 @@ export default function MissingRenewals({ user }) {
                                   onClick={async () => {
                                     const { date, row } = termedDatePicker;
                                     let undone = false;
-                                    
+
                                     // Gray out row and hide date picker
                                     setGrayedRows(prev => new Set([...prev, rowKey]));
                                     setTermedDatePicker(null);
-                                    
+
                                     // Show countdown toast with undo
                                     showCountdownToast(
                                       `${row.client} marked as Termed`,
@@ -892,7 +950,7 @@ export default function MissingRenewals({ user }) {
                                         showToast('Undo successful', 'success');
                                       }
                                     );
-                                    
+
                                     // After 10 seconds, save if not undone
                                     setTimeout(async () => {
                                       if (!undone) {
@@ -904,7 +962,7 @@ export default function MissingRenewals({ user }) {
                                             agent: row.agent,
                                             status: 'termed',
                                             termedDate: date,
-                                            notes: null
+                                            notes: row.policyNotes || null
                                           })
                                         });
                                         await runCheck(); // Refresh data
@@ -950,7 +1008,7 @@ export default function MissingRenewals({ user }) {
                     <tr style={{ background:'var(--bg-subtle)',fontWeight:500 }}>
                       <td colSpan={7} style={{ padding:'8px 12px',fontSize:12 }}>Total ({filtered.filter(r=>!r.isMissing).length} paid)</td>
                       <td style={{ padding:'8px 12px',fontSize:12,color:'var(--green)' }}>{fmt(totalCommission)}</td>
-                      <td colSpan={3}></td>
+                      <td colSpan={4}></td>
                     </tr>
                   </tfoot>
                 </table>

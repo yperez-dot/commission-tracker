@@ -8,6 +8,7 @@ import {
   UPLOAD_PAGE_BY_DEST,
 } from '../utils/uploadDestination';
 import { setPendingUpload, takePendingUpload } from '../utils/pendingUpload';
+import { UploadPageShell, UploadDropZone, UploadAlert } from '../components/UploadPageLayout';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -47,7 +48,6 @@ export default function Upload({ user, onNavigate }) {
   useEffect(() => {
     const pending = takePendingUpload();
     if (pending) queueFile(pending);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function queueFile(file) {
@@ -145,13 +145,6 @@ export default function Upload({ user, onNavigate }) {
       setViewRecords(data.records || []);
     } catch (e) { console.error(e); }
     finally { setViewLoading(false); }
-  }
-
-  function handleDrop(e) {
-    e.preventDefault();
-    setDragOver(false);
-    const files = Array.from(e.dataTransfer.files);
-    for (const file of files) queueFile(file);
   }
 
   const totalRecords = uploads.reduce((s, u) => s + (u.row_count || 0), 0);
@@ -273,57 +266,53 @@ export default function Upload({ user, onNavigate }) {
         />
       )}
 
-      <div className="page-header">
-        <div className="page-title">Commission Statements</div>
-        <div className="page-sub">Direct carrier statements and BSI→THE remittance CSVs. Carrier→BSI feeds belong under Uploads → BSI Statements.</div>
-      </div>
-      <div className="page-body">
+      <UploadPageShell
+        title="Commission Statements"
+        subtitle="Direct carrier statements and BSI→THE remittance CSVs. Carrier→BSI feeds belong under Uploads → BSI Statements."
+      >
+        <UploadDropZone
+          dragOver={dragOver}
+          setDragOver={setDragOver}
+          onDropFiles={(files) => { for (const f of files) queueFile(f); }}
+          uploading={uploading}
+          dropTitle="Drop commission statement here"
+          dropHint="Supports .xlsx, .xls, .csv, .pdf — any carrier format"
+          accept=".xlsx,.xls,.csv,.pdf"
+          multiple
+        />
 
-        {/* Drop zone */}
-        <div className="card" style={{ marginBottom: 16 }}
-          onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={handleDrop}>
-          <div style={{
-            border: `2px dashed ${dragOver ? 'var(--blue)' : 'var(--border)'}`,
-            borderRadius: 8, padding: '32px 20px', textAlign: 'center',
-            background: dragOver ? 'var(--blue-light)' : 'transparent',
-            transition: 'all 0.2s'
-          }}>
-            {uploading ? (
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 600 }}>Processing file...</div>
-                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>Detecting columns and parsing records</div>
-              </div>
-            ) : (
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Drop commission statement here</div>
-                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>Supports .xlsx, .xls, .csv, .pdf — any carrier format</div>
-                <label style={{ background: 'var(--blue)', color: '#fff', borderRadius: 6, padding: '8px 20px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
-                  Choose file
-                  <input type="file" accept=".xlsx,.xls,.csv,.pdf" multiple style={{ display: 'none' }}
-                    onChange={e => {
-                      const files = Array.from(e.target.files);
-                      for (const f of files) queueFile(f);
-                      e.target.value = '';
-                    }} />
-                </label>
-              </div>
-            )}
-          </div>
-        </div>
-
-        {error && (
-          <div style={{ background: '#FCE8E8', border: '1px solid #F7C1C1', borderRadius: 8, padding: '10px 14px', marginBottom: 12, fontSize: 13, color: '#A32D2D' }}>
-            ⚠️ {error}
-          </div>
-        )}
+        {error && <UploadAlert>{error}</UploadAlert>}
 
         {uploadResult && (
-          <div style={{ background: '#EAF3DE', border: '1px solid #C0DD97', borderRadius: 8, padding: '12px 16px', marginBottom: 12, fontSize: 13, color: '#3B6D11' }}>
-            <div style={{ fontWeight: 700, marginBottom: 4 }}>✓ Upload successful — {uploadResult.filename}</div>
-            <div>{uploadResult.rowCount} records imported · {fmt(uploadResult.commissionSum)} total · Carriers: {(uploadResult.carriers || []).join(', ')}</div>
-          </div>
+          <UploadAlert kind="success" title={`Upload successful — ${uploadResult.filename}`}>
+            {uploadResult.rowCount} records imported · {fmt(uploadResult.commissionSum)} total · Carriers: {(uploadResult.carriers || []).join(', ')}
+            {uploadResult.internalDuplicatesRemoved > 0 && (
+              <div style={{ marginTop: 8 }}>
+                Skipped {uploadResult.internalDuplicatesRemoved} exact duplicate line
+                {uploadResult.internalDuplicatesRemoved === 1 ? '' : 's'} within this file
+              </div>
+            )}
+            {uploadResult.resolvedRenewalsCount > 0 && (
+              <div style={{ marginTop: 8, fontWeight: 500 }}>
+                {uploadResult.resolvedRenewalsCount} previously chased/pending renewal
+                {uploadResult.resolvedRenewalsCount === 1 ? '' : 's'} auto-resolved
+                {Array.isArray(uploadResult.resolvedRenewals) && uploadResult.resolvedRenewals.length > 0 && (
+                  <ul style={{ margin: '6px 0 0', paddingLeft: 18, fontWeight: 400 }}>
+                    {uploadResult.resolvedRenewals.slice(0, 8).map((r, i) => (
+                      <li key={i}>
+                        {r.client} · {r.carrier}
+                        {r.paymentPeriod ? ` · ${r.paymentPeriod}` : ''}
+                        {r.commission != null ? ` · ${fmt(r.commission)}` : ''}
+                      </li>
+                    ))}
+                    {uploadResult.resolvedRenewals.length > 8 && (
+                      <li>+{uploadResult.resolvedRenewals.length - 8} more</li>
+                    )}
+                  </ul>
+                )}
+              </div>
+            )}
+          </UploadAlert>
         )}
 
         {/* Duplicate Detection Modal */}
@@ -566,7 +555,7 @@ export default function Upload({ user, onNavigate }) {
             </div>
           ))}
         </div>
-      </div>
+      </UploadPageShell>
     </div>
   );
 }

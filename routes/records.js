@@ -3,6 +3,7 @@ const router = express.Router();
 const { getPool } = require('../db/database');
 const { requireAuth } = require('./auth');
 const { normalizeAllRecords, normalizeAgentName } = require('./normalize');
+const { normalizeCarrierKey } = require('../src/matchingNormalize');
 function requireAdmin(req, res, next) {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
   next();
@@ -31,6 +32,9 @@ function agencyFilter(req, alias) {
   return col + " NOT IN ('Mutual of Omaha', 'United of Omaha', 'Fidelity Life', 'Instabrain', 'F&G', 'Fidelity & Guaranty', 'American Amicable', 'Transamerica', 'Ethos', 'American Home Life', 'National Life Group')";
 }
 
+/** Agency dashboard: drop NHP commission-column ACA rows (agent pass-through). Keep override column. */
+const AGENCY_ACA_AGENT_EXCLUDE = `NOT (lob = 'ACA' AND COALESCE(producer_payable, 0) <> 0 AND COALESCE(thei_share, 0) = 0)`;
+
 // Smart Matching v2 helpers — deterministic keys only, no fuzzy/Levenshtein.
 
 // normalizeNameKey: accent-strip + uppercase + token-sort.
@@ -54,34 +58,12 @@ function normalizeAgentKey(name) {
   return normalizeNameKey(normalizeAgentName(name));
 }
 
-// normalizeCarrierKey: carrier-family normalization.
-function normalizeCarrierKey(carrier) {
-  if (!carrier) return '';
-  const c = carrier.toLowerCase().trim();
-  if (c.includes('humana')) return 'humana';
-  if (c.includes('aetna')) return 'aetna';
-  if (c.includes('uhc') || c.includes('united')) return 'unitedhealthcare';
-  if (c.includes('doctors')) return 'doctors';
-  if (c.includes('careplus') || c.includes('care plus')) return 'careplus';
-  if (c.includes('devoted')) return 'devoted';
-  if (c.includes('solis')) return 'solis';
-  if (c.includes('healthsun') || c.includes('health sun')) return 'healthsun';
-  if (c.includes('oscar')) return 'oscar';
-  if (c.includes('molina')) return 'molina';
-  if (c.includes('wellcare')) return 'wellcare';
-  if (c.includes('florida blue') || c.includes('bcbs') || c.includes('blue cross')) return 'floridablue';
-  if (c.includes('cigna')) return 'cigna';
-  if (c.includes('avmed')) return 'avmed';
-  if (c.includes('simply')) return 'simply';
-  if (c.includes('elevance') || c.includes('anthem')) return 'elevance';
-  if (c.includes('freedom')) return 'freedom';
-  return c.replace(/[^a-z0-9]/g, '');
-}
+// normalizeCarrierKey imported from src/matchingNormalize (Omaha carve-out)
 
 router.get('/', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
-    const { agent, agents, carrier, carriers, period, periods, classification, classifications, lob, lobs, planType, payee, search, upload_id, upload_category, exclude_upload_category, sortCol, sortDir = 'asc', limit = 100, offset = 0 } = req.query;
+    const { agent, agents, carrier, carriers, period, periods, classification, classifications, lob, lobs, planType, payee, search, upload_id, upload_category, exclude_upload_category, amountSign, sortCol, sortDir = 'asc', limit = 100, offset = 0 } = req.query;
     let where = [], params = [], idx = 1;
 
     if (req.user.role === 'agent') {
@@ -105,6 +87,8 @@ router.get('/', requireAuth, async (req, res) => {
     if (upload_category) { where.push(`u.category = $${idx++}`); params.push(upload_category); }
     if (exclude_upload_category) { where.push(`(u.category IS NULL OR u.category != $${idx++})`); params.push(exclude_upload_category); }
     if (payee) { where.push(`cr.payee = $${idx++}`); params.push(payee); }
+    if (amountSign === 'negative') { where.push('cr.commission < 0'); }
+    else if (amountSign === 'positive') { where.push('cr.commission >= 0'); }
     if (search) { where.push(`(cr.client_full_name ILIKE $${idx} OR cr.agent_name ILIKE $${idx} OR cr.carrier ILIKE $${idx})`); params.push(`%${search}%`); idx++; }
 
     const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
@@ -176,6 +160,69 @@ router.get('/', requireAuth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ─── GET /client-history — commission trend for one client (All Data drill-down)
+router.get('/client-history', requireAuth, async (req, res) => {
+  try {
+    const pool = getPool();
+    const { client, carrier, agent } = req.query;
+    if (!client || !carrier) {
+      return res.status(400).json({ error: 'client and carrier are required' });
+    }
+
+    const where = [
+      `LOWER(TRIM(client_full_name)) = LOWER(TRIM($1))`,
+      `LOWER(TRIM(carrier)) = LOWER(TRIM($2))`,
+    ];
+    const params = [client, carrier];
+    let idx = 3;
+
+    if (agent) {
+      where.push(`LOWER(TRIM(agent_name)) = LOWER(TRIM($${idx++}))`);
+      params.push(agent);
+    }
+
+    if (req.user.role === 'agent') {
+      where.push(`agent_name ILIKE $${idx++}`);
+      params.push(`%${req.user.name}%`);
+    } else if (req.user.role === 'admin') {
+      const af = agencyFilter(req, null);
+      if (af) where.push(af);
+    }
+
+    const result = await pool.query(
+      `SELECT id, payment_period, classification, commission, producer_payable,
+              thei_share, bsi_share, policy_number, effective_date, lob, agent_name, carrier
+       FROM commission_records
+       WHERE ${where.join(' AND ')}
+       ORDER BY payment_period ASC NULLS LAST, id ASC`,
+      params
+    );
+
+    const rows = result.rows;
+    let commissionTotal = 0;
+    let payableTotal = 0;
+    for (const r of rows) {
+      commissionTotal += parseFloat(r.commission) || 0;
+      payableTotal += parseFloat(r.producer_payable) || 0;
+    }
+
+    res.json({
+      client,
+      carrier,
+      agent: agent || null,
+      rows,
+      totals: {
+        count: rows.length,
+        commission: Math.round(commissionTotal * 100) / 100,
+        producer_payable: Math.round(payableTotal * 100) / 100,
+      },
+    });
+  } catch (err) {
+    console.error('client-history error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.delete('/:id', requireAuth, requireAdmin, async (req, res) => {
   try {
     const pool = getPool();
@@ -233,9 +280,9 @@ router.get('/summary', requireAuth, async (req, res) => {
     if (planTypes) { const list = planTypes.split(',').map(p=>p.trim()).filter(Boolean); if (list.length) { where.push(`COALESCE(plan_type,'') = ANY($${idx++})`); params.push(list); } }
     if (lobs) { const list = lobs.split(',').map(l=>l.trim()).filter(Boolean); if (list.length) { where.push(`lob = ANY($${idx++})`); params.push(list); } }
 
-    // Agency view: exclude ACA Agent Commissions. Agent view: include everything.
+    // Agency view: ACA house override only (NHP override column). Agent view: include pass-through.
     if (view !== 'agent') {
-      where.push(`NOT (lob = 'ACA' AND classification ILIKE '%agent commission%')`);
+      where.push(AGENCY_ACA_AGENT_EXCLUDE);
     }
 
     const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
@@ -248,7 +295,14 @@ router.get('/summary', requireAuth, async (req, res) => {
       pool.query(`SELECT agent_name, SUM(commission) as total, COUNT(*) as count FROM commission_records ${wc} GROUP BY agent_name ORDER BY total DESC`, params),
       pool.query(`SELECT carrier, SUM(commission) as total, COUNT(*) as count FROM commission_records ${wc} GROUP BY carrier ORDER BY total DESC`, params),
       pool.query(`SELECT payment_period as period, SUM(commission) as total, COUNT(*) as count, ABS(SUM(CASE WHEN commission < 0 THEN commission ELSE 0 END)) as chargebacks FROM commission_records ${wc} GROUP BY payment_period ORDER BY payment_period ASC`, params),
-      pool.query(`SELECT lob, SUM(commission) as total, SUM(COALESCE(producer_payable,0)) as agent_payable, SUM(COALESCE(thei_share,0)) as thei_total, COUNT(*) as count FROM commission_records ${wc} GROUP BY lob ORDER BY lob`, params),
+      pool.query(`SELECT lob,
+        SUM(commission) as total,
+        SUM(COALESCE(producer_payable,0)) as agent_payable,
+        SUM(COALESCE(thei_share,0)) as thei_total,
+        SUM(CASE WHEN COALESCE(producer_payable, 0) <> 0 THEN producer_payable ELSE commission END) as agent_production,
+        COUNT(*) as count,
+        COUNT(*) FILTER (WHERE COALESCE(thei_share, 0) <> 0) as override_count
+        FROM commission_records ${wc} GROUP BY lob ORDER BY lob`, params),
     ]);
 
     res.json({
@@ -284,9 +338,9 @@ router.get('/kpi', requireAuth, async (req, res) => {
     if (planTypes) { const list = planTypes.split(',').map(p=>p.trim()).filter(Boolean); if (list.length) { where.push(`COALESCE(plan_type,'') = ANY($${idx++})`); params.push(list); } }
     if (lobs) { const list = lobs.split(',').map(l=>l.trim()).filter(Boolean); if (list.length) { where.push(`lob = ANY($${idx++})`); params.push(list); } }
 
-    // Agency view: exclude ACA Agent Commissions. Agent view: include everything.
+    // Agency view: ACA house override only (NHP override column). Agent view: include pass-through.
     if (view !== 'agent') {
-      where.push(`NOT (lob = 'ACA' AND classification ILIKE '%agent commission%')`);
+      where.push(AGENCY_ACA_AGENT_EXCLUDE);
     }
 
     const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
@@ -582,6 +636,8 @@ router.get('/adp-payable', requireAuth, requireAdmin, async (req, res) => {
       params.push(`${year}%`);
       whereParts.push(`payment_period LIKE $${params.length}`);
     }
+    const af = agencyFilter(req, null);
+    if (af) whereParts.push(af);
     const whereClause = `WHERE ${whereParts.join(' AND ')}`;
 
     const perProducer = await pool.query(
@@ -648,16 +704,29 @@ router.get('/agency-summary', requireAuth, requireAdmin, async (req, res) => {
     const pool = getPool();
     const period = req.query.period;
     const year = req.query.year;
+    const periods = req.query.periods;
 
-    const whereParts = [];
+    const whereParts = [AGENCY_ACA_AGENT_EXCLUDE];
     const params = [];
-    if (period) {
+    let idx = 1;
+
+    const af = agencyFilter(req, null);
+    if (af) whereParts.push(af);
+
+    if (periods) {
+      const list = String(periods).split(',').map((p) => p.trim()).filter(Boolean);
+      if (list.length) {
+        whereParts.push(`payment_period = ANY($${idx++})`);
+        params.push(list);
+      }
+    } else if (period) {
+      whereParts.push(`payment_period = $${idx++}`);
       params.push(period);
-      whereParts.push(`payment_period = $${params.length}`);
     } else if (year) {
+      whereParts.push(`payment_period LIKE $${idx++}`);
       params.push(`${year}%`);
-      whereParts.push(`payment_period LIKE $${params.length}`);
     }
+
     const whereClause = whereParts.length ? `WHERE ${whereParts.join(' AND ')}` : '';
 
     const result = await pool.query(
@@ -693,8 +762,13 @@ router.get('/agency-summary', requireAuth, requireAdmin, async (req, res) => {
       grandCount += parseInt(r.record_count, 10);
     }
 
+    const periodLabel =
+      (periods && String(periods).split(',').filter(Boolean).length > 1)
+        ? `${String(periods).split(',')[0]}–${String(periods).split(',').slice(-1)[0]}`
+        : period || (year ? `${year}*` : 'all-time');
+
     res.json({
-      period_filter: period || (year ? `${year}*` : 'all-time'),
+      period_filter: periodLabel,
       sources,
       totals: {
         gross: Math.round(grandGross * 100) / 100,

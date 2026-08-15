@@ -1,6 +1,12 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiFetch } from '../api';
 import { formatCarrier } from '../utils/formatCarrier';
+import { lobCardMetrics } from '../lobCardMetrics';
+import {
+  DASHBOARD_MY_AGENTS,
+  DASHBOARD_PRINCIPAL_AGENTS,
+  THEI_DIRECT_AGENTS,
+} from '../theiPrincipalAgents';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -12,11 +18,6 @@ function fmtK(n) {
   return '$' + num.toFixed(0);
 }
 
-const MY_AGENTS = [
-  'Gina Berenguer','Jill Taylor','Katy Robles','Osmary Orozco',
-  'Sabri Perez','The Health Experts Insurance','Yahoska Perez',
-];
-const PRINCIPAL_AGENTS = ['Yahoska Perez', 'Katy Robles', 'The Health Experts Insurance'];
 const CLASSIFICATION_TYPES = ['New Business','Renewal','Agent Commission','Agency Override','Chargeback','HRA/Bonus'];
 
 const C = {
@@ -160,10 +161,89 @@ function FilterGroup({ title, items, selected, onToggle, onSelectAll, onClearAll
   );
 }
 
+function formatPeriodRange(periods) {
+  if (!periods?.length) return 'All periods';
+  const sorted = [...periods].filter((p) => String(p).match(/^\d{6}$/)).sort();
+  if (!sorted.length) return 'All periods';
+  if (sorted.length === 1) return formatPeriod(sorted[0]);
+  return `${formatPeriod(sorted[0])} – ${formatPeriod(sorted[sorted.length - 1])}`;
+}
+
+function dashboardBookLabel(agencyView) {
+  return (agencyView || '').toLowerCase().includes('broker') ? 'BSI' : 'THEI';
+}
+
+function dashboardLensLabel(viewMode) {
+  return viewMode === 'agent' ? 'Principal production' : 'Agency';
+}
+
+function lobFilterLabel(code) {
+  if (code === 'MA' || code === 'MedSupp') return 'Medicare';
+  return code;
+}
+
+/** Trend: later half vs earlier half of the filtered period range. */
+function periodHalfTrend(periodRows, valueKey = 'total') {
+  const rows = (periodRows || []).filter((p) => p.period && String(p.period).match(/^\d{6}$/));
+  if (rows.length < 2) return null;
+  const sorted = [...rows].sort((a, b) => String(a.period).localeCompare(String(b.period)));
+  const mid = Math.floor(sorted.length / 2);
+  const first = sorted.slice(0, mid);
+  const second = sorted.slice(mid);
+  const sum = (list) =>
+    list.reduce((s, p) => {
+      const v =
+        valueKey === 'chargebacks'
+          ? Math.abs(parseFloat(p.chargebacks) || 0)
+          : parseFloat(p.total) || 0;
+      return s + v;
+    }, 0);
+  const sumFirst = sum(first);
+  const sumSecond = sum(second);
+  if (!sumFirst) return null;
+  return ((sumSecond - sumFirst) / Math.abs(sumFirst)) * 100;
+}
+
+function HouseSplitWidget({ data, loading, bookLabel }) {
+  if (loading) {
+    return (
+      <div style={{ ...{ background: C.bg, borderRadius: 10, border: `0.5px solid ${C.border}`, padding: '16px 20px' }, marginBottom: 16 }}>
+        <div style={{ fontSize: 12, color: C.textMuted }}>Loading house split…</div>
+      </div>
+    );
+  }
+  if (!data?.totals) return null;
+  const t = data.totals;
+  const items = [
+    { label: 'Gross pot', value: t.gross, color: C.text },
+    { label: 'THEI share', value: t.thei_share, color: C.green },
+    { label: 'BSI share', value: t.bsi_share, color: C.accentDark },
+    { label: 'Producer payable', value: t.producer_payable, color: C.textMuted },
+  ];
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div style={{ fontSize: 11, color: C.textMuted, marginBottom: 8, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.6px' }}>
+        House split · {bookLabel} book · override 50/50 + agent pass-through
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
+        {items.map((item) => (
+          <div key={item.label} style={{ background: C.bg, borderRadius: 10, border: `0.5px solid ${C.border}`, padding: '14px 16px' }}>
+            <div style={{ fontSize: 10, color: C.textMuted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.7px', marginBottom: 6 }}>
+              {item.label}
+            </div>
+            <div style={{ fontSize: 22, fontWeight: 600, color: item.color, lineHeight: 1.1 }}>{fmt(item.value)}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard({ user, onNavigate }) {
   const agencyView = user.agency || '';
   const [summary, setSummary] = useState(null);
   const [kpi, setKpi] = useState(null);
+  const [agencySummary, setAgencySummary] = useState(null);
   const [periodData, setPeriodData] = useState([]);
   const [allFilters, setAllFilters] = useState({ agents:[], carriers:[], periods:[], planTypes:[] });
   const [loading, setLoading] = useState(false);
@@ -178,9 +258,16 @@ export default function Dashboard({ user, onNavigate }) {
   const [selPlanTypes, setSelPlanTypes] = useState([]);
   const [selLOBs, setSelLOBs] = useState([]);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
-  const [prevPeriodData, setPrevPeriodData] = useState(null);
   const [quickActionsOpen, setQuickActionsOpen] = useState(false);
-  const [viewMode, setViewMode] = useState('agency'); // 'agency' | 'agent'
+  const [viewMode, setViewMode] = useState(() => {
+    const saved = localStorage.getItem('olicomm_dashboard_view_mode');
+    return saved === 'agent' ? 'agent' : 'agency';
+  });
+
+  function setViewModePersisted(mode) {
+    setViewMode(mode);
+    localStorage.setItem('olicomm_dashboard_view_mode', mode);
+  }
 
   function handleKpiSort(col) {
     if (kpiSortCol === col) setKpiSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -191,7 +278,7 @@ export default function Dashboard({ user, onNavigate }) {
     const p = new URLSearchParams();
     // In agent mode, force filter to principals only
     const agentsToUse = viewMode === 'agent'
-      ? PRINCIPAL_AGENTS.filter(a => allFilters.agents.includes(a))
+      ? DASHBOARD_PRINCIPAL_AGENTS.filter(a => allFilters.agents.includes(a))
       : selAgents;
     if (agentsToUse.length) p.set('agents', agentsToUse.join(','));
     if (selCarriers.length) p.set('carriers', selCarriers.join(','));
@@ -207,27 +294,28 @@ export default function Dashboard({ user, onNavigate }) {
     setLoading(true);
     try {
       const params = buildParams();
-      const [s, k] = await Promise.all([apiFetch(`/records/summary?${params}`), apiFetch(`/records/kpi?${params}`)]);
-      setSummary(s); setKpi(k);
+      const fetches = [
+        apiFetch(`/records/summary?${params}`),
+        apiFetch(`/records/kpi?${params}`),
+      ];
+      if (user.role === 'admin' && viewMode === 'agency') {
+        const ap = new URLSearchParams();
+        if (selPeriods.length) ap.set('periods', selPeriods.join(','));
+        fetches.push(apiFetch(`/records/agency-summary?${ap}`));
+      }
+      const results = await Promise.all(fetches);
+      const s = results[0];
+      const k = results[1];
+      setSummary(s);
+      setKpi(k);
+      setAgencySummary(user.role === 'admin' && viewMode === 'agency' ? results[2] : null);
       if (s?.byPeriod) {
         const sorted = [...s.byPeriod].filter(p=>p.period&&p.period!=='Unknown'&&String(p.period).match(/^\d{6}$/)).sort((a,b)=>String(a.period).localeCompare(String(b.period)));
         setPeriodData(sorted.slice(-chartRange));
-        const currentPeriods = sorted.slice(-chartRange);
-        const prevStart = Math.max(0, sorted.length - chartRange * 2);
-        const prevPeriods = sorted.slice(prevStart, sorted.length - chartRange);
-        if (prevPeriods.length > 0) {
-          const currentTotal = currentPeriods.reduce((sum, p) => sum + (parseFloat(p.total) || 0), 0);
-          const prevTotal = prevPeriods.reduce((sum, p) => sum + (parseFloat(p.total) || 0), 0);
-          const currentCB = currentPeriods.reduce((sum, p) => sum + Math.abs(parseFloat(p.chargebacks) || 0), 0);
-          const prevCB = prevPeriods.reduce((sum, p) => sum + Math.abs(parseFloat(p.chargebacks) || 0), 0);
-          setPrevPeriodData({ total: prevTotal, chargebacks: prevCB, current: { total: currentTotal, chargebacks: currentCB } });
-        } else {
-          setPrevPeriodData(null);
-        }
       }
     } catch(e){ console.error(e); }
     finally { setLoading(false); }
-  }, [buildParams, agencyView, chartRange]);
+  }, [buildParams, agencyView, chartRange, user.role, viewMode, selPeriods]);
 
   useEffect(() => {
     setSelAgents([]); setSelCarriers([]); setSelTypes([]); setSelPlanTypes([]); setSelLOBs([]);
@@ -259,14 +347,33 @@ export default function Dashboard({ user, onNavigate }) {
   function drillDown(overrides={}) {
     if (!onNavigate) return;
     const agentOverride = viewMode === 'agent'
-      ? (overrides.agent || PRINCIPAL_AGENTS[0])
-      : (overrides.agent||(selAgents.length===1?selAgents[0]:''));
+      ? (overrides.agent || DASHBOARD_PRINCIPAL_AGENTS[0])
+      : (overrides.agent || (selAgents.length === 1 ? selAgents[0] : ''));
+    const agents = overrides.agents
+      || (viewMode === 'agent'
+        ? DASHBOARD_PRINCIPAL_AGENTS.filter(a => allFilters.agents.includes(a))
+        : (agentOverride ? [agentOverride] : (selAgents.length ? selAgents : [])));
+    const carriers = overrides.carriers
+      || (overrides.carrier ? [overrides.carrier] : (selCarriers.length ? selCarriers : []));
+    const periods = overrides.periods
+      || (overrides.period ? [overrides.period] : (selPeriods.length ? selPeriods : []));
+    const classifications = overrides.classifications
+      || (overrides.classification ? [overrides.classification] : (selTypes.length ? selTypes : []));
+    const lobs = overrides.lobs
+      || (overrides.lob ? [overrides.lob] : (selLOBs.length ? selLOBs : []));
     onNavigate('alldata', {
-      agent: agentOverride,
-      carrier: overrides.carrier||(selCarriers.length===1?selCarriers[0]:''),
-      period: overrides.period||(selPeriods.length===1?selPeriods[0]:''),
-      classification: overrides.classification||(selTypes.length===1?selTypes[0]:''),
-      lob: overrides.lob || (selLOBs.length===1?selLOBs[0]:''),
+      agents,
+      carriers,
+      periods,
+      classifications,
+      lobs,
+      // Keep singular keys for older call sites / deep links
+      agent: agents.length === 1 ? agents[0] : '',
+      carrier: carriers.length === 1 ? carriers[0] : '',
+      period: periods.length === 1 ? periods[0] : '',
+      classification: classifications.length === 1 ? classifications[0] : '',
+      lob: lobs.length === 1 ? lobs[0] : '',
+      amountSign: overrides.amountSign || '',
     });
   }
 
@@ -285,15 +392,19 @@ export default function Dashboard({ user, onNavigate }) {
   const seenLabels = new Set();
   (allFilters.periods||[]).forEach(p => { const l=formatPeriod(p); if(l&&!seenLabels.has(l)){seenLabels.add(l);cleanPeriods.push(p);} });
 
-  const agentList = user.role==='admin'?MY_AGENTS.filter(a=>allFilters.agents.includes(a)):[user.name];
-  const hasFilters = selAgents.length||selCarriers.length||selPeriods.length||selTypes.length||selPlanTypes.length;
-  const totalFiltersActive = [selAgents,selCarriers,selPeriods,selTypes,selPlanTypes].reduce((s,a)=>s+a.length,0);
+  const agentList = user.role==='admin'?DASHBOARD_MY_AGENTS.filter(a=>allFilters.agents.includes(a)):[user.name];
+  const hasFilters = selAgents.length||selCarriers.length||selPeriods.length||selTypes.length||selPlanTypes.length||selLOBs.length;
+  const totalFiltersActive = [selAgents,selCarriers,selPeriods,selTypes,selPlanTypes,selLOBs].reduce((s,a)=>s+a.length,0);
   const netSales = kpi?.agents?.reduce((s,a)=>s+a.net_sales,0)||0;
   const totalCB = kpi?.totals?.chargeback_amount||0;
   const totalAdv = kpi?.totals?.advance_amount||0;
   const card = {background:C.bg,borderRadius:10,border:`0.5px solid ${C.border}`,padding:'16px 20px'};
-
-  const currentYear = new Date().getFullYear().toString();
+  const bookLabel = dashboardBookLabel(agencyView);
+  const contextLine = `${bookLabel} · ${dashboardLensLabel(viewMode)} · ${formatPeriodRange(selPeriods)}`;
+  const totalTrend = periodHalfTrend(summary?.byPeriod, 'total');
+  const cbTrend = periodHalfTrend(summary?.byPeriod, 'chargebacks');
+  const lobFilterPills = [...new Set(selLOBs.map(lobFilterLabel))];
+  const filterPills = [...selAgents,...selCarriers,...selPeriods.map(formatPeriod),...selTypes,...selPlanTypes,...lobFilterPills].filter(Boolean);
 
   return (
     <div style={{display:'flex',height:'100vh',overflow:'hidden',background:C.bgSubtle}}>
@@ -324,7 +435,14 @@ export default function Dashboard({ user, onNavigate }) {
                 {totalFiltersActive} filter{totalFiltersActive!==1?'s':''} active
               </div>
             )}
-            <FilterGroup title="Agent" items={agentList} selected={selAgents} onToggle={item=>toggle(selAgents,setSelAgents,item)} onSelectAll={items=>setSelAgents([...items])} onClearAll={()=>setSelAgents([])}/>
+            {viewMode === 'agency' ? (
+              <FilterGroup title="Agent" items={agentList} selected={selAgents} onToggle={item=>toggle(selAgents,setSelAgents,item)} onSelectAll={items=>setSelAgents([...items])} onClearAll={()=>setSelAgents([])}/>
+            ) : (
+              <div style={{ background: C.accentLight, borderRadius: 6, padding: '8px 10px', marginBottom: 12, fontSize: 11, color: C.accentDark, lineHeight: 1.45, border: '0.5px solid #E8D9B8' }}>
+                <div style={{ fontWeight: 600, marginBottom: 4 }}>Principal agents</div>
+                {THEI_DIRECT_AGENTS.join(', ')}, THEI house (incl. UHC agency writing) — sidebar agent filter disabled in this view.
+              </div>
+            )}
             <FilterGroup title="Plan Type" items={allFilters.planTypes||[]} selected={selPlanTypes} onToggle={item=>toggle(selPlanTypes,setSelPlanTypes,item)} onSelectAll={items=>setSelPlanTypes([...items])} onClearAll={()=>setSelPlanTypes([])}/>
             <FilterGroup title="Carrier" items={allFilters.carriers||[]} selected={selCarriers} onToggle={item=>toggle(selCarriers,setSelCarriers,item)} onSelectAll={items=>setSelCarriers([...items])} onClearAll={()=>setSelCarriers([])}/>
             <FilterGroup title="Period" items={cleanPeriods} selected={selPeriods} onToggle={item=>toggle(selPeriods,setSelPeriods,item)} onSelectAll={items=>setSelPeriods([...items])} onClearAll={()=>setSelPeriods([])} format={formatPeriod}/>
@@ -344,12 +462,14 @@ export default function Dashboard({ user, onNavigate }) {
           <div style={{display:'flex',alignItems:'baseline',justifyContent:'space-between',marginBottom:16}}>
             <div>
               <div style={{fontSize:20,fontWeight:500,color:C.text}}>Dashboard</div>
-              <div style={{fontSize:13,color:C.text,marginTop:2}}>Welcome back, {user.name.split(' ')[0]} — here's your {currentYear} commission overview</div>
+              <div style={{fontSize:13,color:C.text,marginTop:2}}>
+                Welcome back, {user.name.split(' ')[0]} — {contextLine}
+              </div>
             </div>
             <div style={{display:'flex',alignItems:'center',gap:10}}>
               {hasFilters && (
                 <div style={{display:'flex',flexWrap:'wrap',gap:4,justifyContent:'flex-end',maxWidth:400}}>
-                  {[...selAgents,...selCarriers,...selPeriods.map(formatPeriod),...selTypes,...selPlanTypes].filter(Boolean).map(f=>(
+                  {filterPills.map(f=>(
                     <span key={f} style={{background:C.accent,color:C.sidebar,borderRadius:4,padding:'2px 8px',fontSize:11,fontWeight:500}}>{f}</span>
                   ))}
                 </div>
@@ -357,8 +477,8 @@ export default function Dashboard({ user, onNavigate }) {
 
               {/* Agency / Agent toggle */}
               <div style={{display:'flex',borderRadius:8,border:`0.5px solid ${C.border}`,overflow:'hidden'}}>
-                {[['agency','🏢 Agency'],['agent','👤 Agent']].map(([mode, label]) => (
-                  <button key={mode} onClick={() => setViewMode(mode)} style={{
+                {[['agency','Agency'],['agent','Agent']].map(([mode, label]) => (
+                  <button key={mode} onClick={() => setViewModePersisted(mode)} style={{
                     padding:'7px 14px', fontSize:12, border:'none', cursor:'pointer',
                     fontWeight: viewMode===mode ? 600 : 400,
                     background: viewMode===mode ? C.accentDark : 'transparent',
@@ -398,6 +518,10 @@ export default function Dashboard({ user, onNavigate }) {
             </div>
           </div>
 
+          {user.role === 'admin' && viewMode === 'agency' && (
+            <HouseSplitWidget data={agencySummary} loading={loading} bookLabel={bookLabel} />
+          )}
+
           {/* LOB Breakdown Cards */}
           {summary?.byLOB && summary.byLOB.length > 0 && (() => {
             const combined = {};
@@ -408,11 +532,9 @@ export default function Dashboard({ user, onNavigate }) {
                 combined[displayName] = { displayName, lobCodes: [], total: 0, count: 0 };
               }
               combined[displayName].lobCodes.push(lobName);
-              // Agent view: use thei_total for all LOBs (personal production flows through thei_total)
-              // Agency view: use thei_total for non-ACA, agent_payable for ACA overrides
-              const amount = parseFloat(lobData.thei_total || 0);
+              const { amount, count } = lobCardMetrics(lobData, lobName, viewMode);
               combined[displayName].total += amount;
-              combined[displayName].count += parseInt(lobData.count || 0);
+              combined[displayName].count += count;
             });
 
             const cards = Object.values(combined).filter(cardData => {
@@ -434,14 +556,20 @@ export default function Dashboard({ user, onNavigate }) {
                 <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit, minmax(280px, 1fr))',gap:10}}>
                 {cards.map((cardData, idx) => {
                   const isACA = cardData.displayName === 'ACA';
+                  const isMedicare = cardData.displayName === 'Medicare';
                   const isActive = selLOBs.length > 0 && cardData.lobCodes.some(code => selLOBs.includes(code));
                   return (
                     <div
                       key={idx}
                       onClick={() => {
+                        if (isMedicare) {
+                          drillDown({ lobs: cardData.lobCodes });
+                          return;
+                        }
                         if (isActive) { setSelLOBs([]); }
                         else { setSelLOBs(cardData.lobCodes); }
                       }}
+                      title={isMedicare ? 'Open Medicare commission details' : undefined}
                       style={{
                         ...card,
                         padding:'16px 20px',
@@ -460,7 +588,15 @@ export default function Dashboard({ user, onNavigate }) {
                         {loading ? '—' : fmt(cardData.total)}
                       </div>
                       <div style={{fontSize:11,color:C.textMuted}}>
-                        {cardData.count.toLocaleString()} {isACA ? 'agency policies' : 'policies'}
+                        {cardData.count.toLocaleString()}{' '}
+                        {isACA && viewMode === 'agency'
+                          ? 'override lines'
+                          : isACA
+                            ? 'agent policies'
+                            : 'policies'}
+                        {isMedicare && (
+                          <span style={{ marginLeft: 6, color: C.accentDark }}>· view details</span>
+                        )}
                       </div>
                     </div>
                   );
@@ -472,31 +608,36 @@ export default function Dashboard({ user, onNavigate }) {
 
           <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:10,marginBottom:16}}>
             {(() => {
-              const calcChange = (current, prev) => {
-                if (!prev || prev === 0) return null;
-                const change = ((current - prev) / Math.abs(prev)) * 100;
-                return change;
-              };
-              const currentTotal = summary?.totalCommission || 0;
-              const currentCB = totalCB;
-              const prevTotal = prevPeriodData?.total || 0;
-              const prevCB = prevPeriodData?.chargebacks || 0;
-              const totalChange = calcChange(currentTotal, prevTotal);
-              const cbChange = calcChange(currentCB, prevCB);
+              const calcChange = (change) => (change === null || change === undefined ? null : change);
 
               return [
-                {label:'Total Commissions', value:fmt(summary?.totalCommission), color:C.green, sub:`${(summary?.totalRecords||0).toLocaleString()} records`, change: totalChange},
-                {label:'Net Sales', value:fmt(netSales), color:C.accentDark, sub:'after chargebacks', change: null},
-                {label:'Chargebacks', value:fmt(totalCB), color:totalCB>0?C.red:C.textMuted, sub:totalAdv>0?`${fmt(totalAdv)} advance`:'no advances', change: cbChange},
-                {label:'Agents', value:kpi?.agents?.length||0, color:C.text, sub:'active this period', change: null},
+                {label:'Total Commissions', value:fmt(summary?.totalCommission), color:C.green, sub:`${(summary?.totalRecords||0).toLocaleString()} records`, change: calcChange(totalTrend), changeHint: totalTrend != null ? '2nd half vs 1st' : null, onClick: null},
+                {label:'Net Sales', value:fmt(netSales), color:C.accentDark, sub:'after chargebacks', change: null, onClick: () => drillDown({})},
+                {label:'Chargebacks', value:fmt(totalCB), color:totalCB>0?C.red:C.textMuted, sub:totalAdv>0?`${fmt(totalAdv)} advance`:'no advances', change: calcChange(cbTrend), changeHint: cbTrend != null ? '2nd half vs 1st' : null, onClick: () => drillDown({ amountSign: 'negative' })},
+                {label:'Agents', value:kpi?.agents?.length||0, color:C.text, sub:'active this period', change: null, onClick: null},
               ].map((c,i)=>(
-                <div key={i} style={{...card,padding:'16px 20px'}}>
-                  <div style={{fontSize:10,color:C.textMuted,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.8px',marginBottom:8}}>{c.label}</div>
+                <div
+                  key={i}
+                  onClick={c.onClick || undefined}
+                  title={c.onClick ? `Open ${c.label.toLowerCase()} details` : undefined}
+                  style={{
+                    ...card,
+                    padding:'16px 20px',
+                    cursor: c.onClick ? 'pointer' : 'default',
+                    transition: c.onClick ? 'border-color 0.15s, box-shadow 0.15s' : undefined,
+                  }}
+                  onMouseEnter={c.onClick ? (e) => { e.currentTarget.style.borderColor = C.accent; } : undefined}
+                  onMouseLeave={c.onClick ? (e) => { e.currentTarget.style.borderColor = C.border; } : undefined}
+                >
+                  <div style={{fontSize:10,color:C.textMuted,fontWeight:600,textTransform:'uppercase',letterSpacing:'0.8px',marginBottom:8}}>
+                    {c.label}
+                    {c.onClick && <span style={{ marginLeft: 6, fontWeight: 500, color: C.accentDark, textTransform: 'none', letterSpacing: 0 }}>· details</span>}
+                  </div>
                   <div style={{fontSize:28,fontWeight:600,color:c.color,lineHeight:1.1,marginBottom:6}}>{loading?'—':c.value}</div>
-                  <div style={{display:'flex',alignItems:'center',gap:6,marginTop:4}}>
+                  <div style={{display:'flex',alignItems:'center',gap:6,marginTop:4,flexWrap:'wrap'}}>
                     <div style={{fontSize:11,color:C.textMuted}}>{c.sub}</div>
                     {c.change !== null && c.change !== undefined && !loading && (
-                      <div style={{fontSize:11,fontWeight:600,color:c.change>0?C.green:c.change<0?C.red:C.textMuted,background:c.change>0?'rgba(74,114,96,0.1)':c.change<0?'rgba(160,82,45,0.1)':'transparent',padding:'2px 6px',borderRadius:4}}>
+                      <div style={{fontSize:11,fontWeight:600,color:c.change>0?C.green:c.change<0?C.red:C.textMuted,background:c.change>0?'rgba(74,114,96,0.1)':c.change<0?'rgba(160,82,45,0.1)':'transparent',padding:'2px 6px',borderRadius:4}} title={c.changeHint || ''}>
                         {c.change>0?'↑':'↓'} {Math.abs(c.change).toFixed(1)}%
                       </div>
                     )}

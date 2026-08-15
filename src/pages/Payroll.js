@@ -3,6 +3,8 @@ import { apiFetch, apiDownload } from '../api';
 import LOAStatements from '../components/LOAStatements';
 import { formatDate } from '../utils/dateFormat';
 import { countSplitDepositClients, groupClientDeposits } from '../utils/salesReconPayment';
+import { fetchAllPages } from '../fetchAllPages';
+import TruncationBanner from '../components/TruncationBanner';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -64,6 +66,17 @@ function downloadBase64File(filename, base64, mime) {
   a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+function filenameForHouseExcel(type, period, payee) {
+  const periodPart = period && period !== 'all' ? period : 'ALL';
+  if (type === 'bsi_override') return `BSI_Override_Statement_${periodPart}.xlsx`;
+  if (type === 'thei_nhp') return `THEI_NHP_Statement_${periodPart}.xlsx`;
+  if (type === 'thei_bsi') return `THEI_BSI_Remittance_Statement_${periodPart}.xlsx`;
+  if (type === 'thei_override') return `THEI_Override_Statement_${periodPart}.xlsx`;
+  if (type === 'marco') return `Marco_Override_Statement_${periodPart}.xlsx`;
+  const who = String(payee || 'Override').replace(/\s+/g, '_').replace(/[^A-Za-z0-9_\-]/g, '');
+  return `${who}_Override_Statement_${periodPart}.xlsx`;
 }
 
 function chipStyle(active) {
@@ -336,7 +349,7 @@ function OverridePayeeRow({ s, onExport, exportLabel = 'Statement' }) {
           <table style={{ width: '100%', fontSize: 12, borderCollapse: 'collapse' }}>
             <thead>
               <tr>
-                {['Policy #', 'Client', 'Carrier', 'Writing agent', 'Type', 'Amount'].map((h) => (
+                {['Policy #', 'Client', 'Carrier', 'Writing agent', 'Effective', 'Type', 'Amount'].map((h) => (
                   <th
                     key={h}
                     style={{
@@ -360,6 +373,9 @@ function OverridePayeeRow({ s, onExport, exportLabel = 'Statement' }) {
                   <td style={{ padding: '6px 8px' }}>{l.client_full_name}</td>
                   <td style={{ padding: '6px 8px', color: 'var(--text-muted)', fontSize: 11 }}>{l.carrier}</td>
                   <td style={{ padding: '6px 8px', color: 'var(--text-muted)', fontSize: 11 }}>{l.writing_agent}</td>
+                  <td style={{ padding: '6px 8px', color: 'var(--text-muted)', fontSize: 11 }}>
+                    {formatDate(l.effective_date)}
+                  </td>
                   <td style={{ padding: '6px 8px', color: 'var(--text-muted)', fontSize: 11 }}>{l.classification}</td>
                   <td
                     style={{
@@ -384,7 +400,7 @@ function OverridePayeeRow({ s, onExport, exportLabel = 'Statement' }) {
 function HouseOverridesPanel() {
   const [ovTypes, setOvTypes] = useState([]);
   const [ovPeriods, setOvPeriods] = useState([]);
-  const [ovType, setOvType] = useState('thei_override');
+  const [ovType, setOvType] = useState('thei_nhp');
   const [ovPeriod, setOvPeriod] = useState('');
   const [preview, setPreview] = useState(null);
   const [ovLoading, setOvLoading] = useState(false);
@@ -429,27 +445,39 @@ function HouseOverridesPanel() {
     }
   }
 
-  const useExcel = ovType === 'thei_override' || ovType === 'bsi_override';
-
   async function exportAll() {
     if (!ovType || !ovPeriod) return;
     setOvLoading(true);
     setOvError('');
     try {
-      if (useExcel) {
-        const data = await apiFetch(
-          `/override-statements/export-all?type=${encodeURIComponent(ovType)}&period=${encodeURIComponent(ovPeriod)}`
-        );
-        for (const f of data.files || []) {
-          if (f.xlsxBase64) downloadBase64File(f.filename, f.xlsxBase64);
-        }
-        if (data.summaryCsv) downloadTextFile(data.summaryFilename || 'summary.csv', data.summaryCsv);
-      } else {
-        const data = await apiFetch(
-          `/override-statements/export-all?type=${encodeURIComponent(ovType)}&period=${encodeURIComponent(ovPeriod)}`
-        );
-        if (data.summaryCsv) downloadTextFile(data.summaryFilename || 'summary.csv', data.summaryCsv);
-        for (const f of data.files || []) downloadTextFile(f.filename, f.csv);
+      const data = await apiFetch(
+        `/override-statements/export-all?type=${encodeURIComponent(ovType)}&period=${encodeURIComponent(ovPeriod)}`
+      );
+      for (const f of data.files || []) {
+        if (f.xlsxBase64) downloadBase64File(f.filename, f.xlsxBase64);
+      }
+      if (data.summaryCsv) downloadTextFile(data.summaryFilename || 'summary.csv', data.summaryCsv);
+    } catch (e) {
+      setOvError(e.message || 'Export failed');
+    } finally {
+      setOvLoading(false);
+    }
+  }
+
+  async function exportAllTypes() {
+    if (!ovPeriod) return;
+    setOvLoading(true);
+    setOvError('');
+    try {
+      const data = await apiFetch(
+        `/override-statements/export-all-types?period=${encodeURIComponent(ovPeriod)}`
+      );
+      for (const f of data.files || []) {
+        if (f.xlsxBase64) downloadBase64File(f.filename, f.xlsxBase64);
+      }
+      if (data.summaryCsv) downloadTextFile(data.summaryFilename || 'house_summary.csv', data.summaryCsv);
+      if (!(data.files || []).length) {
+        setOvError('No house statement lines for this period');
       }
     } catch (e) {
       setOvError(e.message || 'Export failed');
@@ -460,23 +488,15 @@ function HouseOverridesPanel() {
 
   async function exportOne(payee) {
     try {
-      if (useExcel) {
-        const qs = new URLSearchParams({
-          type: ovType,
-          period: ovPeriod,
-          payee,
-        });
-        await apiDownload(
-          `/override-statements/export-xlsx?${qs.toString()}`,
-          `${ovType === 'bsi_override' ? 'BSI' : 'THEI'}_Override_Statement_${ovPeriod}.xlsx`
-        );
-        return;
-      }
-      const data = await apiFetch(
-        `/override-statements/export-all?type=${encodeURIComponent(ovType)}&period=${encodeURIComponent(ovPeriod)}`
+      const qs = new URLSearchParams({
+        type: ovType,
+        period: ovPeriod,
+        payee,
+      });
+      await apiDownload(
+        `/override-statements/export-xlsx?${qs.toString()}`,
+        filenameForHouseExcel(ovType, ovPeriod, payee)
       );
-      const file = (data.files || []).find((f) => f.payee === payee);
-      if (file) downloadTextFile(file.filename, file.csv);
     } catch (e) {
       setOvError(e.message || 'Export failed');
     }
@@ -487,7 +507,7 @@ function HouseOverridesPanel() {
       <div className="card" style={{ marginBottom: 14 }}>
         <div className="card-title" style={{ fontSize: 15, marginBottom: 6 }}>House statements</div>
         <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14, lineHeight: 1.45 }}>
-          THEI / BSI 50/50, Marco (IRS Swan) $10 agency peel, and Integrity / CAM / Chris producer shares.
+          THEI NHP sales and THEI BSI remittance are separate reports. Marco (IRS Swan) $10 agency peel, and Integrity / CAM / Chris producer shares.
           Lina’s agent production is under <strong>Agent Payouts</strong> — not here.
         </div>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
@@ -539,7 +559,12 @@ function HouseOverridesPanel() {
           </button>
           {preview && (
             <button className="btn" onClick={exportAll} disabled={ovLoading}>
-              {useExcel ? 'Export all Excel' : 'Export all CSVs'}
+              Export all Excel
+            </button>
+          )}
+          {ovPeriod && (
+            <button className="btn" onClick={exportAllTypes} disabled={ovLoading}>
+              Export all types
             </button>
           )}
         </div>
@@ -573,7 +598,7 @@ function HouseOverridesPanel() {
               <OverridePayeeRow
                 key={s.payee}
                 s={s}
-                exportLabel={useExcel ? 'Excel' : 'CSV'}
+                exportLabel="Excel"
                 onExport={() => exportOne(s.payee)}
               />
             ))
@@ -603,6 +628,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
   const [linaBusy, setLinaBusy] = useState(false);
   const [linaError, setLinaError] = useState('');
   const [statusBusy, setStatusBusy] = useState(false);
+  const [truncationWarning, setTruncationWarning] = useState(null);
   const isBSI = (user.agency || '').toLowerCase().includes('broker society');
   const agencyParam = encodeURIComponent(user.agency || 'thei');
 
@@ -682,13 +708,15 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
     if (!period) return;
     setLoading(true);
     setLoadError('');
+    setTruncationWarning(null);
     try {
-      const url =
+      const path =
         period === 'all'
-          ? `/records?limit=5000`
-          : `/records?period=${encodeURIComponent(period)}&limit=5000`;
-      const data = await apiFetch(url);
-      let allRecs = data.records || [];
+          ? `/records`
+          : `/records?period=${encodeURIComponent(period)}`;
+      const page = await fetchAllPages(path, { pageSize: 5000 }, apiFetch);
+      let allRecs = page.items || [];
+      setTruncationWarning(page.warning);
 
       if (isBSI) {
         allRecs = allRecs.filter((r) => {
@@ -874,7 +902,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
     },
     overrides: {
       title: 'House Statements',
-      sub: 'THEI / BSI overrides, Marco (IRS Swan) $10 agency peel, Integrity / CAM / Chris',
+      sub: 'THEI NHP vs BSI remittance, Marco (IRS Swan) $10 agency peel, Integrity / CAM / Chris',
     },
     loa: {
       title: 'LOA Statements',
@@ -969,6 +997,8 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
                 {loadError}
               </div>
             )}
+
+            <TruncationBanner message={truncationWarning} />
 
             {!selectedPeriod ? (
               <div className="card">

@@ -7,6 +7,10 @@ import {
   resolveSalePaymentStatus,
   sumCommissionNet,
 } from '../utils/salesReconPayment';
+import { THEI_DIRECT_AGENTS, isTheiDirectAgent, directAgentsLabel } from '../theiPrincipalAgents';
+import { normName, normalizeCarrier, carriersMatch } from '../matchingNormalize';
+import { fetchAllPages, truncationMessage } from '../fetchAllPages';
+import TruncationBanner from '../components/TruncationBanner';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -87,38 +91,11 @@ function normalizeName(name) {
   return name.toLowerCase().trim().replace(/\s+/g, ' ');
 }
 
-// Normalize name to match database normalized_name logic (same as Missing Renewals)
-function normName(name) {
-  if (!name) return '';
-  const s = String(name).trim();
-  
-  // Helper: Convert to Title Case
-  function toTitleCase(str) {
-    return str.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
-  }
-  
-  // Handle comma-separated "LAST, FIRST" format
-  // Everything before the comma is the full surname (handles compound surnames)
-  if (s.includes(',')) {
-    let [last, first] = s.split(',').map(p => p.trim());
-    
-    // Strip common suffixes from surname
-    last = last.replace(/\b(JR|SR|III|II|IV|V)\.?$/i, '').trim();
-    
-    // Return "FIRST LAST" in Title Case
-    const normalized = `${first} ${last}`.replace(/\s+/g, ' ').trim();
-    return toTitleCase(normalized);
-  }
-  
-  // For non-comma format, just normalize spaces and title case
-  const normalized = s.replace(/\s+/g, ' ').trim();
-  return toTitleCase(normalized);
-}
-
-// Normalize agent names (handle test data and variations)
+// Normalize name to match database normalized_name logic (shared matchingNormalize)
+// normalizeAgentName kept local for Yahoska test alias
 function normalizeAgentName(name) {
   if (!name) return '';
-  const normalized = normalizeName(name);
+  const normalized = (name || '').toLowerCase().trim().replace(/\s+/g, ' ');
   
   // Map known variations to canonical names
   if (normalized.includes('yahoska')) {
@@ -160,24 +137,7 @@ function parseClientName(name) {
   return { first: '', last: words[0] || '', full: normalized };
 }
 
-// Normalize carrier names
-function normalizeCarrier(carrier) {
-  if (!carrier) return '';
-  const c = carrier.toLowerCase().trim();
-  
-  if (c.includes('humana')) return 'humana';
-  if (c.includes('aetna')) return 'aetna';
-  if (c.includes('uhc') || c.includes('united')) return 'uhc';
-  if (c.includes('doctors')) return 'doctors';
-  if (c.includes('careplus') || c.includes('care plus')) return 'careplus';
-  if (c.includes('devoted')) return 'devoted';
-  if (c.includes('wellcare')) return 'wellcare';
-  if (c.includes('healthsun')) return 'healthsun';
-  if (c.includes('florida blue') || c.includes('fl blue')) return 'florida blue';
-  
-  return c;
-}
-
+// Normalize carrier names — shared matchingNormalize (Omaha ≠ UHC)
 // Check if dates match
 function datesMatch(date1, date2) {
   if (!date1 || !date2) return false;
@@ -254,8 +214,8 @@ function findMatch(sale, commissions, manualPayments = []) {
     // Client name match using normName() (handles "LAST FIRST" vs "FIRST LAST")
     const clientMatch = saleClientNorm === commClientNorm;
     
-    // Carrier match
-    const carrierMatch = carrier === commCarrier || carrier.includes(commCarrier) || commCarrier.includes(carrier);
+    // Carrier match (exact canonical — empty carrier never matches)
+    const carrierMatch = carriersMatch(carrier, commCarrier);
     
     // Policy number match (fallback for name mismatches)
     const policyMatch = salePolicy && commPolicy && salePolicy === commPolicy;
@@ -408,18 +368,23 @@ export default function Reconciliation({ user }) {
   const [sortDirection, setSortDirection] = useState('asc');
   const [searchTerm, setSearchTerm] = useState('');
   const [showDirectAgentsOnly, setShowDirectAgentsOnly] = useState(true);  // Default to direct agents only
+  const [truncationWarning, setTruncationWarning] = useState(null);
 
   async function loadData() {
     setLoading(true);
     setError(null);
+    setTruncationWarning(null);
     console.log('Loading MedicarePro sales...');
     try {
-      // Fetch sales from MedicarePro upload endpoint
-      const salesData = await apiFetch('/medicarepro');
-      console.log('MedicarePro API response:', salesData);
-      
+      // Fetch sales from MedicarePro upload endpoint (page through limit)
+      const salesPage = await fetchAllPages('/medicarepro', {
+        itemsKey: 'sales',
+        pageSize: 10000,
+      }, apiFetch);
+      const rawSales = salesPage.items || [];
+      console.log('MedicarePro sales loaded:', rawSales.length, 'total', salesPage.total);
+
       // Deduplicate sales by client + policy + date (Fix #6b)
-      const rawSales = salesData.sales || [];
       const uniqueSales = Array.from(
         new Map(
           rawSales.map(sale => [
@@ -428,24 +393,24 @@ export default function Reconciliation({ user }) {
           ])
         ).values()
       );
-      
+
       if (rawSales.length !== uniqueSales.length) {
-        console.log(`✅ Sales deduplication: ${rawSales.length} → ${uniqueSales.length} (removed ${rawSales.length - uniqueSales.length} duplicates)`);
+        console.log(`Sales deduplication: ${rawSales.length} → ${uniqueSales.length} (removed ${rawSales.length - uniqueSales.length} duplicates)`);
       }
-      
+
       setSales(uniqueSales);
-      
+
       // Fetch commissions from OliComm (ALL records - need complete dataset for matching)
       console.log('Loading commission records...');
-      const commData = await apiFetch('/records?limit=50000');  // Increased from 100 to 50000
-      console.log('Commission response:', commData);
-      
-      // Include ALL records (even chargebacks with negative amounts)
-      // Need full picture to net: Karl Brown has +$318.09 New Business AND -$347 chargeback
-      const allCommissions = commData.records || [];
-      console.log(`✅ Loaded ${allCommissions.length} commission records (including chargebacks)`);
-      setCommissions(allCommissions);
-      
+      const commPage = await fetchAllPages('/records', { pageSize: 5000 }, apiFetch);
+      console.log(`Loaded ${commPage.fetched} commission records (total ${commPage.total})`);
+      setCommissions(commPage.items || []);
+
+      setTruncationWarning(truncationMessage([
+        salesPage.warning ? `Sales: ${salesPage.warning}` : null,
+        commPage.warning ? `Commissions: ${commPage.warning}` : null,
+      ]));
+
       // Fetch manual payments (optional - may not exist yet)
       try {
         console.log('Loading manual payments...');
@@ -468,22 +433,12 @@ export default function Reconciliation({ user }) {
     loadData();
   }, []);
 
-  // Direct agents who get carrier commissions (Yahoska, Katy, Carolina)
-  const directAgents = ['Yahoska Perez', 'Katy Robles', 'Carolina Robles'];
-  
-  // Filter sales by direct agents if toggle is on
+  // Filter sales by direct agents if toggle is on (shared list: Yahoska, Katy, Carolina)
   let filteredSales = sales;
   if (showDirectAgentsOnly) {
-    filteredSales = sales.filter(sale => {
-      const agentName = (sale.agent_name || sale.agent || '').toLowerCase();
-      if (!agentName) return false;
-      return directAgents.some(da => {
-        const d = da.toLowerCase();
-        if (agentName.includes(d) || d.includes(agentName)) return true;
-        // e.g. "Carolina Andrea Robles" ↔ "Carolina Robles"
-        const tokens = d.split(/\s+/).filter(Boolean);
-        return tokens.length >= 2 && tokens.every(t => agentName.includes(t));
-      });
+    filteredSales = sales.filter((sale) => {
+      const agentName = sale.agent_name || sale.agent || '';
+      return isTheiDirectAgent(agentName);
     });
   }
   
@@ -828,7 +783,7 @@ export default function Reconciliation({ user }) {
                   onChange={e => setShowDirectAgentsOnly(e.target.checked)}
                   style={{cursor:'pointer'}}
                 />
-                <span>Direct agents only (Yahoska, Katy & Carolina)</span>
+                <span>Direct agents only ({directAgentsLabel()})</span>
               </label>
               <button className="btn btn-secondary" onClick={exportToCSV} disabled={loading}>
                 📥 Export CSV
@@ -842,9 +797,11 @@ export default function Reconciliation({ user }) {
 
         {error && (
           <div className="card" style={{marginBottom:14, background:'var(--red-light)', border:'1px solid var(--red)'}}>
-            <div style={{color:'var(--red-dark)', fontWeight:500}}>❌ Error: {error}</div>
+            <div style={{color:'var(--red-dark)', fontWeight:500}}>Error: {error}</div>
           </div>
         )}
+
+        <TruncationBanner message={truncationWarning} />
 
         {loading ? (
           <div className="card">

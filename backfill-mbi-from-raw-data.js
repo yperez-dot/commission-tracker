@@ -1,10 +1,12 @@
+
+if (!process.env.DATABASE_URL) { console.error('DATABASE_URL required'); process.exit(1); }
 // Backfill MBI and carrier_member_id for existing agency_production rows
 // Extracts from raw_data JSONB column using same logic as parser
 
 const { Pool } = require('pg');
 
 const pool = new Pool({
-  connectionString: 'postgresql://postgres:LyahRMtjzhkPkaPpXtgysioPUBUVPAOi@metro.proxy.rlwy.net:24676/railway'
+  connectionString: process.env.DATABASE_URL
 });
 
 // Validate MBI format (fixed regex - tested against real data)
