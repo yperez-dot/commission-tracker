@@ -11,6 +11,10 @@ First 5 columns (required for audit):
 
 Regenerate after OliComm uploads:
   node scripts/enrich-carrier-fight-audit-for-katy.js
+  node scripts/export-carrier-google-sheet.js
+
+Google Sheet import (Reason, Carrier, Client, Policy #, …):
+  CARRIER_SHEET_IMPORT.csv — same folder
 
 Includes original 111 + Ibarra ($80) + Milagros ($240).
 

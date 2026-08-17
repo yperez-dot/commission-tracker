@@ -18,6 +18,16 @@ https://raw.githubusercontent.com/yperez-dot/commission-tracker/cursor/fight-pac
 BSI asks carrier (Bucket C):
 https://raw.githubusercontent.com/yperez-dot/commission-tracker/cursor/fight-pack-exports-e242/exports/fight-packs-2026-08-15/google-import/C_BSI_asks_Carrier.csv
 
+Carrier audit — your Google Sheet layout (113 rows, Policy # + NPN filled):
+https://raw.githubusercontent.com/yperez-dot/commission-tracker/cursor/client-fight-analysis-e242/exports/fight-packs-2026-08-15/google-import/CARRIER_SHEET_IMPORT.csv
+
+Katy audit (Policy_number first — 5 audit columns):
+https://raw.githubusercontent.com/yperez-dot/commission-tracker/cursor/client-fight-analysis-e242/exports/fight-packs-2026-08-15/google-import/CARRIER_AUDIT_KATY.csv
+
+Regenerate sheet import after OliComm uploads:
+  node scripts/enrich-carrier-fight-audit-for-katy.js
+  node scripts/export-carrier-google-sheet.js
+
 Overlap warning (same member in A and C):
 https://raw.githubusercontent.com/yperez-dot/commission-tracker/cursor/fight-pack-exports-e242/exports/fight-packs-2026-08-15/google-import/OVERLAP_A_and_C.csv
 
@@ -32,5 +42,5 @@ https://github.com/yperez-dot/commission-tracker/tree/cursor/fight-pack-exports-
 
 FROZEN TOTALS
   THEI ask BSI now (A+B) = $5,468.55
-  Carrier ask via BSI (C) = $2,775.66
+  Carrier ask via BSI (C) = $16,670.66 (113 rows incl. Ibarra + Milagros)
   Overlap members A+C = 14 (do not double count)
