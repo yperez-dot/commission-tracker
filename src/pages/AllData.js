@@ -5,6 +5,7 @@ import { formatDate } from '../utils/dateFormat';
 import EditCommissionModal from '../components/EditCommissionModal';
 import { commissionUploadExportPath, exportUploadFile } from '../utils/exportUpload';
 import { uploadCategoryLabel } from '../utils/uploadDestination';
+import { classifyClientFileStream } from '../clientFileStream';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -151,7 +152,6 @@ export default function AllData({ user, initialFilters = {} }) {
   const [editRecord, setEditRecord] = useState(null);
   const [clientHistory, setClientHistory] = useState(null); // { client, carrier, agent }
   const [clientHistoryData, setClientHistoryData] = useState([]);
-  const [clientHistoryTotals, setClientHistoryTotals] = useState(null);
   const [clientHistoryLoading, setClientHistoryLoading] = useState(false);
   const [clientHistoryError, setClientHistoryError] = useState('');
   const [clientHistorySameAgent, setClientHistorySameAgent] = useState(true);
@@ -427,7 +427,6 @@ export default function AllData({ user, initialFilters = {} }) {
     setClientHistoryLoading(true);
     setClientHistoryError('');
     setClientHistoryData([]);
-    setClientHistoryTotals(null);
     try {
       const params = new URLSearchParams({
         client: r.client_full_name,
@@ -436,7 +435,6 @@ export default function AllData({ user, initialFilters = {} }) {
       if (sameAgent && r.agent_name) params.set('agent', r.agent_name);
       const data = await apiFetch(`/records/client-history?${params}`);
       setClientHistoryData(data.rows || []);
-      setClientHistoryTotals(data.totals || null);
     } catch (e) {
       setClientHistoryError(e.message || 'Failed to load history');
     } finally {
@@ -454,8 +452,15 @@ export default function AllData({ user, initialFilters = {} }) {
   const hasLOB = records.some(r => r.lob);
   const hasSplitData = records.some(r => r.thei_share != null || r.bsi_share != null);
   const hasSubAgentOverride = records.some(r => r.sub_agent_override && r.sub_agent_override > 0);
-  const carrierStatementRows = clientHistoryData.filter((row) => row.upload_category === 'bsi_statement');
-  const theiRemittanceRows = clientHistoryData.filter((row) => row.upload_category !== 'bsi_statement');
+  const carrierStatementRows = clientHistoryData.filter(
+    (row) => classifyClientFileStream(row) === 'carrier_bsi'
+  );
+  const theiRemittanceRows = clientHistoryData.filter(
+    (row) => classifyClientFileStream(row) === 'thei_override'
+  );
+  const otherCommissionRows = clientHistoryData.filter(
+    (row) => classifyClientFileStream(row) === 'other'
+  );
   const sumStatementCommission = (rows) => rows.reduce(
     (total, row) => total + (parseFloat(row.commission) || 0),
     0
@@ -798,12 +803,21 @@ export default function AllData({ user, initialFilters = {} }) {
                   </section>
                 )}
                 {theiRemittanceRows.length > 0 && (
-                  <section>
+                  <section style={{ marginBottom: otherCommissionRows.length > 0 ? 24 : 0 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 8, fontSize: 13 }}>
                       <strong>THEI remittance / agency override activity</strong>
                       <span><strong>{theiRemittanceRows.length}</strong> rows · statement total: <strong>{fmt(sumStatementCommission(theiRemittanceRows))}</strong></span>
                     </div>
                     <ClientHistoryRows rows={theiRemittanceRows} />
+                  </section>
+                )}
+                {otherCommissionRows.length > 0 && (
+                  <section>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 8, fontSize: 13 }}>
+                      <strong>Other agent / commission activity</strong>
+                      <span><strong>{otherCommissionRows.length}</strong> rows · statement total: <strong>{fmt(sumStatementCommission(otherCommissionRows))}</strong></span>
+                    </div>
+                    <ClientHistoryRows rows={otherCommissionRows} />
                   </section>
                 )}
               </>
