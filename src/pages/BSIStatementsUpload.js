@@ -168,6 +168,11 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
                 Records imported: {uploadResult.rowCount ?? uploadResult.recordsImported}
               </div>
             )}
+            {uploadResult.commissionSum != null && (
+              <div style={{ marginTop: 4 }}>
+                Statement commission: ${Number(uploadResult.commissionSum).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+              </div>
+            )}
             {uploadResult.internalDuplicatesRemoved > 0 && (
               <div style={{ marginTop: 4 }}>
                 Skipped {uploadResult.internalDuplicatesRemoved} exact duplicate line
@@ -235,6 +240,7 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
                   <th style={{ padding: 12, textAlign: 'left', fontWeight: 600, fontSize: 12 }}>Uploaded</th>
                   <th style={{ padding: 12, textAlign: 'left', fontWeight: 600, fontSize: 12 }}>Uploaded By</th>
                   <th style={{ padding: 12, textAlign: 'right', fontWeight: 600, fontSize: 12 }}>Records</th>
+                  <th style={{ padding: 12, textAlign: 'right', fontWeight: 600, fontSize: 12 }}>Statement Commission</th>
                   <th style={{ padding: 12, textAlign: 'right', fontWeight: 600, fontSize: 12 }}>Actions</th>
                 </tr>
               </thead>
@@ -323,6 +329,9 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
                     </td>
                     <td style={{ padding: 12, fontSize: 14, textAlign: 'right' }}>
                       {u.row_count || 0}
+                    </td>
+                    <td style={{ padding: 12, fontSize: 14, textAlign: 'right', fontWeight: 500 }}>
+                      ${Number(u.commission_sum || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </td>
                     <td style={{ padding: 12, textAlign: 'right' }}>
                       <div style={{ display: 'inline-flex', gap: 6 }}>

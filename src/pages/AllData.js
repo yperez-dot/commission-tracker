@@ -5,6 +5,7 @@ import { formatDate } from '../utils/dateFormat';
 import EditCommissionModal from '../components/EditCommissionModal';
 import { commissionUploadExportPath, exportUploadFile } from '../utils/exportUpload';
 import { uploadCategoryLabel } from '../utils/uploadDestination';
+import { classifyClientFileStream } from '../clientFileStream';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -151,7 +152,6 @@ export default function AllData({ user, initialFilters = {} }) {
   const [editRecord, setEditRecord] = useState(null);
   const [clientHistory, setClientHistory] = useState(null); // { client, carrier, agent }
   const [clientHistoryData, setClientHistoryData] = useState([]);
-  const [clientHistoryTotals, setClientHistoryTotals] = useState(null);
   const [clientHistoryLoading, setClientHistoryLoading] = useState(false);
   const [clientHistoryError, setClientHistoryError] = useState('');
   const [clientHistorySameAgent, setClientHistorySameAgent] = useState(true);
@@ -427,7 +427,6 @@ export default function AllData({ user, initialFilters = {} }) {
     setClientHistoryLoading(true);
     setClientHistoryError('');
     setClientHistoryData([]);
-    setClientHistoryTotals(null);
     try {
       const params = new URLSearchParams({
         client: r.client_full_name,
@@ -436,7 +435,6 @@ export default function AllData({ user, initialFilters = {} }) {
       if (sameAgent && r.agent_name) params.set('agent', r.agent_name);
       const data = await apiFetch(`/records/client-history?${params}`);
       setClientHistoryData(data.rows || []);
-      setClientHistoryTotals(data.totals || null);
     } catch (e) {
       setClientHistoryError(e.message || 'Failed to load history');
     } finally {
@@ -454,6 +452,82 @@ export default function AllData({ user, initialFilters = {} }) {
   const hasLOB = records.some(r => r.lob);
   const hasSplitData = records.some(r => r.thei_share != null || r.bsi_share != null);
   const hasSubAgentOverride = records.some(r => r.sub_agent_override && r.sub_agent_override > 0);
+  const carrierStatementRows = clientHistoryData.filter(
+    (row) => classifyClientFileStream(row) === 'carrier_bsi'
+  );
+  const theiRemittanceRows = clientHistoryData.filter(
+    (row) => classifyClientFileStream(row) === 'thei_override'
+  );
+  const otherCommissionRows = clientHistoryData.filter(
+    (row) => classifyClientFileStream(row) === 'other'
+  );
+  const sumStatementCommission = (rows) => rows.reduce(
+    (total, row) => total + (parseFloat(row.commission) || 0),
+    0
+  );
+
+  function ClientHistoryRows({ rows }) {
+    return (
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+        <thead>
+          <tr>
+            {['Period', 'Type', 'Statement amount', 'Policy', 'LOB', 'Agent', 'Source'].map((h) => (
+              <th
+                key={h}
+                style={{
+                  textAlign: 'left', padding: '6px 8px',
+                  borderBottom: '0.5px solid var(--border)', color: 'var(--text-muted)', fontSize: 11
+                }}
+              >
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => {
+            const amount = parseFloat(row.commission) || 0;
+            return (
+              <tr key={row.id} style={{ borderBottom: '0.5px solid var(--border)' }}>
+                <td style={{ padding: '6px 8px' }}>{formatPeriodLabel(row.payment_period)}</td>
+                <td style={{ padding: '6px 8px' }}>{row.classification || '—'}</td>
+                <td style={{ padding: '6px 8px' }}>
+                  <AmountLink
+                    value={amount}
+                    record={row}
+                    onOpenSource={openSourceReport}
+                    style={{ color: amount < 0 ? 'var(--red)' : 'var(--green)' }}
+                  />
+                </td>
+                <td style={{ padding: '6px 8px', color: 'var(--text-muted)' }}>{row.policy_number || '—'}</td>
+                <td style={{ padding: '6px 8px' }}>{row.lob || '—'}</td>
+                <td style={{ padding: '6px 8px' }}>{row.agent_name || '—'}</td>
+                <td style={{ padding: '6px 8px', maxWidth: 160 }}>
+                  {row.upload_id ? (
+                    <button
+                      type="button"
+                      onClick={() => openSourceReport(row)}
+                      title={row.upload_name || `Upload #${row.upload_id}`}
+                      style={{
+                        background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                        color: 'var(--accent-dark)', fontSize: 11, textDecoration: 'underline',
+                        textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap', maxWidth: '100%', display: 'block',
+                      }}
+                    >
+                      {row.upload_name || `Upload #${row.upload_id}`}
+                    </button>
+                  ) : (
+                    <span style={{ color: 'var(--text-muted)' }}>—</span>
+                  )}
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    );
+  }
   
   const columns = [
     { col: 'carrier',         label: 'Carrier' },
@@ -716,72 +790,36 @@ export default function AllData({ user, initialFilters = {} }) {
               <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>No commission rows found</div>
             ) : (
               <>
-                <div style={{ display: 'flex', gap: 16, marginBottom: 12, flexWrap: 'wrap', fontSize: 12 }}>
-                  <span><strong>{clientHistoryTotals?.count ?? clientHistoryData.length}</strong> rows</span>
-                  <span>Commission total: <strong style={{ color: 'var(--green)' }}>{fmt(clientHistoryTotals?.commission)}</strong></span>
-                  {(clientHistoryTotals?.producer_payable || 0) !== 0 && (
-                    <span>Producer payable: <strong>{fmt(clientHistoryTotals.producer_payable)}</strong></span>
-                  )}
+                <div style={{ padding: 10, marginBottom: 12, borderRadius: 8, background: 'var(--bg-secondary)', fontSize: 12, color: 'var(--text-muted)' }}>
+                  Statement activity is grouped by where it came from. Carrier → BSI rows and THEI remittance rows are not combined into one payment total.
                 </div>
-                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-                  <thead>
-                    <tr>
-                      {['Period', 'Type', 'Amount', 'Policy', 'LOB', 'Agent', 'Source'].map((h) => (
-                        <th
-                          key={h}
-                          style={{
-                            textAlign: 'left', padding: '6px 8px',
-                            borderBottom: '0.5px solid var(--border)', color: 'var(--text-muted)', fontSize: 11
-                          }}
-                        >
-                          {h}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {clientHistoryData.map((row) => {
-                      const payable = parseFloat(row.producer_payable || 0);
-                      const amt = payable !== 0 ? payable : (parseFloat(row.commission) || 0);
-                      return (
-                        <tr key={row.id} style={{ borderBottom: '0.5px solid var(--border)' }}>
-                          <td style={{ padding: '6px 8px' }}>{formatPeriodLabel(row.payment_period)}</td>
-                          <td style={{ padding: '6px 8px' }}>{row.classification || '—'}</td>
-                          <td style={{ padding: '6px 8px' }}>
-                            <AmountLink
-                              value={amt}
-                              record={row}
-                              onOpenSource={openSourceReport}
-                              style={{ color: amt < 0 ? 'var(--red)' : 'var(--green)' }}
-                            />
-                          </td>
-                          <td style={{ padding: '6px 8px', color: 'var(--text-muted)' }}>{row.policy_number || '—'}</td>
-                          <td style={{ padding: '6px 8px' }}>{row.lob || '—'}</td>
-                          <td style={{ padding: '6px 8px' }}>{row.agent_name || '—'}</td>
-                          <td style={{ padding: '6px 8px', maxWidth: 160 }}>
-                            {row.upload_id ? (
-                              <button
-                                type="button"
-                                onClick={() => openSourceReport(row)}
-                                title={row.upload_name || `Upload #${row.upload_id}`}
-                                style={{
-                                  background: 'none', border: 'none', padding: 0, cursor: 'pointer',
-                                  color: 'var(--accent-dark)', fontSize: 11, textDecoration: 'underline',
-                                  textAlign: 'left', overflow: 'hidden', textOverflow: 'ellipsis',
-                                  whiteSpace: 'nowrap', maxWidth: '100%', display: 'block',
-                                }}
-                              >
-                                {row.upload_name || `Upload #${row.upload_id}`}
-                              </button>
-                            ) : (
-                              <span style={{ color: 'var(--text-muted)' }}>—</span>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
+                {carrierStatementRows.length > 0 && (
+                  <section style={{ marginBottom: theiRemittanceRows.length > 0 ? 24 : 0 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 8, fontSize: 13 }}>
+                      <strong>Carrier → BSI statement activity</strong>
+                      <span><strong>{carrierStatementRows.length}</strong> rows · statement total: <strong>{fmt(sumStatementCommission(carrierStatementRows))}</strong></span>
+                    </div>
+                    <ClientHistoryRows rows={carrierStatementRows} />
+                  </section>
+                )}
+                {theiRemittanceRows.length > 0 && (
+                  <section style={{ marginBottom: otherCommissionRows.length > 0 ? 24 : 0 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 8, fontSize: 13 }}>
+                      <strong>THEI remittance / agency override activity</strong>
+                      <span><strong>{theiRemittanceRows.length}</strong> rows · statement total: <strong>{fmt(sumStatementCommission(theiRemittanceRows))}</strong></span>
+                    </div>
+                    <ClientHistoryRows rows={theiRemittanceRows} />
+                  </section>
+                )}
+                {otherCommissionRows.length > 0 && (
+                  <section>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, marginBottom: 8, fontSize: 13 }}>
+                      <strong>Other agent / commission activity</strong>
+                      <span><strong>{otherCommissionRows.length}</strong> rows · statement total: <strong>{fmt(sumStatementCommission(otherCommissionRows))}</strong></span>
+                    </div>
+                    <ClientHistoryRows rows={otherCommissionRows} />
+                  </section>
+                )}
               </>
             )}
           </div>
