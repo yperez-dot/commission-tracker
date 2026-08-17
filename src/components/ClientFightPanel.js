@@ -47,6 +47,10 @@ export default function ClientFightPanel({ client, carrier, rows }) {
         Fight analysis
       </div>
 
+      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 10, lineHeight: 1.45 }}>
+        Only rows uploaded to OliComm count. If you do not see a reversal in the history below, it did not settle.
+      </div>
+
       {analysis.fights.map((fight, idx) => (
         <div
           key={`${fight.bucket}-${idx}`}
@@ -145,8 +149,14 @@ export default function ClientFightPanel({ client, carrier, rows }) {
       ))}
 
       {(analysis.carrierFight?.paid > 0 || analysis.carrierFight?.clawed > 0) && (
-        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 6 }}>
-          BSI stmt net: paid {fmt(analysis.carrierFight.paid)} · clawed {fmt(analysis.carrierFight.clawed)} · net {fmt(analysis.carrierFight.net)}
+        <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.45 }}>
+          BSI stmt: paid {fmt(analysis.carrierFight.paid)} · clawed {fmt(analysis.carrierFight.clawed)}
+          {analysis.carrierFight.reversalCredit > 0 ? (
+            <span> · reversal in history {fmt(analysis.carrierFight.reversalCredit)}</span>
+          ) : analysis.carrierFight.clawed > 0 ? (
+            <span> · no reversal in history</span>
+          ) : null}
+          {' · net '}{fmt(analysis.carrierFight.net)}
           {analysis.theiFight?.overrideRows?.length > 0 && (
             <span> · THEI remittance net {fmt(analysis.theiFight.net)}</span>
           )}

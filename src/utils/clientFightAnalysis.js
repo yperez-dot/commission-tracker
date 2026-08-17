@@ -64,11 +64,19 @@ function isAgencyBsiRow(row) {
   return isPaidOnBsiRow(row) || isClawOnBsiRow(row);
 }
 
+function isClawReversalRow(row) {
+  const c = String(row.classification || '').toLowerCase();
+  const amt = rowAmount(row);
+  return c.includes('chargeback') && amt > 0;
+}
+
 function analyzeBsiCarrierFight(bsiRows) {
   const paidLines = [];
   const clawLines = [];
+  const reversalLines = [];
   let paid = 0;
   let clawed = 0;
+  let reversalCredit = 0;
   let net = 0;
 
   for (const row of bsiRows) {
@@ -80,13 +88,19 @@ function analyzeBsiCarrierFight(bsiRows) {
       paidLines.push(row);
     }
     if (isClawOnBsiRow(row)) {
-      clawed += Math.abs(amt);
+      if (isClawReversalRow(row)) {
+        reversalCredit += amt;
+        reversalLines.push(row);
+      } else {
+        clawed += Math.abs(amt);
+      }
       clawLines.push(row);
     }
   }
 
   paid = round2(paid);
   clawed = round2(clawed);
+  reversalCredit = round2(reversalCredit);
   net = round2(net);
   const overClaw = net < -0.01 ? round2(Math.abs(net)) : 0;
 
@@ -100,6 +114,9 @@ function analyzeBsiCarrierFight(bsiRows) {
   return {
     paid,
     clawed,
+    reversalCredit,
+    reversalLines,
+    hasReversalInHistory: reversalLines.length > 0,
     net,
     overClaw,
     errorCode,

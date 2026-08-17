@@ -108,4 +108,55 @@ describe('clientFightAnalysis', () => {
     expect(result.fights[0].fightType).toBe('Missing_pay');
     expect(result.fights[0].amount).toBe(150);
   });
+
+  test('reversal only counts when visible as positive chargeback in history', () => {
+    const withoutReversal = analyzeClientFightHistory({
+      client: 'IBARRA GONZALEZ R,RITO',
+      carrier: 'Aetna',
+      rows: [
+        {
+          classification: 'New Business',
+          commission: 160,
+          upload_category: 'bsi_statement',
+          upload_name: 'AETNA_BSI_STATEMENT_202604.csv',
+        },
+        {
+          classification: 'Chargeback',
+          commission: -240,
+          upload_category: 'bsi_statement',
+          upload_name: 'AETNA_BSI_STATEMENT_202604.csv',
+        },
+      ],
+    });
+    expect(withoutReversal.carrierFight.hasReversalInHistory).toBe(false);
+    expect(withoutReversal.carrierFight.overClaw).toBe(80);
+
+    const withReversal = analyzeClientFightHistory({
+      client: 'IBARRA GONZALEZ R,RITO',
+      carrier: 'Aetna',
+      rows: [
+        {
+          classification: 'New Business',
+          commission: 160,
+          upload_category: 'bsi_statement',
+          upload_name: 'AETNA_BSI_STATEMENT_202604.csv',
+        },
+        {
+          classification: 'Chargeback',
+          commission: -240,
+          upload_category: 'bsi_statement',
+          upload_name: 'AETNA_BSI_STATEMENT_202604.csv',
+        },
+        {
+          classification: 'Chargeback',
+          commission: 160,
+          upload_category: 'bsi_statement',
+          upload_name: 'AETNA_BSI_STATEMENT_202605.csv',
+        },
+      ],
+    });
+    expect(withReversal.carrierFight.hasReversalInHistory).toBe(true);
+    expect(withReversal.carrierFight.reversalCredit).toBe(160);
+    expect(withReversal.carrierFight.overClaw).toBe(0);
+  });
 });
