@@ -5,6 +5,7 @@ import { formatDate } from '../utils/dateFormat';
 import EditCommissionModal from '../components/EditCommissionModal';
 import { commissionUploadExportPath, exportUploadFile } from '../utils/exportUpload';
 import { uploadCategoryLabel } from '../utils/uploadDestination';
+import ClientFightPanel from '../components/ClientFightPanel';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -723,6 +724,13 @@ export default function AllData({ user, initialFilters = {} }) {
                     <span>Producer payable: <strong>{fmt(clientHistoryTotals.producer_payable)}</strong></span>
                   )}
                 </div>
+
+                <ClientFightPanel
+                  client={clientHistory.client_full_name}
+                  carrier={clientHistory.carrier}
+                  rows={clientHistoryData}
+                />
+
                 <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
                   <thead>
                     <tr>
