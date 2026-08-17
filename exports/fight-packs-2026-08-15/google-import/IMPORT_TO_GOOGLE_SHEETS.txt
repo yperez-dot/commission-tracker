@@ -1,0 +1,36 @@
+OPEN IN GOOGLE SHEETS (phone-friendly — no Excel needed)
+
+Option 1 — Import from GitHub URL (best)
+1. Open https://sheets.google.com → tap + Blank
+2. File → Import → Link (or URL)
+3. Paste ONE of these URLs, tap Import
+4. Separator: Comma | click Import data
+
+MAIN (all fights + proof):
+https://raw.githubusercontent.com/yperez-dot/commission-tracker/cursor/fight-pack-exports-e242/exports/fight-packs-2026-08-15/google-import/MASTER_ALL.csv
+
+THEI ask BSI now — bad claws (Bucket A):
+https://raw.githubusercontent.com/yperez-dot/commission-tracker/cursor/fight-pack-exports-e242/exports/fight-packs-2026-08-15/google-import/A_THEI_claws_ask_BSI.csv
+
+THEI ask BSI now — Chase overrides (Bucket B):
+https://raw.githubusercontent.com/yperez-dot/commission-tracker/cursor/fight-pack-exports-e242/exports/fight-packs-2026-08-15/google-import/B_Chase_BSI_ask_BSI.csv
+
+BSI asks carrier (Bucket C):
+https://raw.githubusercontent.com/yperez-dot/commission-tracker/cursor/fight-pack-exports-e242/exports/fight-packs-2026-08-15/google-import/C_BSI_asks_Carrier.csv
+
+Overlap warning (same member in A and C):
+https://raw.githubusercontent.com/yperez-dot/commission-tracker/cursor/fight-pack-exports-e242/exports/fight-packs-2026-08-15/google-import/OVERLAP_A_and_C.csv
+
+Who owes who summary:
+https://raw.githubusercontent.com/yperez-dot/commission-tracker/cursor/fight-pack-exports-e242/exports/fight-packs-2026-08-15/google-import/WHO_OWES_WHO.csv
+
+Instructions:
+https://raw.githubusercontent.com/yperez-dot/commission-tracker/cursor/fight-pack-exports-e242/exports/fight-packs-2026-08-15/google-import/HOW_TO_READ.csv
+
+Option 2 — Browse folder on GitHub (tap file → view raw)
+https://github.com/yperez-dot/commission-tracker/tree/cursor/fight-pack-exports-e242/exports/fight-packs-2026-08-15/google-import
+
+FROZEN TOTALS
+  THEI ask BSI now (A+B) = $5,468.55
+  Carrier ask via BSI (C) = $2,775.66
+  Overlap members A+C = 14 (do not double count)
