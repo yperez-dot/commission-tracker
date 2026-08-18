@@ -76,6 +76,13 @@ describe('raw identifier extraction', () => {
     expect(extractDobFromRaw({ Member_DOB: '04-22-1939' })).toBe('04/22/1939');
   });
 
+  test('extracts DOB from Humana-style birth columns and excel serials', () => {
+    expect(extractDobFromRaw({ DOB_DT: '1948-03-12' })).toBe('03/12/1948');
+    expect(extractDobFromRaw({ Birth_Dt: '3/12/1948' })).toBe('03/12/1948');
+    expect(extractDobFromRaw({ MEMBER_BIRTH_DT: 15341 })).toMatch(/^\d{2}\/\d{2}\/\d{4}$/);
+    expect(extractDobFromRaw({ DOB: '15341' })).toMatch(/^\d{2}\/\d{2}\/\d{4}$/);
+  });
+
   test('extracts member ID from carrier-specific raw keys', () => {
     expect(extractMemberIdFromRaw({ UMID: 'H998877' })).toBe('H998877');
     expect(extractMemberIdFromRaw({ MEDICARE_IDENTIFIER: '1EG4TE5MK73' })).toBe('1EG4TE5MK73');
@@ -90,9 +97,12 @@ describe('mergeClientIdentifiers', () => {
       { carrier_member_id: 'UMID-1', policy_number: '1EG4TE5MK73', raw_data: { DOB: '1945-06-02' } },
       { mbi: '1EG4TE5MK73', policy_number_production: 'POL-9' },
     ]);
-    expect(merged.memberId).toBe('UMID-1');
-    expect(merged.policyNumber).toBe('1EG4TE5MK73');
-    expect(merged.dateOfBirth).toBe('06/02/1945');
+    expect(merged).toEqual({
+      memberId: 'UMID-1',
+      policyNumber: '1EG4TE5MK73',
+      dateOfBirth: '06/02/1945',
+      planType: '',
+    });
   });
 
   test('keeps an existing BOB policy number and DOB', () => {
@@ -104,6 +114,7 @@ describe('mergeClientIdentifiers', () => {
       memberId: 'MEM-1',
       policyNumber: 'POL-1',
       dateOfBirth: '02/02/1940',
+      planType: '',
     });
   });
 });
@@ -200,6 +211,7 @@ describe('identifiersFromProductionRaw', () => {
       memberId: 'H70056676',
       policyNumber: '',
       dateOfBirth: '03/08/1942',
+      planType: '',
     });
   });
 
@@ -211,6 +223,7 @@ describe('identifiersFromProductionRaw', () => {
       memberId: '1EG4TE5MK73',
       policyNumber: '008899',
       dateOfBirth: '',
+      planType: '',
     });
   });
 
@@ -219,5 +232,94 @@ describe('identifiersFromProductionRaw', () => {
       MemberRecordLocator: 'MRL-9',
       MBI: '8C73N39QN86',
     }).memberId).toBe('MRL-9');
+  });
+
+  test('reads Humana plan name from production raw_data', () => {
+    expect(identifiersFromProductionRaw('Humana', {
+      UMID: 'H88288448',
+      PLAN_NAME: 'Humana Gold Plus HMO',
+      PRODUCT: 'HMO',
+    })).toMatchObject({
+      memberId: 'H88288448',
+      planType: 'Humana Gold Plus HMO',
+    });
+  });
+});
+
+describe('plan fill from production and policy suffix', () => {
+  test('copies production plan_name onto an empty BOB plan', () => {
+    const enriched = enrichBobClientsWithIdentifiers(
+      [{
+        id: 1,
+        client_full_name: 'ALI JAFRI M',
+        carrier: 'Humana',
+        member_id: 'H88288448',
+        policy_number: '00024276372K_HMO',
+        date_of_birth: '',
+        plan_type: '',
+      }],
+      [{
+        client_name: 'JAFRI, ALI',
+        carrier: 'Humana',
+        carrier_member_id: 'H88288448',
+        plan_name: 'Humana Gold Plus HMO',
+        raw_data: { UMID: 'H88288448', PLAN_NAME: 'Humana Gold Plus HMO', DOB_DT: '1948-03-12' },
+        identifier_source: 'production',
+      }]
+    );
+    expect(enriched[0]).toMatchObject({
+      member_id: 'H88288448',
+      plan_type: 'Humana Gold Plus HMO',
+      date_of_birth: '03/12/1948',
+    });
+  });
+
+  test('matches production by member ID when the names do not line up', () => {
+    const enriched = enrichBobClientsWithIdentifiers(
+      [{
+        id: 1,
+        client_full_name: 'ALI JAFRI M',
+        carrier: 'Humana',
+        member_id: 'H88288448',
+        policy_number: '00024276372K_HMO',
+        date_of_birth: '',
+        plan_type: '',
+      }],
+      [{
+        client_name: 'Completely Different Name',
+        carrier: 'Humana',
+        carrier_member_id: 'H88288448',
+        plan_name: 'HumanaChoice PPO',
+        raw_data: { UMID: 'H88288448', Birth_Dt: '05-20-1941' },
+        identifier_source: 'production',
+      }]
+    );
+    expect(enriched[0]).toMatchObject({
+      plan_type: 'HumanaChoice PPO',
+      date_of_birth: '05/20/1941',
+    });
+  });
+
+  test('derives HMO/PPO from the statement policy number when production has no plan', () => {
+    const merged = mergeClientIdentifiers([
+      { carrier: 'Humana', member_id: 'H88288448', policy_number: '00024276372K_HMO', plan_type: '' },
+    ]);
+    expect(merged.planType).toBe('Humana HMO');
+  });
+
+  test('keeps an existing BOB plan and does not overwrite it', () => {
+    const enriched = enrichBobClientsWithIdentifiers(
+      [{ id: 1, client_full_name: 'Ana Perez', carrier: 'Humana', plan_type: 'Humana PPO', member_id: '', policy_number: '' }],
+      [{ client_name: 'Ana Perez', carrier: 'Humana', plan_name: 'Other Plan', identifier_source: 'production' }]
+    );
+    expect(enriched[0].plan_type).toBe('Humana PPO');
+  });
+
+  test('prefers production plan_name over a policy-suffix fallback', () => {
+    const merged = mergeClientIdentifiers([
+      { carrier: 'Humana', policy_number: '00024276372K_HMO', plan_type: '' },
+      { carrier: 'Humana', plan_name: 'Humana Gold Plus SNP-DE HMO', identifier_source: 'production' },
+    ]);
+    expect(merged.planType).toBe('Humana Gold Plus SNP-DE HMO');
   });
 });
