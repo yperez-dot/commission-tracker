@@ -7,11 +7,19 @@ const DOB_FROM_JSON = `
     NULLIF(TRIM(j->>'DOB'), ''),
     NULLIF(TRIM(j->>'Date of Birth'), ''),
     NULLIF(TRIM(j->>'date_of_birth'), ''),
+    NULLIF(TRIM(j->>'Date_of_Birth'), ''),
+    NULLIF(TRIM(j->>'DATE_OF_BIRTH'), ''),
     NULLIF(TRIM(j->>'Birth Date'), ''),
+    NULLIF(TRIM(j->>'Birth_Date'), ''),
+    NULLIF(TRIM(j->>'BIRTH_DATE'), ''),
     NULLIF(TRIM(j->>'birthdate'), ''),
+    NULLIF(TRIM(j->>'BirthDate'), ''),
+    NULLIF(TRIM(j->>'DateOfBirth'), ''),
     NULLIF(TRIM(j->>'Member DOB'), ''),
     NULLIF(TRIM(j->>'Member_DOB'), ''),
+    NULLIF(TRIM(j->>'MEMBER_DOB'), ''),
     NULLIF(TRIM(j->>'Member Date of Birth'), ''),
+    NULLIF(TRIM(j->>'Member_Birth_Date'), ''),
     NULLIF(TRIM(j->>'BirthDt'), '')
   )
 `;
@@ -20,7 +28,8 @@ async function fetchRelatedIdentifierRows(pool) {
   const [commission, production, medicarepro] = await Promise.all([
     pool.query(`
       SELECT client_full_name, carrier, policy_number, mbi, carrier_member_id,
-             ${DOB_FROM_JSON} AS date_of_birth
+             ${DOB_FROM_JSON} AS date_of_birth,
+             'commission' AS identifier_source
       FROM commission_records
       LEFT JOIN LATERAL (
         SELECT CASE WHEN raw_data ~ '^\\s*\\{' THEN raw_data::jsonb ELSE '{}'::jsonb END AS j
@@ -30,7 +39,8 @@ async function fetchRelatedIdentifierRows(pool) {
       console.error('BOB identifier backfill: commission lookup with DOB failed:', err.message);
       return pool.query(`
         SELECT client_full_name, carrier, policy_number, mbi, carrier_member_id,
-               NULL AS date_of_birth
+               NULL AS date_of_birth,
+               'commission' AS identifier_source
         FROM commission_records
         WHERE client_full_name IS NOT NULL AND TRIM(client_full_name) <> ''
       `).catch((err2) => {
@@ -40,7 +50,9 @@ async function fetchRelatedIdentifierRows(pool) {
     }),
     pool.query(`
       SELECT client_name AS client_full_name, carrier, policy_number, policy_number_production,
-             mbi, carrier_member_id, ${DOB_FROM_JSON} AS date_of_birth
+             mbi, carrier_member_id, raw_data,
+             ${DOB_FROM_JSON} AS date_of_birth,
+             'production' AS identifier_source
       FROM agency_production
       LEFT JOIN LATERAL (
         SELECT COALESCE(raw_data, '{}'::jsonb) AS j
@@ -52,7 +64,8 @@ async function fetchRelatedIdentifierRows(pool) {
     }),
     pool.query(`
       SELECT client_name AS client_full_name, carrier, policy_number,
-             ${DOB_FROM_JSON} AS date_of_birth
+             ${DOB_FROM_JSON} AS date_of_birth,
+             'medicarepro' AS identifier_source
       FROM medicarepro_sales
       LEFT JOIN LATERAL (
         SELECT COALESCE(raw_data, '{}'::jsonb) AS j
@@ -64,7 +77,7 @@ async function fetchRelatedIdentifierRows(pool) {
     }),
   ]);
 
-  return [...commission.rows, ...production.rows, ...medicarepro.rows];
+  return [...production.rows, ...medicarepro.rows, ...commission.rows];
 }
 
 function summarize(rows, updated) {
