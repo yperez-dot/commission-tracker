@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../api';
 import { formatDateTime } from '../utils/dateFormat';
+import { UploadListSearch } from './UploadPageLayout';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -28,6 +29,7 @@ export default function LOAStatements() {
     amount: '',
     note: ''
   });
+  const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
     loadStatements();
@@ -179,6 +181,16 @@ export default function LOAStatements() {
   }
 
   const total = formData.items.reduce((sum, item) => sum + parseFloat(item.amount || 0), 0);
+  const qStmt = searchQuery.trim().toLowerCase();
+  const visibleStatements = !qStmt
+    ? statements
+    : statements.filter((stmt) => {
+        const hay = [stmt.agent_name, stmt.period_label, stmt.status, stmt.payment_date]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        return hay.includes(qStmt);
+      });
 
   if (loading) {
     return <div className="loading">Loading LOA statements...</div>;
@@ -403,7 +415,7 @@ export default function LOAStatements() {
 
       <div className="card" style={{ padding: 0 }}>
         <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>
-          All Statements ({statements.length})
+          All Statements ({qStmt ? `${visibleStatements.length} of ${statements.length}` : statements.length})
         </div>
 
         {statements.length === 0 ? (
@@ -413,6 +425,19 @@ export default function LOAStatements() {
             <div className="empty-sub">Create your first producer payment statement above</div>
           </div>
         ) : (
+          <>
+          <div style={{ padding: '10px 14px 0' }}>
+            <UploadListSearch
+              value={searchQuery}
+              onChange={setSearchQuery}
+              placeholder="Search agent, period, or status…"
+            />
+          </div>
+          {visibleStatements.length === 0 ? (
+            <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+              No statements match “{searchQuery.trim()}”
+            </div>
+          ) : (
           <table style={{ width: '100%', fontSize: 12 }}>
             <thead>
               <tr style={{ background: 'var(--bg-subtle)' }}>
@@ -425,7 +450,7 @@ export default function LOAStatements() {
               </tr>
             </thead>
             <tbody>
-              {statements.map(stmt => (
+              {visibleStatements.map(stmt => (
                 <tr key={stmt.id} style={{ borderBottom: '1px solid var(--border)' }}>
                   <td style={{ padding: '10px 12px', fontWeight: 500, color: 'var(--text)', fontSize: 13 }}>{stmt.agent_name}</td>
                   <td style={{ padding: '10px 12px', color: 'var(--text)', fontSize: 13 }}>{stmt.period_label || '—'}</td>
@@ -501,6 +526,8 @@ export default function LOAStatements() {
               ))}
             </tbody>
           </table>
+          )}
+          </>
         )}
       </div>
     </div>

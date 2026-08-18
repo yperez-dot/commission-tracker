@@ -140,3 +140,44 @@ export function UploadHistoryCard({ title, children }) {
     </div>
   );
 }
+
+export function UploadListSearch({ value, onChange, placeholder = 'Search…' }) {
+  const q = String(value || '').trim();
+  return (
+    <div style={{ padding: '0 0 12px', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      <input
+        type="text"
+        placeholder={placeholder}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        style={{
+          flex: '1 1 240px',
+          minWidth: 180,
+          padding: '8px 12px',
+          borderRadius: 6,
+          border: '0.5px solid var(--border)',
+          fontSize: 13,
+          background: 'var(--bg)',
+          color: 'var(--text)',
+        }}
+      />
+      {q ? (
+        <button
+          type="button"
+          onClick={() => onChange('')}
+          style={{
+            background: 'none',
+            border: '0.5px solid var(--border)',
+            borderRadius: 6,
+            padding: '7px 12px',
+            fontSize: 12,
+            cursor: 'pointer',
+            color: 'var(--text-muted)',
+          }}
+        >
+          Clear
+        </button>
+      ) : null}
+    </div>
+  );
+}

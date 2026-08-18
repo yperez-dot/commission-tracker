@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { apiFetch, apiDownload } from '../api';
 import LOAStatements from '../components/LOAStatements';
+import { UploadListSearch } from '../components/UploadPageLayout';
 import { formatDate } from '../utils/dateFormat';
 import { countSplitDepositClients, groupClientDeposits } from '../utils/salesReconPayment';
 import { fetchAllPages } from '../fetchAllPages';
@@ -663,6 +664,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
   const [paidStatus, setPaidStatus] = useState({});
   const [paidDates, setPaidDates] = useState({});
   const [history, setHistory] = useState([]);
+  const [historySearch, setHistorySearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('unpaid'); // unpaid | paid | all
   const [search, setSearch] = useState('');
   const [linaBusy, setLinaBusy] = useState(false);
@@ -928,6 +930,17 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
       });
   }, [payouts, paidStatus, statusFilter, search]);
 
+  const qHist = historySearch.trim().toLowerCase();
+  const visibleHistory = !qHist
+    ? history
+    : history.filter((r) => {
+        const hay = [r.periodLabel, r.period, r.agent, r.date]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        return hay.includes(qHist);
+      });
+
   const totalOwed = payouts.reduce((s, p) => s + p.total, 0);
   const totalPaid = payouts.filter((p) => paidStatus[p.agent]).reduce((s, p) => s + p.total, 0);
   const totalUnpaid = totalOwed - totalPaid;
@@ -1159,6 +1172,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
           <div className="card" style={{ padding: 0 }}>
             <div style={{ padding: '10px 14px', borderBottom: '0.5px solid var(--border)', fontSize: 13, fontWeight: 500 }}>
               Payment history
+              {qHist ? ` (${visibleHistory.length} of ${history.length})` : ''}
               <span style={{ marginLeft: 8, fontWeight: 400, color: 'var(--text-muted)', fontSize: 11 }}>
                 Shared team record (saved in database)
               </span>
@@ -1169,6 +1183,19 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
                 <div className="empty-sub">Mark agents as paid on Agent Payouts to track them here</div>
               </div>
             ) : (
+              <>
+              <div style={{ padding: '10px 14px 0' }}>
+                <UploadListSearch
+                  value={historySearch}
+                  onChange={setHistorySearch}
+                  placeholder="Search agent or period…"
+                />
+              </div>
+              {visibleHistory.length === 0 ? (
+                <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+                  No payments match “{historySearch.trim()}”
+                </div>
+              ) : (
               <div className="table-wrap">
                 <table>
                   <thead>
@@ -1181,7 +1208,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {history.map((r) => (
+                    {visibleHistory.map((r) => (
                       <tr key={r.id || `${r.period}-${r.agent}-${r.date}`}>
                         <td style={{ fontSize: 12 }}>{r.periodLabel}</td>
                         <td style={{ fontWeight: 500 }}>{r.agent}</td>
@@ -1225,6 +1252,8 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
                   </tbody>
                 </table>
               </div>
+              )}
+              </>
             )}
           </div>
         )}

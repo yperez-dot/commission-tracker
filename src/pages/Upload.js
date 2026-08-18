@@ -10,6 +10,8 @@ import {
 import { setPendingUpload, takePendingUpload } from '../utils/pendingUpload';
 import { UploadPageShell, UploadDropZone, UploadAlert } from '../components/UploadPageLayout';
 import { commissionUploadExportPath, exportUploadFile } from '../utils/exportUpload';
+import { statementDisplayName, statementSearchText } from '../utils/statementDisplayName';
+import StatementFileName from '../components/StatementFileName';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -176,7 +178,7 @@ export default function Upload({ user, onNavigate }) {
   // Apply search + filter + sort
   const visibleUploads = uploads
     .filter(u => {
-      if (searchQuery && !((u.original_name || '').toLowerCase().includes(searchQuery.toLowerCase()))) return false;
+      if (searchQuery && !statementSearchText(u.original_name).includes(searchQuery.toLowerCase())) return false;
       if (filterCarrier && !((u.carrier || '').toLowerCase().includes(filterCarrier.toLowerCase()))) return false;
       return true;
     })
@@ -187,7 +189,7 @@ export default function Upload({ user, onNavigate }) {
         case 'carrier':
           return (a.carrier || '').localeCompare(b.carrier || '');
         case 'name':
-          return (a.original_name || '').localeCompare(b.original_name || '');
+          return statementDisplayName(a.original_name).localeCompare(statementDisplayName(b.original_name));
         case 'date_desc':
         default:
           return new Date(b.uploaded_at) - new Date(a.uploaded_at);
@@ -202,7 +204,9 @@ export default function Upload({ user, onNavigate }) {
           <div style={{ background: '#ffffff', borderRadius: 12, width: '90%', maxWidth: 900, maxHeight: '85vh', display: 'flex', flexDirection: 'column', boxShadow: '0 8px 40px rgba(0,0,0,0.25)' }}>
             <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
               <div>
-                <div style={{ fontWeight: 700, fontSize: 15 }}>{viewUpload.original_name}</div>
+                <div style={{ fontWeight: 700, fontSize: 15 }}>
+                  <StatementFileName filename={viewUpload.original_name} />
+                </div>
                 <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
                   {viewUpload.row_count} records · {fmt(viewUpload.commission_sum)} · {viewUpload.carrier} · {formatDateTime(viewUpload.uploaded_at)}
                 </div>
@@ -489,7 +493,7 @@ export default function Upload({ user, onNavigate }) {
             <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <input
                 type="text"
-                placeholder="Search by filename..."
+                placeholder="Search NHP, filename, or carrier..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 style={{ flex: '1 1 220px', minWidth: 180, padding: '6px 10px', borderRadius: 6, border: '0.5px solid var(--border)', fontSize: 13, background: 'var(--bg)', color: 'var(--text)' }}
@@ -552,10 +556,10 @@ export default function Upload({ user, onNavigate }) {
               <div style={{ flex: 1, minWidth: 0 }}>
                 <button onClick={() => openUpload(u)} style={{
                   background: 'none', border: 'none', padding: 0, cursor: 'pointer',
-                  fontWeight: 600, fontSize: 13, color: '#185FA5', textAlign: 'left',
-                  textDecoration: 'underline', marginBottom: 2
+                  fontWeight: 600, fontSize: 13, color: 'var(--text)', textAlign: 'left',
+                  marginBottom: 2
                 }}>
-                  {u.original_name}
+                  <StatementFileName filename={u.original_name} />
                 </button>
                 <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                   {u.row_count} records · {fmt(u.commission_sum)} · {u.carrier} · {new Date(u.uploaded_at).toLocaleString()} · by {u.uploaded_by_name}
