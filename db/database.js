@@ -62,6 +62,8 @@ async function initSchema() {
         carrier TEXT NOT NULL,
         client_full_name TEXT NOT NULL,
         policy_number TEXT,
+        member_id TEXT,
+        date_of_birth TEXT,
         effective_date TEXT,
         plan_type TEXT,
         status TEXT DEFAULT 'active',
@@ -150,6 +152,9 @@ async function initSchema() {
       CREATE INDEX IF NOT EXISTS idx_bob_carrier ON book_of_business(carrier);
       CREATE INDEX IF NOT EXISTS idx_bob_client ON book_of_business(client_full_name);
       CREATE INDEX IF NOT EXISTS idx_bob_status ON book_of_business(status);
+
+      ALTER TABLE book_of_business ADD COLUMN IF NOT EXISTS member_id TEXT;
+      ALTER TABLE book_of_business ADD COLUMN IF NOT EXISTS date_of_birth TEXT;
       CREATE INDEX IF NOT EXISTS idx_medicarepro_client ON medicarepro_sales(client_name);
       CREATE INDEX IF NOT EXISTS idx_medicarepro_agent ON medicarepro_sales(agent_name);
       CREATE INDEX IF NOT EXISTS idx_medicarepro_carrier ON medicarepro_sales(carrier);

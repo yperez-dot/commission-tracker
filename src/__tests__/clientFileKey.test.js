@@ -1,6 +1,6 @@
 'use strict';
 
-const { clientNameKey, clientFileGroupKey } = require('../clientNameKey');
+const { clientNameKey, clientFileGroupKey, clientNameKeySql } = require('../clientNameKey');
 
 describe('clientNameKey', () => {
   test('merges Last, First and First Last formats', () => {
@@ -17,5 +17,10 @@ describe('clientNameKey', () => {
 
   test('ignores case and extra punctuation', () => {
     expect(clientNameKey('RONALDO BALBOA')).toBe(clientNameKey('ronaldo balboa'));
+  });
+
+  test('clientNameKeySql uses the requested column', () => {
+    expect(clientNameKeySql('ap', 'client_name')).toContain('ap.client_name');
+    expect(clientNameKeySql('cr')).toContain('cr.client_full_name');
   });
 });

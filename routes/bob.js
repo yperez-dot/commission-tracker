@@ -8,6 +8,13 @@ const { getPool } = require('../db/database');
 const { requireAuth, requireAdmin } = require('./auth');
 const { normalizeAgentName } = require('./normalize');
 const { safeUploadFilename, isAllowedUploadName } = require('./uploadSafe');
+const { clientNameKey, clientNameKeySql } = require('../src/clientNameKey');
+const {
+  detectBobExportColumns,
+  mapBobExportRow,
+  mergeClientIdentifiers,
+  identifiersFromRecord,
+} = require('../src/bobClientIdentifiers');
 const {
   buildMissingRenewalRows,
   buildMissingRenewalsPeriodOptions,
@@ -29,33 +36,6 @@ const upload = multer({
   limits: { fileSize: 20 * 1024 * 1024 },
   fileFilter: (req, file, cb) => cb(null, isAllowedUploadName(file.originalname)),
 });
-
-function formatDate(value) {
-  if (!value) return '';
-  if (value instanceof Date) {
-    const m = String(value.getUTCMonth() + 1).padStart(2, '0');
-    const d = String(value.getUTCDate()).padStart(2, '0');
-    const y = value.getUTCFullYear();
-    return `${m}/${d}/${y}`;
-  }
-  if (typeof value === 'string') {
-    if (value.match(/\d{1,2}\/\d{1,2}\/\d{4}/)) return value;
-    if (value.match(/\d{4}-\d{2}-\d{2}/)) {
-      const [y, m, d] = value.split('-');
-      return `${m}/${d}/${y}`;
-    }
-    return value;
-  }
-  if (typeof value === 'number') {
-    const date = new Date((value - 25569) * 86400 * 1000);
-    if (isNaN(date.getTime())) return String(value);
-    const m = String(date.getUTCMonth() + 1).padStart(2, '0');
-    const d = String(date.getUTCDate()).padStart(2, '0');
-    const y = date.getUTCFullYear();
-    return `${m}/${d}/${y}`;
-  }
-  return String(value);
-}
 
 function findHeaderRow(ws) {
   const range = XLSX.utils.decode_range(ws['!ref']);
@@ -79,46 +59,70 @@ function parseBOBSheet(ws) {
   const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true, range: headerRow });
   if (!rows.length) return null;
 
-  const firstRow = rows[0];
-  const keyMap = {};
-  Object.keys(firstRow).forEach(k => { keyMap[k.toLowerCase().replace(/\s+/g, '')] = k; });
+  const columns = detectBobExportColumns(Object.keys(rows[0]));
+  return rows
+    .map((row) => mapBobExportRow(row, columns, { normalizeAgentName }))
+    .filter((r) => r.client && r.client.length > 1);
+}
 
-  const findKey = (terms) => {
-    for (const t of terms) {
-      if (keyMap[t]) return keyMap[t];
-      const found = Object.keys(keyMap).find(k => k.includes(t));
-      if (found) return keyMap[found];
-    }
-    return null;
-  };
+async function lookupRelatedIdentifiers(pool, clientName, carrier) {
+  const nameKey = clientNameKey(clientName);
+  if (!nameKey || !carrier) return [];
 
-  const firstNameCol = findKey(['memberfirstname', 'firstname', 'first']);
-  const lastNameCol = findKey(['memberlastname', 'lastname', 'last']);
-  const clientCol = findKey(['membername', 'clientname', 'subscribername', 'name', 'client', 'member', 'subscriber']);
-  const agentCol = findKey(['agentname', 'writingagentname', 'agent', 'producer']);
-  const policyCol = findKey(['membernumber', 'policynumber', 'memberid', 'policy', 'certificate', 'applicationnumber', 'policyid']);
-  const effDateCol = findKey(['policyeffectivedate', 'effectivedate', 'effective', 'effdate', 'startdate']);
-  const planCol = findKey(['planname', 'plan', 'product', 'benefit']);
-  const statusCol = findKey(['memberstatus', 'planstatus', 'status']);
+  const [commission, production, medicarepro] = await Promise.all([
+    pool.query(
+      `SELECT policy_number, mbi, carrier_member_id, raw_data
+       FROM commission_records cr
+       WHERE ${clientNameKeySql('cr')} = $1
+         AND LOWER(TRIM(cr.carrier)) = LOWER(TRIM($2))
+       ORDER BY
+         CASE WHEN NULLIF(TRIM(COALESCE(cr.carrier_member_id, '')), '') IS NOT NULL THEN 0 ELSE 1 END,
+         CASE WHEN NULLIF(TRIM(COALESCE(cr.mbi, '')), '') IS NOT NULL THEN 0 ELSE 1 END,
+         CASE WHEN NULLIF(TRIM(COALESCE(cr.policy_number, '')), '') IS NOT NULL THEN 0 ELSE 1 END,
+         cr.created_at DESC NULLS LAST
+       LIMIT 8`,
+      [nameKey, carrier]
+    ).catch(() => ({ rows: [] })),
+    pool.query(
+      `SELECT policy_number, policy_number_production, mbi, carrier_member_id, raw_data
+       FROM agency_production ap
+       WHERE ${clientNameKeySql('ap', 'client_name')} = $1
+         AND LOWER(TRIM(ap.carrier)) = LOWER(TRIM($2))
+       ORDER BY
+         CASE WHEN NULLIF(TRIM(COALESCE(ap.carrier_member_id, '')), '') IS NOT NULL THEN 0 ELSE 1 END,
+         CASE WHEN NULLIF(TRIM(COALESCE(ap.mbi, '')), '') IS NOT NULL THEN 0 ELSE 1 END,
+         ap.uploaded_at DESC NULLS LAST
+       LIMIT 8`,
+      [nameKey, carrier]
+    ).catch(() => ({ rows: [] })),
+    pool.query(
+      `SELECT policy_number, raw_data
+       FROM medicarepro_sales mp
+       WHERE ${clientNameKeySql('mp', 'client_name')} = $1
+         AND LOWER(TRIM(mp.carrier)) = LOWER(TRIM($2))
+       ORDER BY mp.uploaded_at DESC NULLS LAST
+       LIMIT 4`,
+      [nameKey, carrier]
+    ).catch(() => ({ rows: [] })),
+  ]);
 
-  return rows.map(row => {
-    let clientName = '';
-    if (firstNameCol && lastNameCol) {
-      const first = String(row[firstNameCol] || '').trim();
-      const last = String(row[lastNameCol] || '').trim();
-      clientName = [first, last].filter(Boolean).join(' ');
-    } else if (clientCol) {
-      clientName = String(row[clientCol] || '').trim();
-    }
-    return {
-      client: clientName,
-      agent: agentCol ? normalizeAgentName(String(row[agentCol] || '').trim()) : '',
-      policyNumber: policyCol ? String(row[policyCol] || '').trim() : '',
-      effectiveDate: effDateCol ? formatDate(row[effDateCol]) : '',
-      planType: planCol ? String(row[planCol] || '').trim() : '',
-      status: statusCol ? String(row[statusCol] || '').trim().toLowerCase() : 'active',
-    };
-  }).filter(r => r.client && r.client.length > 1);
+  return [...commission.rows, ...production.rows, ...medicarepro.rows];
+}
+
+async function persistBobIdentifiers(pool, id, identifiers) {
+  if (!id || !identifiers) return;
+  try {
+    await pool.query(
+      `UPDATE book_of_business SET
+         member_id = COALESCE(NULLIF($1, ''), member_id),
+         policy_number = COALESCE(NULLIF($2, ''), policy_number),
+         date_of_birth = COALESCE(NULLIF($3, ''), date_of_birth)
+       WHERE id = $4`,
+      [identifiers.memberId || '', identifiers.policyNumber || '', identifiers.dateOfBirth || '', id]
+    );
+  } catch (err) {
+    console.error('BOB identifier persist error:', err.message);
+  }
 }
 
 // ─── GET all BOB clients ──────────────────────────────────────────────────────
@@ -235,6 +239,58 @@ router.get('/summary', requireAuth, async (req, res) => {
       bySource: bySource.rows
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─── GET client details (member ID, policy #, DOB) ────────────────────────────
+router.get('/:id/details', requireAuth, async (req, res) => {
+  try {
+    const pool = getPool();
+    const bobResult = await pool.query(`SELECT * FROM book_of_business WHERE id = $1`, [req.params.id]);
+    if (!bobResult.rows.length) return res.status(404).json({ error: 'Client not found' });
+    const bob = bobResult.rows[0];
+
+    if (req.user.role === 'agent') {
+      const agentName = String(bob.agent_name || '').toLowerCase();
+      const userName = String(req.user.name || '').toLowerCase();
+      if (!userName || !agentName.includes(userName)) {
+        return res.status(403).json({ error: 'Not authorized' });
+      }
+    } else if (req.user.role === 'admin') {
+      const af = agencyFilter(req, null);
+      if (af) {
+        const allowed = await pool.query(
+          `SELECT 1 FROM book_of_business WHERE id = $1 AND ${af}`,
+          [req.params.id]
+        );
+        if (!allowed.rows.length) return res.status(403).json({ error: 'Not authorized' });
+      }
+    }
+
+    const related = await lookupRelatedIdentifiers(pool, bob.client_full_name, bob.carrier);
+    const identifiers = mergeClientIdentifiers([bob, ...related]);
+    await persistBobIdentifiers(pool, bob.id, identifiers);
+
+    res.json({
+      id: bob.id,
+      client_full_name: bob.client_full_name,
+      agent_name: bob.agent_name,
+      carrier: bob.carrier,
+      effective_date: bob.effective_date,
+      plan_type: bob.plan_type,
+      status: bob.status,
+      resolution: bob.resolution,
+      last_commission_date: bob.last_commission_date,
+      last_commission_amount: bob.last_commission_amount,
+      source: bob.source,
+      notes: bob.notes,
+      member_id: identifiers.memberId || '',
+      policy_number: identifiers.policyNumber || '',
+      date_of_birth: identifiers.dateOfBirth || '',
+    });
+  } catch (err) {
+    console.error('BOB details error:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ─── PATCH single client ──────────────────────────────────────────────────────
@@ -463,14 +519,23 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
       );
       if (existing.rows.length > 0) {
         await pool.query(
-          `UPDATE book_of_business SET agent_name = COALESCE(NULLIF($1,''), agent_name), policy_number = COALESCE(NULLIF($2,''), policy_number), effective_date = COALESCE(NULLIF($3,''), effective_date), plan_type = COALESCE(NULLIF($4,''), plan_type), source = 'bob_export', status = $5, updated_at = NOW() WHERE id = $6`,
-          [r.agent, r.policyNumber, r.effectiveDate, r.planType, recordStatus, existing.rows[0].id]
+          `UPDATE book_of_business SET
+             agent_name = COALESCE(NULLIF($1,''), agent_name),
+             policy_number = COALESCE(NULLIF($2,''), policy_number),
+             member_id = COALESCE(NULLIF($3,''), member_id),
+             date_of_birth = COALESCE(NULLIF($4,''), date_of_birth),
+             effective_date = COALESCE(NULLIF($5,''), effective_date),
+             plan_type = COALESCE(NULLIF($6,''), plan_type),
+             source = 'bob_export', status = $7, updated_at = NOW()
+           WHERE id = $8`,
+          [r.agent, r.policyNumber, r.memberId, r.dateOfBirth, r.effectiveDate, r.planType, recordStatus, existing.rows[0].id]
         );
         updated++;
       } else {
         await pool.query(
-          `INSERT INTO book_of_business (agent_name, carrier, client_full_name, policy_number, effective_date, plan_type, source, status) VALUES ($1, $2, $3, $4, $5, $6, 'bob_export', $7)`,
-          [r.agent, carrier, r.client, r.policyNumber, r.effectiveDate, r.planType, recordStatus]
+          `INSERT INTO book_of_business (agent_name, carrier, client_full_name, policy_number, member_id, date_of_birth, effective_date, plan_type, source, status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'bob_export', $9)`,
+          [r.agent, carrier, r.client, r.policyNumber, r.memberId, r.dateOfBirth, r.effectiveDate, r.planType, recordStatus]
         );
         added++;
       }
@@ -550,7 +615,8 @@ router.post('/build-from-statements', requireAuth, requireAdmin, async (req, res
          )),
          LOWER(carrier)
        )
-         client_full_name, carrier, agent_name, effective_date, commission, payment_period
+         client_full_name, carrier, agent_name, effective_date, commission, payment_period,
+         policy_number, mbi, carrier_member_id, raw_data
        FROM commission_records
        WHERE client_full_name != '' AND client_full_name IS NOT NULL AND commission > 0 ${af}
        ORDER BY 
@@ -608,13 +674,15 @@ router.post('/build-from-statements', requireAuth, requireAdmin, async (req, res
         [rec.client_full_name, rec.carrier]
       );
 
+      const ids = identifiersFromRecord(rec);
+
       if (existing.rows.length === 0) {
         // Insert new
         await pool.query(
           `INSERT INTO book_of_business
-             (agent_name, carrier, client_full_name, effective_date, last_commission_date, last_commission_amount, source, status, resolution)
-           VALUES ($1, $2, $3, $4, $5, $6, 'statement', $7, $8)`,
-          [rec.agent_name, rec.carrier, rec.client_full_name, rec.effective_date, rec.payment_period, rec.commission, bobStatus, resolution]
+             (agent_name, carrier, client_full_name, effective_date, last_commission_date, last_commission_amount, source, status, resolution, policy_number, member_id, date_of_birth)
+           VALUES ($1, $2, $3, $4, $5, $6, 'statement', $7, $8, $9, $10, $11)`,
+          [rec.agent_name, rec.carrier, rec.client_full_name, rec.effective_date, rec.payment_period, rec.commission, bobStatus, resolution, ids.policyNumber, ids.memberId, ids.dateOfBirth]
         );
         added++;
       } else {
@@ -636,9 +704,12 @@ router.post('/build-from-statements', requireAuth, requireAdmin, async (req, res
              last_commission_amount = $4,
              status = $5,
              resolution = $6,
+             policy_number = COALESCE(NULLIF($7,''), policy_number),
+             member_id = COALESCE(NULLIF($8,''), member_id),
+             date_of_birth = COALESCE(NULLIF($9,''), date_of_birth),
              updated_at = NOW()
-           WHERE id = $7`,
-          [rec.agent_name, newEffDate, rec.payment_period, rec.commission, bobStatus, resolution, existing.rows[0].id]
+           WHERE id = $10`,
+          [rec.agent_name, newEffDate, rec.payment_period, rec.commission, bobStatus, resolution, ids.policyNumber, ids.memberId, ids.dateOfBirth, existing.rows[0].id]
         );
         updated++;
       }
@@ -674,7 +745,8 @@ router.post('/reset-and-rebuild', requireAuth, requireAdmin, async (req, res) =>
          )),
          LOWER(carrier)
        )
-         client_full_name, carrier, agent_name, effective_date, commission, payment_period
+         client_full_name, carrier, agent_name, effective_date, commission, payment_period,
+         policy_number, mbi, carrier_member_id, raw_data
        FROM commission_records
        WHERE client_full_name != '' AND client_full_name IS NOT NULL AND commission > 0
        ORDER BY 
@@ -723,11 +795,13 @@ router.post('/reset-and-rebuild', requireAuth, requireAdmin, async (req, res) =>
         }
       }
 
+      const ids = identifiersFromRecord(rec);
+
       await pool.query(
         `INSERT INTO book_of_business
-           (agent_name, carrier, client_full_name, effective_date, last_commission_date, last_commission_amount, source, status, resolution)
-         VALUES ($1, $2, $3, $4, $5, $6, 'statement', $7, $8)`,
-        [rec.agent_name, rec.carrier, rec.client_full_name, rec.effective_date, rec.payment_period, rec.commission, bobStatus, resolution]
+           (agent_name, carrier, client_full_name, effective_date, last_commission_date, last_commission_amount, source, status, resolution, policy_number, member_id, date_of_birth)
+         VALUES ($1, $2, $3, $4, $5, $6, 'statement', $7, $8, $9, $10, $11)`,
+        [rec.agent_name, rec.carrier, rec.client_full_name, rec.effective_date, rec.payment_period, rec.commission, bobStatus, resolution, ids.policyNumber, ids.memberId, ids.dateOfBirth]
       );
       added++;
     }
