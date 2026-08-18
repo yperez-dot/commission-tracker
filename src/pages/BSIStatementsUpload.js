@@ -197,7 +197,7 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
           <div style={{ padding: '0 0 12px', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
             <input
               type="text"
-              placeholder="Search filename, carrier, or uploader…"
+              placeholder="Search BSI, filename, carrier, or uploader…"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               style={{

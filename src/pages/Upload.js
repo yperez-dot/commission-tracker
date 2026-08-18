@@ -493,7 +493,7 @@ export default function Upload({ user, onNavigate }) {
             <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <input
                 type="text"
-                placeholder="Search by filename..."
+                placeholder="Search NHP, filename, or carrier..."
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 style={{ flex: '1 1 220px', minWidth: 180, padding: '6px 10px', borderRadius: 6, border: '0.5px solid var(--border)', fontSize: 13, background: 'var(--bg)', color: 'var(--text)' }}

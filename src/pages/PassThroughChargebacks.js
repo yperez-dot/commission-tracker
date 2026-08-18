@@ -33,6 +33,7 @@ export default function PassThroughChargebacks({ user }) {
   const [selAgent, setSelAgent] = useState('');
   const [collectedFilter, setCollectedFilter] = useState('no');
   const [message, setMessage] = useState('');
+  const [searchQuery, setSearchQuery] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -87,6 +88,16 @@ export default function PassThroughChargebacks({ user }) {
   }
 
   const totalOutstanding = summary.reduce((s, r) => s + parseFloat(r.total_outstanding || 0), 0);
+  const qCb = searchQuery.trim().toLowerCase();
+  const visibleRows = !qCb
+    ? rows
+    : rows.filter((r) => {
+        const hay = [r.client_full_name, r.liable_agent, r.writing_agent, r.carrier]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        return hay.includes(qCb);
+      });
 
   if (user.role !== 'admin') {
     return (
@@ -130,6 +141,13 @@ export default function PassThroughChargebacks({ user }) {
           <option value="yes">Collected</option>
           <option value="all">All</option>
         </select>
+        <input
+          type="text"
+          placeholder="Search client, agent, or carrier…"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          style={{ ...selectStyle, minWidth: 220, flex: '1 1 200px' }}
+        />
         <button type="button" onClick={() => runBackfill(true)} disabled={backfilling} style={btnSecondary}>
           Preview tag
         </button>
@@ -163,6 +181,10 @@ export default function PassThroughChargebacks({ user }) {
           <div style={{ padding: 24, color: C.textMuted }}>
             No pass-through chargebacks found. Run &quot;Tag chargebacks&quot; to attribute historical UHC chargebacks on house writing.
           </div>
+        ) : visibleRows.length === 0 ? (
+          <div style={{ padding: 24, color: C.textMuted }}>
+            No chargebacks match “{searchQuery.trim()}”
+          </div>
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead>
@@ -173,7 +195,7 @@ export default function PassThroughChargebacks({ user }) {
               </tr>
             </thead>
             <tbody>
-              {rows.map((r) => (
+              {visibleRows.map((r) => (
                 <tr key={r.id} style={{ borderTop: `1px solid ${C.border}` }}>
                   <td style={{ padding: '9px 12px' }}>{formatPeriod(r.payment_period)}</td>
                   <td style={{ padding: '9px 12px', fontWeight: 500 }}>{r.liable_agent}</td>

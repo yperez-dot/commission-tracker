@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch, apiUpload } from '../api';
 import { formatDate } from '../utils/dateFormat';
-import { UploadPageShell, UploadDropZone, UploadAlert, UploadHistoryCard } from '../components/UploadPageLayout';
+import { UploadPageShell, UploadDropZone, UploadAlert, UploadHistoryCard, UploadListSearch } from '../components/UploadPageLayout';
 import { medicareProUploadExportPath, exportUploadFile } from '../utils/exportUpload';
 export default function MedicareProUpload() {
   const [file, setFile] = useState(null);
@@ -16,6 +16,7 @@ export default function MedicareProUpload() {
   const [batchData, setBatchData] = useState([]);
   const [loadingBatchData, setLoadingBatchData] = useState(false);
   const [exportingId, setExportingId] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Load upload history on mount
   useEffect(() => {
@@ -152,6 +153,17 @@ export default function MedicareProUpload() {
     }
   }
 
+  const qHist = searchQuery.trim().toLowerCase();
+  const visibleHistory = !qHist
+    ? uploadHistory
+    : uploadHistory.filter((u) => {
+        const hay = [u.filename, u.upload_batch, u.uploaded_by]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        return hay.includes(qHist);
+      });
+
   return (
     <UploadPageShell
       title="MedicarePro Sales"
@@ -281,7 +293,7 @@ export default function MedicareProUpload() {
           </ol>
         </div>
 
-        <UploadHistoryCard title="Upload history">
+        <UploadHistoryCard title={`Upload history${searchQuery.trim() ? ` (${visibleHistory.length} of ${uploadHistory.length})` : uploadHistory.length ? ` (${uploadHistory.length})` : ''}`}>
           {loadingHistory ? (
             <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-muted)' }}>Loading history...</div>
           ) : uploadHistory.length === 0 ? (
@@ -289,6 +301,19 @@ export default function MedicareProUpload() {
               No uploads yet. Upload your first file above!
             </div>
           ) : (
+            <>
+            <div style={{ padding: '0 16px' }}>
+              <UploadListSearch
+                value={searchQuery}
+                onChange={setSearchQuery}
+                placeholder="Search filename, batch, or uploader…"
+              />
+            </div>
+            {visibleHistory.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-muted)' }}>
+                No uploads match “{searchQuery.trim()}”
+              </div>
+            ) : (
             <div className="table-wrap">
               <table>
                 <thead>
@@ -302,7 +327,7 @@ export default function MedicareProUpload() {
                   </tr>
                 </thead>
                 <tbody>
-                  {uploadHistory.map((upload) => (
+                  {visibleHistory.map((upload) => (
                     <tr key={upload.id}>
                       <td>
                         <a
@@ -365,6 +390,8 @@ export default function MedicareProUpload() {
                 </tbody>
               </table>
             </div>
+            )}
+            </>
           )}
         </UploadHistoryCard>
 

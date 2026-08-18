@@ -8,8 +8,9 @@ import {
   UPLOAD_PAGE_BY_DEST,
 } from '../utils/uploadDestination';
 import { setPendingUpload, takePendingUpload } from '../utils/pendingUpload';
-import { UploadPageShell, UploadDropZone, UploadAlert, UploadHistoryCard } from '../components/UploadPageLayout';
+import { UploadPageShell, UploadDropZone, UploadAlert, UploadHistoryCard, UploadListSearch } from '../components/UploadPageLayout';
 import { commissionUploadExportPath, exportUploadFile } from '../utils/exportUpload';
+import { statementSearchText } from '../utils/statementDisplayName';
 import StatementFileName from '../components/StatementFileName';
 
 function fmt(n) {
@@ -27,6 +28,7 @@ export default function AgentPayoutUploads({ user, onNavigate }) {
   const [routeConfirm, setRouteConfirm] = useState(null);
   const [duplicateModal, setDuplicateModal] = useState(null);
   const [selectedDuplicates, setSelectedDuplicates] = useState(new Set());
+  const [searchQuery, setSearchQuery] = useState('');
 
   const loadUploads = useCallback(async () => {
     try {
@@ -126,6 +128,22 @@ export default function AgentPayoutUploads({ user, onNavigate }) {
       setExportingId(null);
     }
   }
+
+  const q = searchQuery.trim().toLowerCase();
+  const visibleUploads = !q
+    ? uploads
+    : uploads.filter((u) => {
+        const hay = [
+          statementSearchText(u.original_name, { category: 'agent_payout' }),
+          u.uploaded_by_name,
+          u.carrier,
+          u.uploaded_by != null ? `User ${u.uploaded_by}` : '',
+        ]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        return hay.includes(q);
+      });
 
   return (
     <div>
@@ -242,10 +260,23 @@ export default function AgentPayoutUploads({ user, onNavigate }) {
           </UploadAlert>
         )}
 
-        <UploadHistoryCard title={`Agent payout statements (${uploads.length})`}>
+        <UploadHistoryCard title={`Agent payout statements (${q ? `${visibleUploads.length} of ${uploads.length}` : uploads.length})`}>
+          {uploads.length > 0 && (
+            <div style={{ padding: '0 16px' }}>
+              <UploadListSearch
+                value={searchQuery}
+                onChange={setSearchQuery}
+                placeholder="Search NHP, filename, or uploader…"
+              />
+            </div>
+          )}
           {uploads.length === 0 ? (
             <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
               No agent payout statements uploaded yet
+            </div>
+          ) : visibleUploads.length === 0 ? (
+            <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
+              No uploads match “{searchQuery.trim()}”
             </div>
           ) : (
             <div
@@ -267,7 +298,7 @@ export default function AgentPayoutUploads({ user, onNavigate }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {uploads.map((u, i) => (
+                  {visibleUploads.map((u, i) => (
                     <tr
                       key={u.id}
                       style={{

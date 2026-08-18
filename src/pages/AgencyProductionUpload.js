@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch, getToken } from '../api';
-import { UploadPageShell, UploadDropZone, UploadAlert, UploadHistoryCard } from '../components/UploadPageLayout';
+import { UploadPageShell, UploadDropZone, UploadAlert, UploadHistoryCard, UploadListSearch } from '../components/UploadPageLayout';
 import { agencyProductionUploadExportPath, exportUploadFile } from '../utils/exportUpload';
 
 export default function AgencyProductionUpload() {
@@ -13,6 +13,7 @@ export default function AgencyProductionUpload() {
   const [uploadHistory, setUploadHistory] = useState([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [exportingId, setExportingId] = useState(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const API_URL = process.env.REACT_APP_API_URL || '';
 
@@ -193,6 +194,17 @@ export default function AgencyProductionUpload() {
     }
   }
 
+  const qHist = searchQuery.trim().toLowerCase();
+  const visibleHistory = !qHist
+    ? uploadHistory
+    : uploadHistory.filter((u) => {
+        const hay = [u.filename, u.carrier, u.upload_batch, u.uploaded_by]
+          .filter(Boolean)
+          .join(' ')
+          .toLowerCase();
+        return hay.includes(qHist);
+      });
+
   return (
     <UploadPageShell
       title="Agency Production"
@@ -301,7 +313,7 @@ export default function AgencyProductionUpload() {
           </ul>
         </div>
 
-        <UploadHistoryCard title="Upload history">
+        <UploadHistoryCard title={`Upload history${searchQuery.trim() ? ` (${visibleHistory.length} of ${uploadHistory.length})` : uploadHistory.length ? ` (${uploadHistory.length})` : ''}`}>
           {loadingHistory ? (
             <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-muted)' }}>Loading history...</div>
           ) : uploadHistory.length === 0 ? (
@@ -309,6 +321,19 @@ export default function AgencyProductionUpload() {
               No uploads yet. Upload your first production report above!
             </div>
           ) : (
+            <>
+            <div style={{ padding: '0 16px' }}>
+              <UploadListSearch
+                value={searchQuery}
+                onChange={setSearchQuery}
+                placeholder="Search filename, carrier, or batch…"
+              />
+            </div>
+            {visibleHistory.length === 0 ? (
+              <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-muted)' }}>
+                No uploads match “{searchQuery.trim()}”
+              </div>
+            ) : (
             <div className="table-wrap">
               <table>
                 <thead>
@@ -323,7 +348,7 @@ export default function AgencyProductionUpload() {
                   </tr>
                 </thead>
                 <tbody>
-                  {uploadHistory.map((upload) => (
+                  {visibleHistory.map((upload) => (
                     <tr key={upload.id}>
                       <td style={{ fontWeight: 500 }}>
                         <a 
@@ -442,6 +467,8 @@ export default function AgencyProductionUpload() {
                 </tbody>
               </table>
             </div>
+            )}
+            </>
           )}
         </UploadHistoryCard>
     </UploadPageShell>
