@@ -155,6 +155,11 @@ async function initSchema() {
 
       ALTER TABLE book_of_business ADD COLUMN IF NOT EXISTS member_id TEXT;
       ALTER TABLE book_of_business ADD COLUMN IF NOT EXISTS date_of_birth TEXT;
+      CREATE TABLE IF NOT EXISTS schema_meta (
+        key TEXT PRIMARY KEY,
+        value TEXT,
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
       CREATE INDEX IF NOT EXISTS idx_medicarepro_client ON medicarepro_sales(client_name);
       CREATE INDEX IF NOT EXISTS idx_medicarepro_agent ON medicarepro_sales(agent_name);
       CREATE INDEX IF NOT EXISTS idx_medicarepro_carrier ON medicarepro_sales(carrier);
@@ -232,6 +237,24 @@ async function initSchema() {
     `);
 
     await seedDefaultAdmin(client);
+
+    try {
+      const flag = await client.query(`SELECT value FROM schema_meta WHERE key = 'bob_identifiers_backfill'`);
+      if (!flag.rows.length || flag.rows[0].value !== 'done') {
+        const { backfillBobIdentifiers } = require('../src/bobIdentifierBackfill');
+        console.log('Backfilling Book of Business member ID, policy number, and date of birth...');
+        const result = await backfillBobIdentifiers(client);
+        await client.query(
+          `INSERT INTO schema_meta (key, value, updated_at)
+           VALUES ('bob_identifiers_backfill', 'done', NOW())
+           ON CONFLICT (key) DO UPDATE SET value = 'done', updated_at = NOW()`
+        );
+        console.log('BOB identifier backfill complete:', result);
+      }
+    } catch (err) {
+      console.error('BOB identifier backfill skipped:', err.message);
+    }
+
     console.log('Database schema initialized');
   } finally {
     client.release();

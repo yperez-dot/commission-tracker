@@ -1,9 +1,6 @@
 'use strict';
 
-/**
- * Book of Business client identifiers: member ID, policy number, date of birth.
- * Used by BOB export parsing and the client-details lookup.
- */
+const { clientNameKey } = require('./clientNameKey');
 
 function normalizeHeader(value) {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -217,6 +214,32 @@ function policyNumberForDisplay(memberId, policyNumber) {
   return policyNumber;
 }
 
+function identifierLookupKey(name, carrier) {
+  return `${clientNameKey(name)}|${String(carrier || '').toLowerCase().trim()}`;
+}
+
+function enrichBobClientsWithIdentifiers(bobRows, relatedRows) {
+  const byKey = new Map();
+  for (const rec of relatedRows || []) {
+    const name = rec.client_full_name || rec.client_name || rec.client || '';
+    const key = identifierLookupKey(name, rec.carrier);
+    if (!clientNameKey(name)) continue;
+    if (!byKey.has(key)) byKey.set(key, []);
+    byKey.get(key).push(rec);
+  }
+
+  return (bobRows || []).map((bob) => {
+    const key = identifierLookupKey(bob.client_full_name, bob.carrier);
+    const ids = mergeClientIdentifiers([bob, ...(byKey.get(key) || [])]);
+    return {
+      ...bob,
+      member_id: ids.memberId || '',
+      policy_number: ids.policyNumber || '',
+      date_of_birth: ids.dateOfBirth || '',
+    };
+  });
+}
+
 module.exports = {
   normalizeHeader,
   normalizeId,
@@ -229,4 +252,6 @@ module.exports = {
   identifiersFromRecord,
   mergeClientIdentifiers,
   policyNumberForDisplay,
+  identifierLookupKey,
+  enrichBobClientsWithIdentifiers,
 };

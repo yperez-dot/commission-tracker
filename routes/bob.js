@@ -15,6 +15,7 @@ const {
   mergeClientIdentifiers,
   identifiersFromRecord,
 } = require('../src/bobClientIdentifiers');
+const { backfillBobIdentifiers } = require('../src/bobIdentifierBackfill');
 const {
   buildMissingRenewalRows,
   buildMissingRenewalsPeriodOptions,
@@ -239,6 +240,17 @@ router.get('/summary', requireAuth, async (req, res) => {
       bySource: bySource.rows
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ─── POST backfill member ID / policy / DOB onto existing BOB rows ────────────
+router.post('/backfill-identifiers', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const result = await backfillBobIdentifiers(getPool());
+    res.json(result);
+  } catch (err) {
+    console.error('BOB identifier backfill error:', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ─── GET client details (member ID, policy #, DOB) ────────────────────────────
@@ -715,7 +727,14 @@ router.post('/build-from-statements', requireAuth, requireAdmin, async (req, res
       }
     }
 
-    res.json({ added, updated, total: added + updated });
+    let identifiers = null;
+    try {
+      identifiers = await backfillBobIdentifiers(pool);
+    } catch (err) {
+      console.error('BOB identifier backfill after build failed:', err.message);
+    }
+
+    res.json({ added, updated, total: added + updated, identifiers });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -804,6 +823,12 @@ router.post('/reset-and-rebuild', requireAuth, requireAdmin, async (req, res) =>
         [rec.agent_name, rec.carrier, rec.client_full_name, rec.effective_date, rec.payment_period, rec.commission, bobStatus, resolution, ids.policyNumber, ids.memberId, ids.dateOfBirth]
       );
       added++;
+    }
+
+    try {
+      await backfillBobIdentifiers(pool);
+    } catch (err) {
+      console.error('BOB identifier backfill after reset failed:', err.message);
     }
 
     res.json({ deleted: deleted.rowCount, added, message: `Cleared ${deleted.rowCount} duplicates and rebuilt ${added} clean clients.` });

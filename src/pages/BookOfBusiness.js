@@ -221,9 +221,24 @@ export default function BookOfBusiness({ user }) {
     setBuildStatus('building');
     try {
       const result = await apiFetch('/bob/build-from-statements', { method: 'POST' });
-      setBuildStatus(`Added ${result.added} clients to your BOB from existing statements!`);
+      const ids = result.identifiers || {};
+      const idNote = ids.updated != null
+        ? ` Filled identifiers on ${ids.updated} existing clients (${ids.withMemberId || 0} member IDs, ${ids.withPolicy || 0} policy numbers, ${ids.withDob || 0} dates of birth).`
+        : '';
+      setBuildStatus(`Added ${result.added} clients to your BOB from existing statements!${idNote}`);
       loadData(); loadClients();
     } catch (e) { setBuildStatus('Error: ' + e.message); }
+  }
+
+  async function backfillIdentifiers() {
+    setBuildStatus('Updating existing clients with member ID, policy number, and date of birth…');
+    setLoading(true);
+    try {
+      const result = await apiFetch('/bob/backfill-identifiers', { method: 'POST' });
+      setBuildStatus(`Updated existing BOB clients — ${result.updated} rows changed, ${result.withMemberId} member IDs, ${result.withPolicy} policy numbers, ${result.withDob} dates of birth (${result.total} total clients).`);
+      loadData(); loadClients();
+    } catch (e) { setBuildStatus('Error: ' + e.message); }
+    finally { setLoading(false); }
   }
 
   async function runRenewalCheck() {
@@ -907,6 +922,16 @@ export default function BookOfBusiness({ user }) {
 
         {tab==='setup' && isAdmin && (
           <div>
+            <div className="card" style={{marginBottom:14}}>
+              <div className="card-title">Fill member ID, policy number, and date of birth</div>
+              <p style={{fontSize:13,color:'var(--text-muted)',marginBottom:12}}>
+                Update every existing Book of Business client from commission statements, production files, and MedicarePro. Empty fields are filled in; values already on the BOB record are left alone.
+              </p>
+              <button className="btn btn-primary" onClick={backfillIdentifiers} disabled={loading}>
+                {loading ? 'Updating existing clients…' : 'Update existing clients →'}
+              </button>
+            </div>
+
             <div className="card" style={{marginBottom:14}}>
               <div className="card-title">Run monthly renewal check</div>
               <p style={{fontSize:13,color:'var(--text-muted)',marginBottom:12}}>

@@ -8,6 +8,7 @@ const {
   mergeClientIdentifiers,
   policyNumberForDisplay,
   formatIdentifierDate,
+  enrichBobClientsWithIdentifiers,
 } = require('../bobClientIdentifiers');
 
 describe('detectBobExportColumns', () => {
@@ -120,5 +121,30 @@ describe('formatIdentifierDate', () => {
     expect(formatIdentifierDate('1942-03-08')).toBe('03/08/1942');
     expect(formatIdentifierDate('3/8/1942')).toBe('03/08/1942');
     expect(formatIdentifierDate('')).toBe('');
+  });
+});
+
+describe('enrichBobClientsWithIdentifiers', () => {
+  test('fills empty BOB rows from statements and production without overwriting existing values', () => {
+    const enriched = enrichBobClientsWithIdentifiers(
+      [
+        { id: 1, client_full_name: 'Maria Garcia', carrier: 'Humana', member_id: '', policy_number: '', date_of_birth: '' },
+        { id: 2, client_full_name: 'John Smith', carrier: 'Aetna', member_id: 'KEEP-ME', policy_number: '', date_of_birth: '02/02/1940' },
+      ],
+      [
+        { client_full_name: 'GARCIA, MARIA', carrier: 'Humana', carrier_member_id: 'UMID-9', policy_number: 'POL-1', date_of_birth: '1945-06-02' },
+        { client_name: 'John Smith', carrier: 'Aetna', mbi: 'OTHER', policy_number: 'AET-22', date_of_birth: '2000-01-01' },
+      ]
+    );
+    expect(enriched[0]).toMatchObject({
+      member_id: 'UMID-9',
+      policy_number: 'POL-1',
+      date_of_birth: '06/02/1945',
+    });
+    expect(enriched[1]).toMatchObject({
+      member_id: 'KEEP-ME',
+      policy_number: 'AET-22',
+      date_of_birth: '02/02/1940',
+    });
   });
 });

@@ -21,4 +21,10 @@ COMMENT ON COLUMN book_of_business.member_id IS 'Carrier member ID or MBI when a
 COMMENT ON COLUMN book_of_business.date_of_birth IS 'Client date of birth (MM/DD/YYYY text, matching effective_date)';
 COMMENT ON COLUMN book_of_business.policy_number IS 'Policy number when the carrier provides one (may be absent on MA books)';
 
+CREATE TABLE IF NOT EXISTS schema_meta (
+  key TEXT PRIMARY KEY,
+  value TEXT,
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 COMMIT;
