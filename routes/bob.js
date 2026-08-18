@@ -9,6 +9,7 @@ const { requireAuth, requireAdmin } = require('./auth');
 const { normalizeAgentName } = require('./normalize');
 const { safeUploadFilename, isAllowedUploadName } = require('./uploadSafe');
 const { clientNameKey, clientNameKeySql } = require('../src/clientNameKey');
+const { namesLooseMatch, normalizeCarrier, carriersMatch } = require('../src/matchingNormalize.cjs');
 const {
   detectBobExportColumns,
   mapBobExportRow,
@@ -66,48 +67,83 @@ function parseBOBSheet(ws) {
     .filter((r) => r.client && r.client.length > 1);
 }
 
+function productionCarrierLikes(carrier) {
+  const c = normalizeCarrier(carrier);
+  if (c === 'humana') return ['%humana%'];
+  if (c === 'devoted health') return ['%devoted%'];
+  if (c === 'unitedhealthcare') return ['%unitedhealth%', '%uhc%'];
+  if (c) return [`%${c.replace(/[^a-z0-9]+/g, '%')}%`];
+  return [];
+}
+
 async function lookupRelatedIdentifiers(pool, clientName, carrier) {
   const nameKey = clientNameKey(clientName);
   if (!nameKey || !carrier) return [];
 
-  const [commission, production, medicarepro] = await Promise.all([
+  const [commission, productionByName, medicarepro] = await Promise.all([
     pool.query(
-      `SELECT policy_number, mbi, carrier_member_id, raw_data
+      `SELECT client_full_name, carrier, policy_number, mbi, carrier_member_id, raw_data,
+              'commission' AS identifier_source
        FROM commission_records cr
        WHERE ${clientNameKeySql('cr')} = $1
-         AND LOWER(TRIM(cr.carrier)) = LOWER(TRIM($2))
        ORDER BY
          CASE WHEN NULLIF(TRIM(COALESCE(cr.carrier_member_id, '')), '') IS NOT NULL THEN 0 ELSE 1 END,
          CASE WHEN NULLIF(TRIM(COALESCE(cr.mbi, '')), '') IS NOT NULL THEN 0 ELSE 1 END,
          CASE WHEN NULLIF(TRIM(COALESCE(cr.policy_number, '')), '') IS NOT NULL THEN 0 ELSE 1 END,
          cr.created_at DESC NULLS LAST
-       LIMIT 8`,
-      [nameKey, carrier]
+       LIMIT 24`,
+      [nameKey]
     ).catch(() => ({ rows: [] })),
     pool.query(
-      `SELECT policy_number, policy_number_production, mbi, carrier_member_id, raw_data
+      `SELECT client_name AS client_full_name, carrier, policy_number, policy_number_production,
+              mbi, carrier_member_id, raw_data, 'production' AS identifier_source
        FROM agency_production ap
        WHERE ${clientNameKeySql('ap', 'client_name')} = $1
-         AND LOWER(TRIM(ap.carrier)) = LOWER(TRIM($2))
        ORDER BY
          CASE WHEN NULLIF(TRIM(COALESCE(ap.carrier_member_id, '')), '') IS NOT NULL THEN 0 ELSE 1 END,
          CASE WHEN NULLIF(TRIM(COALESCE(ap.mbi, '')), '') IS NOT NULL THEN 0 ELSE 1 END,
          ap.uploaded_at DESC NULLS LAST
-       LIMIT 8`,
-      [nameKey, carrier]
+       LIMIT 24`,
+      [nameKey]
     ).catch(() => ({ rows: [] })),
     pool.query(
-      `SELECT policy_number, raw_data
+      `SELECT client_name AS client_full_name, carrier, policy_number, raw_data,
+              'medicarepro' AS identifier_source
        FROM medicarepro_sales mp
        WHERE ${clientNameKeySql('mp', 'client_name')} = $1
-         AND LOWER(TRIM(mp.carrier)) = LOWER(TRIM($2))
        ORDER BY mp.uploaded_at DESC NULLS LAST
-       LIMIT 4`,
-      [nameKey, carrier]
+       LIMIT 12`,
+      [nameKey]
     ).catch(() => ({ rows: [] })),
   ]);
 
-  return [...commission.rows, ...production.rows, ...medicarepro.rows];
+  const sameCarrier = (row) => carriersMatch(row.carrier, carrier);
+  let production = productionByName.rows.filter(sameCarrier);
+  const commissionRows = commission.rows.filter(sameCarrier);
+  const medicareproRows = medicarepro.rows.filter(sameCarrier);
+
+  if (!production.length) {
+    const likes = productionCarrierLikes(carrier);
+    if (likes.length) {
+      try {
+        const extra = await pool.query(
+          `SELECT client_name AS client_full_name, carrier, policy_number, policy_number_production,
+                  mbi, carrier_member_id, raw_data, 'production' AS identifier_source
+           FROM agency_production ap
+           WHERE client_name IS NOT NULL AND TRIM(client_name) <> ''
+             AND (${likes.map((_, i) => `LOWER(ap.carrier) LIKE $${i + 1}`).join(' OR ')})`,
+          likes
+        );
+        production = extra.rows.filter(
+          (row) => sameCarrier(row) && namesLooseMatch(clientName, row.client_full_name)
+        );
+      } catch (err) {
+        console.error('BOB production loose match failed:', err.message);
+      }
+    }
+  }
+
+  return [...production, ...medicareproRows, ...commissionRows];
 }
 
 async function persistBobIdentifiers(pool, id, identifiers) {

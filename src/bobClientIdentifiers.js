@@ -1,6 +1,7 @@
 'use strict';
 
 const { clientNameKey } = require('./clientNameKey');
+const { namesLooseMatch, normalizeCarrier } = require('./matchingNormalize.cjs');
 
 function normalizeHeader(value) {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -183,15 +184,52 @@ function extractDobFromRaw(raw) {
   return '';
 }
 
+function pickRaw(obj, keys) {
+  const value = lookupRawKey(obj, keys);
+  return value ? String(value).trim() : '';
+}
+
+/**
+ * Humana / UHC / Devoted production files store IDs in carrier-specific columns.
+ * Prefer those so UMID, HIC, and MemberRecordLocator win over generic scanning.
+ */
+function identifiersFromProductionRaw(carrier, raw) {
+  const obj = parseRawObject(raw);
+  if (!obj) return { memberId: '', policyNumber: '', dateOfBirth: '' };
+  const c = normalizeCarrier(carrier);
+  let memberId = '';
+  let policyNumber = '';
+
+  if (c === 'humana') {
+    memberId = pickRaw(obj, ['UMID', 'Member ID', 'MEDICARE_IDENTIFIER', 'MBI']);
+    policyNumber = pickRaw(obj, ['Policy Number', 'POLICY_NUMBER', 'Contract Number']);
+  } else if (c === 'unitedhealthcare') {
+    memberId = pickRaw(obj, ['HICN/MBI', 'HIC', 'MBI', 'Medicare Beneficiary Identifier (MBI)']);
+    policyNumber = pickRaw(obj, ['Policy Number', 'POLICY_NUMBER', 'Contract Number', 'CONTRACT']);
+  } else if (c === 'devoted health') {
+    memberId = pickRaw(obj, ['MemberRecordLocator', 'Member Record Locator', 'Member ID', 'MBI']);
+    policyNumber = pickRaw(obj, ['Policy Number', 'POLICY_NUMBER']);
+  }
+
+  return {
+    memberId,
+    policyNumber,
+    dateOfBirth: extractDobFromRaw(obj),
+  };
+}
+
 function identifiersFromRecord(rec = {}) {
+  const fromProd = identifiersFromProductionRaw(rec.carrier, rec.raw_data);
   const memberId = String(
-    rec.member_id || rec.memberId || rec.carrier_member_id || rec.mbi || extractMemberIdFromRaw(rec.raw_data) || ''
+    rec.member_id || rec.memberId || rec.carrier_member_id || rec.mbi
+      || fromProd.memberId || extractMemberIdFromRaw(rec.raw_data) || ''
   ).trim();
   const policyNumber = String(
-    rec.policy_number || rec.policyNumber || rec.policy_number_production || ''
+    rec.policy_number || rec.policyNumber || rec.policy_number_production
+      || fromProd.policyNumber || ''
   ).trim();
   const dateOfBirth = String(
-    rec.date_of_birth || rec.dateOfBirth || extractDobFromRaw(rec.raw_data) || ''
+    rec.date_of_birth || rec.dateOfBirth || fromProd.dateOfBirth || extractDobFromRaw(rec.raw_data) || ''
   ).trim();
   return { memberId, policyNumber, dateOfBirth };
 }
@@ -214,23 +252,55 @@ function policyNumberForDisplay(memberId, policyNumber) {
   return policyNumber;
 }
 
+function relatedClientName(rec) {
+  return rec.client_full_name || rec.client_name || rec.client || '';
+}
+
 function identifierLookupKey(name, carrier) {
-  return `${clientNameKey(name)}|${String(carrier || '').toLowerCase().trim()}`;
+  return `${clientNameKey(name)}|${normalizeCarrier(carrier)}`;
+}
+
+function sourceRank(rec) {
+  const source = rec.identifier_source || rec.source;
+  if (source === 'production') return 0;
+  if (source === 'medicarepro') return 1;
+  return 2;
+}
+
+function sortRelated(rows) {
+  return [...(rows || [])].sort((a, b) => sourceRank(a) - sourceRank(b));
+}
+
+function relatedRowsForClient(bob, byKey, byCarrier) {
+  const key = identifierLookupKey(bob.client_full_name, bob.carrier);
+  const exact = byKey.get(key) || [];
+  if (exact.length) return sortRelated(exact);
+
+  const carrierRows = byCarrier.get(normalizeCarrier(bob.carrier)) || [];
+  const loose = carrierRows.filter((rec) => namesLooseMatch(bob.client_full_name, relatedClientName(rec)));
+  return sortRelated(loose);
 }
 
 function enrichBobClientsWithIdentifiers(bobRows, relatedRows) {
   const byKey = new Map();
+  const byCarrier = new Map();
   for (const rec of relatedRows || []) {
-    const name = rec.client_full_name || rec.client_name || rec.client || '';
+    const name = relatedClientName(rec);
     const key = identifierLookupKey(name, rec.carrier);
-    if (!clientNameKey(name)) continue;
-    if (!byKey.has(key)) byKey.set(key, []);
-    byKey.get(key).push(rec);
+    if (clientNameKey(name)) {
+      if (!byKey.has(key)) byKey.set(key, []);
+      byKey.get(key).push(rec);
+    }
+    const carrierKey = normalizeCarrier(rec.carrier);
+    if (carrierKey) {
+      if (!byCarrier.has(carrierKey)) byCarrier.set(carrierKey, []);
+      byCarrier.get(carrierKey).push(rec);
+    }
   }
 
   return (bobRows || []).map((bob) => {
-    const key = identifierLookupKey(bob.client_full_name, bob.carrier);
-    const ids = mergeClientIdentifiers([bob, ...(byKey.get(key) || [])]);
+    const related = relatedRowsForClient(bob, byKey, byCarrier);
+    const ids = mergeClientIdentifiers([bob, ...related]);
     return {
       ...bob,
       member_id: ids.memberId || '',
@@ -254,4 +324,5 @@ module.exports = {
   policyNumberForDisplay,
   identifierLookupKey,
   enrichBobClientsWithIdentifiers,
+  identifiersFromProductionRaw,
 };

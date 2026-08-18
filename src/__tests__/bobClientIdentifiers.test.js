@@ -9,6 +9,7 @@ const {
   policyNumberForDisplay,
   formatIdentifierDate,
   enrichBobClientsWithIdentifiers,
+  identifiersFromProductionRaw,
 } = require('../bobClientIdentifiers');
 
 describe('detectBobExportColumns', () => {
@@ -146,5 +147,77 @@ describe('enrichBobClientsWithIdentifiers', () => {
       policy_number: 'AET-22',
       date_of_birth: '02/02/1940',
     });
+  });
+
+  test('crosswalks production carrier name variants for UHC, Devoted, and Humana', () => {
+    const enriched = enrichBobClientsWithIdentifiers(
+      [
+        { id: 1, client_full_name: 'Ana Perez', carrier: 'UHC', member_id: '', policy_number: '', date_of_birth: '' },
+        { id: 2, client_full_name: 'Luis Diaz', carrier: 'Devoted', member_id: '', policy_number: '', date_of_birth: '' },
+        { id: 3, client_full_name: 'Carla Ruiz', carrier: 'HUMANA INC', member_id: '', policy_number: '', date_of_birth: '' },
+      ],
+      [
+        { client_name: 'PEREZ, ANA', carrier: 'UnitedHealthcare', mbi: '1EG4TE5MK73', policy_number_production: 'POL-UHC', identifier_source: 'production' },
+        { client_name: 'Luis Diaz', carrier: 'Devoted Health', carrier_member_id: 'MRL-22', mbi: '8C73N39QN86', identifier_source: 'production' },
+        { client_name: 'Carla Ruiz', carrier: 'Humana', carrier_member_id: 'H70056676', mbi: '2D15P42UY89', identifier_source: 'production' },
+      ]
+    );
+    expect(enriched[0]).toMatchObject({ member_id: '1EG4TE5MK73', policy_number: 'POL-UHC' });
+    expect(enriched[1]).toMatchObject({ member_id: 'MRL-22' });
+    expect(enriched[2]).toMatchObject({ member_id: 'H70056676' });
+  });
+
+  test('matches production names with an extra middle name on the same carrier', () => {
+    const enriched = enrichBobClientsWithIdentifiers(
+      [{ id: 1, client_full_name: 'Maria Garcia', carrier: 'Humana', member_id: '', policy_number: '', date_of_birth: '' }],
+      [{ client_name: 'Maria Lopez Garcia', carrier: 'Humana', carrier_member_id: 'UMID-77', identifier_source: 'production' }]
+    );
+    expect(enriched[0].member_id).toBe('UMID-77');
+  });
+
+  test('prefers production IDs over commission when both match', () => {
+    const enriched = enrichBobClientsWithIdentifiers(
+      [{ id: 1, client_full_name: 'Ana Perez', carrier: 'UnitedHealthcare', member_id: '', policy_number: '', date_of_birth: '' }],
+      [
+        { client_full_name: 'Ana Perez', carrier: 'UnitedHealthcare', policy_number: 'STMT-ONLY', identifier_source: 'commission' },
+        { client_name: 'Ana Perez', carrier: 'UnitedHealthcare', mbi: '1YJ9E76GC17', policy_number_production: 'UHC-POL', identifier_source: 'production' },
+      ]
+    );
+    expect(enriched[0]).toMatchObject({
+      member_id: '1YJ9E76GC17',
+      policy_number: 'UHC-POL',
+    });
+  });
+});
+
+describe('identifiersFromProductionRaw', () => {
+  test('reads Humana UMID then MBI', () => {
+    expect(identifiersFromProductionRaw('Humana', {
+      UMID: 'H70056676',
+      MEDICARE_IDENTIFIER: '2D15P42UY89',
+      Date_of_Birth: '1942-03-08',
+    })).toEqual({
+      memberId: 'H70056676',
+      policyNumber: '',
+      dateOfBirth: '03/08/1942',
+    });
+  });
+
+  test('reads UHC HIC / policy number', () => {
+    expect(identifiersFromProductionRaw('UnitedHealthcare', {
+      HIC: '1EG4TE5MK73',
+      'Policy Number': '008899',
+    })).toEqual({
+      memberId: '1EG4TE5MK73',
+      policyNumber: '008899',
+      dateOfBirth: '',
+    });
+  });
+
+  test('reads Devoted MemberRecordLocator', () => {
+    expect(identifiersFromProductionRaw('Devoted', {
+      MemberRecordLocator: 'MRL-9',
+      MBI: '8C73N39QN86',
+    }).memberId).toBe('MRL-9');
   });
 });
