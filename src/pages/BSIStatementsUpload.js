@@ -313,7 +313,7 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
                             alert('Error loading records: ' + err.message);
                           }
                         }}
-                        style={{ color: 'var(--accent,#6B46C1)', textDecoration: 'none', cursor: 'pointer', borderBottom: '1px dashed currentColor' }}
+                        style={{ color: 'var(--text)', fontWeight: 500, textDecoration: 'none', cursor: 'pointer', borderBottom: '1px dashed currentColor' }}
                         onMouseOver={e => e.currentTarget.style.borderBottom='1px solid currentColor'}
                         onMouseOut={e => e.currentTarget.style.borderBottom='1px dashed currentColor'}
                         title="Click to view records"
