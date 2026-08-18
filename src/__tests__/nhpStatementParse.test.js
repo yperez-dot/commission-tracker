@@ -10,8 +10,17 @@ const {
   buildNhpChargeBacksHouseRecord,
   nhpStatementCheckAmount,
   parseNhpWorkbook,
+  nhpEffectiveDateIso,
   NHP_CHARGE_BACKS_CLIENT,
 } = require('../nhpStatementParse');
+
+describe('nhpEffectiveDateIso', () => {
+  test('Doctors YYYYMMDD and slash dates both work for BSI start', () => {
+    expect(nhpEffectiveDateIso('20260301')).toBe('2026-03-01');
+    expect(nhpEffectiveDateIso('10/1/2025')).toBe('2025-10-01');
+    expect(nhpEffectiveDateIso('8/1/2025')).toBe('2025-08-01');
+  });
+});
 
 describe('parseNhpMoney', () => {
   test('handles currency, commas, leading minus, and accounting parens', () => {
@@ -116,6 +125,22 @@ describe('May 30 THEI principal NHP fixture', () => {
     expect(aetnaNoLob).toBeTruthy();
     expect(aetnaNoLob.grossCommission).toBeCloseTo(3.21);
     expect(aetnaNoLob.carrier).toBe('Aetna');
+  });
+
+  test('even on a net-negative file, new sales still split BSI half and Chris', () => {
+    const records = parse();
+    expect(records.find((r) => r.client === NHP_CHARGE_BACKS_CLIENT).theiShare).toBeCloseTo(-14554.63);
+    expect(records.find((r) => r.client === NHP_CHARGE_BACKS_CLIENT).bsiShare).toBe(0);
+
+    const chris = records.find((r) => r.policyNumber === 'DOC-NB-001');
+    expect(chris.agent).toMatch(/Christian Munoz/i);
+    expect(chris.producerPayable).toBe(50);
+    expect(chris.theiShare).toBe(62.5);
+    expect(chris.bsiShare).toBe(62.5);
+
+    const bsiSale = records.find((r) => r.policyNumber === 'HUM-NB-001');
+    expect(bsiSale.theiShare).toBe(50);
+    expect(bsiSale.bsiShare).toBe(50);
   });
 
   test('NHP check reconstruction includes the -$14,554.63 recoup', () => {

@@ -32,6 +32,10 @@ function isNhpIntegrityFixedNb(agentName, carrier, classification) {
 }
 
 /**
+ * Splits are per Medicare override row. A net-negative NHP statement (or the
+ * house Charge Backs rollup) does not skip BSI's half or Chris/Horacio's cut
+ * on new sales on that same file — or on the next NHP file.
+ *
  * @param {{
  *   pot: number,
  *   agentName: string,

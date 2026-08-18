@@ -78,4 +78,28 @@ describe('nhpOverrideSplit', () => {
     expect(isNhpIntegrityFixedNb('Christian Munoz', 'Doctors', 'New Business')).toBe(true);
     expect(isNhpIntegrityFixedNb('CAM Insurance Solutions Corp', 'Doctors', 'New Business')).toBe(false);
   });
+
+  test('negative NHP cycle does not skip Chris split or BSI half on a new sale', () => {
+    const chris = splitNhpMedicareOverride({
+      pot: 175,
+      agentName: 'Christian Munoz',
+      carrier: 'Doctors',
+      classification: 'New',
+      isBsiEligible: true,
+    });
+    expect(chris.producerPayable).toBe(50);
+    expect(chris.theiShare).toBe(62.5);
+    expect(chris.bsiShare).toBe(62.5);
+
+    const houseNewSale = splitNhpMedicareOverride({
+      pot: 100,
+      agentName: 'Yahoska Perez',
+      carrier: 'Humana',
+      classification: 'New',
+      isBsiEligible: true,
+    });
+    expect(houseNewSale.theiShare).toBe(50);
+    expect(houseNewSale.bsiShare).toBe(50);
+    expect(houseNewSale.producerPayable).toBe(0);
+  });
 });

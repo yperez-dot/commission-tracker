@@ -101,8 +101,30 @@ function buildNhpChargeBacksHouseRecord({ amount, period, raw } = {}) {
     statementMonth: 'Charge Backs',
     mga: '',
     excludeFromBob: true,
+    // Agency recoup — not a new sale. Itemized MA rows on the same file still split BSI / Chris.
     raw: raw || [],
   };
+}
+
+function compactYyyymmdd(value) {
+  const s = String(value || '').trim();
+  if (/^\d{8}$/.test(s) && parseInt(s.slice(0, 4), 10) > 1900) {
+    return { y: s.slice(0, 4), m: s.slice(4, 6), d: s.slice(6, 8) };
+  }
+  return null;
+}
+
+/** Normalize NHP Policy Effective Date to YYYY-MM-DD for BSI eligibility (eff >= 2025-09-01). */
+function nhpEffectiveDateIso(effectiveDate) {
+  const s = String(effectiveDate || '').trim();
+  if (!s) return '';
+  let m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (m) return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
+  m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  const ymd = compactYyyymmdd(s);
+  if (ymd) return `${ymd.y}-${ymd.m}-${ymd.d}`;
+  return '';
 }
 
 function defaultFormatDate(value) {
@@ -119,9 +141,13 @@ function defaultFormatDate(value) {
       const [y, m, d] = value.split('-');
       return `${m}/${d}/${y}`;
     }
+    const ymd = compactYyyymmdd(value);
+    if (ymd) return `${ymd.m}/${ymd.d}/${ymd.y}`;
     return value;
   }
   if (typeof value === 'number') {
+    const ymd = compactYyyymmdd(value);
+    if (ymd) return `${ymd.m}/${ymd.d}/${ymd.y}`;
     const date = new Date((value - 25569) * 86400 * 1000);
     if (isNaN(date.getTime()) || date.getUTCFullYear() > 2100) return String(value);
     const m = String(date.getUTCMonth() + 1).padStart(2, '0');
@@ -350,11 +376,7 @@ function parseNhpWorkbook(wb, uploadPeriod, filename = '', helpers = {}) {
     const planType = derivePlanType(carrier, '', policyNumber, lobRaw);
 
     const BSI_SPLIT_START_DATE = '2025-09-01';
-    const isoEff = (() => {
-      const m = String(effectiveDate || '').match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-      if (m) return `${m[3]}-${m[1].padStart(2, '0')}-${m[2].padStart(2, '0')}`;
-      return '';
-    })();
+    const isoEff = nhpEffectiveDateIso(effectiveDate);
     const isBsiEligible = lob === 'MA' && isoEff && isoEff >= BSI_SPLIT_START_DATE;
 
     let splitApplies;
@@ -469,4 +491,5 @@ module.exports = {
   nhpStatementCheckAmount,
   parseNhpWorkbook,
   looksLikeNhpLob,
+  nhpEffectiveDateIso,
 };
