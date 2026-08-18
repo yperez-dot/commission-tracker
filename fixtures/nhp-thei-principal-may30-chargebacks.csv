@@ -1,0 +1,20 @@
+,,,,,,,,,,,,,,,
+THE HEALTH EXPERST INSURANCE - YAHOSKA PEREZ (principal) - KATY ROBLES,,,,,,,,,,,,,,,
+"PAYMENT/STATEMENT DATE:  MAY 30TH, 2026",,,,,,,,,,,,,,,
+,Florida Blue ACA - February 2026,-$561.00,,,,,,,,,,,,,
+,Charge Backs,"-$14,554.63",,,,,,,,,,,,,
+,TOTAL PAYMENT,"-$8,983.39",,,,,,,,,,,,,
+,,,,,,,,,,,,,,,
+LOB,Carrier-Statement Month,Agency,Agent NPN,Agent Name,Policy Number,Subscriber / Member Name,State,Members,Policy Effective Date,Commission /Coverage Date,Commission Type,Comm Class,Commission,Override,Fee
+ACA,FLORIDA BLUE ACA - FEBRUARY 2026,The Health Experts Insurance,16326554,Yahoska Perez,FL-TEST-001,"DOE, JANE",FL,1,1/1/2026,2-2026,Renewal,Commission,$27.00,,
+ACA,FLORIDA BLUE ACA - FEBRUARY 2026,The Health Experts Insurance,16326554,Yahoska Perez,FL-TEST-002,"ROE, RICHARD",FL,1,1/1/2026,2-2026,Chargeback,Commission,"($210.00)",,
+ACA,OSCAR ORS-APRIL 2026,The Health Experts Insurance,16326554,Yahoska Perez,FL-TEST-003,"SMITH, PAT",FL,1,4/1/2026,4-2026,Renewal,Override,,$100.00,
+MA,UHC - FEBRUARY 2026,The Health Experts Insurance,16326554,Yahoska Perez,961574000,"SAMPLE, MEMBER",FL,1,10/1/2025,202602,Renewal,Override,,$200.00,
+MA,UHC - FEBRUARY 2026,The Health Experts Insurance,16326554,Yahoska Perez,986226000,"CHARGE, ITEM",FL,1,2/1/2026,,New Chargeback,Override,,-$96.25,
+MA,DEVOTED - MARCH 2026,The Health Experts Insurance,16326554,Yahoska Perez,D4SRR9, ,FL, ,10/1/2024,Mar,Renewal - Monthly,Override,,$9.80,
+MA,UHC - FEBRUARY 2026,The Health Experts Insurance,16326554,Yahoska Perez,905977000,"FEE, ROW",FL,1,8/1/2025,202602,Renewal,Override,,$4.38,$1.17
+MA,CAREPOINT HEALTH SUN - FEBRUARY 2026,The Health Experts Insurance,456776,Gina Berenguer,HS877249,"BOND, CATHERINE",FL,1,8/1/2025,2/26/2026,CARRY_OVER,Override,$10.21,,
+ACA,Cigna - April 2026,The Health Experts Insurance,8972775,Patsy Pernia,1V8A76,"DE LA CRUZ, JASME",FL,1,1/1/2026,4-2026,Renewal,Override,$27.00,,
+AETNA MA - MARCH 2026,The Health Experts Insurance,456776,GINA BERENGUER,NG101778595300,"TAN D,MARIE",FL, ,45231,3/1/2026,Renewal,Override,,$3.21,,
+C/B,,Charge Backs,,,,,,,,,,Charge Backs,,"-$14,554.63",
+TOTAL,,,,,,,,,,,,,"$4,265.16","-$13,260.81",$12.27
