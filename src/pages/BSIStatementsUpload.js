@@ -10,6 +10,8 @@ import {
 import { setPendingUpload, takePendingUpload } from '../utils/pendingUpload';
 import { UploadPageShell, UploadDropZone, UploadAlert, UploadHistoryCard } from '../components/UploadPageLayout';
 import { commissionUploadExportPath, exportUploadFile } from '../utils/exportUpload';
+import { statementDisplayName, statementSearchText } from '../utils/statementDisplayName';
+import StatementFileName from '../components/StatementFileName';
 
 export default function BSIStatementsUpload({ user, onNavigate }) {
   const [uploads, setUploads] = useState([]);
@@ -105,7 +107,7 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
     ? uploads
     : uploads.filter((u) => {
         const hay = [
-          u.original_name,
+          statementSearchText(u.original_name, { category: 'bsi_statement' }),
           u.uploaded_by_name,
           u.carrier,
           u.uploaded_by != null ? `User ${u.uploaded_by}` : '',
@@ -270,7 +272,7 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
                               <div style="background:white;border-radius:8px;max-width:95vw;width:1100px;max-height:90vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,0.3);">
                                 <div style="padding:16px 20px;border-bottom:1px solid #ddd;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;background:white;z-index:1;">
                                   <div>
-                                    <h2 style="margin:0;font-size:16px;">${u.original_name}</h2>
+                                    <h2 style="margin:0;font-size:16px;">${statementDisplayName(u.original_name, { category: 'bsi_statement' })}</h2>
                                     <p style="margin:4px 0 0;font-size:12px;color:#666;">${records.length} records &bull; $${fmt(total)} total</p>
                                   </div>
                                   <button onclick="this.closest('[style*=fixed]').remove()" style="background:#e53e3e;color:white;border:none;border-radius:4px;padding:6px 14px;cursor:pointer;font-size:12px;">&#x2715; Close</button>
@@ -318,7 +320,7 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
                         onMouseOut={e => e.currentTarget.style.borderBottom='1px dashed currentColor'}
                         title="Click to view records"
                       >
-                        {u.original_name}
+                        <StatementFileName filename={u.original_name} category="bsi_statement" />
                       </a>
                     </td>
                     <td style={{ padding: 12, fontSize: 14, color: 'var(--text-muted)' }}>

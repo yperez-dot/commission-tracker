@@ -10,6 +10,7 @@ import {
 import { setPendingUpload, takePendingUpload } from '../utils/pendingUpload';
 import { UploadPageShell, UploadDropZone, UploadAlert, UploadHistoryCard } from '../components/UploadPageLayout';
 import { commissionUploadExportPath, exportUploadFile } from '../utils/exportUpload';
+import StatementFileName from '../components/StatementFileName';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -273,7 +274,9 @@ export default function AgentPayoutUploads({ user, onNavigate }) {
                         borderBottom: i < uploads.length - 1 ? '1px solid var(--border)' : 'none',
                       }}
                     >
-                      <td style={{ padding: 12, fontSize: 14 }}>{u.original_name}</td>
+                      <td style={{ padding: 12, fontSize: 14 }}>
+                        <StatementFileName filename={u.original_name} category="agent_payout" />
+                      </td>
                       <td style={{ padding: 12, fontSize: 14, color: 'var(--text-muted)' }}>
                         {formatDateTime(u.uploaded_at)}
                       </td>
