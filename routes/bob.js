@@ -76,13 +76,22 @@ function productionCarrierLikes(carrier) {
   return [];
 }
 
-async function lookupRelatedIdentifiers(pool, clientName, carrier) {
+function normSqlId(value) {
+  return String(value || '').trim().toUpperCase().replace(/[\s\-]/g, '');
+}
+
+async function lookupRelatedIdentifiers(pool, bob) {
+  const clientName = bob.client_full_name;
+  const carrier = bob.carrier;
   const nameKey = clientNameKey(clientName);
   if (!nameKey || !carrier) return [];
 
+  const memberId = normSqlId(bob.member_id);
+  const policyNumber = String(bob.policy_number || '').trim();
+
   const [commission, productionByName, medicarepro] = await Promise.all([
     pool.query(
-      `SELECT client_full_name, carrier, policy_number, mbi, carrier_member_id, raw_data,
+      `SELECT client_full_name, carrier, policy_number, mbi, carrier_member_id, raw_data, plan_type,
               'commission' AS identifier_source
        FROM commission_records cr
        WHERE ${clientNameKeySql('cr')} = $1
@@ -96,7 +105,7 @@ async function lookupRelatedIdentifiers(pool, clientName, carrier) {
     ).catch(() => ({ rows: [] })),
     pool.query(
       `SELECT client_name AS client_full_name, carrier, policy_number, policy_number_production,
-              mbi, carrier_member_id, raw_data, 'production' AS identifier_source
+              mbi, carrier_member_id, raw_data, plan_name, policy_type, 'production' AS identifier_source
        FROM agency_production ap
        WHERE ${clientNameKeySql('ap', 'client_name')} = $1
        ORDER BY
@@ -107,7 +116,7 @@ async function lookupRelatedIdentifiers(pool, clientName, carrier) {
       [nameKey]
     ).catch(() => ({ rows: [] })),
     pool.query(
-      `SELECT client_name AS client_full_name, carrier, policy_number, raw_data,
+      `SELECT client_name AS client_full_name, carrier, policy_number, raw_data, plan_name, policy_type,
               'medicarepro' AS identifier_source
        FROM medicarepro_sales mp
        WHERE ${clientNameKeySql('mp', 'client_name')} = $1
@@ -122,24 +131,40 @@ async function lookupRelatedIdentifiers(pool, clientName, carrier) {
   const commissionRows = commission.rows.filter(sameCarrier);
   const medicareproRows = medicarepro.rows.filter(sameCarrier);
 
-  if (!production.length) {
-    const likes = productionCarrierLikes(carrier);
-    if (likes.length) {
-      try {
-        const extra = await pool.query(
-          `SELECT client_name AS client_full_name, carrier, policy_number, policy_number_production,
-                  mbi, carrier_member_id, raw_data, 'production' AS identifier_source
-           FROM agency_production ap
-           WHERE client_name IS NOT NULL AND TRIM(client_name) <> ''
-             AND (${likes.map((_, i) => `LOWER(ap.carrier) LIKE $${i + 1}`).join(' OR ')})`,
-          likes
-        );
-        production = extra.rows.filter(
-          (row) => sameCarrier(row) && namesLooseMatch(clientName, row.client_full_name)
-        );
-      } catch (err) {
-        console.error('BOB production loose match failed:', err.message);
+  const likes = productionCarrierLikes(carrier);
+  const needsLoose = !production.length;
+  const needsIdLookup = Boolean(memberId || policyNumber);
+  if ((needsLoose || needsIdLookup) && likes.length) {
+    try {
+      const extra = await pool.query(
+        `SELECT client_name AS client_full_name, carrier, policy_number, policy_number_production,
+                mbi, carrier_member_id, raw_data, plan_name, policy_type, 'production' AS identifier_source
+         FROM agency_production ap
+         WHERE client_name IS NOT NULL AND TRIM(client_name) <> ''
+           AND (${likes.map((_, i) => `LOWER(ap.carrier) LIKE $${i + 1}`).join(' OR ')})`,
+        likes
+      );
+      const extraRows = extra.rows.filter(sameCarrier);
+      if (needsLoose) {
+        production = extraRows.filter((row) => namesLooseMatch(clientName, row.client_full_name));
       }
+      if (memberId) {
+        const byId = extraRows.filter((row) => {
+          const recId = normSqlId(row.carrier_member_id || row.mbi);
+          const raw = row.raw_data && typeof row.raw_data === 'object' ? row.raw_data : {};
+          const rawId = normSqlId(raw.UMID || raw.HIC || raw.MemberRecordLocator || raw.MBI);
+          return recId === memberId || rawId === memberId;
+        });
+        production = [...production, ...byId.filter((row) => !production.includes(row))];
+      }
+      if (policyNumber && !production.length) {
+        const pol = normSqlId(policyNumber);
+        production = extraRows.filter((row) => (
+          normSqlId(row.policy_number) === pol || normSqlId(row.policy_number_production) === pol
+        ));
+      }
+    } catch (err) {
+      console.error('BOB production loose match failed:', err.message);
     }
   }
 
@@ -153,9 +178,16 @@ async function persistBobIdentifiers(pool, id, identifiers) {
       `UPDATE book_of_business SET
          member_id = COALESCE(NULLIF($1, ''), member_id),
          policy_number = COALESCE(NULLIF($2, ''), policy_number),
-         date_of_birth = COALESCE(NULLIF($3, ''), date_of_birth)
-       WHERE id = $4`,
-      [identifiers.memberId || '', identifiers.policyNumber || '', identifiers.dateOfBirth || '', id]
+         date_of_birth = COALESCE(NULLIF($3, ''), date_of_birth),
+         plan_type = COALESCE(NULLIF($4, ''), plan_type)
+       WHERE id = $5`,
+      [
+        identifiers.memberId || '',
+        identifiers.policyNumber || '',
+        identifiers.dateOfBirth || '',
+        identifiers.planType || '',
+        id,
+      ]
     );
   } catch (err) {
     console.error('BOB identifier persist error:', err.message);
@@ -314,7 +346,7 @@ router.get('/:id/details', requireAuth, async (req, res) => {
       }
     }
 
-    const related = await lookupRelatedIdentifiers(pool, bob.client_full_name, bob.carrier);
+    const related = await lookupRelatedIdentifiers(pool, bob);
     const identifiers = mergeClientIdentifiers([bob, ...related]);
     await persistBobIdentifiers(pool, bob.id, identifiers);
 
@@ -324,7 +356,7 @@ router.get('/:id/details', requireAuth, async (req, res) => {
       agent_name: bob.agent_name,
       carrier: bob.carrier,
       effective_date: bob.effective_date,
-      plan_type: bob.plan_type,
+      plan_type: identifiers.planType || bob.plan_type,
       status: bob.status,
       resolution: bob.resolution,
       last_commission_date: bob.last_commission_date,
@@ -664,7 +696,7 @@ router.post('/build-from-statements', requireAuth, requireAdmin, async (req, res
          LOWER(carrier)
        )
          client_full_name, carrier, agent_name, effective_date, commission, payment_period,
-         policy_number, mbi, carrier_member_id, raw_data
+         policy_number, mbi, carrier_member_id, raw_data, plan_type
        FROM commission_records
        WHERE client_full_name != '' AND client_full_name IS NOT NULL AND commission > 0 ${af}
        ORDER BY 
@@ -728,9 +760,9 @@ router.post('/build-from-statements', requireAuth, requireAdmin, async (req, res
         // Insert new
         await pool.query(
           `INSERT INTO book_of_business
-             (agent_name, carrier, client_full_name, effective_date, last_commission_date, last_commission_amount, source, status, resolution, policy_number, member_id, date_of_birth)
-           VALUES ($1, $2, $3, $4, $5, $6, 'statement', $7, $8, $9, $10, $11)`,
-          [rec.agent_name, rec.carrier, rec.client_full_name, rec.effective_date, rec.payment_period, rec.commission, bobStatus, resolution, ids.policyNumber, ids.memberId, ids.dateOfBirth]
+             (agent_name, carrier, client_full_name, effective_date, last_commission_date, last_commission_amount, source, status, resolution, policy_number, member_id, date_of_birth, plan_type)
+           VALUES ($1, $2, $3, $4, $5, $6, 'statement', $7, $8, $9, $10, $11, $12)`,
+          [rec.agent_name, rec.carrier, rec.client_full_name, rec.effective_date, rec.payment_period, rec.commission, bobStatus, resolution, ids.policyNumber, ids.memberId, ids.dateOfBirth, ids.planType]
         );
         added++;
       } else {
@@ -755,9 +787,10 @@ router.post('/build-from-statements', requireAuth, requireAdmin, async (req, res
              policy_number = COALESCE(NULLIF($7,''), policy_number),
              member_id = COALESCE(NULLIF($8,''), member_id),
              date_of_birth = COALESCE(NULLIF($9,''), date_of_birth),
+             plan_type = COALESCE(NULLIF($10,''), plan_type),
              updated_at = NOW()
-           WHERE id = $10`,
-          [rec.agent_name, newEffDate, rec.payment_period, rec.commission, bobStatus, resolution, ids.policyNumber, ids.memberId, ids.dateOfBirth, existing.rows[0].id]
+           WHERE id = $11`,
+          [rec.agent_name, newEffDate, rec.payment_period, rec.commission, bobStatus, resolution, ids.policyNumber, ids.memberId, ids.dateOfBirth, ids.planType, existing.rows[0].id]
         );
         updated++;
       }
@@ -801,7 +834,7 @@ router.post('/reset-and-rebuild', requireAuth, requireAdmin, async (req, res) =>
          LOWER(carrier)
        )
          client_full_name, carrier, agent_name, effective_date, commission, payment_period,
-         policy_number, mbi, carrier_member_id, raw_data
+         policy_number, mbi, carrier_member_id, raw_data, plan_type
        FROM commission_records
        WHERE client_full_name != '' AND client_full_name IS NOT NULL AND commission > 0
        ORDER BY 
@@ -854,9 +887,9 @@ router.post('/reset-and-rebuild', requireAuth, requireAdmin, async (req, res) =>
 
       await pool.query(
         `INSERT INTO book_of_business
-           (agent_name, carrier, client_full_name, effective_date, last_commission_date, last_commission_amount, source, status, resolution, policy_number, member_id, date_of_birth)
-         VALUES ($1, $2, $3, $4, $5, $6, 'statement', $7, $8, $9, $10, $11)`,
-        [rec.agent_name, rec.carrier, rec.client_full_name, rec.effective_date, rec.payment_period, rec.commission, bobStatus, resolution, ids.policyNumber, ids.memberId, ids.dateOfBirth]
+           (agent_name, carrier, client_full_name, effective_date, last_commission_date, last_commission_amount, source, status, resolution, policy_number, member_id, date_of_birth, plan_type)
+         VALUES ($1, $2, $3, $4, $5, $6, 'statement', $7, $8, $9, $10, $11, $12)`,
+        [rec.agent_name, rec.carrier, rec.client_full_name, rec.effective_date, rec.payment_period, rec.commission, bobStatus, resolution, ids.policyNumber, ids.memberId, ids.dateOfBirth, ids.planType]
       );
       added++;
     }

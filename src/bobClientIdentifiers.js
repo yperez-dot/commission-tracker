@@ -1,7 +1,7 @@
 'use strict';
 
 const { clientNameKey } = require('./clientNameKey');
-const { namesLooseMatch, normalizeCarrier } = require('./matchingNormalize.cjs');
+const { namesLooseMatch, normalizeCarrier, carriersMatch } = require('./matchingNormalize.cjs');
 
 function normalizeHeader(value) {
   return String(value || '').toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -37,6 +37,7 @@ function formatIdentifierDate(value) {
   if (iso) return `${iso[2]}/${iso[3]}/${iso[1]}`;
   const us = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
   if (us) return `${us[1].padStart(2, '0')}/${us[2].padStart(2, '0')}/${us[3]}`;
+  if (/^\d{5,6}(\.\d+)?$/.test(s)) return formatIdentifierDate(Number(s));
   return s;
 }
 
@@ -149,16 +150,25 @@ const DOB_RAW_KEYS = [
   'dob', 'dateofbirth', 'date of birth', 'birthdate', 'birth date',
   'memberdob', 'member dob', 'memberdateofbirth', 'member date of birth',
   'birthdt', 'date_of_birth', 'birth_date',
+  'dobdt', 'dob_dt', 'birth_dt', 'member_birth_dt', 'memberbirthdt',
+  'member_birth_date', 'mbr_dob', 'mbrdob', 'member_dob_dt',
+  'dateofbirthdt', 'birthdate_dt',
+];
+
+const PLAN_RAW_KEYS = [
+  'plan_name', 'planname', 'plan name', 'plan_type', 'plantype', 'plan type',
+  'product_description', 'product description', 'productdescription',
+  'plan_desc', 'plandesc', 'plan description', 'marketing_name', 'marketingname',
+  'mkt_name', 'pbp_name', 'pbpname', 'product',
 ];
 
 function lookupRawKey(obj, wanted) {
   if (!obj || typeof obj !== 'object') return '';
-  const wantedNorm = wanted.map(normalizeHeader);
-  for (const [key, value] of Object.entries(obj)) {
-    const n = normalizeHeader(key);
-    if (wantedNorm.includes(n) && value != null && String(value).trim() !== '') {
-      return value;
-    }
+  const entries = Object.entries(obj).map(([key, value]) => [normalizeHeader(key), value]);
+  for (const term of wanted) {
+    const n = normalizeHeader(term);
+    const found = entries.find(([k, value]) => k === n && value != null && String(value).trim() !== '');
+    if (found) return found[1];
   }
   return '';
 }
@@ -176,11 +186,39 @@ function extractDobFromRaw(raw) {
   if (!obj) return '';
   for (const [key, val] of Object.entries(obj)) {
     const n = normalizeHeader(key);
-    if (n.includes('birth') && n.includes('date') && !n.includes('effective')) {
-      const formatted = formatIdentifierDate(val);
-      if (formatted) return formatted;
-    }
+    if (!n) continue;
+    if (DOB_EXCLUDE.some((ex) => n.includes(normalizeHeader(ex)))) continue;
+    const looksLikeDob = n.includes('dob') || n.includes('birth');
+    if (!looksLikeDob) continue;
+    const formatted = formatIdentifierDate(val);
+    if (formatted) return formatted;
   }
+  return '';
+}
+
+function extractPlanFromRaw(raw) {
+  const obj = parseRawObject(raw);
+  const value = lookupRawKey(obj, PLAN_RAW_KEYS);
+  if (value) return String(value).trim();
+  if (!obj) return '';
+  for (const [key, val] of Object.entries(obj)) {
+    const n = normalizeHeader(key);
+    if (n !== 'plan' && n !== 'product' && !n.endsWith('planname')) continue;
+    if (n.includes('status') || n.includes('effective')) continue;
+    const s = String(val || '').trim();
+    if (s) return s;
+  }
+  return '';
+}
+
+function derivePlanFromPolicy(carrier, policyNumber) {
+  const p = String(policyNumber || '');
+  if (!p) return '';
+  const prefix = String(carrier || '').trim() || 'Plan';
+  if (/_HMO/i.test(p)) return `${prefix} HMO`;
+  if (/_PPO/i.test(p)) return `${prefix} PPO`;
+  if (/_PDP/i.test(p)) return `${prefix} PDP`;
+  if (/MSup|MSUP|MedSupp|_MS\b/i.test(p)) return `${prefix} MedSupp`;
   return '';
 }
 
@@ -195,7 +233,7 @@ function pickRaw(obj, keys) {
  */
 function identifiersFromProductionRaw(carrier, raw) {
   const obj = parseRawObject(raw);
-  if (!obj) return { memberId: '', policyNumber: '', dateOfBirth: '' };
+  if (!obj) return { memberId: '', policyNumber: '', dateOfBirth: '', planType: '' };
   const c = normalizeCarrier(carrier);
   let memberId = '';
   let policyNumber = '';
@@ -215,6 +253,7 @@ function identifiersFromProductionRaw(carrier, raw) {
     memberId,
     policyNumber,
     dateOfBirth: extractDobFromRaw(obj),
+    planType: extractPlanFromRaw(obj),
   };
 }
 
@@ -231,17 +270,27 @@ function identifiersFromRecord(rec = {}) {
   const dateOfBirth = String(
     rec.date_of_birth || rec.dateOfBirth || fromProd.dateOfBirth || extractDobFromRaw(rec.raw_data) || ''
   ).trim();
-  return { memberId, policyNumber, dateOfBirth };
+  const planType = String(
+    rec.plan_type || rec.planType || rec.plan_name || rec.planName || rec.policy_type
+      || fromProd.planType || extractPlanFromRaw(rec.raw_data) || ''
+  ).trim();
+  return { memberId, policyNumber, dateOfBirth, planType };
 }
 
 function mergeClientIdentifiers(sources) {
-  const merged = { memberId: '', policyNumber: '', dateOfBirth: '' };
+  const merged = { memberId: '', policyNumber: '', dateOfBirth: '', planType: '' };
+  let carrier = '';
   for (const source of sources || []) {
     if (!source) continue;
+    if (!carrier && source.carrier) carrier = source.carrier;
     const ids = identifiersFromRecord(source);
     if (!merged.memberId && ids.memberId) merged.memberId = ids.memberId;
     if (!merged.policyNumber && ids.policyNumber) merged.policyNumber = ids.policyNumber;
     if (!merged.dateOfBirth && ids.dateOfBirth) merged.dateOfBirth = formatIdentifierDate(ids.dateOfBirth);
+    if (!merged.planType && ids.planType) merged.planType = ids.planType;
+  }
+  if (!merged.planType) {
+    merged.planType = derivePlanFromPolicy(carrier, merged.policyNumber);
   }
   return merged;
 }
@@ -271,19 +320,46 @@ function sortRelated(rows) {
   return [...(rows || [])].sort((a, b) => sourceRank(a) - sourceRank(b));
 }
 
-function relatedRowsForClient(bob, byKey, byCarrier) {
-  const key = identifierLookupKey(bob.client_full_name, bob.carrier);
-  const exact = byKey.get(key) || [];
-  if (exact.length) return sortRelated(exact);
+function relatedRowsForClient(bob, byKey, byCarrier, byMemberId, byPolicy) {
+  const seen = new Set();
+  const collected = [];
+  const add = (rows) => {
+    for (const rec of rows || []) {
+      if (!rec || seen.has(rec)) continue;
+      if (rec.carrier && bob.carrier && !carriersMatch(rec.carrier, bob.carrier)) continue;
+      seen.add(rec);
+      collected.push(rec);
+    }
+  };
+
+  add(byKey.get(identifierLookupKey(bob.client_full_name, bob.carrier)));
 
   const carrierRows = byCarrier.get(normalizeCarrier(bob.carrier)) || [];
-  const loose = carrierRows.filter((rec) => namesLooseMatch(bob.client_full_name, relatedClientName(rec)));
-  return sortRelated(loose);
+  add(carrierRows.filter((rec) => namesLooseMatch(bob.client_full_name, relatedClientName(rec))));
+
+  for (const rawId of [bob.member_id, bob.mbi]) {
+    const id = normalizeId(rawId);
+    if (id) add(byMemberId.get(`${normalizeCarrier(bob.carrier)}|${id}`));
+  }
+  const policy = normalizeId(bob.policy_number);
+  if (policy) add(byPolicy.get(`${normalizeCarrier(bob.carrier)}|${policy}`));
+
+  return sortRelated(collected);
+}
+
+function indexId(map, carrier, value, rec) {
+  const id = normalizeId(value);
+  if (!id) return;
+  const key = `${normalizeCarrier(carrier)}|${id}`;
+  if (!map.has(key)) map.set(key, []);
+  map.get(key).push(rec);
 }
 
 function enrichBobClientsWithIdentifiers(bobRows, relatedRows) {
   const byKey = new Map();
   const byCarrier = new Map();
+  const byMemberId = new Map();
+  const byPolicy = new Map();
   for (const rec of relatedRows || []) {
     const name = relatedClientName(rec);
     const key = identifierLookupKey(name, rec.carrier);
@@ -296,16 +372,23 @@ function enrichBobClientsWithIdentifiers(bobRows, relatedRows) {
       if (!byCarrier.has(carrierKey)) byCarrier.set(carrierKey, []);
       byCarrier.get(carrierKey).push(rec);
     }
+    const ids = identifiersFromRecord(rec);
+    indexId(byMemberId, rec.carrier, ids.memberId, rec);
+    indexId(byMemberId, rec.carrier, rec.carrier_member_id, rec);
+    indexId(byMemberId, rec.carrier, rec.mbi, rec);
+    indexId(byPolicy, rec.carrier, ids.policyNumber, rec);
+    indexId(byPolicy, rec.carrier, rec.policy_number_production, rec);
   }
 
   return (bobRows || []).map((bob) => {
-    const related = relatedRowsForClient(bob, byKey, byCarrier);
+    const related = relatedRowsForClient(bob, byKey, byCarrier, byMemberId, byPolicy);
     const ids = mergeClientIdentifiers([bob, ...related]);
     return {
       ...bob,
       member_id: ids.memberId || '',
       policy_number: ids.policyNumber || '',
       date_of_birth: ids.dateOfBirth || '',
+      plan_type: ids.planType || '',
     };
   });
 }
@@ -319,6 +402,8 @@ module.exports = {
   mapBobExportRow,
   extractMemberIdFromRaw,
   extractDobFromRaw,
+  extractPlanFromRaw,
+  derivePlanFromPolicy,
   identifiersFromRecord,
   mergeClientIdentifiers,
   policyNumberForDisplay,

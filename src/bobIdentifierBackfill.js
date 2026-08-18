@@ -20,14 +20,18 @@ const DOB_FROM_JSON = `
     NULLIF(TRIM(j->>'MEMBER_DOB'), ''),
     NULLIF(TRIM(j->>'Member Date of Birth'), ''),
     NULLIF(TRIM(j->>'Member_Birth_Date'), ''),
-    NULLIF(TRIM(j->>'BirthDt'), '')
+    NULLIF(TRIM(j->>'BirthDt'), ''),
+    NULLIF(TRIM(j->>'DOB_DT'), ''),
+    NULLIF(TRIM(j->>'BIRTH_DT'), ''),
+    NULLIF(TRIM(j->>'Birth_Dt'), ''),
+    NULLIF(TRIM(j->>'MEMBER_BIRTH_DT'), '')
   )
 `;
 
 async function fetchRelatedIdentifierRows(pool) {
   const [commission, production, medicarepro] = await Promise.all([
     pool.query(`
-      SELECT client_full_name, carrier, policy_number, mbi, carrier_member_id,
+      SELECT client_full_name, carrier, policy_number, mbi, carrier_member_id, plan_type,
              ${DOB_FROM_JSON} AS date_of_birth,
              'commission' AS identifier_source
       FROM commission_records
@@ -38,7 +42,7 @@ async function fetchRelatedIdentifierRows(pool) {
     `).catch(async (err) => {
       console.error('BOB identifier backfill: commission lookup with DOB failed:', err.message);
       return pool.query(`
-        SELECT client_full_name, carrier, policy_number, mbi, carrier_member_id,
+        SELECT client_full_name, carrier, policy_number, mbi, carrier_member_id, plan_type,
                NULL AS date_of_birth,
                'commission' AS identifier_source
         FROM commission_records
@@ -50,7 +54,7 @@ async function fetchRelatedIdentifierRows(pool) {
     }),
     pool.query(`
       SELECT client_name AS client_full_name, carrier, policy_number, policy_number_production,
-             mbi, carrier_member_id, raw_data,
+             mbi, carrier_member_id, raw_data, plan_name, policy_type,
              ${DOB_FROM_JSON} AS date_of_birth,
              'production' AS identifier_source
       FROM agency_production
@@ -63,7 +67,7 @@ async function fetchRelatedIdentifierRows(pool) {
       return { rows: [] };
     }),
     pool.query(`
-      SELECT client_name AS client_full_name, carrier, policy_number,
+      SELECT client_name AS client_full_name, carrier, policy_number, plan_name, policy_type,
              ${DOB_FROM_JSON} AS date_of_birth,
              'medicarepro' AS identifier_source
       FROM medicarepro_sales
@@ -87,12 +91,13 @@ function summarize(rows, updated) {
     withMemberId: rows.filter((r) => r.member_id).length,
     withPolicy: rows.filter((r) => r.policy_number).length,
     withDob: rows.filter((r) => r.date_of_birth).length,
+    withPlan: rows.filter((r) => r.plan_type).length,
   };
 }
 
 async function backfillBobIdentifiers(pool) {
   const bob = await pool.query(
-    `SELECT id, client_full_name, carrier, member_id, policy_number, date_of_birth
+    `SELECT id, client_full_name, carrier, member_id, policy_number, date_of_birth, plan_type
      FROM book_of_business`
   );
   if (!bob.rows.length) return summarize([], 0);
@@ -106,7 +111,8 @@ async function backfillBobIdentifiers(pool) {
     const filledMember = row.member_id && !(orig.member_id || '');
     const filledPolicy = row.policy_number && !(orig.policy_number || '');
     const filledDob = row.date_of_birth && !(orig.date_of_birth || '');
-    return filledMember || filledPolicy || filledDob;
+    const filledPlan = row.plan_type && !(orig.plan_type || '');
+    return filledMember || filledPolicy || filledDob || filledPlan;
   });
 
   if (!toUpdate.length) return summarize(enriched, 0);
@@ -115,15 +121,17 @@ async function backfillBobIdentifiers(pool) {
     `UPDATE book_of_business b SET
        member_id = COALESCE(NULLIF(v.member_id, ''), b.member_id),
        policy_number = COALESCE(NULLIF(v.policy_number, ''), b.policy_number),
-       date_of_birth = COALESCE(NULLIF(v.date_of_birth, ''), b.date_of_birth)
-     FROM unnest($1::int[], $2::text[], $3::text[], $4::text[])
-       AS v(id, member_id, policy_number, date_of_birth)
+       date_of_birth = COALESCE(NULLIF(v.date_of_birth, ''), b.date_of_birth),
+       plan_type = COALESCE(NULLIF(v.plan_type, ''), b.plan_type)
+     FROM unnest($1::int[], $2::text[], $3::text[], $4::text[], $5::text[])
+       AS v(id, member_id, policy_number, date_of_birth, plan_type)
      WHERE b.id = v.id`,
     [
       toUpdate.map((r) => r.id),
       toUpdate.map((r) => r.member_id || ''),
       toUpdate.map((r) => r.policy_number || ''),
       toUpdate.map((r) => formatIdentifierDate(r.date_of_birth) || r.date_of_birth || ''),
+      toUpdate.map((r) => r.plan_type || ''),
     ]
   );
 
