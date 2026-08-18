@@ -151,7 +151,7 @@ function generateStatement(agent, records, periodLabel, isBSI) {
   downloadTextFile(filename, csv);
 }
 
-function PayoutRow({ p, isPaid, paidDate, onTogglePaid, onExport, exportLabel }) {
+function PayoutRow({ p, isPaid, paidDate, onTogglePaid, onExport, exportLabel, exportDisabled }) {
   const [expanded, setExpanded] = useState(false);
   const posCount = p.records.filter((r) => recordAmount(r) > 0).length;
   const negCount = p.records.filter((r) => recordAmount(r) < 0).length;
@@ -170,7 +170,7 @@ function PayoutRow({ p, isPaid, paidDate, onTogglePaid, onExport, exportLabel })
           alignItems: 'center',
           gap: 12,
           padding: '12px 14px',
-          background: isPaid ? 'rgba(80,160,80,0.06)' : isLina ? 'rgba(59,130,246,0.04)' : 'transparent',
+          background: isPaid ? 'rgba(80,160,80,0.06)' : 'transparent',
         }}
       >
         <button
@@ -221,8 +221,8 @@ function PayoutRow({ p, isPaid, paidDate, onTogglePaid, onExport, exportLabel })
           >
             {expanded ? 'Hide' : 'Details'}
           </button>
-          <button className="btn btn-primary" onClick={onExport} style={{ fontSize: 11, padding: '4px 12px' }}>
-            {exportLabel || 'Statement'}
+          <button className="btn btn-primary" onClick={onExport} disabled={exportDisabled} style={{ fontSize: 11, padding: '4px 12px' }}>
+            {exportDisabled ? 'Preparing…' : (exportLabel || 'Statement')}
           </button>
         </div>
       </div>
@@ -933,7 +933,6 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
   const totalUnpaid = totalOwed - totalPaid;
   const paidCount = payouts.filter((p) => paidStatus[p.agent]).length;
   const unpaidCount = payouts.length - paidCount;
-  const linaPayout = payouts.find((p) => p.agent === 'Lina Hernandez');
 
   const pageMeta = {
     payroll: {
@@ -1078,39 +1077,6 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
                   </div>
                 </div>
 
-                {linaPayout && selectedPeriod && selectedPeriod !== 'all' && (
-                  <div
-                    className="card"
-                    style={{
-                      marginBottom: 14,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: 12,
-                      flexWrap: 'wrap',
-                    }}
-                  >
-                    <div>
-                      <div style={{ fontSize: 13, fontWeight: 600 }}>Lina Hernandez — compensation statement</div>
-                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
-                        {periodLabel} · {linaPayout.records.length} line
-                        {linaPayout.records.length !== 1 ? 's' : ''} · Balance {fmt(linaPayout.total)} · Excel detail
-                        report (same layout BSI used)
-                      </div>
-                      {linaError && (
-                        <div style={{ fontSize: 12, color: 'var(--red)', marginTop: 6 }}>{linaError}</div>
-                      )}
-                    </div>
-                    <button
-                      className="btn btn-primary"
-                      disabled={linaBusy}
-                      onClick={() => downloadLinaExcel(selectedPeriod)}
-                    >
-                      {linaBusy ? 'Preparing…' : 'Download Excel'}
-                    </button>
-                  </div>
-                )}
-
                 {totalUnpaid === 0 && payouts.length > 0 && (
                   <div
                     style={{
@@ -1146,9 +1112,12 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
                       {filteredPayouts.length}
                     </span>
                     <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                      Check mark = paid · Lina = Excel statement · others = CSV
+                      Check mark = paid
                     </span>
                   </div>
+                  {linaError && (
+                    <div style={{ padding: '8px 14px', fontSize: 12, color: 'var(--red)' }}>{linaError}</div>
+                  )}
                   {filteredPayouts.length === 0 ? (
                     <div className="empty-state">
                       <div className="empty-title">
@@ -1168,7 +1137,8 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
                         isPaid={!!paidStatus[p.agent]}
                         paidDate={paidDates[p.agent]}
                         onTogglePaid={togglePaid}
-                        exportLabel={p.agent === 'Lina Hernandez' ? 'Excel' : 'Statement'}
+                        exportLabel="Statement"
+                        exportDisabled={p.agent === 'Lina Hernandez' && linaBusy}
                         onExport={() => {
                           if (p.agent === 'Lina Hernandez' && selectedPeriod && selectedPeriod !== 'all') {
                             downloadLinaExcel(selectedPeriod);
