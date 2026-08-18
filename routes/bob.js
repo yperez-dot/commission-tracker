@@ -17,6 +17,7 @@ const {
   identifiersFromRecord,
 } = require('../src/bobClientIdentifiers');
 const { backfillBobIdentifiers } = require('../src/bobIdentifierBackfill');
+const { nhpHouseOnlyClientSql } = require('../src/nhpStatementParse');
 const {
   buildMissingRenewalRows,
   buildMissingRenewalsPeriodOptions,
@@ -698,7 +699,8 @@ router.post('/build-from-statements', requireAuth, requireAdmin, async (req, res
          client_full_name, carrier, agent_name, effective_date, commission, payment_period,
          policy_number, mbi, carrier_member_id, raw_data, plan_type
        FROM commission_records
-       WHERE client_full_name != '' AND client_full_name IS NOT NULL AND commission > 0 ${af}
+       WHERE client_full_name != '' AND client_full_name IS NOT NULL AND commission > 0
+         AND ${nhpHouseOnlyClientSql('client_full_name')} ${af}
        ORDER BY 
          LOWER(TRIM(
            CASE 
@@ -837,6 +839,7 @@ router.post('/reset-and-rebuild', requireAuth, requireAdmin, async (req, res) =>
          policy_number, mbi, carrier_member_id, raw_data, plan_type
        FROM commission_records
        WHERE client_full_name != '' AND client_full_name IS NOT NULL AND commission > 0
+         AND ${nhpHouseOnlyClientSql('client_full_name')}
        ORDER BY 
          LOWER(TRIM(
            CASE 
