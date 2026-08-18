@@ -11,32 +11,34 @@ function norm(name) {
 }
 
 const MONTHS = [
-  ['january', 'Jan'], ['february', 'Feb'], ['september', 'Sep'],
-  ['october', 'Oct'], ['november', 'Nov'], ['december', 'Dec'],
-  ['august', 'Aug'], ['march', 'Mar'], ['april', 'Apr'],
-  ['june', 'Jun'], ['july', 'Jul'], ['jan', 'Jan'], ['feb', 'Feb'],
-  ['mar', 'Mar'], ['apr', 'Apr'], ['may', 'May'], ['jun', 'Jun'],
-  ['jul', 'Jul'], ['aug', 'Aug'], ['sep', 'Sep'], ['oct', 'Oct'],
-  ['nov', 'Nov'], ['dec', 'Dec'],
+  ['january', '01'], ['february', '02'], ['september', '09'],
+  ['october', '10'], ['november', '11'], ['december', '12'],
+  ['august', '08'], ['march', '03'], ['april', '04'],
+  ['june', '06'], ['july', '07'], ['jan', '01'], ['feb', '02'],
+  ['mar', '03'], ['apr', '04'], ['may', '05'], ['jun', '06'],
+  ['jul', '07'], ['aug', '08'], ['sep', '09'], ['oct', '10'],
+  ['nov', '11'], ['dec', '12'],
 ];
+
+function pad2(n) {
+  return String(n).padStart(2, '0');
+}
 
 function formatYyyymmdd(s) {
   if (!/^\d{8}$/.test(s)) return '';
   const y = s.slice(0, 4);
   const m = parseInt(s.slice(4, 6), 10);
   const d = parseInt(s.slice(6, 8), 10);
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   if (m < 1 || m > 12 || d < 1 || d > 31) return '';
-  return `${months[m - 1]} ${d}, ${y}`;
+  return `${pad2(m)}.${pad2(d)}.${y.slice(2)}`;
 }
 
 function formatYyyymm(s) {
   if (!/^\d{6}$/.test(s)) return '';
   const y = s.slice(0, 4);
   const m = parseInt(s.slice(4, 6), 10);
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   if (m < 1 || m > 12) return '';
-  return `${months[m - 1]} ${y}`;
+  return `${pad2(m)}.${y.slice(2)}`;
 }
 
 function dateFromFilename(filename) {
@@ -61,12 +63,12 @@ function dateFromFilename(filename) {
   for (const [key, label] of MONTHS) {
     const re = new RegExp(`\\b${key}\\.?\\s*(\\d{1,2})(?:st|nd|rd|th)?[,_\\s-]+(20\\d{2})`, 'i');
     const dm = raw.match(re) || spaced.match(re);
-    if (dm) return `${label} ${parseInt(dm[1], 10)}, ${dm[2]}`;
+    if (dm) return `${label}.${pad2(dm[1])}.${dm[2].slice(2)}`;
   }
   for (const [key, label] of MONTHS) {
     const re = new RegExp(`\\b${key}\\b[^0-9]{0,12}(20\\d{2})`, 'i');
     const ym = raw.match(re) || spaced.match(re);
-    if (ym) return `${label} ${ym[1]}`;
+    if (ym) return `${label}.${ym[1].slice(2)}`;
   }
   m = blob.match(/(20\d{2})[-_](0[1-9]|1[0-2])(?!\d)/);
   if (m) return formatYyyymm(`${m[1]}${m[2]}`);

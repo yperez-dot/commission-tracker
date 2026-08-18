@@ -16,13 +16,13 @@ describe('statementDisplayName', () => {
       statementDisplayName(
         'THE_HEALTH_EXPERST_INSURANCE_-_YAHOSKA_PEREZ__principal_-_KATY_ROBLES-_NHP_Commission_Report_2026-05-30.csv'
       )
-    ).toBe('NHP · May 30, 2026 · THEI principal');
+    ).toBe('NHP · 05.30.26 · THEI principal');
   });
 
   test('NHP agency statement with cycle in filename', () => {
     expect(
       statementDisplayName('The_Health_Experts_Insurance_Statement_2026-06-15.xlsx')
-    ).toBe('NHP · Jun 15, 2026');
+    ).toBe('NHP · 06.15.26');
   });
 
   test('NHP Jill / Tailored', () => {
@@ -30,13 +30,13 @@ describe('statementDisplayName', () => {
       statementDisplayName(
         'THE_HEALTH_EXPERST_INSURANCE_-_TAILORED_INSURANCE_SOLUTIONS_AGCY_-_JILL_TAYLOR_-_NHP_Commission_Report-_Jun_15th__2026.xlsx'
       )
-    ).toBe('NHP · Jun 15, 2026 · Jill Taylor');
+    ).toBe('NHP · 06.15.26 · Jill Taylor');
   });
 
   test('BSI THE remittance and carrier feeds', () => {
-    expect(statementDisplayName('JULY - THE.csv')).toBe('BSI · Jul · THE remittance');
-    expect(statementDisplayName('JULY 2026 - THE.csv')).toBe('BSI · Jul 2026 · THE remittance');
-    expect(statementDisplayName('Humana_BSI_July.xlsx')).toBe('BSI · Jul · Humana');
+    expect(statementDisplayName('JULY - THE.csv')).toBe('BSI · 07 · THE remittance');
+    expect(statementDisplayName('JULY 2026 - THE.csv')).toBe('BSI · 07.26 · THE remittance');
+    expect(statementDisplayName('Humana_BSI_July.xlsx')).toBe('BSI · 07 · Humana');
     expect(statementDisplayName('Statement-Health_Experts_2026.xlsx')).toBe('BSI · consolidator');
     expect(statementDisplayName('random.xlsx', { category: 'bsi_statement' })).toBe('BSI · random');
   });
