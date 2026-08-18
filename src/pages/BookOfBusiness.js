@@ -7,6 +7,14 @@ function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
+function displayPolicyNumber(memberId, policyNumber) {
+  if (!policyNumber) return '';
+  const a = String(memberId || '').replace(/[\s\-]/g, '').toUpperCase();
+  const b = String(policyNumber || '').replace(/[\s\-]/g, '').toUpperCase();
+  if (a && a === b) return '';
+  return policyNumber;
+}
+
 const CARRIERS = ['UnitedHealthcare','Humana','Aetna','Devoted','Cigna','Florida Blue','Oscar Health','Molina','WellCare','Sunshine Health','Gold Kidney','NHP','BSI','Solis','Integrity'];
 const STATUSES = ['','Termed','Deceased','Plan changed','Duplicate','Resolved'];
 
@@ -105,6 +113,8 @@ export default function BookOfBusiness({ user }) {
   const [planBusyId, setPlanBusyId] = useState(null);
   const [planStatusFilter, setPlanStatusFilter] = useState('pending');
   const [pendingPlanCount, setPendingPlanCount] = useState(0);
+  const [clientDetails, setClientDetails] = useState(null);
+  const [clientDetailsLoading, setClientDetailsLoading] = useState(false);
 
   useEffect(() => {
     if (tab === 'setup' && !isAdmin) setTab('all');
@@ -211,9 +221,24 @@ export default function BookOfBusiness({ user }) {
     setBuildStatus('building');
     try {
       const result = await apiFetch('/bob/build-from-statements', { method: 'POST' });
-      setBuildStatus(`Added ${result.added} clients to your BOB from existing statements!`);
+      const ids = result.identifiers || {};
+      const idNote = ids.updated != null
+        ? ` Filled identifiers on ${ids.updated} existing clients (${ids.withMemberId || 0} member IDs, ${ids.withPolicy || 0} policy numbers, ${ids.withDob || 0} dates of birth).`
+        : '';
+      setBuildStatus(`Added ${result.added} clients to your BOB from existing statements!${idNote}`);
       loadData(); loadClients();
     } catch (e) { setBuildStatus('Error: ' + e.message); }
+  }
+
+  async function backfillIdentifiers() {
+    setBuildStatus('Updating existing clients with member ID, policy number, and date of birth…');
+    setLoading(true);
+    try {
+      const result = await apiFetch('/bob/backfill-identifiers', { method: 'POST' });
+      setBuildStatus(`Updated existing BOB clients — ${result.updated} rows changed, ${result.withMemberId} member IDs, ${result.withPolicy} policy numbers, ${result.withDob} dates of birth (${result.total} total clients).`);
+      loadData(); loadClients();
+    } catch (e) { setBuildStatus('Error: ' + e.message); }
+    finally { setLoading(false); }
   }
 
   async function runRenewalCheck() {
@@ -334,6 +359,19 @@ export default function BookOfBusiness({ user }) {
     }
   }
 
+  async function openClientDetails(c) {
+    setClientDetails(c);
+    setClientDetailsLoading(true);
+    try {
+      const data = await apiFetch(`/bob/${c.id}/details`);
+      setClientDetails(prev => (prev && prev.id === c.id ? { ...prev, ...data } : prev));
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setClientDetailsLoading(false);
+    }
+  }
+
   async function exportCSV() {
     try {
       // Build same params as loadClients to get ALL matching records
@@ -354,12 +392,14 @@ export default function BookOfBusiness({ user }) {
         ? allData.filter(c =>
             c.client_full_name?.toLowerCase().includes(search.toLowerCase()) ||
             c.agent_name?.toLowerCase().includes(search.toLowerCase()) ||
-            c.carrier?.toLowerCase().includes(search.toLowerCase())
+            c.carrier?.toLowerCase().includes(search.toLowerCase()) ||
+            c.member_id?.toLowerCase().includes(search.toLowerCase()) ||
+            c.policy_number?.toLowerCase().includes(search.toLowerCase())
           )
         : allData;
       
       // Build CSV
-      const headers = ['Client name', 'Agent', 'Carrier', 'Effective date', 'Last commission date', 'Last commission amount', 'Status', 'LOB'];
+      const headers = ['Client name', 'Agent', 'Carrier', 'Member ID', 'Policy number', 'Date of birth', 'Effective date', 'Last commission date', 'Last commission amount', 'Status', 'LOB'];
       const rows = filteredData.map(c => {
         let status = 'Active';
         if (c.status === 'termed') {
@@ -372,6 +412,9 @@ export default function BookOfBusiness({ user }) {
           c.client_full_name || '',
           c.agent_name || '',
           formatCarrier(c.carrier) || '',
+          c.member_id || '',
+          displayPolicyNumber(c.member_id, c.policy_number) || c.policy_number || '',
+          formatDate(c.date_of_birth) === '—' ? '' : formatDate(c.date_of_birth),
           formatDate(c.effective_date) || '',
           formatDate(c.last_commission_date) || '',
           c.last_commission_amount || '',
@@ -426,7 +469,9 @@ export default function BookOfBusiness({ user }) {
     ? clients.filter(c =>
         c.client_full_name?.toLowerCase().includes(search.toLowerCase()) ||
         c.agent_name?.toLowerCase().includes(search.toLowerCase()) ||
-        c.carrier?.toLowerCase().includes(search.toLowerCase())
+        c.carrier?.toLowerCase().includes(search.toLowerCase()) ||
+        c.member_id?.toLowerCase().includes(search.toLowerCase()) ||
+        c.policy_number?.toLowerCase().includes(search.toLowerCase())
       )
     : clients;
 
@@ -449,6 +494,70 @@ export default function BookOfBusiness({ user }) {
 
   return (
     <div>
+      {clientDetails && (
+        <div
+          onClick={() => setClientDetails(null)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              background: 'var(--bg)', borderRadius: 12, padding: 24, width: 520, maxWidth: '96vw',
+              maxHeight: '85vh', overflowY: 'auto', border: '0.5px solid var(--border)',
+              boxShadow: '0 8px 32px rgba(0,0,0,0.15)'
+            }}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16, gap: 12 }}>
+              <div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 4 }}>
+                  Client details
+                </div>
+                <div style={{ fontSize: 17, fontWeight: 600 }}>{clientDetails.client_full_name}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>
+                  {formatCarrier(clientDetails.carrier)}
+                  {clientDetails.agent_name ? ` · ${clientDetails.agent_name}` : ''}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setClientDetails(null)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: 'var(--text-muted)' }}
+              >
+                ×
+              </button>
+            </div>
+
+            {clientDetailsLoading && (
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>Looking up member ID, policy number, and date of birth…</div>
+            )}
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 20px', fontSize: 13 }}>
+              {[
+                ['Member ID', clientDetails.member_id],
+                ['Policy number', displayPolicyNumber(clientDetails.member_id, clientDetails.policy_number)],
+                ['Date of birth', clientDetails.date_of_birth ? formatDate(clientDetails.date_of_birth) : ''],
+                ['Effective date', formatDate(clientDetails.effective_date)],
+                ['Plan', clientDetails.plan_type],
+                ['Last commission', clientDetails.last_commission_amount && parseFloat(clientDetails.last_commission_amount) > 0
+                  ? `${fmt(clientDetails.last_commission_amount)}${clientDetails.last_commission_date ? ` · ${formatDate(clientDetails.last_commission_date)}` : ''}`
+                  : ''],
+                ['Status', clientDetails.resolution || (clientDetails.status === 'termed' ? 'Termed' : 'Active')],
+              ].map(([label, value]) => {
+                const showPolicy = label !== 'Policy number' || value;
+                if (label === 'Policy number' && !showPolicy) return null;
+                const display = value && value !== '—' ? value : '—';
+                return (
+                  <div key={label} style={label === 'Last commission' || label === 'Status' ? { gridColumn: '1 / -1' } : undefined}>
+                    <div style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 2 }}>{label}</div>
+                    <div style={{ fontWeight: 500, color: display === '—' ? 'var(--text-muted)' : 'var(--text)' }}>{display}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Delete client modal */}
       {confirmDelete && (
         <div style={{position:'fixed',top:0,left:0,right:0,bottom:0,background:'rgba(0,0,0,0.4)',zIndex:1000,display:'flex',alignItems:'center',justifyContent:'center'}}>
@@ -631,7 +740,7 @@ export default function BookOfBusiness({ user }) {
             <div style={{display:'flex',gap:8,marginBottom:10,alignItems:'center',flexWrap:'wrap'}}>
               <input
                 type="text"
-                placeholder="Search client, agent, carrier..."
+                placeholder="Search client, agent, carrier, member ID..."
                 value={search}
                 onChange={e => setSearch(e.target.value)}
                 style={{
@@ -724,6 +833,16 @@ export default function BookOfBusiness({ user }) {
                           </td>
                           <td style={{color:'var(--text-muted)',fontSize:11}}>{i+1}</td>
                           <td style={{fontWeight:500}}>
+                            <button
+                              type="button"
+                              onClick={() => openClientDetails(c)}
+                              title="Open client details"
+                              style={{
+                                background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+                                color: 'var(--accent-dark)', fontWeight: 600, fontSize: 13,
+                                textDecoration: 'underline', textAlign: 'left',
+                              }}
+                            >
                             {search.trim()
                               ? <span dangerouslySetInnerHTML={{__html: c.client_full_name.replace(
                                   new RegExp(`(${search.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')})`, 'gi'),
@@ -731,6 +850,7 @@ export default function BookOfBusiness({ user }) {
                                 )}} />
                               : c.client_full_name
                             }
+                            </button>
                           </td>
                           <td style={{fontSize:12}}>{c.agent_name||'—'}</td>
                           <td style={{fontSize:12,color:'var(--text)',fontWeight:500}}>{formatCarrier(c.carrier)}</td>
@@ -802,6 +922,16 @@ export default function BookOfBusiness({ user }) {
 
         {tab==='setup' && isAdmin && (
           <div>
+            <div className="card" style={{marginBottom:14}}>
+              <div className="card-title">Fill member ID, policy number, and date of birth</div>
+              <p style={{fontSize:13,color:'var(--text-muted)',marginBottom:12}}>
+                Update every existing Book of Business client from commission statements, production files, and MedicarePro. Empty fields are filled in; values already on the BOB record are left alone.
+              </p>
+              <button className="btn btn-primary" onClick={backfillIdentifiers} disabled={loading}>
+                {loading ? 'Updating existing clients…' : 'Update existing clients →'}
+              </button>
+            </div>
+
             <div className="card" style={{marginBottom:14}}>
               <div className="card-title">Run monthly renewal check</div>
               <p style={{fontSize:13,color:'var(--text-muted)',marginBottom:12}}>

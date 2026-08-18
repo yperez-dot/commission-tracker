@@ -23,11 +23,11 @@ function clientFileGroupKey(clientName, carrier) {
 }
 
 /**
- * Postgres expression equivalent to clientNameKey(alias.client_full_name).
- * Used by /records/by-client GROUP BY and /client-history WHERE.
+ * Postgres expression equivalent to clientNameKey(alias.column).
+ * Used by /records/by-client GROUP BY, /client-history WHERE, and BOB details.
  */
-function clientNameKeySql(alias = 'cr') {
-  const col = `${alias}.client_full_name`;
+function clientNameKeySql(alias = 'cr', column = 'client_full_name') {
+  const col = `${alias}.${column}`;
   return `(
     SELECT string_agg(tok, '|' ORDER BY tok)
     FROM unnest(
