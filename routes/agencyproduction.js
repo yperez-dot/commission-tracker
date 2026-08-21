@@ -425,7 +425,16 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
       } else {
         planName = (row.PLAN_NAME || row['Plan Name'] || row.Plan_Name || row.PlanName || '').trim().substring(0, 255);
       }
-      const policyNumber = (row.DOC_ID || row['Policy Number'] || row.Application_ID || row.HIC || '').toString().substring(0, 100);
+      // Carrier-specific policy number mapping:
+      // Humana production files use UMID (H-format, e.g. H05007113) as the member ID.
+      // DOC_ID is an application/enrollment document ID — NOT the member ID.
+      // All other carriers fall back to their respective policy number columns.
+      let policyNumber = '';
+      if (carrier === 'Humana') {
+        policyNumber = (row.UMID || row.DOC_ID || '').toString().substring(0, 100);
+      } else {
+        policyNumber = (row.DOC_ID || row['Policy Number'] || row.Application_ID || row.HIC || '').toString().substring(0, 100);
+      }
       const statusValue = str(
         carrier === 'Aetna'
           ? (row.Enroll_Status || row.Status || row.App_Status || row.Consumer_Status || '')
