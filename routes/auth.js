@@ -3,6 +3,12 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { getPool } = require('../db/database');
+const {
+  sha256hex,
+  extractApiToken,
+  envApiKeyMatches,
+  servicePrincipal,
+} = require('../src/serviceAuth');
 const JWT_SECRET = process.env.JWT_SECRET;
 if (!JWT_SECRET) { console.error('FATAL: JWT_SECRET env var not set'); process.exit(1); }
 
@@ -191,15 +197,51 @@ router.get('/_schema/:table', async (req, res) => {
   }
 });
 
-function requireAuth(req, res, next) {
-  const auth = req.headers.authorization;
-  if (!auth || !auth.startsWith('Bearer ')) return res.status(401).json({ error: 'Unauthorized' });
+function attachJwtOrReject(token, req, res, next) {
   try {
-    req.user = jwt.verify(auth.slice(7), JWT_SECRET);
+    req.user = jwt.verify(token, JWT_SECRET);
     next();
   } catch {
     res.status(401).json({ error: 'Invalid token' });
   }
+}
+
+function requireAuth(req, res, next) {
+  const token = extractApiToken(req);
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
+
+  // Machine access for Igor / automations: static env key or hashed row in api_keys.
+  if (envApiKeyMatches(token)) {
+    req.user = servicePrincipal();
+    return next();
+  }
+
+  const pool = getPool();
+  pool.query(
+    `SELECT user_id, name, email, role
+       FROM api_keys
+      WHERE key_hash = $1 AND revoked_at IS NULL
+      LIMIT 1`,
+    [sha256hex(token)]
+  ).then((result) => {
+    const row = result.rows[0];
+    if (row) {
+      req.user = servicePrincipal({
+        id: row.user_id,
+        name: row.name,
+        email: row.email,
+        role: row.role,
+      });
+      return next();
+    }
+    attachJwtOrReject(token, req, res, next);
+  }).catch((err) => {
+    if (err && err.code === '42P01') {
+      return attachJwtOrReject(token, req, res, next);
+    }
+    console.error('api_keys lookup', err.message);
+    return attachJwtOrReject(token, req, res, next);
+  });
 }
 
 function requireAdmin(req, res, next) {
