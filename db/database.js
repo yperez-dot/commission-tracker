@@ -27,6 +27,17 @@ async function initSchema() {
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
 
+      CREATE TABLE IF NOT EXISTS api_keys (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        key_hash TEXT UNIQUE NOT NULL,
+        user_id INTEGER REFERENCES users(id),
+        email TEXT,
+        role TEXT NOT NULL DEFAULT 'admin',
+        revoked_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
       CREATE TABLE IF NOT EXISTS uploads (
         id SERIAL PRIMARY KEY,
         filename TEXT NOT NULL,
@@ -152,6 +163,7 @@ async function initSchema() {
       CREATE INDEX IF NOT EXISTS idx_bob_carrier ON book_of_business(carrier);
       CREATE INDEX IF NOT EXISTS idx_bob_client ON book_of_business(client_full_name);
       CREATE INDEX IF NOT EXISTS idx_bob_status ON book_of_business(status);
+      CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash) WHERE revoked_at IS NULL;
 
       ALTER TABLE book_of_business ADD COLUMN IF NOT EXISTS member_id TEXT;
       ALTER TABLE book_of_business ADD COLUMN IF NOT EXISTS date_of_birth TEXT;

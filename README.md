@@ -67,6 +67,23 @@ Currently seeded:
 
 Other users (agents, ACA pass-through producers, partner agency principals) can be added via the **User Accounts** page once they're invited.
 
+### Machine access (Igor)
+
+Igor V2 should call the production API with a static key, not a login JWT:
+
+```
+Authorization: Bearer $OLICOMM_API_KEY
+```
+
+or `x-api-key: $OLICOMM_API_KEY`.
+
+Set the same value on:
+
+1. OliComm Railway → `OLICOMM_API_KEY` (optional if the hash is stored in `api_keys`)
+2. Igor V2 Railway → `OLICOMM_API_KEY`
+
+The key is treated as an **admin** principal (`igor@healthexps.com`) so `/api/bob`, `/api/records`, and `/api/auth/me` work. Never commit the live key.
+
 ## License
 
 Internal tool. All rights reserved by The Health Experts Insurance.

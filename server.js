@@ -8,7 +8,7 @@ app.use(cors({
   origin: ['https://melodic-cendol-e1dc49.netlify.app', 'http://localhost:3000'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-agency-override']
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-agency-override', 'x-api-key', 'x-olicomm-api-key']
 }));
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
