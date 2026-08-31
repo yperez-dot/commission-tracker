@@ -10,6 +10,9 @@ const {
   formatIdentifierDate,
   enrichBobClientsWithIdentifiers,
   identifiersFromProductionRaw,
+  namesMatchForIdentifiers,
+  parseGivenSurname,
+  stripPolicySuffix,
 } = require('../bobClientIdentifiers');
 
 describe('detectBobExportColumns', () => {
@@ -321,5 +324,168 @@ describe('plan fill from production and policy suffix', () => {
       { carrier: 'Humana', plan_name: 'Humana Gold Plus SNP-DE HMO', identifier_source: 'production' },
     ]);
     expect(merged.planType).toBe('Humana Gold Plus SNP-DE HMO');
+  });
+});
+
+describe('namesMatchForIdentifiers', () => {
+  test('matches a first initial to the full given name on the same surname', () => {
+    expect(namesMatchForIdentifiers('A Palacio', 'Ana Palacio')).toBe(true);
+    expect(namesMatchForIdentifiers('A Palacio', 'PALACIO, ANA')).toBe(true);
+    expect(namesMatchForIdentifiers('Palacio A', 'Ana Palacio')).toBe(true);
+    expect(parseGivenSurname('A Palacio')).toEqual({ given: 'A', surname: 'Palacio' });
+  });
+
+  test('does not match a different first name that shares the surname', () => {
+    expect(namesMatchForIdentifiers('A Palacio', 'Dora Palacio')).toBe(false);
+    expect(namesMatchForIdentifiers('A Palacio', 'PALACIO, DORA')).toBe(false);
+  });
+});
+
+describe('truncated BOB names vs production reports', () => {
+  test('fills Humana A Palacio from Ana Palacio production (UMID, plan, DOB)', () => {
+    const enriched = enrichBobClientsWithIdentifiers(
+      [{
+        id: 1,
+        client_full_name: 'A Palacio',
+        carrier: 'Humana',
+        agent_name: 'Eric Del Valle',
+        effective_date: '01/01/2025',
+        member_id: '',
+        policy_number: '',
+        date_of_birth: '',
+        plan_type: '',
+      }],
+      [{
+        client_name: 'Ana Palacio',
+        carrier: 'Humana',
+        agent_name: 'DEL VALLE, ERIC',
+        carrier_member_id: 'H92450001',
+        mbi: '1AA1AA1AA11',
+        plan_name: 'HUMANA GOLD PLUS HMO H1036-054',
+        raw_data: { UMID: 'H92450001', PLAN_NAME: 'HUMANA GOLD PLUS HMO H1036-054', MEDICARE_IDENTIFIER: '1AA1AA1AA11' },
+        identifier_source: 'production',
+      }, {
+        client_name: 'Dora Palacio',
+        carrier: 'Devoted Health',
+        agent_name: 'Eric del Valle',
+        mbi: '7A14DD4NF93',
+        raw_data: { BirthDate: '1952-12-13', MBI: '7A14DD4NF93', PlanName: 'Devoted DUAL PLUS Florida (HMO D-SNP)' },
+        identifier_source: 'production',
+      }]
+    );
+    expect(enriched[0]).toMatchObject({
+      member_id: 'H92450001',
+      plan_type: 'HUMANA GOLD PLUS HMO H1036-054',
+    });
+    expect(enriched[0].plan_type).not.toMatch(/Devoted/i);
+  });
+
+  test('does not copy Dora Palacio Humana IDs onto A Palacio when both exist', () => {
+    const enriched = enrichBobClientsWithIdentifiers(
+      [{
+        id: 1,
+        client_full_name: 'A Palacio',
+        carrier: 'Humana',
+        agent_name: 'Eric Del Valle',
+        member_id: '',
+        policy_number: '',
+        plan_type: '',
+      }],
+      [
+        {
+          client_name: 'Ana Palacio',
+          carrier: 'Humana',
+          agent_name: 'Eric Del Valle',
+          carrier_member_id: 'H-ANA',
+          plan_name: 'Humana Gold Plus HMO',
+          identifier_source: 'production',
+        },
+        {
+          client_name: 'Dora Palacio',
+          carrier: 'Humana',
+          agent_name: 'Eric Del Valle',
+          carrier_member_id: 'H-DORA',
+          plan_name: 'CareOne Plus HMO',
+          identifier_source: 'production',
+        },
+      ]
+    );
+    expect(enriched[0].member_id).toBe('H-ANA');
+    expect(enriched[0].plan_type).toBe('Humana Gold Plus HMO');
+  });
+
+  test('unique last name + agent fills Dora when she is the only Palacio on Humana', () => {
+    const enriched = enrichBobClientsWithIdentifiers(
+      [{
+        id: 1,
+        client_full_name: 'A Palacio',
+        carrier: 'Humana',
+        agent_name: 'Eric Del Valle',
+        effective_date: '01/01/2025',
+        member_id: '',
+        policy_number: '',
+        date_of_birth: '',
+        plan_type: '',
+      }],
+      [{
+        client_full_name: 'Dora Palacio',
+        carrier: 'Humana',
+        agent_name: 'Eric Del Valle',
+        policy_number: '7A14DD4NF93_MA',
+        effective_date: '01/01/2025',
+        identifier_source: 'commission',
+      }, {
+        client_name: 'Dora Palacio',
+        carrier: 'Humana',
+        agent_name: 'Eric Del Valle',
+        carrier_member_id: 'H63800001',
+        mbi: '7A14DD4NF93',
+        plan_name: 'HUMANA GOLD PLUS HMO H1036-065',
+        raw_data: { UMID: 'H63800001', MEDICARE_IDENTIFIER: '7A14DD4NF93', PLAN_NAME: 'HUMANA GOLD PLUS HMO H1036-065' },
+        identifier_source: 'production',
+      }, {
+        client_name: 'Dora Palacio',
+        carrier: 'Devoted Health',
+        mbi: '7A14DD4NF93',
+        plan_name: 'Devoted DUAL PLUS Florida (HMO D-SNP)',
+        raw_data: { BirthDate: '1952-12-13', MBI: '7A14DD4NF93', PlanName: 'Devoted DUAL PLUS Florida (HMO D-SNP)' },
+        identifier_source: 'production',
+      }]
+    );
+    expect(enriched[0]).toMatchObject({
+      member_id: 'H63800001',
+      plan_type: 'HUMANA GOLD PLUS HMO H1036-065',
+      date_of_birth: '12/13/1952',
+    });
+  });
+
+  test('chains statement policy 7A14DD4NF93_MA to production MBI', () => {
+    const enriched = enrichBobClientsWithIdentifiers(
+      [{
+        id: 1,
+        client_full_name: 'Dora Palacio',
+        carrier: 'Humana',
+        member_id: '',
+        policy_number: '',
+        date_of_birth: '',
+        plan_type: '',
+      }],
+      [{
+        client_full_name: 'Dora Palacio',
+        carrier: 'Humana',
+        policy_number: '7A14DD4NF93_MA',
+        identifier_source: 'commission',
+      }, {
+        client_name: 'Completely Different',
+        carrier: 'Humana',
+        mbi: '7A14DD4NF93',
+        carrier_member_id: 'H63800001',
+        plan_name: 'HUMANA GOLD PLUS HMO H1036-065',
+        identifier_source: 'production',
+      }]
+    );
+    expect(enriched[0].member_id).toBe('H63800001');
+    expect(enriched[0].plan_type).toBe('HUMANA GOLD PLUS HMO H1036-065');
+    expect(stripPolicySuffix('7A14DD4NF93_MA')).toBe('7A14DD4NF93');
   });
 });
