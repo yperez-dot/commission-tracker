@@ -69,7 +69,11 @@ function parseGivenSurname(name) {
 function surnamesMatch(a, b) {
   const sa = parseGivenSurname(a).surname.toLowerCase().replace(/[^a-z]/g, '');
   const sb = parseGivenSurname(b).surname.toLowerCase().replace(/[^a-z]/g, '');
-  return Boolean(sa && sb && sa === sb);
+  if (!sa || !sb) return false;
+  if (sa === sb) return true;
+  const shorter = sa.length <= sb.length ? sa : sb;
+  const longer = sa.length <= sb.length ? sb : sa;
+  return shorter.length >= 4 && longer.endsWith(shorter);
 }
 
 function firstInitialCompatible(a, b) {
@@ -234,12 +238,14 @@ function mapBobExportRow(row, columns, { normalizeAgentName } = {}) {
 }
 
 const MEMBER_ID_RAW_KEYS = [
-  'memberid', 'member_id', 'membernumber', 'member #',
+  'memberid', 'member_id', 'membernumber', 'member #', 'mbr#',
   'carrier_member_id', 'carriermemberid', 'umid', 'hcid',
+  'affinitypolicyid', 'affinity policy id',
   'mbi', 'medicareidentifier', 'medicare_identifier', 'medicareid',
   'medicarenumber', 'medicare_number', 'hicnmbi', 'hicn/mbi', 'hic#', 'hic',
   'subscriberid', 'subscriber id', 'memberrecordlocator',
   'beneficiary_claim_number', 'beneficiaryclaimnumber',
+  'membership number', 'membershipnumber',
 ];
 
 const DOB_RAW_KEYS = [
@@ -253,9 +259,12 @@ const DOB_RAW_KEYS = [
 
 const PLAN_RAW_KEYS = [
   'plan_name', 'planname', 'plan name', 'plan_type', 'plantype', 'plan type',
+  'application_plan_name', 'applicationplanname', 'application_plan',
+  'product_name', 'productname', 'product name',
   'product_description', 'product description', 'productdescription',
-  'plan_desc', 'plandesc', 'plan description', 'marketing_name', 'marketingname',
-  'mkt_name', 'pbp_name', 'pbpname', 'product',
+  'plan_desc', 'plandesc', 'plan description', 'contract_desc', 'contractdesc',
+  'marketing_name', 'marketingname', 'mkt_name', 'pbp_name', 'pbpname',
+  'product', 'subproduct',
 ];
 
 function lookupRawKey(obj, wanted) {
@@ -325,32 +334,67 @@ function pickRaw(obj, keys) {
 }
 
 /**
- * Humana / UHC / Devoted production files store IDs in carrier-specific columns.
- * Prefer those so UMID, HIC, and MemberRecordLocator win over generic scanning.
+ * Production files store IDs in carrier-specific columns. Prefer those so
+ * UMID, HIC, HCID, Affinitypolicyid, Member_ID, etc. win over generic scanning.
  */
+const PRODUCTION_COLUMN_MAP = {
+  humana: {
+    member: ['UMID', 'Member ID', 'MEDICARE_IDENTIFIER', 'MBI'],
+    policy: ['Policy Number', 'POLICY_NUMBER', 'Contract Number'],
+    plan: ['PLAN_NAME', 'Plan Name', 'PRODUCT_DESCRIPTION'],
+  },
+  unitedhealthcare: {
+    member: ['HICN/MBI', 'HIC', 'MBI', 'Medicare Beneficiary Identifier (MBI)'],
+    policy: ['Policy Number', 'POLICY_NUMBER', 'Contract Number', 'CONTRACT'],
+    plan: ['Plan_Name', 'Plan Name', 'Plan Type', 'SubProduct'],
+  },
+  'devoted health': {
+    member: ['MemberRecordLocator', 'Member Record Locator', 'Member ID', 'MBI'],
+    policy: ['Policy Number', 'POLICY_NUMBER'],
+    plan: ['PlanName', 'Plan Name', 'PLAN_NAME'],
+  },
+  aetna: {
+    member: ['Affinitypolicyid', 'Affinity Policy ID', 'Member ID', 'MEDICARE_NUMBER', 'MBI'],
+    policy: ['Policy Number', 'POLICY_NUMBER', 'Affinitypolicyid'],
+    plan: ['Plan_Name', 'PLAN_NAME', 'Plan Name', 'Product'],
+  },
+  'elevance medicare': {
+    member: ['HCID', 'Beneficiary_Claim_Number', 'MBI'],
+    policy: ['Contract', 'POLICY_NUMBER', 'HCID'],
+    plan: ['Product_Description', 'Product_Type_Description', 'PLAN_NAME', 'Plan Name'],
+  },
+  freedom: {
+    member: ['POLICY_NUMBER', 'HIC#', 'HIC', 'MBI', 'MBR#'],
+    policy: ['POLICY_NUMBER', 'CONTRACT'],
+    plan: ['PRODUCT_NAME', 'PLAN_DESC', 'PLAN_DESCRIPTION', 'CONTRACT_DESC', 'PLAN', 'PLAN_NAME'],
+  },
+  healthspring: {
+    member: ['Member_ID', 'Medicare_Number', 'MBI'],
+    policy: ['Application_ID', 'zApplication_ID', 'Member_ID'],
+    plan: ['Application_Plan_Name', 'Product', 'Application_Plan', 'PLAN_NAME', 'Plan Name'],
+  },
+};
+
 function identifiersFromProductionRaw(carrier, raw) {
   const obj = parseRawObject(raw);
   if (!obj) return { memberId: '', policyNumber: '', dateOfBirth: '', planType: '' };
   const c = normalizeCarrier(carrier);
+  const cols = PRODUCTION_COLUMN_MAP[c];
   let memberId = '';
   let policyNumber = '';
+  let planType = '';
 
-  if (c === 'humana') {
-    memberId = pickRaw(obj, ['UMID', 'Member ID', 'MEDICARE_IDENTIFIER', 'MBI']);
-    policyNumber = pickRaw(obj, ['Policy Number', 'POLICY_NUMBER', 'Contract Number']);
-  } else if (c === 'unitedhealthcare') {
-    memberId = pickRaw(obj, ['HICN/MBI', 'HIC', 'MBI', 'Medicare Beneficiary Identifier (MBI)']);
-    policyNumber = pickRaw(obj, ['Policy Number', 'POLICY_NUMBER', 'Contract Number', 'CONTRACT']);
-  } else if (c === 'devoted health') {
-    memberId = pickRaw(obj, ['MemberRecordLocator', 'Member Record Locator', 'Member ID', 'MBI']);
-    policyNumber = pickRaw(obj, ['Policy Number', 'POLICY_NUMBER']);
+  if (cols) {
+    memberId = pickRaw(obj, cols.member);
+    policyNumber = pickRaw(obj, cols.policy);
+    planType = pickRaw(obj, cols.plan);
   }
 
   return {
-    memberId,
+    memberId: memberId || extractMemberIdFromRaw(obj),
     policyNumber,
     dateOfBirth: extractDobFromRaw(obj),
-    planType: extractPlanFromRaw(obj),
+    planType: planType || extractPlanFromRaw(obj),
   };
 }
 

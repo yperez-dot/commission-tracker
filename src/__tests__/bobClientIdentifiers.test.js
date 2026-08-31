@@ -247,6 +247,70 @@ describe('identifiersFromProductionRaw', () => {
       planType: 'Humana Gold Plus HMO',
     });
   });
+
+  test('reads Aetna Affinity policy ID, MBI, and plan', () => {
+    expect(identifiersFromProductionRaw('Aetna', {
+      Affinitypolicyid: 'AFF-9988',
+      MEDICARE_NUMBER: '1EG4TE5MK73',
+      Plan_Name: 'Aetna Medicare Premier HMO',
+      Date_of_Birth: '1941-04-22',
+    })).toMatchObject({
+      memberId: 'AFF-9988',
+      planType: 'Aetna Medicare Premier HMO',
+      dateOfBirth: '04/22/1941',
+    });
+  });
+
+  test('reads Anthem HCID, DOB, and product description', () => {
+    expect(identifiersFromProductionRaw('Anthem', {
+      HCID: '746W25493',
+      Beneficiary_Claim_Number: '1AA1AA1AA11',
+      Dob: '1960-09-15',
+      Product_Description: 'Anthem Full Dual Advantage Ali',
+    })).toMatchObject({
+      memberId: '746W25493',
+      dateOfBirth: '09/15/1960',
+      planType: 'Anthem Full Dual Advantage Ali',
+    });
+  });
+
+  test('reads Freedom policy number, HIC, DOB, and product name', () => {
+    expect(identifiersFromProductionRaw('Freedom', {
+      POLICY_NUMBER: 'SFQRDZ02HQKK',
+      'HIC#': '3AH1C37YK13',
+      DOB: '1953-10-01',
+      PRODUCT_NAME: 'Freedom VIP Rewards (HMO C-SNP)',
+    })).toMatchObject({
+      memberId: 'SFQRDZ02HQKK',
+      dateOfBirth: '10/01/1953',
+      planType: 'Freedom VIP Rewards (HMO C-SNP)',
+    });
+  });
+
+  test('reads HealthSpring Member_ID and Product plan name', () => {
+    expect(identifiersFromProductionRaw('HealthSpring', {
+      Member_ID: '61A1H4F13',
+      Medicare_Number: '4WW1XY6JN36',
+      Product: 'HealthSpring Preferred (HMO)',
+    })).toMatchObject({
+      memberId: '61A1H4F13',
+      planType: 'HealthSpring Preferred (HMO)',
+    });
+  });
+
+  test('reads UHC Med Supp HICN/MBI, policy, DOB, and plan type', () => {
+    expect(identifiersFromProductionRaw('UnitedHealthcare', {
+      'HICN/MBI': '4UG6QK2WF60',
+      'Policy Number': 'A02968809',
+      'Date of Birth': '1952-08-29',
+      'Plan Type': 'MS',
+    })).toMatchObject({
+      memberId: '4UG6QK2WF60',
+      policyNumber: 'A02968809',
+      dateOfBirth: '08/29/1952',
+      planType: 'MS',
+    });
+  });
 });
 
 describe('plan fill from production and policy suffix', () => {
@@ -487,5 +551,63 @@ describe('truncated BOB names vs production reports', () => {
     expect(enriched[0].member_id).toBe('H63800001');
     expect(enriched[0].plan_type).toBe('HUMANA GOLD PLUS HMO H1036-065');
     expect(stripPolicySuffix('7A14DD4NF93_MA')).toBe('7A14DD4NF93');
+  });
+
+  test('fills truncated names on UHC, Anthem, Aetna, Freedom, and HealthSpring', () => {
+    const enriched = enrichBobClientsWithIdentifiers(
+      [
+        { id: 1, client_full_name: 'G Goree', carrier: 'UHC', member_id: '', policy_number: '', date_of_birth: '', plan_type: '', agent_name: 'Jendy Vanheyningen' },
+        { id: 2, client_full_name: 'G Alvarez Sandoval', carrier: 'Anthem', member_id: '', policy_number: '', date_of_birth: '', plan_type: '', agent_name: 'Alonso Torres-Castaneda' },
+        { id: 3, client_full_name: 'P Wills Romero', carrier: 'UnitedHealthcare', member_id: '', policy_number: '', date_of_birth: '', plan_type: '' },
+        { id: 4, client_full_name: 'L Hale', carrier: 'Freedom', member_id: '', policy_number: '', date_of_birth: '', plan_type: '' },
+        { id: 5, client_full_name: 'P Roth', carrier: 'HealthSpring', member_id: '', policy_number: '', date_of_birth: '', plan_type: '' },
+      ],
+      [
+        {
+          client_name: 'Gloria Goree',
+          carrier: 'UnitedHealthcare',
+          agent_name: 'VANHEYNINGEN, JENDY',
+          mbi: '8QE1DF5DQ24',
+          plan_name: 'AARP Medicare Advantage Essentials from UHC KY-1',
+          raw_data: { HIC: '8QE1DF5DQ24', Plan_Name: 'AARP Medicare Advantage Essentials from UHC KY-1' },
+          identifier_source: 'production',
+        },
+        {
+          client_name: 'Gustavo Alvarez Sandoval',
+          carrier: 'Anthem',
+          agent_name: 'Alonso Torres-Castaneda',
+          carrier_member_id: '746W25493',
+          raw_data: { HCID: '746W25493', Dob: '1960-09-15', Product_Description: 'Anthem Full Dual Advantage Ali' },
+          identifier_source: 'production',
+        },
+        {
+          client_name: 'Patricio Wills Romero',
+          carrier: 'UnitedHealthcare',
+          mbi: '4UG6QK2WF60',
+          policy_number_production: 'A02968809',
+          raw_data: { 'HICN/MBI': '4UG6QK2WF60', 'Policy Number': 'A02968809', 'Date of Birth': '1952-08-29', 'Plan Type': 'MS' },
+          identifier_source: 'production',
+        },
+        {
+          client_name: 'Leland Hale',
+          carrier: 'Freedom',
+          carrier_member_id: 'SFQRDZ02HQKK',
+          raw_data: { POLICY_NUMBER: 'SFQRDZ02HQKK', DOB: '1953-10-01', PRODUCT_NAME: 'Freedom VIP Rewards (HMO C-SNP)' },
+          identifier_source: 'production',
+        },
+        {
+          client_name: 'Patricia Roth',
+          carrier: 'HealthSpring',
+          carrier_member_id: '61A1H4F13',
+          raw_data: { Member_ID: '61A1H4F13', Product: 'HealthSpring Preferred (HMO)' },
+          identifier_source: 'production',
+        },
+      ]
+    );
+    expect(enriched[0]).toMatchObject({ member_id: '8QE1DF5DQ24', plan_type: 'AARP Medicare Advantage Essentials from UHC KY-1' });
+    expect(enriched[1]).toMatchObject({ member_id: '746W25493', date_of_birth: '09/15/1960', plan_type: 'Anthem Full Dual Advantage Ali' });
+    expect(enriched[2]).toMatchObject({ member_id: '4UG6QK2WF60', policy_number: 'A02968809', date_of_birth: '08/29/1952' });
+    expect(enriched[3]).toMatchObject({ member_id: 'SFQRDZ02HQKK', date_of_birth: '10/01/1953', plan_type: 'Freedom VIP Rewards (HMO C-SNP)' });
+    expect(enriched[4]).toMatchObject({ member_id: '61A1H4F13', plan_type: 'HealthSpring Preferred (HMO)' });
   });
 });

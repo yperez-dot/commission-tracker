@@ -17,6 +17,7 @@ const {
   namesMatchForIdentifiers,
   enrichBobClientsWithIdentifiers,
   stripPolicySuffix,
+  parseGivenSurname,
 } = require('../src/bobClientIdentifiers');
 const { backfillBobIdentifiers } = require('../src/bobIdentifierBackfill');
 const { nhpHouseOnlyClientSql } = require('../src/nhpStatementParse');
@@ -75,6 +76,21 @@ function productionCarrierLikes(carrier) {
   if (c === 'humana') return ['%humana%'];
   if (c === 'devoted health') return ['%devoted%'];
   if (c === 'unitedhealthcare') return ['%unitedhealth%', '%uhc%'];
+  if (c === 'elevance medicare') return ['%anthem%', '%elevance%'];
+  if (c === 'healthspring') return ['%healthspring%'];
+  if (c === 'aetna') return ['%aetna%'];
+  if (c === 'freedom') return ['%freedom%'];
+  if (c === 'oscar health') return ['%oscar%'];
+  if (c === 'florida blue') return ['%florida%blue%', '%bcbs%', '%blue cross%'];
+  if (c === 'doctors healthcare') return ['%doctors%'];
+  if (c === 'gold kidney') return ['%gold%kidney%'];
+  if (c === 'careplus') return ['%careplus%', '%care plus%'];
+  if (c === 'wellcare') return ['%wellcare%'];
+  if (c === 'molina') return ['%molina%'];
+  if (c === 'cigna') return ['%cigna%'];
+  if (c === 'solis') return ['%solis%'];
+  if (c === 'healthsun') return ['%healthsun%', '%health sun%'];
+  if (c === 'avmed') return ['%avmed%', '%av med%'];
   if (c) return [`%${c.replace(/[^a-z0-9]+/g, '%')}%`];
   return [];
 }
@@ -85,10 +101,15 @@ function normSqlId(value) {
 
 function recMatchesId(row, targetId) {
   if (!targetId) return false;
+  const ids = identifiersFromRecord(row);
   const raw = row.raw_data && typeof row.raw_data === 'object' ? row.raw_data : {};
   const candidates = [
+    ids.memberId, ids.policyNumber,
     row.carrier_member_id, row.mbi, row.policy_number, row.policy_number_production,
     raw.UMID, raw.HIC, raw.MemberRecordLocator, raw.MBI, raw.MEDICARE_IDENTIFIER,
+    raw.HCID, raw.Affinitypolicyid, raw.Medicare_Number, raw.Member_ID,
+    raw['HIC#'], raw.POLICY_NUMBER, raw.CONTRACT, raw.Beneficiary_Claim_Number,
+    raw.MEDICARE_NUMBER, raw['HICN/MBI'],
   ];
   return candidates.some((value) => {
     const recId = normSqlId(value);
@@ -104,8 +125,10 @@ async function lookupRelatedIdentifiers(pool, bob) {
 
   const memberId = normSqlId(bob.member_id);
   const policyNumber = String(bob.policy_number || '').trim();
-  const lastToken = String(clientName || '').trim().split(/\s+/).filter(Boolean).pop() || '';
+  const parsedName = parseGivenSurname(clientName);
+  const lastToken = parsedName.surname || String(clientName || '').trim().split(/\s+/).filter(Boolean).pop() || '';
   const lastLike = lastToken.length > 1 ? `%${lastToken}%` : '';
+  const truncatedName = (parsedName.given || '').replace(/[^a-zA-Z]/g, '').length <= 1;
 
   const [commission, productionByName, medicarepro] = await Promise.all([
     pool.query(
@@ -165,7 +188,7 @@ async function lookupRelatedIdentifiers(pool, bob) {
   }
 
   const likes = productionCarrierLikes(carrier);
-  const needsLoose = !production.length;
+  const needsLoose = !production.length || truncatedName;
   const needsIdLookup = Boolean(memberId || policyNumber);
   if ((needsLoose || needsIdLookup) && likes.length) {
     try {
