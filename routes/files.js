@@ -526,24 +526,10 @@ function isOscarIFPFile(wb) {
   return false;
 }
 
-// ─── 2026 CMS Maximum FMV Caps ──────────────────────────────────────────────
-// Source: Yahoska Perez 2026-07-01
-// Used for agency override anomaly flagging (non-Alba rows only)
-const CMS_FMV_CAPS_2026 = {
-  CA: { initial: 864, renewal: 432 },
-  NJ: { initial: 864, renewal: 432 },
-  CT: { initial: 781, renewal: 391 },
-  PA: { initial: 781, renewal: 391 },
-  DC: { initial: 781, renewal: 391 },
-  PR: { initial: 474, renewal: 237 },
-  VI: { initial: 474, renewal: 237 },
-};
-const CMS_FMV_DEFAULT_2026 = { initial: 694, renewal: 347 };
-
-function getCMSCap2026(state, eventType) {
-  const caps = CMS_FMV_CAPS_2026[(state || '').toUpperCase()] || CMS_FMV_DEFAULT_2026;
-  return caps[eventType] || caps.initial;
-}
+// ─── CMS Maximum FMV Caps ───────────────────────────────────────────────────
+// 2026: Yahoska Perez 2026-07-01
+// 2027: Aetna Schedule One Agent 4 AG4 (National $725/$363, CT/PA/DC $816/$408, CA/NJ $902/$451)
+const { getCmsFmvCap } = require('../src/cmsFmvCaps');
 
 // ─── AETNA BSI CSV ────────────────────────────────────────────────────────────
 // Format: Aetna-to-BSI consolidated statement CSV
@@ -646,10 +632,10 @@ function parseAetnaBSICSV(wb, filename) {
         classification = eventType === 'renewal' ? 'Renewal' : 'New Business';
       }
 
-      // CMS cap anomaly check on all non-chargeback rows
+      // CMS cap anomaly check on all non-chargeback rows (plan-year aware)
       let anomaly = false;
       if (amount > 0 && eventType !== 'skip') {
-        const cap = getCMSCap2026(memberState, eventType);
+        const cap = getCmsFmvCap(memberState, eventType, effectiveDate || period);
         if (amount > cap) {
           anomaly = true;
           console.log(`[AETNA-BSI] ⚠️  ANOMALY: ${memberName} | ${memberState} | ${salesEvent} | $${amount} > cap $${cap}`);

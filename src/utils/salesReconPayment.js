@@ -3,10 +3,16 @@
 /** Within $1 = paid in full (carrier rounding). */
 export const PAYMENT_TOLERANCE = 1.0;
 
-/** Full-year Medicare NB rate used in Sales Recon (Jan effective). Mid-year is prorated. */
+/** Full-year Medicare NB rate used in Sales Recon (Jan effective). Mid-year is prorated.
+ *  2026 industry residual FMV. Aetna 2027+ uses aetnaCommissionSchedule.js instead. */
 export const FULL_YEAR_NB = 347;
 
 const { lookupMedSuppYear1 } = require('../medSuppCommissionSchedule');
+const {
+  isAetnaCarrier,
+  lookupAetnaMaRate,
+  lookupAetnaPdpRate,
+} = require('../aetnaCommissionSchedule');
 
 function round2(n) {
   return Math.round(n * 100) / 100;
@@ -82,6 +88,37 @@ export function expectedSaleCommission(sale) {
   }
 
   if (family === 'PDP') {
+    if (isAetnaCarrier(sale?.carrier)) {
+      const pdp = lookupAetnaPdpRate({
+        effectiveDate: sale?.effective_date,
+        contractLevel: sale?.contract_level || sale?.hierarchy_level || 'AG4',
+      });
+      if (pdp.found) {
+        const remaining = remainingCalendarMonths(sale?.effective_date);
+        if (pdp.nonCommissionable) {
+          return {
+            amount: 0,
+            remainingMonths: remaining,
+            fullYear: 0,
+            prorated: false,
+            kind: 'pdp',
+            family,
+            note: pdp.note,
+            aetna: pdp,
+          };
+        }
+        return {
+          amount: round2((pdp.renewal || 0) / 12),
+          remainingMonths: 1,
+          fullYear: pdp.renewal,
+          prorated: false,
+          kind: 'pdp',
+          family,
+          note: pdp.note,
+          aetna: pdp,
+        };
+      }
+    }
     return {
       amount: null,
       remainingMonths: remainingCalendarMonths(sale?.effective_date),
@@ -95,6 +132,32 @@ export function expectedSaleCommission(sale) {
 
   const remaining = remainingCalendarMonths(sale?.effective_date);
   const months = renewal ? 1 : remaining;
+
+  // 2027 Aetna Agent 4: Base is the Sales Recon expected (same role as 2026 $347).
+  // CMS New is the overpay cap so a true new-to-Medicare lump sum is not "Overpaid".
+  if (isAetnaCarrier(sale?.carrier)) {
+    const ma = lookupAetnaMaRate({
+      effectiveDate: sale?.effective_date,
+      state: sale?.state || sale?.member_state,
+      contractLevel: sale?.contract_level || sale?.hierarchy_level || 'AG4',
+    });
+    if (ma.found) {
+      const expectedAnnual = renewal ? ma.renewal : ma.base;
+      const amount = round2((expectedAnnual * months) / 12);
+      return {
+        amount,
+        remainingMonths: months,
+        fullYear: renewal ? ma.renewal : ma.cmsNew,
+        prorated: !renewal && remaining < 12,
+        kind: renewal ? 'renewal' : 'new_business',
+        family: family === 'UNKNOWN' ? 'MA_MAPD' : family,
+        note: `${ma.stateGroup} AG4 ${renewal ? 'Renewal' : 'Base'} $${expectedAnnual}` +
+          (renewal ? '' : ` · CMS New cap $${ma.cmsNew}`),
+        aetna: ma,
+      };
+    }
+  }
+
   const amount = round2((FULL_YEAR_NB * months) / 12);
   return {
     amount,

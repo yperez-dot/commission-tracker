@@ -125,6 +125,8 @@ const OVERRIDE_RATE_TABLE = {
   },
 
   Aetna: {
+    // Writing-agent 2027 FMV is in aetnaCommissionSchedule.js (AG4).
+    // These pots are still the 2026 FMO−WA override until an agency schedule arrives.
     National:           { Initial: 125, Renewal: 45 },
     CT_PA_DC:           { Initial: 125, Renewal: 45 },
     CA_NJ:              { Initial: 135, Renewal: 50 },
