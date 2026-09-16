@@ -4257,7 +4257,9 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
         let splitApplies, theiShare, bsiShare, producerPayable, grossCommission;
         let subAgentOverride = 0;
 
-        if (isCommissionRow) {
+        if (isCommissionRow || isAgentDirectRow) {
+          // Agent production is paid to agents — never Agency THEI Share.
+          // Must run BEFORE the direct_carrier 100% THEI branch (Solis/HealthSun/etc.).
           splitApplies = false;
           grossCommission = netCommission;
           theiShare = 0;
@@ -4272,18 +4274,12 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
             theiShare = grossCommission; bsiShare = 0; producerPayable = 0;
           }
         } else if (inferredSource === 'direct_carrier' && recordPayeeLc !== 'bsi') {
-          // True direct-carrier pulls keep 100% THEI. Never treat payee=BSI this way.
+          // Remaining direct-carrier house lines (e.g. Agency Override) keep 100% THEI.
           splitApplies = false;
           grossCommission = netCommission;
           theiShare = netCommission;
           bsiShare = 0;
           producerPayable = 0;
-        } else if (isAgentDirectRow && hasMatchingOverride) {
-          splitApplies = false;
-          grossCommission = netCommission;
-          theiShare = 0;
-          bsiShare = 0;
-          producerPayable = grossCommission;
         } else if (classification === 'agency override' && isIntegrityPartnersUpload) {
           // Integrity Partners (Christian Munoz, Horacio Mendieta, CAM): 50% producer / 25% THEI / 25% BSI
           splitApplies = false;

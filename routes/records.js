@@ -1057,7 +1057,9 @@ router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, r
       const isMarcoAgent = MARCO_AGENTS_LIST.some(n => agentLcB.includes(n)) && !isJendyPostCutoff;
       const isBsiFullPot = payeeLc === 'bsi';
 
-      if (isCommissionRow) {
+      if (isCommissionRow || isAgentDirectRow) {
+        // Agent production (Agent Commission / NB / Renewal / Chargeback) is paid to agents —
+        // never Agency THEI Share. Must run BEFORE the direct_carrier 100% THEI branch.
         splitApplies = false;
         grossCommission = netCommission;
         theiShare = 0;
@@ -1076,19 +1078,12 @@ router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, r
           producerPayable = 0;
         }
       } else if (source === 'direct_carrier' && !isBsiFullPot) {
+        // Remaining direct-carrier house lines (e.g. Agency Override) keep 100% THEI.
         splitApplies = false;
         grossCommission = netCommission;
         theiShare = netCommission;
         bsiShare = 0;
         producerPayable = 0;
-      } else if (isAgentDirectRow && hasMatchingOverride) {
-        // Agent-level transaction for a principal who has a separate Agency Override row for this carrier.
-        // Treat as pass-through: 100% to producer, no THEI/BSI split.
-        splitApplies = false;
-        grossCommission = netCommission;
-        theiShare = 0;
-        bsiShare = 0;
-        producerPayable = grossCommission;
       } else if (classification === 'agency override' && isIntegrityPartners) {
         // Integrity Partners (Christian Munoz, Horacio Mendieta, CAM): 50% producer / 25% THEI / 25% BSI
         splitApplies = false;
