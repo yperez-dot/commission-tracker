@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiFetch, apiUpload } from '../api';
+import { fetchAllPages, truncationMessage } from '../fetchAllPages';
+import TruncationBanner from '../components/TruncationBanner';
 import { formatCarrier } from '../utils/formatCarrier';
 import { formatDate, formatDateTime } from '../utils/dateFormat';
 
@@ -85,7 +87,7 @@ export default function BookOfBusiness({ user }) {
   const isAdmin = user?.role === 'admin';
   const [summary, setSummary] = useState(null);
   const [clients, setClients] = useState([]);
-  const [allClients, setAllClients] = useState([]); // Full unfiltered list for tab counts
+  const [clientsTruncationWarning, setClientsTruncationWarning] = useState(null);
   const [periods, setPeriods] = useState([]);
   const [tab, setTab] = useState('all');
   const [filterCarrier, setFilterCarrier] = useState([]);
@@ -166,11 +168,9 @@ export default function BookOfBusiness({ user }) {
   const loadClients = useCallback(async () => {
     if (tab === 'planchanges') return;
     try {
-      // Load full list for tab counts (no status filter)
-      const allData = await apiFetch('/bob');
-      setAllClients(allData);
-      
-      // Load filtered list for display
+      // Tab counts (active vs termed) come from /bob/summary (loadData), which
+      // runs two cheap COUNT queries instead of pulling every row down to the
+      // browser just to count them.
       const params = new URLSearchParams();
       if (filterCarrier.length === 1) params.set('carrier', filterCarrier[0]);
       if (filterCarrier.length > 1) params.set('carriers', filterCarrier.join(','));
@@ -179,8 +179,15 @@ export default function BookOfBusiness({ user }) {
       if (filterLOB.length === 1) params.set('lob', filterLOB[0]);
       if (filterLOB.length > 1) params.set('lobs', filterLOB.join(','));
       if (filterStatus) params.set('status', filterStatus);
-      const data = await apiFetch(`/bob?${params}`);
-      setClients(data);
+      const clientsPage = await fetchAllPages(
+        `/bob?${params}`,
+        { itemsKey: 'rows', pageSize: 5000 },
+        apiFetch
+      );
+      setClients(clientsPage.items || []);
+      setClientsTruncationWarning(truncationMessage([
+        clientsPage.warning ? `Book of Business: ${clientsPage.warning}` : null,
+      ]));
     } catch (e) { console.error(e); }
   }, [tab, filterCarrier, filterAgent, filterLOB, filterStatus]);
 
@@ -374,30 +381,11 @@ export default function BookOfBusiness({ user }) {
 
   async function exportCSV() {
     try {
-      // Build same params as loadClients to get ALL matching records
-      const params = new URLSearchParams();
-      if (filterCarrier.length === 1) params.set('carrier', filterCarrier[0]);
-      if (filterCarrier.length > 1) params.set('carriers', filterCarrier.join(','));
-      if (filterAgent.length === 1) params.set('agent', filterAgent[0]);
-      if (filterAgent.length > 1) params.set('agents', filterAgent.join(','));
-      if (filterLOB.length === 1) params.set('lob', filterLOB[0]);
-      if (filterLOB.length > 1) params.set('lobs', filterLOB.join(','));
-      if (filterStatus) params.set('status', filterStatus);
-      
-      // Fetch ALL matching records
-      const allData = await apiFetch(`/bob?${params}`);
-      
-      // Apply search filter client-side if present
-      const filteredData = search.trim()
-        ? allData.filter(c =>
-            c.client_full_name?.toLowerCase().includes(search.toLowerCase()) ||
-            c.agent_name?.toLowerCase().includes(search.toLowerCase()) ||
-            c.carrier?.toLowerCase().includes(search.toLowerCase()) ||
-            c.member_id?.toLowerCase().includes(search.toLowerCase()) ||
-            c.policy_number?.toLowerCase().includes(search.toLowerCase())
-          )
-        : allData;
-      
+      // clients (and its search-filtered view, filteredClients) already hold the
+      // exact rows this export needs — loadClients fetched them with these same
+      // filters. No need for a second full network pull just to export.
+      const filteredData = filteredClients;
+
       // Build CSV
       const headers = ['Client name', 'Agent', 'Carrier', 'Member ID', 'Policy number', 'Date of birth', 'Effective date', 'Last commission date', 'Last commission amount', 'Status', 'LOB'];
       const rows = filteredData.map(c => {
@@ -482,8 +470,7 @@ export default function BookOfBusiness({ user }) {
   });
 
   // Calculate counts from FULL unfiltered dataset, not filtered view
-  const activeCount = allClients.filter(c => c.status !== 'termed').length;
-  const termedCount = allClients.filter(c => c.status === 'termed').length;
+  const termedCount = summary?.termedCount || 0;
 
   const tabStyle = (id) => ({
     padding:'7px 14px', border:'none', background:'none', fontSize:13, cursor:'pointer',
@@ -607,6 +594,7 @@ export default function BookOfBusiness({ user }) {
         <div className="page-sub">Active clients across all carriers</div>
       </div>
       <div className="page-body">
+        <TruncationBanner message={clientsTruncationWarning} />
 
         <div className="kpi-grid" style={{marginBottom:14, gridTemplateColumns: 'repeat(3, 1fr)'}}>
           <div className="kpi-card"><div className="kpi-label">Active clients</div><div className="kpi-value blue">{summary?.totalActive||0}</div></div>
