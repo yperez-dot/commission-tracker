@@ -7,6 +7,25 @@ const { requireAuth, requireAdmin } = require('./auth');
 const { isAetnaActivePolicy } = require('../src/agencyOverrideReconMatch.cjs');
 const { auditOverrideGaps } = require('../src/overrideGapAudit');
 const { agencyFilter } = require('./records');
+const { clientNameKey, clientNameKeySql } = require('../src/clientNameKey');
+
+// Builds "col ILIKE %term%" (partial, order-sensitive) OR'd with a full-name,
+// order/format-independent match via the same normalized key used by
+// /records/by-client and /client-history (src/clientNameKey.js) — so "Maria
+// Perez" typed in All Data's search box still finds a production row stored
+// as "Perez, Maria". Falls back to the plain ILIKE alone when the term has no
+// real name tokens (e.g. a 1-2 char partial search) since the key would be
+// too loose to compare. Appends to `params` and returns the SQL clause.
+function nameSearchClause(alias, column, term, params) {
+  const idx1 = params.length + 1;
+  params.push(`%${term}%`);
+  const col = `${alias}.${column}`;
+  const key = clientNameKey(term);
+  if (!key) return `${col} ILIKE $${idx1}`;
+  const idx2 = params.length + 1;
+  params.push(key);
+  return `(${col} ILIKE $${idx1} OR ${clientNameKeySql(alias, column)} = $${idx2})`;
+}
 
 // str() — safe Excel cell coercion: null/undefined → '', numbers/booleans → String, Dates → ISO date
 // Prevents TypeError when a numeric or null Excel cell value hits .trim() or .substring()
@@ -631,8 +650,7 @@ router.get('/', requireAuth, async (req, res) => {
     }
 
     if (search) {
-      query += ` AND ap.client_name ILIKE $${params.length + 1}`;
-      params.push(`%${search}%`);
+      query += ` AND ${nameSearchClause('ap', 'client_name', search, params)}`;
       if (req.user.role === 'agent') {
         query += ` AND ap.agent_name ILIKE $${params.length + 1}`;
         params.push(`%${req.user.name}%`);
@@ -667,8 +685,7 @@ router.get('/', requireAuth, async (req, res) => {
       countParams.push(`%${agent}%`);
     }
     if (search) {
-      countQuery += ` AND ap.client_name ILIKE $${countParams.length + 1}`;
-      countParams.push(`%${search}%`);
+      countQuery += ` AND ${nameSearchClause('ap', 'client_name', search, countParams)}`;
       if (req.user.role === 'agent') {
         countQuery += ` AND ap.agent_name ILIKE $${countParams.length + 1}`;
         countParams.push(`%${req.user.name}%`);
