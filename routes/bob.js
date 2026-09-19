@@ -221,7 +221,7 @@ function agencyFilter(req, alias) {
 router.get('/', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
-    const { carrier, carriers, agent, agents, status, missing, lob, lobs } = req.query;
+    const { carrier, carriers, agent, agents, status, missing, lob, lobs, limit, offset } = req.query;
     let where = ['1=1'];
     let params = [];
     let idx = 1;
@@ -277,7 +277,21 @@ router.get('/', requireAuth, async (req, res) => {
     } else {
       query = `SELECT * FROM book_of_business b WHERE ${where.join(' AND ')} ORDER BY b.months_missing DESC, b.client_full_name ASC`;
     }
-    
+
+    // Opt-in pagination: callers that pass limit/offset (e.g. fetchAllPages on the
+    // frontend) get a bounded query plus a total count instead of one unbounded
+    // SELECT * for the whole (filtered) book. Callers that don't pass limit keep
+    // the old bare-array response so nothing else that hits this endpoint breaks.
+    if (limit !== undefined) {
+      const limitNum = Math.min(parseInt(limit, 10) || 5000, 20000);
+      const offsetNum = parseInt(offset, 10) || 0;
+      const countResult = await pool.query(`SELECT COUNT(*) AS count FROM (${query}) sub`, params);
+      const total = parseInt(countResult.rows[0].count, 10);
+      const pagedQuery = `${query} LIMIT $${idx++} OFFSET $${idx++}`;
+      const result = await pool.query(pagedQuery, [...params, limitNum, offsetNum]);
+      return res.json({ rows: result.rows, total });
+    }
+
     const result = await pool.query(query, params);
     res.json(result.rows);
   } catch (err) { res.status(500).json({ error: err.message }); }
@@ -296,12 +310,14 @@ router.get('/summary', requireAuth, async (req, res) => {
       af = `AND carrier IN (SELECT DISTINCT carrier FROM commission_records WHERE ${agencyFilter(req, null)})`;
     }
     const total = await pool.query(`SELECT COUNT(*) as count FROM book_of_business WHERE status = 'active' ${af}`, params);
+    const termed = await pool.query(`SELECT COUNT(*) as count FROM book_of_business WHERE status = 'termed' ${af}`, params);
     const missing = await pool.query(`SELECT COUNT(*) as count, COALESCE(SUM(last_commission_amount),0) as at_risk FROM book_of_business WHERE months_missing > 0 AND status = 'active' ${af}`, params);
     const newThis = await pool.query(`SELECT COUNT(*) as count FROM book_of_business WHERE created_at > NOW() - INTERVAL '35 days' ${af}`, params);
     const byCarrier = await pool.query(`SELECT carrier, COUNT(*) as count, MAX(updated_at) as last_updated FROM book_of_business WHERE status = 'active' ${af} GROUP BY carrier ORDER BY count DESC`, params);
     const bySource = await pool.query(`SELECT source, COUNT(*) as count FROM book_of_business WHERE status = 'active' ${af} GROUP BY source`, params);
     res.json({
       totalActive: parseInt(total.rows[0].count),
+      termedCount: parseInt(termed.rows[0].count),
       missingCount: parseInt(missing.rows[0].count),
       atRisk: parseFloat(missing.rows[0].at_risk),
       newEnrollments: parseInt(newThis.rows[0].count),
