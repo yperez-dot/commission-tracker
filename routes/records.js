@@ -136,9 +136,27 @@ function buildRecordListFilters(req) {
   if (amountSign === 'negative') where.push('cr.commission < 0');
   else if (amountSign === 'positive') where.push('cr.commission >= 0');
   if (search) {
-    where.push(`(cr.client_full_name ILIKE $${idx} OR cr.agent_name ILIKE $${idx} OR cr.carrier ILIKE $${idx})`);
+    // Plain substring match (partial, order-sensitive) OR'd with a full-name,
+    // order/format-independent match on client_full_name via the same
+    // normalized key /records/by-client and /client-history already use
+    // (clientNameKey/clientNameKeySql above) — so a name typed "Maria Perez"
+    // still matches a record stored "Perez, Maria". Only added when the term
+    // has real name tokens (skipped for a 1-2 char partial, where the key
+    // would be too loose to compare).
+    const clauses = [
+      `cr.client_full_name ILIKE $${idx}`,
+      `cr.agent_name ILIKE $${idx}`,
+      `cr.carrier ILIKE $${idx}`,
+    ];
     params.push(`%${search}%`);
     idx += 1;
+    const searchKey = clientNameKey(search);
+    if (searchKey) {
+      clauses.push(`${clientNameKeySql('cr', 'client_full_name')} = $${idx}`);
+      params.push(searchKey);
+      idx += 1;
+    }
+    where.push(`(${clauses.join(' OR ')})`);
   }
 
   const needsUploadJoin = Boolean(upload_category || exclude_upload_category);
