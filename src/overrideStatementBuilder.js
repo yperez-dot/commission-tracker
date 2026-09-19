@@ -6,7 +6,7 @@
  * Statement types (see payeeSchedules.STATEMENT_TYPES):
  *   thei_override  → amount = thei_share (combined NHP + BSI; scripts)
  *   thei_nhp       → THEI house, NHP sales only
- *   thei_bsi       → THEI house, BSI remittance only (what BSI pays us)
+ *   thei_bsi       → THEI house, BSI→THE remittance uploads only (not carrier peels)
  *   bsi_override   → amount = bsi_share  (50% of override pot on standard BSI rows)
  *   marco          → amount = sub_agent_override on Marco-schedule agents
  *   integrity      → amount = producer_payable on Integrity agents

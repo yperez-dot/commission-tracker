@@ -136,9 +136,36 @@ function isNhpHouseRow(row = {}) {
   );
 }
 
-/** BSI remittance / BSI payee feeds — money BSI pays THEI (never ACA/Oscar). */
+/**
+ * BSI → THE remittance upload filenames (what BSI pays THEI).
+ * Carrier BSI feeds (UHC/Humana/Aetna statements) also use source=BSI — those are NOT remittance.
+ */
+function isTheRemittanceUploadName(name) {
+  const f = String(name || '')
+    .toLowerCase()
+    .replace(/[\s()]/g, '_');
+  if (!f) return false;
+  return (
+    /t\.?h\.?e[_.-]*statements?/.test(f) ||
+    /the_statements?/.test(f) ||
+    /thei_statement_bsi/.test(f) ||
+    (/thei_statement/.test(f) && /bsi/.test(f)) ||
+    /medicare[_-]?statement.*[_-]?the(i)?([_.-]|$)/.test(f)
+  );
+}
+
+/**
+ * Row belongs on THEI — BSI remittance (money BSI pays THEI).
+ * Prefer remittance upload identity when present so carrier BSI statement peels
+ * (also source=BSI) do not inflate the remittance house total.
+ */
 function isBsiRemitSource(source, row = null) {
   if (row && isAcaNhpHouseRow(row)) return false;
+  if (row) {
+    const fn = row.upload_original_name || row.original_name || '';
+    if (fn) return isTheRemittanceUploadName(fn);
+  }
+  // Legacy / unit-test rows without an upload name: keep BSI source fallback.
   const s = normalizeSource(source);
   return s === 'BSI' || s === 'BSI_PAYEE';
 }
@@ -165,6 +192,7 @@ module.exports = {
   isAcaNhpHouseRow,
   isNhpSource,
   isNhpHouseRow,
+  isTheRemittanceUploadName,
   isBsiRemitSource,
   isTheiHouseType,
   normName,

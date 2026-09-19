@@ -224,7 +224,9 @@ function parseTheRemittanceSheet(ws, filename, sheetName) {
     const carrier = normalizeCarrier(company);
     const agent = normalizeAgentName(agentRaw) || agentRaw;
     const effectiveDate = formatDate(iEff >= 0 ? row[iEff] : '');
-    const classification = amount < 0 ? 'Chargeback' : 'Agency Override';
+    // Keep remittance clawbacks on the Agency Override statement path.
+    // Plain "Chargeback" is excluded from THEI/BSI house fetches (ILIKE '%override%').
+    const classification = amount < 0 ? 'Agency Override Chargeback' : 'Agency Override';
 
     let theiShare;
     let bsiShare;
