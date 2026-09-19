@@ -62,6 +62,7 @@ function normalizeAgentKey(name) {
 function buildRecordListFilters(req) {
   const {
     agent, agents, carrier, carriers, period, periods, classification, classifications,
+    classificationLike,
     lob, lobs, planType, payee, search, upload_id, upload_category, exclude_upload_category,
     amountSign,
   } = req.query;
@@ -118,6 +119,19 @@ function buildRecordListFilters(req) {
     where.push(`(u.category IS NULL OR u.category != $${idx++})`);
     params.push(exclude_upload_category);
   }
+  if (classificationLike) {
+    // Comma-separated substrings, matched case-insensitively (e.g. "override,chargeback").
+    // Lets a caller narrow to a small family of classifications server-side instead of
+    // downloading every row and filtering in JS.
+    const terms = classificationLike.split(',').map((t) => t.trim()).filter(Boolean);
+    if (terms.length) {
+      const clauses = terms.map((t) => {
+        params.push(`%${t}%`);
+        return `cr.classification ILIKE $${idx++}`;
+      });
+      where.push(`(${clauses.join(' OR ')})`);
+    }
+  }
   if (payee) { where.push(`cr.payee = $${idx++}`); params.push(payee); }
   if (amountSign === 'negative') where.push('cr.commission < 0');
   else if (amountSign === 'positive') where.push('cr.commission >= 0');
@@ -150,7 +164,13 @@ THEN true ELSE false END`;
 router.get('/', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
-    const { sortCol, sortDir = 'asc', limit = 100, offset = 0 } = req.query;
+    const { sortCol, sortDir = 'asc', limit = 100, offset = 0, light } = req.query;
+    // light=1: skip the per-row termed-policy EXISTS check and the full-set SUM query,
+    // and only run the full-set COUNT on the first page. Callers that only need the raw
+    // rows (e.g. Agency Override Recon, which recomputes its own status client-side)
+    // opt in with light=1 — default behavior (is_termed + sums + count every page) is
+    // unchanged for callers like AllData / Reconciliation that rely on them.
+    const isLight = light === '1' || light === 'true';
     const { where, params, idx: startIdx, needsUploadJoin } = buildRecordListFilters(req);
     let idx = startIdx;
     const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
@@ -189,7 +209,7 @@ router.get('/', requireAuth, async (req, res) => {
         cr.lob, cr.gross_commission, cr.thei_share, cr.bsi_share,
         cr.producer_payable, cr.sub_agent_override,
         cr.members, cr.statement_month,
-        ${IS_TERMED_SQL} as is_termed
+        ${isLight ? 'false' : IS_TERMED_SQL} as is_termed
        FROM commission_records cr 
        LEFT JOIN uploads u ON cr.upload_id = u.id
        ${wc} ${orderBy} LIMIT $${idx++} OFFSET $${idx++}`,
@@ -197,28 +217,38 @@ router.get('/', requireAuth, async (req, res) => {
     );
 
     const uploadJoin = needsUploadJoin ? ' LEFT JOIN uploads u ON cr.upload_id = u.id' : '';
-    const total = await pool.query(
-      `SELECT COUNT(*) as count FROM commission_records cr${uploadJoin} ${wc}`,
-      params
-    );
+    const offsetNum = parseInt(offset, 10) || 0;
 
-    const sumsResult = await pool.query(
-      `SELECT
-         COALESCE(SUM(cr.commission), 0)::float AS commission,
-         COALESCE(SUM(cr.gross_commission), 0)::float AS gross_commission,
-         COALESCE(SUM(cr.thei_share), 0)::float AS thei_share,
-         COALESCE(SUM(cr.bsi_share), 0)::float AS bsi_share,
-         COALESCE(SUM(cr.producer_payable), 0)::float AS producer_payable,
-         COALESCE(SUM(cr.sub_agent_override), 0)::float AS sub_agent_override,
-         COALESCE(SUM(cr.premium), 0)::float AS premium
-       FROM commission_records cr${uploadJoin} ${wc}`,
-      params
-    );
-
+    // Full-set COUNT is only needed once — fetchAllPages terminates on a short page
+    // regardless, so a light caller skips recomputing it on every subsequent page.
+    let total = null;
+    if (!isLight || offsetNum === 0) {
+      const totalResult = await pool.query(
+        `SELECT COUNT(*) as count FROM commission_records cr${uploadJoin} ${wc}`,
+        params
+      );
+      total = parseInt(totalResult.rows[0].count, 10);
+    }
+    let sums = null;
+    if (!isLight) {
+      const sumsResult = await pool.query(
+        `SELECT
+           COALESCE(SUM(cr.commission), 0)::float AS commission,
+           COALESCE(SUM(cr.gross_commission), 0)::float AS gross_commission,
+           COALESCE(SUM(cr.thei_share), 0)::float AS thei_share,
+           COALESCE(SUM(cr.bsi_share), 0)::float AS bsi_share,
+           COALESCE(SUM(cr.producer_payable), 0)::float AS producer_payable,
+           COALESCE(SUM(cr.sub_agent_override), 0)::float AS sub_agent_override,
+           COALESCE(SUM(cr.premium), 0)::float AS premium
+         FROM commission_records cr${uploadJoin} ${wc}`,
+        params
+      );
+      sums = sumsResult.rows[0] || null;
+    }
     res.json({
       records: records.rows,
-      total: parseInt(total.rows[0].count, 10),
-      sums: sumsResult.rows[0] || null,
+      total,
+      sums,
     });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });

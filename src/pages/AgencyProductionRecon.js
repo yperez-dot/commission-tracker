@@ -366,25 +366,26 @@ export default function AgencyProductionRecon() {
     setError(null);
     setTruncationWarning(null);
     try {
-      const prodPage = await fetchAllPages('/agency-production', {
-        itemsKey: 'production',
-        pageSize: 5000,
-      }, apiFetch);
+      const [prodPage, overridePage, carrierPage, bsiUploadsData] = await Promise.all([
+        fetchAllPages('/agency-production', { itemsKey: 'production', pageSize: 5000 }, apiFetch),
+        fetchAllPages(
+          '/records?exclude_upload_category=bsi_statement&classificationLike=override,chargeback&light=1',
+          { pageSize: 5000 },
+          apiFetch
+        ),
+        fetchAllPages(
+          '/records?upload_category=bsi_statement&light=1',
+          { pageSize: 5000 },
+          apiFetch
+        ),
+        apiFetch('/files/uploads?category=bsi_statement'),
+      ]);
+
       setProduction(prodPage.items || []);
 
-      const overridePage = await fetchAllPages(
-        '/records?exclude_upload_category=bsi_statement',
-        { pageSize: 5000 },
-        apiFetch
-      );
       const overrideStatements = (overridePage.items || []).filter(isOverrideStatementRow);
       setOverrides(overrideStatements);
 
-      const carrierPage = await fetchAllPages(
-        '/records?upload_category=bsi_statement',
-        { pageSize: 5000 },
-        apiFetch
-      );
       setCarrierBSIRecords(carrierPage.items || []);
 
       setTruncationWarning(truncationMessage([
@@ -393,8 +394,6 @@ export default function AgencyProductionRecon() {
         carrierPage.warning ? `Carrier→BSI: ${carrierPage.warning}` : null,
       ]));
 
-      // Build set of uploaded carrier+period keys so we know what's been uploaded
-      const bsiUploadsData = await apiFetch('/files/uploads?category=bsi_statement');
       const uploadedKeys = new Set();
       (bsiUploadsData || []).forEach(u => {
         const carrier = (u.carrier || '').split(',').map(c => c.trim()).filter(Boolean);
