@@ -7,12 +7,15 @@
 const { Pool } = require('pg');
 const {
   buildMissingRenewalRows,
+  buildLastPaidLookup,
   normName,
   normCarrier,
   normPeriod,
   isTheiPrincipalAgent,
   nameVariants,
   namesLooseMatch,
+  heldIdentityKey,
+  policyStatusKey,
 } = require('../src/missingRenewalsLogic');
 
 const pool = new Pool({
@@ -68,21 +71,36 @@ async function loadForPeriod(period) {
   `);
   const heldKeySet = new Set();
   for (const h of heldResult.rows) {
-    heldKeySet.add(`${normName(h.client_full_name)}|${normCarrier(h.carrier)}`);
+    const key = heldIdentityKey(h.client_full_name, h.carrier);
+    if (key) heldKeySet.add(key);
   }
 
   const psResult = await pool.query(
-    `SELECT client_full_name, carrier, agent_name, status, termed_date FROM policy_status`
+    `SELECT client_full_name, carrier, agent_name, status, termed_date, notes FROM policy_status`
   );
   const policyStatusMap = {};
   for (const ps of psResult.rows) {
-    const key = `${normName(ps.client_full_name)}|${normCarrier(ps.carrier)}|${normName(ps.agent_name)}`;
-    policyStatusMap[key] = ps;
+    const key = policyStatusKey(ps.client_full_name, ps.carrier, ps.agent_name);
+    if (key) policyStatusMap[key] = ps;
   }
+
+  const histResult = await pool.query(
+    `SELECT client_full_name, carrier, payment_period, commission, classification
+     FROM commission_records
+     WHERE commission IS NOT NULL AND commission > 0`
+  );
+  const lastPaidByKey = buildLastPaidLookup(histResult.rows);
 
   const bobClients = bobResult.rows.filter((c) => isTheiPrincipalAgent(c.agent_name));
 
-  return { bobClients, periodRecords, heldKeySet, policyStatusMap, rawBobCount: bobResult.rows.length };
+  return {
+    bobClients,
+    periodRecords,
+    heldKeySet,
+    policyStatusMap,
+    lastPaidByKey,
+    rawBobCount: bobResult.rows.length,
+  };
 }
 
 function analyzeFalsePositives(rows, periodRecords) {
@@ -268,12 +286,16 @@ async function main() {
 
   const audits = [];
   for (const period of uniqueTargets) {
-    const { bobClients, periodRecords, heldKeySet, policyStatusMap, rawBobCount } =
+    const { bobClients, periodRecords, heldKeySet, policyStatusMap, lastPaidByKey, rawBobCount } =
       await loadForPeriod(period);
     const payload = buildMissingRenewalRows({
       bobClients,
       periodRecords,
       period,
+      heldKeySet,
+      policyStatusMap,
+      lastPaidByKey,
+    });
       heldKeySet,
       policyStatusMap,
     });

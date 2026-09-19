@@ -21,10 +21,17 @@ const { nhpHouseOnlyClientSql } = require('../src/nhpStatementParse');
 const {
   buildMissingRenewalRows,
   buildMissingRenewalsPeriodOptions,
+  buildLastPaidLookup,
   isTheiPrincipalAgent,
   normName,
   normCarrier,
+  normalizeCarrier,
   normPeriod,
+  clientNameKey,
+  clientCarrierKey,
+  heldIdentityKey,
+  policyStatusKey,
+  countsAsRenewalPaid,
   MIN_STATEMENT_MONTH_RECORDS,
 } = require('../src/missingRenewalsLogic');
 const UPLOADS_DIR = path.join('/tmp', 'uploads');
@@ -420,12 +427,15 @@ router.patch('/:id', requireAuth, requireAdmin, async (req, res) => {
 });
 
 // ─── POST check-renewals ──────────────────────────────────────────────────────
+// LEGACY Book of Business "Check Renewals" button writer.
+// Prefer GET /missing-renewals-check for accurate unpaid lists (no BOB mutation).
+// This path still updates months_missing / last_commission_* — matching must stay
+// strict (no surname-only pays; use clientNameKey + carrier families).
 router.post('/check-renewals', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
     const { period, scope } = req.body;
     if (!period) return res.status(400).json({ error: 'Period required' });
-    const isAdmin = req.user.role === 'admin' && !getAgency(req);
 
     // Default scope for THEI admins: check ONLY Yahoska + Katy's BOB
     // (their personal production). Pass scope='all' to check everyone.
@@ -450,102 +460,32 @@ router.post('/check-renewals', requireAuth, async (req, res) => {
       af = THEI_PRINCIPAL_FILTER; // default: Yahoska + Katy only
     }
 
-    function normalizePeriod(p) {
-      if (!p) return null;
-      const s = String(p).trim();
-      if (s.match(/^\d{6}$/)) return s;
-      const mmyyyy = s.match(/^(\d{1,2})\/(?:\d{2}\/)?(\d{4})$/);
-      if (mmyyyy) return mmyyyy[2] + mmyyyy[1].padStart(2,'0');
-      const months = {jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12'};
-      const named = s.toLowerCase().match(/^([a-z]{3})\s*(\d{4})$/);
-      if (named && months[named[1]]) return named[2] + months[named[1]];
-      return null;
-    }
+    const targetNorm = normPeriod(period);
+    if (!targetNorm) return res.status(400).json({ error: 'Invalid period' });
 
-    const targetNorm = normalizePeriod(period);
-    // Include ALL commission records (including chargebacks with negative amounts)
-    // Netting logic needs complete picture: e.g., David Mosley Jr +$70 -$70 = $0 net (not owed)
     const allRecords = await pool.query(
-      `SELECT LOWER(TRIM(client_full_name)) as client_key, carrier, agent_name, commission, payment_period FROM commission_records WHERE 1=1 ${af}`,
+      `SELECT client_full_name, carrier, agent_name, commission, payment_period, classification
+       FROM commission_records WHERE 1=1 ${af}`,
       queryParams
     );
-    const matchingRecords = allRecords.rows.filter(r => {
-      const norm = normalizePeriod(r.payment_period);
-      return norm && targetNorm && norm === targetNorm;
+    const matchingRecords = allRecords.rows.filter((r) => {
+      const norm = normPeriod(r.payment_period);
+      return norm && targetNorm && norm === targetNorm && countsAsRenewalPaid(r.classification);
     });
 
-    function normName(name) {
-      if (!name) return '';
-      const s = String(name).trim();
-      
-      // Helper: Convert to Title Case
-      function toTitleCase(str) {
-        return str.toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
-      }
-      
-      // Handle comma-separated "LAST, FIRST" format
-      // Everything before the comma is the full surname (handles compound surnames)
-      if (s.includes(',')) {
-        let [last, first] = s.split(',').map(p => p.trim());
-        
-        // Strip common suffixes from surname
-        last = last.replace(/\b(JR|SR|III|II|IV|V)\.?$/i, '').trim();
-        
-        // Return "FIRST LAST" in Title Case
-        const normalized = `${first} ${last}`.replace(/\s+/g, ' ').trim();
-        return toTitleCase(normalized);
-      }
-      
-      // For non-comma format, just normalize spaces and title case
-      const normalized = s.replace(/\s+/g, ' ').trim();
-      return toTitleCase(normalized);
-    }
-    function normCarrier(c) {
-      const s = String(c || '').toLowerCase();
-      if (s.includes('united') || s.includes('uhc')) return 'unitedhealthcare';
-      if (s.includes('humana')) return 'humana';
-      if (s.includes('aetna')) return 'aetna';
-      if (s.includes('devoted')) return 'devoted health';
-      return s;
-    }
-    
-    // Extract surname from name (handles compound surnames)
-    function extractSurname(name) {
-      if (!name) return '';
-      const s = String(name).trim();
-      
-      // If comma-separated, everything before comma is surname
-      if (s.includes(',')) {
-        let surname = s.split(',')[0].trim();
-        // Strip suffixes
-        surname = surname.replace(/\b(JR|SR|III|II|IV|V)\.?$/i, '').trim();
-        return surname.toLowerCase();
-      }
-      
-      // Fallback: take last word
-      return s.split(/\s+/).pop().toLowerCase();
-    }
-
-    // CRITICAL: Match on client_name|carrier ONLY - do NOT include effective_date
-    // Effective dates vary across different statement sources (BSI, NHP, direct carrier)
-    // and would cause false "missing" flags for the same client
-    const paidSet = new Set(matchingRecords.map(r => `${normName(r.client_key)}|${normCarrier(r.carrier)}`));
-    const paidLastNameSet = new Set(matchingRecords.map(r => {
-      const surname = extractSurname(r.client_key);
-      return `${surname}|${normCarrier(r.carrier)}`;
-    }));
+    const paidSet = new Set(
+      matchingRecords
+        .map((r) => clientCarrierKey(r.client_full_name, r.carrier))
+        .filter(Boolean)
+    );
 
     const bobClients = await pool.query(`SELECT * FROM book_of_business WHERE status = 'active' ${af}`, queryParams);
     let missingCount = 0, recoveredCount = 0;
 
     for (const client of bobClients.rows) {
-      const normN = normName(client.client_full_name);
-      const normC = normCarrier(client.carrier);
-      const key = `${normN}|${normC}`;
-      const surname = extractSurname(client.client_full_name);
-      const lastKey = `${surname}|${normC}`;
+      const key = clientCarrierKey(client.client_full_name, client.carrier);
       const wasMissing = client.months_missing > 0;
-      const isPaid = paidSet.has(key) || paidLastNameSet.has(lastKey);
+      const isPaid = key && paidSet.has(key);
       if (!isPaid) {
         await pool.query(`UPDATE book_of_business SET months_missing = months_missing + 1, updated_at = NOW() WHERE id = $1`, [client.id]);
         missingCount++;
@@ -555,15 +495,26 @@ router.post('/check-renewals', requireAuth, async (req, res) => {
       }
     }
 
+    // Update last paid using identity key (not exact string match)
+    const amountByKey = new Map();
     for (const rec of matchingRecords) {
+      const key = clientCarrierKey(rec.client_full_name, rec.carrier);
+      if (!key) continue;
+      const amt = parseFloat(rec.commission) || 0;
+      amountByKey.set(key, (amountByKey.get(key) || 0) + amt);
+    }
+    for (const client of bobClients.rows) {
+      const key = clientCarrierKey(client.client_full_name, client.carrier);
+      if (!key || !amountByKey.has(key)) continue;
       await pool.query(
-        `UPDATE book_of_business SET last_commission_date = $1, last_commission_amount = $2, updated_at = NOW()
-         WHERE LOWER(TRIM(client_full_name)) = $3 AND LOWER(carrier) = $4 AND status = 'active'`,
-        [period, rec.commission, rec.client_key, rec.carrier.toLowerCase()]
+        `UPDATE book_of_business
+         SET last_commission_date = $1, last_commission_amount = $2, updated_at = NOW()
+         WHERE id = $3 AND status = 'active'`,
+        [targetNorm, amountByKey.get(key), client.id]
       );
     }
 
-    res.json({ missingCount, recoveredCount, period, checkedClients: bobClients.rows.length, matchedRecords: matchingRecords.length });
+    res.json({ missingCount, recoveredCount, period: targetNorm, checkedClients: bobClients.rows.length, matchedRecords: matchingRecords.length });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -1147,7 +1098,8 @@ router.get('/missing-renewals-check', requireAuth, async (req, res) => {
     `);
     const heldKeySet = new Set();
     for (const h of heldResult.rows) {
-      heldKeySet.add(`${normName(h.client_full_name)}|${normCarrier(h.carrier)}`);
+      const key = heldIdentityKey(h.client_full_name, h.carrier);
+      if (key) heldKeySet.add(key);
     }
 
     const psResult = await pool.query(
@@ -1156,9 +1108,19 @@ router.get('/missing-renewals-check', requireAuth, async (req, res) => {
     );
     const policyStatusMap = {};
     for (const ps of psResult.rows) {
-      const key = `${normName(ps.client_full_name)}|${normCarrier(ps.carrier)}|${normName(ps.agent_name)}`;
-      policyStatusMap[key] = ps;
+      const key = policyStatusKey(ps.client_full_name, ps.carrier, ps.agent_name);
+      if (key) policyStatusMap[key] = ps;
     }
+
+    // Live last-paid enrichment — fixes "New" when BOB last_commission_* is stale
+    // because exact-string sync never matched SWITZ, BEVERLY ↔ BEVERLY SWITZ.
+    const histResult = await pool.query(
+      `SELECT client_full_name, carrier, payment_period, commission, classification
+       FROM commission_records
+       WHERE commission IS NOT NULL
+         AND commission > 0`
+    );
+    const lastPaidByKey = buildLastPaidLookup(histResult.rows);
 
     const bobClients = bobResult.rows.filter((c) =>
       scope === 'all' || req.user.role === 'agent' ? true : isTheiPrincipalAgent(c.agent_name)
@@ -1170,6 +1132,7 @@ router.get('/missing-renewals-check', requireAuth, async (req, res) => {
       period,
       heldKeySet,
       policyStatusMap,
+      lastPaidByKey,
     });
 
     payload.sparsePeriod = periodRecords.length < MIN_STATEMENT_MONTH_RECORDS;
@@ -1186,7 +1149,8 @@ router.get('/missing-renewals-check', requireAuth, async (req, res) => {
 router.get('/coverage', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
-    const { period } = req.query;
+    const rawPeriod = req.query.period;
+    const period = normPeriod(rawPeriod);
 
     if (!period) {
       return res.status(400).json({ error: 'period required' });
@@ -1195,7 +1159,7 @@ router.get('/coverage', requireAuth, async (req, res) => {
     // Carriers that report through NHP consolidator (not separate statements)
     const NHP_CONSOLIDATED_CARRIERS = [
       'avmed',
-      'cigna', // Sometimes direct, sometimes NHP - if NHP uploaded, don't warn
+      'cigna',
       'oscar',
       'oscar health',
       'molina',
@@ -1203,9 +1167,9 @@ router.get('/coverage', requireAuth, async (req, res) => {
       'elevance medicare',
       'wellcare',
       'simply',
-      'florida blue' // Sometimes consolidated through NHP
+      'florida blue',
     ];
-    
+
     // Carriers that report through BSI consolidator
     const BSI_CONSOLIDATED_CARRIERS = [
       'mutual of omaha',
@@ -1217,70 +1181,92 @@ router.get('/coverage', requireAuth, async (req, res) => {
       'transamerica',
       'ethos',
       'american home life',
-      'national life group'
+      'national life group',
     ];
 
-    // Get all carriers in Book of Business
+    // Same Yahoska/Katy scope as Missing Renewals (not entire BOB)
     const bobCarriers = await pool.query(
-      `SELECT DISTINCT carrier FROM book_of_business WHERE carrier IS NOT NULL AND carrier != '' ORDER BY carrier`
+      `SELECT DISTINCT carrier FROM book_of_business
+       WHERE carrier IS NOT NULL AND carrier != ''
+         AND status = 'active'
+         AND (
+           LOWER(agent_name) LIKE '%yahoska%'
+           OR LOWER(agent_name) LIKE '%katy%'
+           OR LOWER(agent_name) LIKE '%perez, yahoska%'
+           OR LOWER(agent_name) LIKE '%robles, katy%'
+         )
+       ORDER BY carrier`
     );
 
-    // Get all carriers that have records in commission_records for this period
+    const periodVariants = [
+      period,
+      `${period.slice(4, 6)}/${period.slice(0, 4)}`,
+      `${period.slice(4, 6)}/01/${period.slice(0, 4)}`,
+    ];
+
     const coveredCarriers = await pool.query(
-      `SELECT DISTINCT carrier FROM commission_records WHERE payment_period = $1 AND carrier IS NOT NULL AND carrier != ''`,
-      [period]
+      `SELECT DISTINCT carrier, payment_period FROM commission_records
+       WHERE payment_period = ANY($1::text[])
+         AND carrier IS NOT NULL AND carrier != ''`,
+      [periodVariants]
     );
 
-    const covered = new Set(coveredCarriers.rows.map(r => r.carrier.toLowerCase().trim()));
+    const coveredFamilies = new Set();
+    for (const r of coveredCarriers.rows) {
+      if (normPeriod(r.payment_period) !== period) continue;
+      const fam = normalizeCarrier(r.carrier);
+      if (fam) coveredFamilies.add(fam);
+    }
 
-    // Check if NHP statement uploaded for this period
     const nhpUploaded = await pool.query(
-      `SELECT COUNT(*) as count FROM commission_records 
-       WHERE payment_period = $1 
-       AND (payee = 'NHP' OR LOWER(carrier) LIKE '%nhp%')
-       LIMIT 1`,
-      [period]
+      `SELECT payment_period FROM commission_records
+       WHERE payment_period = ANY($1::text[])
+         AND (payee = 'NHP' OR LOWER(carrier) LIKE '%nhp%')
+       LIMIT 50`,
+      [periodVariants]
     );
-    const hasNHP = parseInt(nhpUploaded.rows[0]?.count || 0) > 0;
-    
-    // Check if BSI statement uploaded for this period
+    const hasNHP = nhpUploaded.rows.some((r) => normPeriod(r.payment_period) === period);
+
     const bsiUploaded = await pool.query(
-      `SELECT COUNT(*) as count FROM commission_records 
-       WHERE payment_period = $1 
-       AND payee = 'BSI'
-       LIMIT 1`,
-      [period]
+      `SELECT payment_period FROM commission_records
+       WHERE payment_period = ANY($1::text[])
+         AND payee = 'BSI'
+       LIMIT 50`,
+      [periodVariants]
     );
-    const hasBSI = parseInt(bsiUploaded.rows[0]?.count || 0) > 0;
+    const hasBSI = bsiUploaded.rows.some((r) => normPeriod(r.payment_period) === period);
 
     const missing = bobCarriers.rows
-      .filter(r => {
-        const carrierLower = r.carrier.toLowerCase().trim();
-        
-        // If carrier has direct statement, not missing
-        if (covered.has(carrierLower)) return false;
-        
-        // If carrier reports through NHP and NHP uploaded, not missing
-        if (hasNHP && NHP_CONSOLIDATED_CARRIERS.some(nhp => carrierLower.includes(nhp))) {
+      .filter((r) => {
+        const fam = normalizeCarrier(r.carrier);
+        if (!fam) return false;
+        if (coveredFamilies.has(fam)) return false;
+        if (hasNHP && NHP_CONSOLIDATED_CARRIERS.some((nhp) => fam.includes(nhp) || nhp.includes(fam))) {
           return false;
         }
-        
-        // If carrier reports through BSI and BSI uploaded, not missing
-        if (hasBSI && BSI_CONSOLIDATED_CARRIERS.some(bsi => carrierLower.includes(bsi))) {
+        if (hasBSI && BSI_CONSOLIDATED_CARRIERS.some((bsi) => fam.includes(bsi) || bsi.includes(fam))) {
           return false;
         }
-        
-        // Otherwise, missing
         return true;
       })
-      .map(r => r.carrier);
+      .map((r) => r.carrier);
+
+    // Deduplicate by carrier family for the banner
+    const seenFam = new Set();
+    const missingStatements = [];
+    for (const c of missing) {
+      const fam = normalizeCarrier(c);
+      if (seenFam.has(fam)) continue;
+      seenFam.add(fam);
+      missingStatements.push(c);
+    }
 
     res.json({
       period,
-      covered: coveredCarriers.rows.map(r => r.carrier),
-      missingStatements: missing,
-      hasNHP, // Include for debugging
-      hasBSI  // Include for debugging
+      covered: [...coveredFamilies],
+      missingStatements,
+      hasNHP,
+      hasBSI,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });
