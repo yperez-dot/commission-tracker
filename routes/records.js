@@ -62,7 +62,7 @@ function normalizeAgentKey(name) {
 function buildRecordListFilters(req) {
   const {
     agent, agents, carrier, carriers, period, periods, classification, classifications,
-    classificationLike,
+    classificationLike, payrollCandidate,
     lob, lobs, planType, payee, search, upload_id, upload_category, exclude_upload_category,
     amountSign,
   } = req.query;
@@ -131,6 +131,28 @@ function buildRecordListFilters(req) {
       });
       where.push(`(${clauses.join(' OR ')})`);
     }
+  }
+  if (payrollCandidate === '1') {
+    // Superset prefilter for Payroll -> Agent Payouts (non-BSI branch): every row that
+    // Payroll.js's client-side filter can ever accept has producer_payable <> 0, and
+    // either lob = 'ACA' (the regular ACA-payable path) or a classification containing
+    // one of these substrings (new business / renewal / chargeback / commission — this
+    // last one covers both "Agent Commission" and the bare "Commission" classification
+    // used by the Alba/Lina Hernandez path). This is a *necessary*, not sufficient,
+    // condition — the exact predicate (agent-name checks, override exclusion, sub-agent
+    // override exclusion) still runs client-side on the narrowed set, so totals are
+    // unchanged. It just avoids shipping rows that can never be payable to the browser,
+    // which matters most on period=all (full-table) loads.
+    where.push(`(
+      COALESCE(cr.producer_payable, 0) <> 0
+      AND (
+        cr.lob = 'ACA'
+        OR cr.classification ILIKE '%new business%'
+        OR cr.classification ILIKE '%renewal%'
+        OR cr.classification ILIKE '%chargeback%'
+        OR cr.classification ILIKE '%commission%'
+      )
+    )`);
   }
   if (payee) { where.push(`cr.payee = $${idx++}`); params.push(payee); }
   if (amountSign === 'negative') where.push('cr.commission < 0');
