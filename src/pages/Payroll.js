@@ -752,10 +752,22 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
     setLoadError('');
     setTruncationWarning(null);
     try {
+      // light=1: this page never reads is_termed or the sums payload off /records
+      // (payable amounts come from recordAmount(), which only looks at
+      // sub_agent_override / producer_payable / commission on the row itself).
+      //
+      // The second param is a safe server-side superset prefilter matching which
+      // classification family loadPayouts filters to below, so period=all (a full-table
+      // crawl) doesn't ship every non-payable row to the browser just to drop it a
+      // moment later. It narrows, it never changes the result: the exact predicate below
+      // still runs unchanged on whatever comes back.
+      const candidateParam = isBSI
+        ? 'classificationLike=' + encodeURIComponent('new business,chargeback')
+        : 'payrollCandidate=1';
       const path =
         period === 'all'
-          ? `/records`
-          : `/records?period=${encodeURIComponent(period)}`;
+          ? `/records?light=1&${candidateParam}`
+          : `/records?period=${encodeURIComponent(period)}&light=1&${candidateParam}`;
       const page = await fetchAllPages(path, { pageSize: 5000 }, apiFetch);
       let allRecs = page.items || [];
       setTruncationWarning(page.warning);
