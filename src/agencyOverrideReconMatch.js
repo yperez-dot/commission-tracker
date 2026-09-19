@@ -316,6 +316,65 @@ export function expandOverrideLifecycle(production, overrides) {
  * If Enroll_Status is Active / Future Active, keep even when Exit/Term still
  * says Voluntary from a prior disenrollment (client came back to the plan).
  */
+/**
+ * Period-scoped Carrier→BSI match with a period-agnostic fallback — same lookup
+ * AgencyProductionRecon.js used inline before this was factored out for reuse
+ * (e.g. by All Data's unpaid-production search, which needs the identical rule).
+ */
+function _findCarrierBSIMatch(prod, carrierRecords) {
+  const prodPeriod = prod.payment_period || '';
+  if (prodPeriod) {
+    const samePeriod = carrierRecords.filter((r) => r.payment_period === prodPeriod);
+    const periodMatch = findOverrideMatch(prod, samePeriod);
+    if (periodMatch) return periodMatch;
+  }
+  // Fall back across periods — Hector month ≠ statement month still means carrier paid BSI.
+  return findOverrideMatch(prod, carrierRecords);
+}
+
+/** Period-agnostic lookup for a Held record by client+carrier. */
+function _findHeldRecord(prod, carrierRecords) {
+  const prodClientNorm = normName(prod.client_name);
+  const prodCarrier = normalizeCarrier(prod.carrier);
+  return carrierRecords.find(r =>
+    r.classification === 'Held' &&
+    normName(r.client_full_name) === prodClientNorm &&
+    carriersMatch(r.carrier, prodCarrier)
+  ) || null;
+}
+
+/**
+ * Build the same per-sale match rows AgencyProductionRecon.js renders (one row per
+ * paid/chargeback/missing lifecycle entry), from the same four inputs that page loads.
+ * Factored out of that page's `matches` useMemo (byte-identical logic) so any other
+ * surface — All Data's unpaid-production search — can compute the exact same status
+ * for a sale instead of re-deriving payment rules of its own.
+ */
+export function buildOverrideMatches(production, overrides, carrierBSIRecords, bsiUploadedKeys) {
+  const bsiKeysList = [...bsiUploadedKeys];
+  const rows = [];
+  // Rolling 90-day production repeats the same sale — one recon row per true sale.
+  const uniqueProduction = dedupeProductionSales(production);
+  for (const prod of uniqueProduction) {
+    const carrierBSI = _findCarrierBSIMatch(prod, carrierBSIRecords);
+    const heldRecord = _findHeldRecord(prod, carrierBSIRecords);
+    const prodCarrier = normalizeCarrier(prod.carrier || '');
+    const prodPeriod = prod.payment_period || prod.effective_date?.substring(0, 7)?.replace('-', '') || '';
+    const carrierUploaded = bsiUploadedKeys.has(`${prodCarrier}|${prodPeriod}`) ||
+      bsiKeysList.some((k) => k.startsWith(`${prodCarrier}|`));
+    const lifecycleRows = expandOverrideLifecycle(prod, overrides);
+    for (const life of lifecycleRows) {
+      rows.push({
+        ...life,
+        carrierBSI: life.isHistory ? null : carrierBSI,
+        heldRecord: life.isHistory ? null : heldRecord,
+        carrierUploaded: life.isHistory ? false : carrierUploaded,
+      });
+    }
+  }
+  return rows;
+}
+
 export function isAetnaActivePolicy(row) {
   const str = (v) => String(v == null ? '' : v);
   const enrollStatus = str(row.Enroll_Status || row.enroll_status || row.status).trim().toUpperCase();

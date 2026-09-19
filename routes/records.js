@@ -1253,3 +1253,8 @@ router.post('/fix-aca-classifications', requireAuth, requireAdmin, async (req, r
 });
 
 module.exports = router;
+// Exported for reuse by other routes that need the same agency-isolation rule
+// (e.g. agencyproduction.js's new unpaid-production search) instead of
+// re-deriving the BSI/THEI carrier split and risking it drifting out of sync.
+module.exports.getAgency = getAgency;
+module.exports.agencyFilter = agencyFilter;

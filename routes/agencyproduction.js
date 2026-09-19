@@ -6,6 +6,7 @@ const { getPool } = require('../db/database');
 const { requireAuth, requireAdmin } = require('./auth');
 const { isAetnaActivePolicy } = require('../src/agencyOverrideReconMatch.cjs');
 const { auditOverrideGaps } = require('../src/overrideGapAudit');
+const { agencyFilter } = require('./records');
 
 // str() — safe Excel cell coercion: null/undefined → '', numbers/booleans → String, Dates → ISO date
 // Prevents TypeError when a numeric or null Excel cell value hits .trim() or .substring()
@@ -581,10 +582,17 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
 router.get('/', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
-    const { batch, carrier, agent, upload_id, limit = 100, offset = 0 } = req.query;
+    const { batch, carrier, agent, upload_id, limit = 100, offset = 0, search } = req.query;
 
-    let query = `SELECT 
-      ap.*, 
+    // search=<term> is new: it's an opt-in ILIKE on client_name for All Data's
+    // unpaid-production lookup (Brief D). Only THIS path gets agency isolation below —
+    // the pre-existing unscoped listing (no search param) stays exactly as it was for
+    // its one current caller, the admin-only Agency Production Recon page, which has
+    // never applied per-agent/per-carrier filtering here. Turning isolation on for
+    // that unconditionally would be a separate, unverified behavior change; scoping it
+    // to `search` only affects the new caller and can't hide rows admins already see.
+    let query = `SELECT
+      ap.*,
       apu.filename as upload_filename,
       apu.uploaded_at as upload_date,
       apu.uploaded_by as uploaded_by_user
@@ -622,6 +630,18 @@ router.get('/', requireAuth, async (req, res) => {
       params.push(`%${agent}%`);
     }
 
+    if (search) {
+      query += ` AND ap.client_name ILIKE $${params.length + 1}`;
+      params.push(`%${search}%`);
+      if (req.user.role === 'agent') {
+        query += ` AND ap.agent_name ILIKE $${params.length + 1}`;
+        params.push(`%${req.user.name}%`);
+      } else if (req.user.role === 'admin') {
+        const af = agencyFilter(req, 'ap');
+        if (af) query += ` AND ${af}`;
+      }
+    }
+
     query += ` ORDER BY effective_date DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`;
     params.push(parseInt(limit), parseInt(offset));
 
@@ -645,6 +665,17 @@ router.get('/', requireAuth, async (req, res) => {
     if (agent) {
       countQuery += ` AND agent_name ILIKE $${countParams.length + 1}`;
       countParams.push(`%${agent}%`);
+    }
+    if (search) {
+      countQuery += ` AND ap.client_name ILIKE $${countParams.length + 1}`;
+      countParams.push(`%${search}%`);
+      if (req.user.role === 'agent') {
+        countQuery += ` AND ap.agent_name ILIKE $${countParams.length + 1}`;
+        countParams.push(`%${req.user.name}%`);
+      } else if (req.user.role === 'admin') {
+        const af = agencyFilter(req, 'ap');
+        if (af) countQuery += ` AND ${af}`;
+      }
     }
 
     const countResult = await pool.query(countQuery, countParams);
