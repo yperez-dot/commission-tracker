@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiFetch, apiUpload } from '../api';
-import { formatDateTime } from '../utils/dateFormat';
+import { formatDate, formatDateTime } from '../utils/dateFormat';
 import UploadRouteConfirm from '../components/UploadRouteConfirm';
 import {
   detectUploadDestination,
@@ -8,7 +8,14 @@ import {
   UPLOAD_PAGE_BY_DEST,
 } from '../utils/uploadDestination';
 import { setPendingUpload, takePendingUpload } from '../utils/pendingUpload';
-import { UploadPageShell, UploadDropZone, UploadAlert, UploadHistoryCard, UploadListSearch } from '../components/UploadPageLayout';
+import {
+  UploadPageShell,
+  UploadDropZone,
+  UploadAlert,
+  UploadRecordPreviewModal,
+  UploadListToolbar,
+  UploadRowList,
+} from '../components/UploadPageLayout';
 import { commissionUploadExportPath, exportUploadFile } from '../utils/exportUpload';
 import { statementSearchText } from '../utils/statementDisplayName';
 import StatementFileName from '../components/StatementFileName';
@@ -29,6 +36,16 @@ export default function AgentPayoutUploads({ user, onNavigate }) {
   const [duplicateModal, setDuplicateModal] = useState(null);
   const [selectedDuplicates, setSelectedDuplicates] = useState(new Set());
   const [searchQuery, setSearchQuery] = useState('');
+  const [filterCarrier, setFilterCarrier] = useState('');
+  const [sortBy, setSortBy] = useState('date_desc'); // date_desc | date_asc | carrier
+  const [selectedUploads, setSelectedUploads] = useState(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  // Record preview — same shared modal Commission Statements uses, reading
+  // from the same /records table (agent payout rows carry the same upload_id
+  // FK, just filtered to category=agent_payout on the list fetch above).
+  const [viewUpload, setViewUpload] = useState(null);
+  const [viewRecords, setViewRecords] = useState([]);
+  const [viewLoading, setViewLoading] = useState(false);
 
   const loadUploads = useCallback(async () => {
     try {
@@ -113,6 +130,49 @@ export default function AgentPayoutUploads({ user, onNavigate }) {
     }
   }
 
+  function toggleSelectUpload(id) {
+    setSelectedUploads((prev) => {
+      const n = new Set(prev);
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
+    });
+  }
+
+  function selectAllUploads() {
+    if (selectedUploads.size === visibleUploads.length) setSelectedUploads(new Set());
+    else setSelectedUploads(new Set(visibleUploads.map((u) => u.id)));
+  }
+
+  async function bulkDeleteUploads() {
+    if (!window.confirm(`Delete ${selectedUploads.size} agent payout uploads and all their records?`)) return;
+    setBulkDeleting(true);
+    try {
+      for (const id of selectedUploads) {
+        await apiFetch(`/files/uploads/${id}`, { method: 'DELETE' });
+      }
+      setUploads((prev) => prev.filter((u) => !selectedUploads.has(u.id)));
+      setSelectedUploads(new Set());
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setBulkDeleting(false);
+    }
+  }
+
+  async function openUpload(upload) {
+    setViewUpload(upload);
+    setViewLoading(true);
+    setViewRecords([]);
+    try {
+      const data = await apiFetch(`/records?upload_id=${upload.id}&limit=500`);
+      setViewRecords(data.records || []);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setViewLoading(false);
+    }
+  }
+
   async function exportUpload(u) {
     if (!u?.id) return;
     setExportingId(u.id);
@@ -130,9 +190,12 @@ export default function AgentPayoutUploads({ user, onNavigate }) {
   }
 
   const q = searchQuery.trim().toLowerCase();
-  const visibleUploads = !q
-    ? uploads
-    : uploads.filter((u) => {
+  const allCarriers = Array.from(new Set(
+    uploads.flatMap((u) => (u.carrier || '').split(',').map((s) => s.trim()).filter(Boolean))
+  )).sort();
+  const visibleUploads = uploads
+    .filter((u) => {
+      if (q) {
         const hay = [
           statementSearchText(u.original_name, { category: 'agent_payout' }),
           u.uploaded_by_name,
@@ -142,8 +205,22 @@ export default function AgentPayoutUploads({ user, onNavigate }) {
           .filter(Boolean)
           .join(' ')
           .toLowerCase();
-        return hay.includes(q);
-      });
+        if (!hay.includes(q)) return false;
+      }
+      if (filterCarrier && !((u.carrier || '').toLowerCase().includes(filterCarrier.toLowerCase()))) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      switch (sortBy) {
+        case 'date_asc':
+          return new Date(a.uploaded_at) - new Date(b.uploaded_at);
+        case 'carrier':
+          return (a.carrier || '').localeCompare(b.carrier || '');
+        case 'date_desc':
+        default:
+          return new Date(b.uploaded_at) - new Date(a.uploaded_at);
+      }
+    });
 
   return (
     <div>
@@ -260,93 +337,110 @@ export default function AgentPayoutUploads({ user, onNavigate }) {
           </UploadAlert>
         )}
 
-        <UploadHistoryCard title={`Agent payout statements (${q ? `${visibleUploads.length} of ${uploads.length}` : uploads.length})`}>
-          {uploads.length > 0 && (
-            <div style={{ padding: '0 16px' }}>
-              <UploadListSearch
-                value={searchQuery}
-                onChange={setSearchQuery}
-                placeholder="Search NHP, filename, or uploader…"
-              />
-            </div>
-          )}
-          {uploads.length === 0 ? (
+        {uploads.length > 0 && (
+          <UploadListToolbar
+            search={searchQuery}
+            onSearchChange={setSearchQuery}
+            searchPlaceholder="Search NHP, filename, or uploader…"
+            filterValue={filterCarrier}
+            onFilterChange={setFilterCarrier}
+            filterOptions={allCarriers}
+            sortValue={sortBy}
+            onSortChange={setSortBy}
+            sortOptions={[
+              { value: 'date_desc', label: '↓ Newest first' },
+              { value: 'date_asc', label: '↑ Oldest first' },
+              { value: 'carrier', label: 'Sort by carrier' },
+            ]}
+            showClear={!!(searchQuery || filterCarrier)}
+            onClear={() => { setSearchQuery(''); setFilterCarrier(''); }}
+          />
+        )}
+        <UploadRowList
+          items={visibleUploads}
+          getKey={(u) => u.id}
+          selectable
+          selected={selectedUploads}
+          onToggleSelect={toggleSelectUpload}
+          onSelectAll={selectAllUploads}
+          allSelected={selectedUploads.size === visibleUploads.length && visibleUploads.length > 0}
+          headerLabel={`Agent payout statements ${q || filterCarrier ? `(${visibleUploads.length} of ${uploads.length})` : `(${uploads.length})`}`}
+          bulkActions={user.role === 'admin' && selectedUploads.size > 0 ? (
+            <button onClick={bulkDeleteUploads} disabled={bulkDeleting} style={{ background: '#E24B4A', color: '#fff', border: 'none', borderRadius: 6, padding: '5px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+              {bulkDeleting ? 'Deleting...' : `Delete ${selectedUploads.size} selected`}
+            </button>
+          ) : null}
+          icon="💵"
+          hasAnyItems={uploads.length > 0}
+          emptyState={(
             <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
               No agent payout statements uploaded yet
             </div>
-          ) : visibleUploads.length === 0 ? (
+          )}
+          noMatchState={(
             <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
               No uploads match “{searchQuery.trim()}”
             </div>
-          ) : (
-            <div
-              style={{
-                background: 'var(--bg)',
-                border: '1px solid var(--border)',
-                borderRadius: 8,
-                overflow: 'hidden',
-              }}
-            >
-              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                <thead>
-                  <tr style={{ background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)' }}>
-                    <th style={{ padding: 12, textAlign: 'left', fontWeight: 600, fontSize: 12 }}>File Name</th>
-                    <th style={{ padding: 12, textAlign: 'left', fontWeight: 600, fontSize: 12 }}>Uploaded</th>
-                    <th style={{ padding: 12, textAlign: 'left', fontWeight: 600, fontSize: 12 }}>Uploaded By</th>
-                    <th style={{ padding: 12, textAlign: 'right', fontWeight: 600, fontSize: 12 }}>Records</th>
-                    <th style={{ padding: 12, textAlign: 'right', fontWeight: 600, fontSize: 12 }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleUploads.map((u, i) => (
-                    <tr
-                      key={u.id}
-                      style={{
-                        borderBottom: i < uploads.length - 1 ? '1px solid var(--border)' : 'none',
-                      }}
-                    >
-                      <td style={{ padding: 12, fontSize: 14 }}>
-                        <StatementFileName filename={u.original_name} category="agent_payout" />
-                      </td>
-                      <td style={{ padding: 12, fontSize: 14, color: 'var(--text-muted)' }}>
-                        {formatDateTime(u.uploaded_at)}
-                      </td>
-                      <td style={{ padding: 12, fontSize: 14, color: 'var(--text-muted)' }}>
-                        {u.uploaded_by_name || `User ${u.uploaded_by}`}
-                      </td>
-                      <td style={{ padding: 12, fontSize: 14, textAlign: 'right' }}>
-                        {u.row_count || 0}
-                      </td>
-                      <td style={{ padding: 12, textAlign: 'right' }}>
-                        <div style={{ display: 'inline-flex', gap: 6 }}>
-                          <button
-                            onClick={() => exportUpload(u)}
-                            disabled={exportingId === u.id}
-                            className="btn"
-                            style={{ fontSize: 12, padding: '4px 12px' }}
-                          >
-                            {exportingId === u.id ? 'Exporting...' : 'Export'}
-                          </button>
-                          {user.role === 'admin' && (
-                            <button
-                              onClick={() => deleteUpload(u.id)}
-                              disabled={deletingId === u.id}
-                              className="btn btn-danger"
-                              style={{ fontSize: 12, padding: '4px 12px' }}
-                            >
-                              {deletingId === u.id ? 'Deleting...' : 'Delete'}
-                            </button>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
           )}
-        </UploadHistoryCard>
+          renderPrimary={(u) => (
+            <button onClick={() => openUpload(u)} style={{
+              background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+              fontWeight: 600, fontSize: 13, color: 'var(--text)', textAlign: 'left',
+            }}>
+              <StatementFileName filename={u.original_name} category="agent_payout" />
+            </button>
+          )}
+          renderMeta={(u) => `${u.row_count || 0} records · ${u.carrier || '—'} · ${formatDateTime(u.uploaded_at)} · by ${u.uploaded_by_name || `User ${u.uploaded_by}`}`}
+          renderActions={(u) => (
+            <>
+              <button
+                onClick={() => exportUpload(u)}
+                disabled={exportingId === u.id}
+                style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 10px', fontSize: 11, cursor: 'pointer', color: 'var(--text)' }}
+              >
+                {exportingId === u.id ? '...' : 'Export'}
+              </button>
+              {user.role === 'admin' && (
+                <button onClick={() => deleteUpload(u.id)} disabled={deletingId === u.id}
+                  style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 10px', fontSize: 11, cursor: 'pointer', color: '#E24B4A' }}>
+                  {deletingId === u.id ? '...' : 'Delete'}
+                </button>
+              )}
+            </>
+          )}
+        />
       </UploadPageShell>
+
+      {/* Record preview — same shared modal as every other Uploads tab now uses */}
+      <UploadRecordPreviewModal
+        open={!!viewUpload}
+        onClose={() => setViewUpload(null)}
+        title={viewUpload ? <StatementFileName filename={viewUpload.original_name} category="agent_payout" /> : ''}
+        subtitle={viewUpload ? `${viewUpload.row_count || 0} records · ${fmt(viewUpload.commission_sum)} · ${viewUpload.carrier || '—'} · ${formatDateTime(viewUpload.uploaded_at)}` : ''}
+        loading={viewLoading}
+        rows={viewRecords}
+        columns={[
+          { key: 'agent_name', header: 'Agent', render: (r) => <span style={{ fontWeight: 500 }}>{r.agent_name}</span> },
+          { key: 'carrier', header: 'Carrier', render: (r) => <span style={{ color: 'var(--text-muted)' }}>{r.carrier}</span> },
+          { key: 'client_full_name', header: 'Client', render: (r) => r.client_full_name || '—' },
+          { key: 'effective_date', header: 'Effective', render: (r) => <span style={{ color: 'var(--text-muted)' }}>{formatDate(r.effective_date)}</span> },
+          {
+            key: 'commission', header: 'Commission',
+            render: (r) => <span style={{ fontWeight: 600, color: parseFloat(r.commission) < 0 ? '#E24B4A' : '#1D9E75' }}>{fmt(r.commission)}</span>,
+          },
+          { key: 'classification', header: 'Type', render: (r) => r.classification || '—' },
+          { key: 'payment_period', header: 'Period', render: (r) => <span style={{ color: 'var(--text-muted)' }}>{r.payment_period || '—'}</span> },
+        ]}
+        footer={(rows) => (
+          <>
+            <td colSpan={4} style={{ padding: '8px 12px', fontSize: 12 }}>Total ({rows.length} records)</td>
+            <td style={{ padding: '8px 12px', fontSize: 12, color: '#1D9E75' }}>
+              {fmt(rows.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0))}
+            </td>
+            <td colSpan={2}></td>
+          </>
+        )}
+      />
     </div>
   );
 }
