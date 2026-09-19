@@ -2400,7 +2400,7 @@ function parseSolisRows(wb, filename) {
 
   for (const row of rows) {
     // Handle both Solis (with spaces) and Doctors (no spaces) column formats
-    const client = String(row['Member Name'] || row['MemberName'] || '').trim();
+    let client = String(row['Member Name'] || row['MemberName'] || '').trim();
     const agent = normalizeAgentName(String(row['Agent Name'] || row['AgentName'] || '').trim());
     const commission = parseFloat(row['Payment Amt'] || row['PaymentAmt']) || 0;
     const commissionEffDate = row['Commission Eff. Date'] || row['CommissionEffectiveDate'];
@@ -2413,7 +2413,21 @@ function parseSolisRows(wb, filename) {
     const paymentType = String(row['Payment Type'] || row['PaymentType'] || '').toLowerCase().replace(/\s+/g, ' ').trim();
     const policyNumber = String(row['Plan Member ID'] || row['PlanMemberID'] || '').trim();
 
-    if (!isValidClientName(client) || commission === 0) continue;
+    // Doctors/Solis often include a prior-month negative with blank MemberName.
+    // Keep non-zero amounts even when client is blank; do not import zero blank junk.
+    const paymentTypeRaw = String(row['Payment Type'] || row['PaymentType'] || '').trim();
+    const isPriorMonthNegative = /negative|previous\s*month|prior\s*month|carry\s*over|carryover/i.test(paymentTypeRaw)
+      || (commission < 0 && !client);
+    if (commission === 0) continue;
+    if (!isValidClientName(client)) {
+      if (!isPriorMonthNegative) continue;
+      client = paymentTypeRaw
+        ? paymentTypeRaw.replace(/\s+/g, ' ').trim().slice(0, 120)
+        : 'PRIOR MONTH NEGATIVE CHARGE';
+      // isValidClientName rejects names containing "balance"/"total"/etc — strip those words
+      client = client.replace(/\b(balance|total|summary|subtotal|deduction)\b/ig, 'CHARGE').trim()
+        || 'PRIOR MONTH NEGATIVE CHARGE';
+    }
 
     // Determine if New Business vs Renewal by comparing enrollment date to commission date
     let isNewBusiness = false;
