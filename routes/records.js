@@ -80,7 +80,8 @@ function buildRecordListFilters(req) {
   if (agents) {
     const list = agents.split(',').map((a) => a.trim()).filter(Boolean);
     if (list.length) { where.push(`cr.agent_name = ANY($${idx++})`); params.push(list); }
-} else if (agent) { where.push(`cr.agent_name = $${idx++}`);
+  } else if (agent) {
+    where.push(`cr.agent_name = $${idx++}`);
     params.push(agent);
   }
   if (carriers) {
@@ -225,26 +226,24 @@ router.get('/', requireAuth, async (req, res) => {
       const totalResult = await pool.query(
         `SELECT COUNT(*) as count FROM commission_records cr${uploadJoin} ${wc}`,
         params
-
-    );
+      );
       total = parseInt(totalResult.rows[0].count, 10);
     }
     let sums = null;
     if (!isLight) {
       const sumsResult = await pool.query(
-      `SELECT
-         COALESCE(SUM(cr.commission), 0)::float AS commission,
-         COALESCE(SUM(cr.gross_commission), 0)::float AS gross_commission,
-         COALESCE(SUM(cr.thei_share), 0)::float AS thei_share,
-         COALESCE(SUM(cr.bsi_share), 0)::float AS bsi_share,
-         COALESCE(SUM(cr.producer_payable), 0)::float AS producer_payable,
-         COALESCE(SUM(cr.sub_agent_override), 0)::float AS sub_agent_override,
-         COALESCE(SUM(cr.premium), 0)::float AS premium
-       FROM commission_records cr${uploadJoin} ${wc}`,
-      params
-    );
-
-    sums = sumsResult.rows[0] || null;
+        `SELECT
+           COALESCE(SUM(cr.commission), 0)::float AS commission,
+           COALESCE(SUM(cr.gross_commission), 0)::float AS gross_commission,
+           COALESCE(SUM(cr.thei_share), 0)::float AS thei_share,
+           COALESCE(SUM(cr.bsi_share), 0)::float AS bsi_share,
+           COALESCE(SUM(cr.producer_payable), 0)::float AS producer_payable,
+           COALESCE(SUM(cr.sub_agent_override), 0)::float AS sub_agent_override,
+           COALESCE(SUM(cr.premium), 0)::float AS premium
+         FROM commission_records cr${uploadJoin} ${wc}`,
+        params
+      );
+      sums = sumsResult.rows[0] || null;
     }
     res.json({
       records: records.rows,
