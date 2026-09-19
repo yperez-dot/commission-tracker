@@ -374,15 +374,21 @@ export default function Reconciliation({ user }) {
     setLoading(true);
     setError(null);
     setTruncationWarning(null);
-    console.log('Loading MedicarePro sales...');
     try {
-      // Fetch sales from MedicarePro upload endpoint (page through limit)
-      const salesPage = await fetchAllPages('/medicarepro', {
-        itemsKey: 'sales',
-        pageSize: 10000,
-      }, apiFetch);
+      // Sales, commissions, and manual payments are independent — load them in
+      // parallel instead of sequentially. light=1 on /records skips the per-row
+      // termed-policy check and the full-set SUM query: Reconciliation never reads
+      // is_termed or sums off commission records (sale termed/deceased status comes
+      // from /medicarepro's own BOB join), it only needs the raw rows for findMatch.
+      // Manual payments is optional (may 404 on a fresh install) so a failure there
+      // resolves to an empty list instead of failing the whole load.
+      const [salesPage, commPage, manualData] = await Promise.all([
+        fetchAllPages('/medicarepro', { itemsKey: 'sales', pageSize: 10000 }, apiFetch),
+        fetchAllPages('/records?light=1', { pageSize: 5000 }, apiFetch),
+        apiFetch('/manual-payments').catch(() => ({ payments: [] })),
+      ]);
+
       const rawSales = salesPage.items || [];
-      console.log('MedicarePro sales loaded:', rawSales.length, 'total', salesPage.total);
 
       // Deduplicate sales by client + policy + date (Fix #6b)
       const uniqueSales = Array.from(
@@ -394,33 +400,14 @@ export default function Reconciliation({ user }) {
         ).values()
       );
 
-      if (rawSales.length !== uniqueSales.length) {
-        console.log(`Sales deduplication: ${rawSales.length} → ${uniqueSales.length} (removed ${rawSales.length - uniqueSales.length} duplicates)`);
-      }
-
       setSales(uniqueSales);
-
-      // Fetch commissions from OliComm (ALL records - need complete dataset for matching)
-      console.log('Loading commission records...');
-      const commPage = await fetchAllPages('/records', { pageSize: 5000 }, apiFetch);
-      console.log(`Loaded ${commPage.fetched} commission records (total ${commPage.total})`);
       setCommissions(commPage.items || []);
+      setManualPayments(manualData.payments || []);
 
       setTruncationWarning(truncationMessage([
         salesPage.warning ? `Sales: ${salesPage.warning}` : null,
         commPage.warning ? `Commissions: ${commPage.warning}` : null,
       ]));
-
-      // Fetch manual payments (optional - may not exist yet)
-      try {
-        console.log('Loading manual payments...');
-        const manualData = await apiFetch('/manual-payments');
-        console.log('Manual payments response:', manualData);
-        setManualPayments(manualData.payments || []);
-      } catch (manualError) {
-        console.log('Manual payments endpoint not available yet (optional feature)');
-        setManualPayments([]);
-      }
     } catch (e) {
       console.error('Error loading data:', e);
       setError(e.message || 'Failed to load data');
