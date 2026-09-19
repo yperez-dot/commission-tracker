@@ -1,9 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch, getToken } from '../api';
-import { UploadPageShell, UploadDropZone, UploadAlert, UploadHistoryCard, UploadListSearch } from '../components/UploadPageLayout';
+import {
+  UploadPageShell,
+  UploadDropZone,
+  UploadAlert,
+  UploadRecordPreviewModal,
+  UploadListToolbar,
+  UploadRowList,
+} from '../components/UploadPageLayout';
 import { agencyProductionUploadExportPath, exportUploadFile } from '../utils/exportUpload';
 
-export default function AgencyProductionUpload() {
+export default function AgencyProductionUpload({ user }) {
   const [files, setFiles] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -14,6 +21,15 @@ export default function AgencyProductionUpload() {
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [exportingId, setExportingId] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [filterCarrier, setFilterCarrier] = useState('');
+  const [sortBy, setSortBy] = useState('date_desc'); // date_desc | date_asc | carrier | filename
+  const [selectedUploads, setSelectedUploads] = useState(new Set());
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  // Record preview — shared React modal, replacing the DOM innerHTML modal
+  // this page used to build by hand.
+  const [viewUpload, setViewUpload] = useState(null);
+  const [viewRecords, setViewRecords] = useState([]);
+  const [viewLoading, setViewLoading] = useState(false);
 
   const API_URL = process.env.REACT_APP_API_URL || '';
 
@@ -170,11 +186,55 @@ export default function AgencyProductionUpload() {
       });
       
       alert(`Deleted ${result.carrier} upload\n\n${result.deleted_production} production records deleted`);
-      
+
       // Reload history
       await loadUploadHistory();
     } catch (err) {
       alert(`Error deleting upload: ${err.message}`);
+    }
+  }
+
+  function toggleSelectUpload(id) {
+    setSelectedUploads((prev) => {
+      const n = new Set(prev);
+      n.has(id) ? n.delete(id) : n.add(id);
+      return n;
+    });
+  }
+
+  function selectAllUploads() {
+    if (selectedUploads.size === visibleHistory.length) setSelectedUploads(new Set());
+    else setSelectedUploads(new Set(visibleHistory.map((u) => u.id)));
+  }
+
+  async function bulkDeleteUploads() {
+    const toDelete = uploadHistory.filter((u) => selectedUploads.has(u.id));
+    if (!window.confirm(`Delete ${toDelete.length} uploads and all their production records? This cannot be undone.`)) return;
+    setBulkDeleting(true);
+    try {
+      for (const u of toDelete) {
+        await apiFetch(`/agency-production/upload/${u.id}`, { method: 'DELETE' });
+      }
+      setSelectedUploads(new Set());
+      await loadUploadHistory();
+    } catch (err) {
+      alert(`Error deleting uploads: ${err.message}`);
+    } finally {
+      setBulkDeleting(false);
+    }
+  }
+
+  async function openUpload(upload) {
+    setViewUpload(upload);
+    setViewLoading(true);
+    setViewRecords([]);
+    try {
+      const data = await apiFetch(`/agency-production?upload_id=${upload.id}&limit=1000`);
+      setViewRecords(data.production || []);
+    } catch (err) {
+      console.error('Error loading production records:', err);
+    } finally {
+      setViewLoading(false);
     }
   }
 
@@ -195,17 +255,35 @@ export default function AgencyProductionUpload() {
   }
 
   const qHist = searchQuery.trim().toLowerCase();
-  const visibleHistory = !qHist
-    ? uploadHistory
-    : uploadHistory.filter((u) => {
+  const allCarriers = Array.from(new Set(uploadHistory.map((u) => u.carrier).filter(Boolean))).sort();
+  const visibleHistory = uploadHistory
+    .filter((u) => {
+      if (qHist) {
         const hay = [u.filename, u.carrier, u.upload_batch, u.uploaded_by]
           .filter(Boolean)
           .join(' ')
           .toLowerCase();
-        return hay.includes(qHist);
-      });
+        if (!hay.includes(qHist)) return false;
+      }
+      if (filterCarrier && u.carrier !== filterCarrier) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      switch (sortBy) {
+        case 'date_asc':
+          return new Date(a.uploaded_at) - new Date(b.uploaded_at);
+        case 'carrier':
+          return (a.carrier || '').localeCompare(b.carrier || '');
+        case 'filename':
+          return (a.filename || '').localeCompare(b.filename || '');
+        case 'date_desc':
+        default:
+          return new Date(b.uploaded_at) - new Date(a.uploaded_at);
+      }
+    });
 
   return (
+    <>
     <UploadPageShell
       title="Agency Production"
       subtitle="Hector's monthly production reports (Humana, UHC, Aetna, etc.) for Agency Override Recon."
@@ -313,164 +391,105 @@ export default function AgencyProductionUpload() {
           </ul>
         </div>
 
-        <UploadHistoryCard title={`Upload history${searchQuery.trim() ? ` (${visibleHistory.length} of ${uploadHistory.length})` : uploadHistory.length ? ` (${uploadHistory.length})` : ''}`}>
-          {loadingHistory ? (
-            <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-muted)' }}>Loading history...</div>
-          ) : uploadHistory.length === 0 ? (
+        {uploadHistory.length > 0 && (
+          <UploadListToolbar
+            search={searchQuery}
+            onSearchChange={setSearchQuery}
+            searchPlaceholder="Search filename, carrier, or batch…"
+            filterValue={filterCarrier}
+            onFilterChange={setFilterCarrier}
+            filterOptions={allCarriers}
+            sortValue={sortBy}
+            onSortChange={setSortBy}
+            sortOptions={[
+              { value: 'date_desc', label: '↓ Newest first' },
+              { value: 'date_asc', label: '↑ Oldest first' },
+              { value: 'carrier', label: 'Sort by carrier' },
+              { value: 'filename', label: 'Sort by filename' },
+            ]}
+            showClear={!!(searchQuery || filterCarrier)}
+            onClear={() => { setSearchQuery(''); setFilterCarrier(''); }}
+          />
+        )}
+        <UploadRowList
+          items={visibleHistory}
+          getKey={(u) => u.id}
+          selectable={user?.role === 'admin'}
+          selected={selectedUploads}
+          onToggleSelect={toggleSelectUpload}
+          onSelectAll={selectAllUploads}
+          allSelected={selectedUploads.size === visibleHistory.length && visibleHistory.length > 0}
+          headerLabel={loadingHistory ? 'Loading history…' : `Upload history${searchQuery.trim() || filterCarrier ? ` (${visibleHistory.length} of ${uploadHistory.length})` : uploadHistory.length ? ` (${uploadHistory.length})` : ''}`}
+          bulkActions={user?.role === 'admin' && selectedUploads.size > 0 ? (
+            <button onClick={bulkDeleteUploads} disabled={bulkDeleting} style={{ background: '#E24B4A', color: '#fff', border: 'none', borderRadius: 6, padding: '5px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+              {bulkDeleting ? 'Deleting...' : `Delete ${selectedUploads.size} selected`}
+            </button>
+          ) : null}
+          icon="📈"
+          hasAnyItems={uploadHistory.length > 0}
+          emptyState={(
             <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-muted)' }}>
-              No uploads yet. Upload your first production report above!
+              {loadingHistory ? 'Loading history...' : 'No uploads yet. Upload your first production report above!'}
             </div>
-          ) : (
+          )}
+          noMatchState={(
+            <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-muted)' }}>
+              No uploads match “{searchQuery.trim()}”
+            </div>
+          )}
+          renderPrimary={(upload) => (
+            <button
+              onClick={() => openUpload(upload)}
+              style={{ background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontWeight: 600, fontSize: 13, color: 'var(--text)', textAlign: 'left' }}
+              title="Click to view uploaded records"
+            >
+              {upload.filename}
+            </button>
+          )}
+          renderMeta={(upload) => `${upload.record_count} records · batch ${upload.upload_batch} · ${new Date(upload.uploaded_at).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true })} · by ${upload.uploaded_by || '—'}`}
+          renderBadges={(upload) => (
+            <span className="badge" style={{ background: 'var(--green-light)', color: 'var(--green)' }}>
+              {upload.carrier}
+            </span>
+          )}
+          renderActions={(upload) => (
             <>
-            <div style={{ padding: '0 16px' }}>
-              <UploadListSearch
-                value={searchQuery}
-                onChange={setSearchQuery}
-                placeholder="Search filename, carrier, or batch…"
-              />
-            </div>
-            {visibleHistory.length === 0 ? (
-              <div style={{ textAlign: 'center', padding: 20, color: 'var(--text-muted)' }}>
-                No uploads match “{searchQuery.trim()}”
-              </div>
-            ) : (
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Filename</th>
-                    <th>Carrier</th>
-                    <th>Batch</th>
-                    <th>Uploaded</th>
-                    <th>By</th>
-                    <th>Records</th>
-                    <th style={{ textAlign: 'center' }}>Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleHistory.map((upload) => (
-                    <tr key={upload.id}>
-                      <td style={{ fontWeight: 500 }}>
-                        <a 
-                          href="#" 
-                          onClick={async (e) => {
-                            e.preventDefault();
-                            try {
-                              const data = await apiFetch(`/agency-production?upload_id=${upload.id}&limit=1000`);
-                              const records = data.production || [];
-                              
-                              if (records.length === 0) {
-                                alert('No records found for this upload');
-                                return;
-                              }
-                              
-                              // Show modal with data
-                              const modal = document.createElement('div');
-                              modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:9999;';
-                              modal.innerHTML = `
-                                <div style="background:white;border-radius:8px;max-width:90vw;max-height:90vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,0.3);">
-                                  <div style="padding:20px;border-bottom:1px solid #ddd;display:flex;justify-content:space-between;align-items:center;">
-                                    <div>
-                                      <h2 style="margin:0;font-size:18px;">${upload.filename}</h2>
-                                      <p style="margin:4px 0 0;font-size:13px;color:#666;">${upload.carrier} - ${upload.upload_batch} - ${records.length} records</p>
-                                    </div>
-                                    <button onclick="this.closest('div[style*=fixed]').remove()" style="background:var(--red);color:white;border:none;border-radius:4px;padding:6px 12px;cursor:pointer;font-size:12px;">Close</button>
-                                  </div>
-                                  <div style="padding:20px;">
-                                    <table style="width:100%;border-collapse:collapse;font-size:12px;">
-                                      <thead>
-                                        <tr style="border-bottom:2px solid #ddd;">
-                                          <th style="text-align:left;padding:8px;">Agent</th>
-                                          <th style="text-align:left;padding:8px;">Client</th>
-                                          <th style="text-align:left;padding:8px;">Effective Date</th>
-                                          <th style="text-align:left;padding:8px;">Status</th>
-                                          <th style="text-align:left;padding:8px;">Plan</th>
-                                        </tr>
-                                      </thead>
-                                      <tbody>
-                                        ${records.map((r, i) => `
-                                          <tr style="border-bottom:1px solid #eee;${i % 2 === 0 ? 'background:#f9f9f9;' : ''}">
-                                            <td style="padding:8px;">${r.agent_name || '—'}</td>
-                                            <td style="padding:8px;">${r.client_name || '—'}</td>
-                                            <td style="padding:8px;">${r.effective_date || '—'}</td>
-                                            <td style="padding:8px;">${r.status || '—'}</td>
-                                            <td style="padding:8px;">${r.policy_type || '—'}</td>
-                                          </tr>
-                                        `).join('')}
-                                      </tbody>
-                                    </table>
-                                  </div>
-                                </div>
-                              `;
-                              document.body.appendChild(modal);
-                              modal.onclick = (e) => { if (e.target === modal) modal.remove(); };
-                            } catch (err) {
-                              alert('Error loading data: ' + err.message);
-                            }
-                          }}
-                          style={{ 
-                            color: 'var(--blue)', 
-                            textDecoration: 'none',
-                            cursor: 'pointer',
-                            borderBottom: '1px dashed var(--blue)'
-                          }}
-                          onMouseOver={(e) => e.target.style.borderBottom = '1px solid var(--blue)'}
-                          onMouseOut={(e) => e.target.style.borderBottom = '1px dashed var(--blue)'}
-                          title="Click to view uploaded records"
-                        >
-                          {upload.filename}
-                        </a>
-                      </td>
-                      <td>
-                        <span className="badge" style={{ background: 'var(--green-light)', color: 'var(--green)' }}>
-                          {upload.carrier}
-                        </span>
-                      </td>
-                      <td>
-                        <span className="badge" style={{ background: 'var(--blue-light)', color: 'var(--blue)' }}>
-                          {upload.upload_batch}
-                        </span>
-                      </td>
-                      <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                        {new Date(upload.uploaded_at).toLocaleString('en-US', {
-                          month: 'short',
-                          day: 'numeric',
-                          year: 'numeric',
-                          hour: 'numeric',
-                          minute: '2-digit',
-                          hour12: true
-                        })}
-                      </td>
-                      <td style={{ fontSize: 13 }}>{upload.uploaded_by || '—'}</td>
-                      <td style={{ fontWeight: 500, color: 'var(--green)' }}>{upload.record_count}</td>
-                      <td style={{ textAlign: 'center' }}>
-                        <div style={{ display: 'inline-flex', gap: 6 }}>
-                          <button
-                            className="btn btn-sm"
-                            onClick={() => handleExportUpload(upload)}
-                            disabled={exportingId === upload.id}
-                            style={{ fontSize: 11, padding: '4px 10px' }}
-                          >
-                            {exportingId === upload.id ? '...' : 'Export'}
-                          </button>
-                          <button
-                            className="btn btn-sm"
-                            onClick={() => handleDeleteUpload(upload)}
-                            style={{ background: 'var(--red)', color: 'white', fontSize: 11, padding: '4px 10px' }}
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            )}
+              <button
+                onClick={() => handleExportUpload(upload)}
+                disabled={exportingId === upload.id}
+                style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 10px', fontSize: 11, cursor: 'pointer', color: 'var(--text)' }}
+              >
+                {exportingId === upload.id ? '...' : 'Export'}
+              </button>
+              {user?.role === 'admin' && (
+                <button
+                  onClick={() => handleDeleteUpload(upload)}
+                  style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 10px', fontSize: 11, cursor: 'pointer', color: '#E24B4A' }}
+                >
+                  Delete
+                </button>
+              )}
             </>
           )}
-        </UploadHistoryCard>
+        />
     </UploadPageShell>
+
+      {/* Record preview — shared React modal (replaces the old innerHTML modal) */}
+      <UploadRecordPreviewModal
+        open={!!viewUpload}
+        onClose={() => setViewUpload(null)}
+        title={viewUpload ? viewUpload.filename : ''}
+        subtitle={viewUpload ? `${viewUpload.carrier} · ${viewUpload.upload_batch} · ${viewRecords.length} records` : ''}
+        loading={viewLoading}
+        rows={viewRecords}
+        columns={[
+          { key: 'agent_name', header: 'Agent', render: (r) => r.agent_name || '—' },
+          { key: 'client_name', header: 'Client', render: (r) => r.client_name || '—' },
+          { key: 'effective_date', header: 'Effective Date', render: (r) => r.effective_date || '—' },
+          { key: 'status', header: 'Status', render: (r) => r.status || '—' },
+          { key: 'policy_type', header: 'Plan', render: (r) => r.policy_type || '—' },
+        ]}
+      />
+    </>
   );
 }
