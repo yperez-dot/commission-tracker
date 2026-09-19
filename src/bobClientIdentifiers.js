@@ -11,6 +11,106 @@ function normalizeId(value) {
   return String(value || '').trim().toUpperCase().replace(/[\s\-]/g, '');
 }
 
+function stripPolicySuffix(value) {
+  return normalizeId(value).replace(/_(MA|MAPD|HMO|PPO|PDP|MS|MSUP|MEDSUPP)$/i, '');
+}
+
+function idsEquivalent(a, b) {
+  const na = normalizeId(a);
+  const nb = normalizeId(b);
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  const sa = stripPolicySuffix(na);
+  const sb = stripPolicySuffix(nb);
+  return Boolean(sa && sb && sa === sb && sa.length >= 8);
+}
+
+function idIndexKeys(value) {
+  const id = normalizeId(value);
+  if (!id) return [];
+  const keys = [id];
+  const stripped = stripPolicySuffix(id);
+  if (stripped && stripped !== id) keys.push(stripped);
+  return keys;
+}
+
+/**
+ * Given name + surname for identifier matching.
+ * Handles "A Palacio", "Palacio A", "PALACIO, DORA", and "Dora Palacio".
+ * Does not use normName() because that strips single-letter tokens.
+ */
+function parseGivenSurname(name) {
+  const s = String(name || '').trim();
+  if (!s) return { given: '', surname: '' };
+
+  if (s.includes(',')) {
+    let [last, first] = s.split(',').map((p) => p.trim());
+    last = last.replace(/\b(JR|SR|III|II|IV|V)\.?$/i, '').trim();
+    const given = (first.split(/\s+/).filter(Boolean)[0] || '').replace(/\./g, '');
+    return { given, surname: last };
+  }
+
+  const parts = s
+    .replace(/\s+/g, ' ')
+    .split(' ')
+    .filter(Boolean)
+    .filter((p) => !/^(JR|SR|III|II|IV|V)\.?$/i.test(p));
+  if (!parts.length) return { given: '', surname: '' };
+  if (parts.length === 1) return { given: '', surname: parts[0] };
+  if (parts[0].replace(/\./g, '').length === 1) {
+    return { given: parts[0].replace(/\./g, ''), surname: parts.slice(1).join(' ') };
+  }
+  if (parts[parts.length - 1].replace(/\./g, '').length === 1) {
+    return { given: parts[parts.length - 1].replace(/\./g, ''), surname: parts.slice(0, -1).join(' ') };
+  }
+  return { given: parts[0], surname: parts[parts.length - 1] };
+}
+
+function surnamesMatch(a, b) {
+  const sa = parseGivenSurname(a).surname.toLowerCase().replace(/[^a-z]/g, '');
+  const sb = parseGivenSurname(b).surname.toLowerCase().replace(/[^a-z]/g, '');
+  if (!sa || !sb) return false;
+  if (sa === sb) return true;
+  const shorter = sa.length <= sb.length ? sa : sb;
+  const longer = sa.length <= sb.length ? sb : sa;
+  return shorter.length >= 4 && longer.endsWith(shorter);
+}
+
+function firstInitialCompatible(a, b) {
+  const pa = parseGivenSurname(a);
+  const pb = parseGivenSurname(b);
+  const ga = pa.given.toLowerCase().replace(/[^a-z]/g, '');
+  const gb = pb.given.toLowerCase().replace(/[^a-z]/g, '');
+  if (!ga || !gb) return false;
+  if (ga === gb) return true;
+  if (ga.length === 1 && gb.startsWith(ga)) return true;
+  if (gb.length === 1 && ga.startsWith(gb)) return true;
+  return false;
+}
+
+/**
+ * Name match for filling BOB identifiers.
+ * Full fuzzy match, or same surname + first initial (e.g. "A Palacio" ↔ "Ana Palacio").
+ * Does not match "A Palacio" to "Dora Palacio".
+ */
+function namesMatchForIdentifiers(a, b) {
+  if (!a || !b) return false;
+  if (namesLooseMatch(a, b)) return true;
+  return surnamesMatch(a, b) && firstInitialCompatible(a, b);
+}
+
+function agentsMatch(a, b) {
+  if (!a || !b) return true;
+  return namesLooseMatch(a, b) || namesMatchForIdentifiers(a, b);
+}
+
+function datesMatch(a, b) {
+  const fa = formatIdentifierDate(a);
+  const fb = formatIdentifierDate(b);
+  if (!fa || !fb) return false;
+  return fa === fb;
+}
+
 function formatIdentifierDate(value) {
   if (value == null || value === '') return '';
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
@@ -138,12 +238,14 @@ function mapBobExportRow(row, columns, { normalizeAgentName } = {}) {
 }
 
 const MEMBER_ID_RAW_KEYS = [
-  'memberid', 'member_id', 'membernumber', 'member #',
+  'memberid', 'member_id', 'membernumber', 'member #', 'mbr#',
   'carrier_member_id', 'carriermemberid', 'umid', 'hcid',
+  'affinitypolicyid', 'affinity policy id',
   'mbi', 'medicareidentifier', 'medicare_identifier', 'medicareid',
   'medicarenumber', 'medicare_number', 'hicnmbi', 'hicn/mbi', 'hic#', 'hic',
   'subscriberid', 'subscriber id', 'memberrecordlocator',
   'beneficiary_claim_number', 'beneficiaryclaimnumber',
+  'membership number', 'membershipnumber',
 ];
 
 const DOB_RAW_KEYS = [
@@ -157,9 +259,12 @@ const DOB_RAW_KEYS = [
 
 const PLAN_RAW_KEYS = [
   'plan_name', 'planname', 'plan name', 'plan_type', 'plantype', 'plan type',
+  'application_plan_name', 'applicationplanname', 'application_plan',
+  'product_name', 'productname', 'product name',
   'product_description', 'product description', 'productdescription',
-  'plan_desc', 'plandesc', 'plan description', 'marketing_name', 'marketingname',
-  'mkt_name', 'pbp_name', 'pbpname', 'product',
+  'plan_desc', 'plandesc', 'plan description', 'contract_desc', 'contractdesc',
+  'marketing_name', 'marketingname', 'mkt_name', 'pbp_name', 'pbpname',
+  'product', 'subproduct',
 ];
 
 function lookupRawKey(obj, wanted) {
@@ -218,6 +323,7 @@ function derivePlanFromPolicy(carrier, policyNumber) {
   if (/_HMO/i.test(p)) return `${prefix} HMO`;
   if (/_PPO/i.test(p)) return `${prefix} PPO`;
   if (/_PDP/i.test(p)) return `${prefix} PDP`;
+  if (/_MA\b|_MAPD/i.test(p)) return `${prefix} MA`;
   if (/MSup|MSUP|MedSupp|_MS\b/i.test(p)) return `${prefix} MedSupp`;
   return '';
 }
@@ -228,32 +334,67 @@ function pickRaw(obj, keys) {
 }
 
 /**
- * Humana / UHC / Devoted production files store IDs in carrier-specific columns.
- * Prefer those so UMID, HIC, and MemberRecordLocator win over generic scanning.
+ * Production files store IDs in carrier-specific columns. Prefer those so
+ * UMID, HIC, HCID, Affinitypolicyid, Member_ID, etc. win over generic scanning.
  */
+const PRODUCTION_COLUMN_MAP = {
+  humana: {
+    member: ['UMID', 'Member ID', 'MEDICARE_IDENTIFIER', 'MBI'],
+    policy: ['Policy Number', 'POLICY_NUMBER', 'Contract Number'],
+    plan: ['PLAN_NAME', 'Plan Name', 'PRODUCT_DESCRIPTION'],
+  },
+  unitedhealthcare: {
+    member: ['HICN/MBI', 'HIC', 'MBI', 'Medicare Beneficiary Identifier (MBI)'],
+    policy: ['Policy Number', 'POLICY_NUMBER', 'Contract Number', 'CONTRACT'],
+    plan: ['Plan_Name', 'Plan Name', 'Plan Type', 'SubProduct'],
+  },
+  'devoted health': {
+    member: ['MemberRecordLocator', 'Member Record Locator', 'Member ID', 'MBI'],
+    policy: ['Policy Number', 'POLICY_NUMBER'],
+    plan: ['PlanName', 'Plan Name', 'PLAN_NAME'],
+  },
+  aetna: {
+    member: ['Affinitypolicyid', 'Affinity Policy ID', 'Member ID', 'MEDICARE_NUMBER', 'MBI'],
+    policy: ['Policy Number', 'POLICY_NUMBER', 'Affinitypolicyid'],
+    plan: ['Plan_Name', 'PLAN_NAME', 'Plan Name', 'Product'],
+  },
+  'elevance medicare': {
+    member: ['HCID', 'Beneficiary_Claim_Number', 'MBI'],
+    policy: ['Contract', 'POLICY_NUMBER', 'HCID'],
+    plan: ['Product_Description', 'Product_Type_Description', 'PLAN_NAME', 'Plan Name'],
+  },
+  freedom: {
+    member: ['POLICY_NUMBER', 'HIC#', 'HIC', 'MBI', 'MBR#'],
+    policy: ['POLICY_NUMBER', 'CONTRACT'],
+    plan: ['PRODUCT_NAME', 'PLAN_DESC', 'PLAN_DESCRIPTION', 'CONTRACT_DESC', 'PLAN', 'PLAN_NAME'],
+  },
+  healthspring: {
+    member: ['Member_ID', 'Medicare_Number', 'MBI'],
+    policy: ['Application_ID', 'zApplication_ID', 'Member_ID'],
+    plan: ['Application_Plan_Name', 'Product', 'Application_Plan', 'PLAN_NAME', 'Plan Name'],
+  },
+};
+
 function identifiersFromProductionRaw(carrier, raw) {
   const obj = parseRawObject(raw);
   if (!obj) return { memberId: '', policyNumber: '', dateOfBirth: '', planType: '' };
   const c = normalizeCarrier(carrier);
+  const cols = PRODUCTION_COLUMN_MAP[c];
   let memberId = '';
   let policyNumber = '';
+  let planType = '';
 
-  if (c === 'humana') {
-    memberId = pickRaw(obj, ['UMID', 'Member ID', 'MEDICARE_IDENTIFIER', 'MBI']);
-    policyNumber = pickRaw(obj, ['Policy Number', 'POLICY_NUMBER', 'Contract Number']);
-  } else if (c === 'unitedhealthcare') {
-    memberId = pickRaw(obj, ['HICN/MBI', 'HIC', 'MBI', 'Medicare Beneficiary Identifier (MBI)']);
-    policyNumber = pickRaw(obj, ['Policy Number', 'POLICY_NUMBER', 'Contract Number', 'CONTRACT']);
-  } else if (c === 'devoted health') {
-    memberId = pickRaw(obj, ['MemberRecordLocator', 'Member Record Locator', 'Member ID', 'MBI']);
-    policyNumber = pickRaw(obj, ['Policy Number', 'POLICY_NUMBER']);
+  if (cols) {
+    memberId = pickRaw(obj, cols.member);
+    policyNumber = pickRaw(obj, cols.policy);
+    planType = pickRaw(obj, cols.plan);
   }
 
   return {
-    memberId,
+    memberId: memberId || extractMemberIdFromRaw(obj),
     policyNumber,
     dateOfBirth: extractDobFromRaw(obj),
-    planType: extractPlanFromRaw(obj),
+    planType: planType || extractPlanFromRaw(obj),
   };
 }
 
@@ -320,6 +461,45 @@ function sortRelated(rows) {
   return [...(rows || [])].sort((a, b) => sourceRank(a) - sourceRank(b));
 }
 
+function addIdLookups(add, carrier, rawId, byMemberId, byPolicy) {
+  for (const id of idIndexKeys(rawId)) {
+    const key = `${normalizeCarrier(carrier)}|${id}`;
+    add(byMemberId.get(key));
+    add(byPolicy.get(key));
+  }
+}
+
+function chainIdsFromCollected(add, collected, bob, byMemberId, byPolicy) {
+  for (const rec of collected) {
+    const ids = identifiersFromRecord(rec);
+    addIdLookups(add, bob.carrier, ids.memberId, byMemberId, byPolicy);
+    addIdLookups(add, bob.carrier, rec.carrier_member_id, byMemberId, byPolicy);
+    addIdLookups(add, bob.carrier, rec.mbi, byMemberId, byPolicy);
+    addIdLookups(add, bob.carrier, ids.policyNumber, byMemberId, byPolicy);
+    addIdLookups(add, bob.carrier, rec.policy_number_production, byMemberId, byPolicy);
+  }
+}
+
+function uniqueLastNameFallback(bob, carrierRows) {
+  const matches = (carrierRows || []).filter((rec) => {
+    if (!surnamesMatch(bob.client_full_name, relatedClientName(rec))) return false;
+    if (bob.agent_name && rec.agent_name && !agentsMatch(bob.agent_name, rec.agent_name)) return false;
+    return true;
+  });
+  if (!matches.length) return [];
+
+  const initialHits = matches.filter((rec) => namesMatchForIdentifiers(bob.client_full_name, relatedClientName(rec)));
+  if (initialHits.length) return initialHits;
+
+  if (bob.effective_date) {
+    const byDate = matches.filter((rec) => datesMatch(bob.effective_date, rec.effective_date));
+    if (byDate.length === 1) return byDate;
+  }
+
+  if (matches.length === 1) return matches;
+  return [];
+}
+
 function relatedRowsForClient(bob, byKey, byCarrier, byMemberId, byPolicy) {
   const seen = new Set();
   const collected = [];
@@ -335,24 +515,58 @@ function relatedRowsForClient(bob, byKey, byCarrier, byMemberId, byPolicy) {
   add(byKey.get(identifierLookupKey(bob.client_full_name, bob.carrier)));
 
   const carrierRows = byCarrier.get(normalizeCarrier(bob.carrier)) || [];
-  add(carrierRows.filter((rec) => namesLooseMatch(bob.client_full_name, relatedClientName(rec))));
+  add(carrierRows.filter((rec) => namesMatchForIdentifiers(bob.client_full_name, relatedClientName(rec))));
+  add(uniqueLastNameFallback(bob, carrierRows));
 
-  for (const rawId of [bob.member_id, bob.mbi]) {
-    const id = normalizeId(rawId);
-    if (id) add(byMemberId.get(`${normalizeCarrier(bob.carrier)}|${id}`));
-  }
-  const policy = normalizeId(bob.policy_number);
-  if (policy) add(byPolicy.get(`${normalizeCarrier(bob.carrier)}|${policy}`));
+  addIdLookups(add, bob.carrier, bob.member_id, byMemberId, byPolicy);
+  addIdLookups(add, bob.carrier, bob.mbi, byMemberId, byPolicy);
+  addIdLookups(add, bob.carrier, bob.policy_number, byMemberId, byPolicy);
+
+  chainIdsFromCollected(add, collected, bob, byMemberId, byPolicy);
 
   return sortRelated(collected);
 }
 
 function indexId(map, carrier, value, rec) {
-  const id = normalizeId(value);
-  if (!id) return;
-  const key = `${normalizeCarrier(carrier)}|${id}`;
-  if (!map.has(key)) map.set(key, []);
-  map.get(key).push(rec);
+  for (const id of idIndexKeys(value)) {
+    const key = `${normalizeCarrier(carrier)}|${id}`;
+    if (!map.has(key)) map.set(key, []);
+    map.get(key).push(rec);
+  }
+}
+
+function collectIdTargets(ids, extraRows) {
+  const targets = new Set();
+  for (const value of [ids.memberId, ids.policyNumber]) {
+    const stripped = stripPolicySuffix(value);
+    if (stripped.length >= 8) targets.add(stripped);
+  }
+  for (const rec of extraRows || []) {
+    const recIds = identifiersFromRecord(rec);
+    for (const value of [recIds.memberId, recIds.policyNumber, rec.mbi, rec.carrier_member_id, rec.policy_number_production]) {
+      const stripped = stripPolicySuffix(value);
+      if (stripped.length >= 8) targets.add(stripped);
+    }
+  }
+  return [...targets];
+}
+
+function fillDobFromAnyCarrier(ids, matchedRows, allRelatedRows) {
+  if (ids.dateOfBirth) return ids;
+  const targets = collectIdTargets(ids, matchedRows);
+  if (!targets.length) return ids;
+  for (const rec of allRelatedRows || []) {
+    const recIds = identifiersFromRecord(rec);
+    const recKeys = [
+      recIds.memberId, recIds.policyNumber, rec.mbi, rec.carrier_member_id, rec.policy_number_production,
+    ].map(stripPolicySuffix).filter(Boolean);
+    if (!recKeys.some((k) => targets.includes(k))) continue;
+    if (recIds.dateOfBirth) {
+      ids.dateOfBirth = recIds.dateOfBirth;
+      return ids;
+    }
+  }
+  return ids;
 }
 
 function enrichBobClientsWithIdentifiers(bobRows, relatedRows) {
@@ -382,7 +596,11 @@ function enrichBobClientsWithIdentifiers(bobRows, relatedRows) {
 
   return (bobRows || []).map((bob) => {
     const related = relatedRowsForClient(bob, byKey, byCarrier, byMemberId, byPolicy);
-    const ids = mergeClientIdentifiers([bob, ...related]);
+    const ids = fillDobFromAnyCarrier(
+      mergeClientIdentifiers([bob, ...related]),
+      related,
+      relatedRows
+    );
     return {
       ...bob,
       member_id: ids.memberId || '',
@@ -410,4 +628,8 @@ module.exports = {
   identifierLookupKey,
   enrichBobClientsWithIdentifiers,
   identifiersFromProductionRaw,
+  namesMatchForIdentifiers,
+  parseGivenSurname,
+  idsEquivalent,
+  stripPolicySuffix,
 };

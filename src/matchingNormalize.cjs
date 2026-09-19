@@ -113,6 +113,7 @@ function normalizeCarrier(carrier) {
   if (s.includes('careplus') || s.includes('care plus')) return 'careplus';
   if (s.includes('wellcare')) return 'wellcare';
   if (s.includes('elevance') || s.includes('anthem')) return 'elevance medicare';
+  if (s.includes('healthspring')) return 'healthspring';
   if (s.includes('freedom')) return 'freedom';
   if (s.includes('nhp')) return 'nhp';
 

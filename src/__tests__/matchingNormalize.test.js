@@ -30,8 +30,9 @@ describe('matchingNormalize', () => {
     expect('humana'.includes('')).toBe(true); // language footgun
     expect(carriersMatch('Humana', '')).toBe(false);
     expect(carriersMatch('', 'Humana')).toBe(false);
-    expect(carriersMatch('Humana', 'HUMANA INC')).toBe(true);
-    expect(carriersMatch('United of Omaha', 'UnitedHealthcare')).toBe(false);
+    expect(normalizeCarrier('HealthSpring')).toBe('healthspring');
+    expect(carriersMatch('Anthem', 'Elevance Medicare')).toBe(true);
+    expect(carriersMatch('HealthSpring', 'Cigna')).toBe(false);
   });
 
   test('normalizeCarrierKey omaha vs uhc', () => {

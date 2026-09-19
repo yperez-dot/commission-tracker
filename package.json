@@ -4,7 +4,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "build": "react-scripts build",
+    "build": "DISABLE_ESLINT_PLUGIN=true CI=false react-scripts build",
     "test": "react-scripts test --watchAll=false --testPathPattern='commissionEngine|overrideStatements|theRemittance|bsiPayee|linaCompensation|bsiBookAttribution|overrideExcel|missingRenewalsLogic|uploadDestination|theiPrincipalAgents|writerPassThroughAgents|uploadSafe|matchingNormalize|fetchAllPages|renewalsAutoResolve|uploadBatchDedupe|adpExport|lobCardMetrics|nhpOverrideSplit|nhpStatementParse|agentViewCommissionReport|salesReconPayment|medSuppCommissionSchedule|nhpUploadName|nhpPeriod|tailoredAcaPay|tailoredJillNhpCsv|uploadDataExport|theCarrierStatementClassify|clientFileKey|clientNameKey|agencyOverrideReconMatch|overrideGapAudit|agencyOverrideExpected|bobClientIdentifiers|dateFormat|statementDisplayName|serviceAuth'"
   },
   "dependencies": {

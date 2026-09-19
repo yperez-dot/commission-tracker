@@ -13,8 +13,11 @@ const { namesLooseMatch, normalizeCarrier, carriersMatch } = require('../src/mat
 const {
   detectBobExportColumns,
   mapBobExportRow,
-  mergeClientIdentifiers,
   identifiersFromRecord,
+  namesMatchForIdentifiers,
+  enrichBobClientsWithIdentifiers,
+  stripPolicySuffix,
+  parseGivenSurname,
 } = require('../src/bobClientIdentifiers');
 const { backfillBobIdentifiers } = require('../src/bobIdentifierBackfill');
 const { nhpHouseOnlyClientSql } = require('../src/nhpStatementParse');
@@ -73,12 +76,45 @@ function productionCarrierLikes(carrier) {
   if (c === 'humana') return ['%humana%'];
   if (c === 'devoted health') return ['%devoted%'];
   if (c === 'unitedhealthcare') return ['%unitedhealth%', '%uhc%'];
+  if (c === 'elevance medicare') return ['%anthem%', '%elevance%'];
+  if (c === 'healthspring') return ['%healthspring%'];
+  if (c === 'aetna') return ['%aetna%'];
+  if (c === 'freedom') return ['%freedom%'];
+  if (c === 'oscar health') return ['%oscar%'];
+  if (c === 'florida blue') return ['%florida%blue%', '%bcbs%', '%blue cross%'];
+  if (c === 'doctors healthcare') return ['%doctors%'];
+  if (c === 'gold kidney') return ['%gold%kidney%'];
+  if (c === 'careplus') return ['%careplus%', '%care plus%'];
+  if (c === 'wellcare') return ['%wellcare%'];
+  if (c === 'molina') return ['%molina%'];
+  if (c === 'cigna') return ['%cigna%'];
+  if (c === 'solis') return ['%solis%'];
+  if (c === 'healthsun') return ['%healthsun%', '%health sun%'];
+  if (c === 'avmed') return ['%avmed%', '%av med%'];
   if (c) return [`%${c.replace(/[^a-z0-9]+/g, '%')}%`];
   return [];
 }
 
 function normSqlId(value) {
   return String(value || '').trim().toUpperCase().replace(/[\s\-]/g, '');
+}
+
+function recMatchesId(row, targetId) {
+  if (!targetId) return false;
+  const ids = identifiersFromRecord(row);
+  const raw = row.raw_data && typeof row.raw_data === 'object' ? row.raw_data : {};
+  const candidates = [
+    ids.memberId, ids.policyNumber,
+    row.carrier_member_id, row.mbi, row.policy_number, row.policy_number_production,
+    raw.UMID, raw.HIC, raw.MemberRecordLocator, raw.MBI, raw.MEDICARE_IDENTIFIER,
+    raw.HCID, raw.Affinitypolicyid, raw.Medicare_Number, raw.Member_ID,
+    raw['HIC#'], raw.POLICY_NUMBER, raw.CONTRACT, raw.Beneficiary_Claim_Number,
+    raw.MEDICARE_NUMBER, raw['HICN/MBI'],
+  ];
+  return candidates.some((value) => {
+    const recId = normSqlId(value);
+    return recId && (recId === targetId || stripPolicySuffix(recId) === stripPolicySuffix(targetId));
+  });
 }
 
 async function lookupRelatedIdentifiers(pool, bob) {
@@ -89,57 +125,77 @@ async function lookupRelatedIdentifiers(pool, bob) {
 
   const memberId = normSqlId(bob.member_id);
   const policyNumber = String(bob.policy_number || '').trim();
+  const parsedName = parseGivenSurname(clientName);
+  const lastToken = parsedName.surname || String(clientName || '').trim().split(/\s+/).filter(Boolean).pop() || '';
+  const lastLike = lastToken.length > 1 ? `%${lastToken}%` : '';
+  const truncatedName = (parsedName.given || '').replace(/[^a-zA-Z]/g, '').length <= 1;
 
   const [commission, productionByName, medicarepro] = await Promise.all([
     pool.query(
-      `SELECT client_full_name, carrier, policy_number, mbi, carrier_member_id, raw_data, plan_type,
-              'commission' AS identifier_source
+      `SELECT client_full_name, carrier, agent_name, policy_number, mbi, carrier_member_id, raw_data, plan_type,
+              effective_date, 'commission' AS identifier_source
        FROM commission_records cr
        WHERE ${clientNameKeySql('cr')} = $1
+          OR ($2 <> '' AND cr.client_full_name ILIKE $2)
        ORDER BY
          CASE WHEN NULLIF(TRIM(COALESCE(cr.carrier_member_id, '')), '') IS NOT NULL THEN 0 ELSE 1 END,
          CASE WHEN NULLIF(TRIM(COALESCE(cr.mbi, '')), '') IS NOT NULL THEN 0 ELSE 1 END,
          CASE WHEN NULLIF(TRIM(COALESCE(cr.policy_number, '')), '') IS NOT NULL THEN 0 ELSE 1 END,
          cr.created_at DESC NULLS LAST
-       LIMIT 24`,
-      [nameKey]
+       LIMIT 80`,
+      [nameKey, lastLike]
     ).catch(() => ({ rows: [] })),
     pool.query(
-      `SELECT client_name AS client_full_name, carrier, policy_number, policy_number_production,
-              mbi, carrier_member_id, raw_data, plan_name, policy_type, 'production' AS identifier_source
+      `SELECT client_name AS client_full_name, carrier, agent_name, policy_number, policy_number_production,
+              mbi, carrier_member_id, raw_data, plan_name, policy_type, effective_date,
+              'production' AS identifier_source
        FROM agency_production ap
        WHERE ${clientNameKeySql('ap', 'client_name')} = $1
+          OR ($2 <> '' AND ap.client_name ILIKE $2)
        ORDER BY
          CASE WHEN NULLIF(TRIM(COALESCE(ap.carrier_member_id, '')), '') IS NOT NULL THEN 0 ELSE 1 END,
          CASE WHEN NULLIF(TRIM(COALESCE(ap.mbi, '')), '') IS NOT NULL THEN 0 ELSE 1 END,
          ap.uploaded_at DESC NULLS LAST
-       LIMIT 24`,
-      [nameKey]
+       LIMIT 80`,
+      [nameKey, lastLike]
     ).catch(() => ({ rows: [] })),
     pool.query(
-      `SELECT client_name AS client_full_name, carrier, policy_number, raw_data, plan_name, policy_type,
-              'medicarepro' AS identifier_source
+      `SELECT client_name AS client_full_name, carrier, agent_name, policy_number, raw_data, plan_name, policy_type,
+              effective_date, 'medicarepro' AS identifier_source
        FROM medicarepro_sales mp
        WHERE ${clientNameKeySql('mp', 'client_name')} = $1
+          OR ($2 <> '' AND mp.client_name ILIKE $2)
        ORDER BY mp.uploaded_at DESC NULLS LAST
-       LIMIT 12`,
-      [nameKey]
+       LIMIT 24`,
+      [nameKey, lastLike]
     ).catch(() => ({ rows: [] })),
   ]);
 
   const sameCarrier = (row) => carriersMatch(row.carrier, carrier);
-  let production = productionByName.rows.filter(sameCarrier);
-  const commissionRows = commission.rows.filter(sameCarrier);
-  const medicareproRows = medicarepro.rows.filter(sameCarrier);
+  const nameOrAgentMatch = (row) => (
+    namesMatchForIdentifiers(clientName, row.client_full_name)
+    || namesLooseMatch(clientName, row.client_full_name)
+  );
+  let production = productionByName.rows.filter((row) => sameCarrier(row) && nameOrAgentMatch(row));
+  let commissionRows = commission.rows.filter((row) => sameCarrier(row) && nameOrAgentMatch(row));
+  const medicareproRows = medicarepro.rows.filter((row) => sameCarrier(row) && nameOrAgentMatch(row));
+
+  if (!commissionRows.length) {
+    commissionRows = commission.rows.filter(sameCarrier);
+  }
+  if (!production.length) {
+    production = productionByName.rows.filter(sameCarrier);
+  }
 
   const likes = productionCarrierLikes(carrier);
-  const needsLoose = !production.length;
+  const needsLoose = !production.length || truncatedName;
   const needsIdLookup = Boolean(memberId || policyNumber);
   if ((needsLoose || needsIdLookup) && likes.length) {
     try {
       const extra = await pool.query(
-        `SELECT client_name AS client_full_name, carrier, policy_number, policy_number_production,
-                mbi, carrier_member_id, raw_data, plan_name, policy_type, 'production' AS identifier_source
+        `SELECT client_name AS client_full_name, carrier, agent_name, policy_number, policy_number_production,
+                mbi, carrier_member_id, raw_data, plan_name, policy_type, effective_date,
+                'production' AS identifier_source
          FROM agency_production ap
          WHERE client_name IS NOT NULL AND TRIM(client_name) <> ''
            AND (${likes.map((_, i) => `LOWER(ap.carrier) LIKE $${i + 1}`).join(' OR ')})`,
@@ -147,29 +203,56 @@ async function lookupRelatedIdentifiers(pool, bob) {
       );
       const extraRows = extra.rows.filter(sameCarrier);
       if (needsLoose) {
-        production = extraRows.filter((row) => namesLooseMatch(clientName, row.client_full_name));
+        const named = extraRows.filter((row) => nameOrAgentMatch(row));
+        production = named.length ? named : extraRows.filter((row) => namesLooseMatch(clientName, row.client_full_name));
       }
-      if (memberId) {
-        const byId = extraRows.filter((row) => {
-          const recId = normSqlId(row.carrier_member_id || row.mbi);
-          const raw = row.raw_data && typeof row.raw_data === 'object' ? row.raw_data : {};
-          const rawId = normSqlId(raw.UMID || raw.HIC || raw.MemberRecordLocator || raw.MBI);
-          return recId === memberId || rawId === memberId;
-        });
+      const idTargets = [memberId, normSqlId(policyNumber)].filter(Boolean);
+      for (const rec of commissionRows) {
+        const recIds = identifiersFromRecord(rec);
+        if (recIds.memberId) idTargets.push(normSqlId(recIds.memberId));
+        if (rec.mbi) idTargets.push(normSqlId(rec.mbi));
+        if (recIds.policyNumber) idTargets.push(normSqlId(recIds.policyNumber));
+      }
+      for (const target of [...new Set(idTargets)]) {
+        const byId = extraRows.filter((row) => recMatchesId(row, target));
         production = [...production, ...byId.filter((row) => !production.includes(row))];
-      }
-      if (policyNumber && !production.length) {
-        const pol = normSqlId(policyNumber);
-        production = extraRows.filter((row) => (
-          normSqlId(row.policy_number) === pol || normSqlId(row.policy_number_production) === pol
-        ));
       }
     } catch (err) {
       console.error('BOB production loose match failed:', err.message);
     }
   }
 
-  return [...production, ...medicareproRows, ...commissionRows];
+  let related = [...production, ...medicareproRows, ...commissionRows];
+  const idTargets = [...new Set(related.flatMap((row) => {
+    const ids = identifiersFromRecord(row);
+    return [ids.memberId, ids.policyNumber, row.mbi, row.carrier_member_id, row.policy_number_production]
+      .map(stripPolicySuffix)
+      .filter((id) => id.length >= 8);
+  }))];
+  if (idTargets.length) {
+    try {
+      const dobExtra = await pool.query(
+        `SELECT client_name AS client_full_name, carrier, agent_name, policy_number, policy_number_production,
+                mbi, carrier_member_id, raw_data, plan_name, policy_type, effective_date,
+                'production' AS identifier_source
+         FROM agency_production ap
+         WHERE client_name IS NOT NULL AND TRIM(client_name) <> ''
+           AND (
+             UPPER(REPLACE(REPLACE(COALESCE(ap.mbi, ''), '-', ''), ' ', '')) = ANY($1)
+             OR UPPER(REPLACE(REPLACE(COALESCE(ap.carrier_member_id, ''), '-', ''), ' ', '')) = ANY($1)
+             OR UPPER(REPLACE(REPLACE(COALESCE(ap.policy_number, ''), '-', ''), ' ', '')) = ANY($1)
+             OR UPPER(REPLACE(REPLACE(COALESCE(ap.policy_number_production, ''), '-', ''), ' ', '')) = ANY($1)
+           )
+         LIMIT 40`,
+        [idTargets]
+      );
+      related = [...related, ...dobExtra.rows.filter((row) => !related.includes(row))];
+    } catch (err) {
+      console.error('BOB cross-carrier DOB lookup failed:', err.message);
+    }
+  }
+
+  return related;
 }
 
 async function persistBobIdentifiers(pool, id, identifiers) {
@@ -348,7 +431,13 @@ router.get('/:id/details', requireAuth, async (req, res) => {
     }
 
     const related = await lookupRelatedIdentifiers(pool, bob);
-    const identifiers = mergeClientIdentifiers([bob, ...related]);
+    const [enriched] = enrichBobClientsWithIdentifiers([bob], related);
+    const identifiers = {
+      memberId: enriched.member_id || '',
+      policyNumber: enriched.policy_number || '',
+      dateOfBirth: enriched.date_of_birth || '',
+      planType: enriched.plan_type || '',
+    };
     await persistBobIdentifiers(pool, bob.id, identifiers);
 
     res.json({

@@ -29,9 +29,11 @@ const DOB_FROM_JSON = `
 `;
 
 async function fetchRelatedIdentifierRows(pool) {
-  const [commission, production, medicarepro] = await Promise.all([
-    pool.query(`
-      SELECT client_full_name, carrier, policy_number, mbi, carrier_member_id, plan_type,
+  // Sequential on purpose: initSchema passes a pg Client, which cannot run
+  // concurrent queries. A Pool still works with sequential queries.
+  const commission = await pool.query(`
+      SELECT client_full_name, carrier, agent_name, policy_number, mbi, carrier_member_id, plan_type,
+             effective_date, raw_data,
              ${DOB_FROM_JSON} AS date_of_birth,
              'commission' AS identifier_source
       FROM commission_records
@@ -42,8 +44,8 @@ async function fetchRelatedIdentifierRows(pool) {
     `).catch(async (err) => {
       console.error('BOB identifier backfill: commission lookup with DOB failed:', err.message);
       return pool.query(`
-        SELECT client_full_name, carrier, policy_number, mbi, carrier_member_id, plan_type,
-               NULL AS date_of_birth,
+        SELECT client_full_name, carrier, agent_name, policy_number, mbi, carrier_member_id, plan_type,
+               effective_date, NULL AS date_of_birth,
                'commission' AS identifier_source
         FROM commission_records
         WHERE client_full_name IS NOT NULL AND TRIM(client_full_name) <> ''
@@ -51,10 +53,10 @@ async function fetchRelatedIdentifierRows(pool) {
         console.error('BOB identifier backfill: commission lookup failed:', err2.message);
         return { rows: [] };
       });
-    }),
-    pool.query(`
-      SELECT client_name AS client_full_name, carrier, policy_number, policy_number_production,
-             mbi, carrier_member_id, raw_data, plan_name, policy_type,
+    });
+  const production = await pool.query(`
+      SELECT client_name AS client_full_name, carrier, agent_name, policy_number, policy_number_production,
+             mbi, carrier_member_id, raw_data, plan_name, policy_type, effective_date,
              ${DOB_FROM_JSON} AS date_of_birth,
              'production' AS identifier_source
       FROM agency_production
@@ -65,10 +67,10 @@ async function fetchRelatedIdentifierRows(pool) {
     `).catch((err) => {
       console.error('BOB identifier backfill: production lookup failed:', err.message);
       return { rows: [] };
-    }),
-    pool.query(`
-      SELECT client_name AS client_full_name, carrier, policy_number, plan_name, policy_type,
-             ${DOB_FROM_JSON} AS date_of_birth,
+    });
+  const medicarepro = await pool.query(`
+      SELECT client_name AS client_full_name, carrier, agent_name, policy_number, plan_name, policy_type,
+             effective_date, ${DOB_FROM_JSON} AS date_of_birth,
              'medicarepro' AS identifier_source
       FROM medicarepro_sales
       LEFT JOIN LATERAL (
@@ -78,8 +80,7 @@ async function fetchRelatedIdentifierRows(pool) {
     `).catch((err) => {
       console.error('BOB identifier backfill: MedicarePro lookup failed:', err.message);
       return { rows: [] };
-    }),
-  ]);
+    });
 
   return [...production.rows, ...medicarepro.rows, ...commission.rows];
 }

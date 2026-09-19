@@ -251,14 +251,14 @@ async function initSchema() {
     await seedDefaultAdmin(client);
 
     try {
-      const flag = await client.query(`SELECT value FROM schema_meta WHERE key = 'bob_identifiers_backfill_v3'`);
+      const flag = await client.query(`SELECT value FROM schema_meta WHERE key = 'bob_identifiers_backfill_v5'`);
       if (!flag.rows.length || flag.rows[0].value !== 'done') {
         const { backfillBobIdentifiers } = require('../src/bobIdentifierBackfill');
         console.log('Backfilling Book of Business identifiers from production reports...');
         const result = await backfillBobIdentifiers(client);
         await client.query(
           `INSERT INTO schema_meta (key, value, updated_at)
-           VALUES ('bob_identifiers_backfill_v3', 'done', NOW())
+           VALUES ('bob_identifiers_backfill_v5', 'done', NOW())
            ON CONFLICT (key) DO UPDATE SET value = 'done', updated_at = NOW()`
         );
         console.log('BOB identifier backfill complete:', result);

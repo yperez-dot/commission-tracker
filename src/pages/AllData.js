@@ -224,7 +224,6 @@ export default function AllData({ user, initialFilters = {} }) {
       setSelected(new Set());
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- buildListParams reads current filter state
   }, [selAgents, selCarriers, selPeriods, selTypes, selPayees, selLOB, amountSign, search, sortCol, sortDir, hideTermed, uploadFilter, user.agency]);
 
   const loadClients = useCallback(async (offset = 0) => {
@@ -246,7 +245,6 @@ export default function AllData({ user, initialFilters = {} }) {
       setSelected(new Set());
     } catch (e) { console.error(e); }
     finally { setLoading(false); }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selAgents, selCarriers, selPeriods, selTypes, selPayees, selLOB, amountSign, search, sortCol, sortDir, hideTermed, uploadFilter, user.agency]);
 
   useEffect(() => {
