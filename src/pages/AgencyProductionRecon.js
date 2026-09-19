@@ -2,8 +2,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { apiFetch } from '../api';
 import { formatCarrier } from '../utils/formatCarrier';
 import { formatDate as formatDateUtil } from '../utils/dateFormat';
-import { normName, normalizeCarrier, carriersMatch } from '../matchingNormalize';
-import { findOverrideMatch, expandOverrideLifecycle, dedupeProductionSales, isOverrideStatementRow, getThreeWayOverrideStatus, getOverrideReconCategory } from '../agencyOverrideReconMatch';
+import { normalizeCarrier } from '../matchingNormalize';
+import { isOverrideStatementRow, getThreeWayOverrideStatus, getOverrideReconCategory, buildOverrideMatches } from '../agencyOverrideReconMatch';
 import { fetchAllPages, truncationMessage } from '../fetchAllPages';
 import TruncationBanner from '../components/TruncationBanner';
 import { expectedAgencyOverride, expectedOverrideLabel } from '../utils/agencyOverrideExpected';
@@ -217,16 +217,10 @@ function parseEffectiveDate(dateStr) {
 // findOverrideMatch imported from shared module
 
 // Pure helpers — defined outside component so useMemo deps stay stable
-function _findCarrierBSIMatch(prod, carrierRecords) {
-  const prodPeriod = prod.payment_period || '';
-  if (prodPeriod) {
-    const samePeriod = carrierRecords.filter((r) => r.payment_period === prodPeriod);
-    const periodMatch = findOverrideMatch(prod, samePeriod);
-    if (periodMatch) return periodMatch;
-  }
-  // Fall back across periods — Hector month ≠ statement month still means carrier paid BSI.
-  return findOverrideMatch(prod, carrierRecords);
-}
+// (carrier-BSI / held-record lookups now live in agencyOverrideReconMatch.js's
+// buildOverrideMatches, alongside the shared assembly logic below — see that
+// function's comment. _getHoldDetail stays here: it's a rendering helper over an
+// already-built match, not part of building matches.)
 
 // Extract hold detail for held_licensing rows: { reason, state, county }
 // Prefers the carrierBSI Held record; falls back to heldRecord.
@@ -244,23 +238,11 @@ function _getHoldDetail(m) {
   } catch { return null; }
 }
 
-// Pure helper: period-agnostic lookup for a Held record by client+carrier.
-// Used when _findCarrierBSIMatch misses because payment_period differs.
-function _findHeldRecord(prod, carrierRecords) {
-  const prodClientNorm = normName(prod.client_name);
-  const prodCarrier = normalizeCarrier(prod.carrier);
-  return carrierRecords.find(r =>
-    r.classification === 'Held' &&
-    normName(r.client_full_name) === prodClientNorm &&
-    carriersMatch(r.carrier, prodCarrier)
-  ) || null;
-}
-
 // Aliases — shared three-way / tab logic lives in agencyOverrideReconMatch.js
 const _getThreeWayStatus = getThreeWayOverrideStatus;
 const _getCategory = getOverrideReconCategory;
 
-export default function AgencyProductionRecon() {
+export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [production, setProduction] = useState([]);
@@ -272,7 +254,10 @@ export default function AgencyProductionRecon() {
   const [filterAgents, setFilterAgents] = useState([]);
   const [filterEffDates, setFilterEffDates] = useState([]);
   const [filterOverrideStatus, setFilterOverrideStatus] = useState([]);
-  const [searchTerm, setSearchTerm] = useState('');
+  // App.js remounts this page (key includes pageParams.search) whenever All Data's
+  // "View in Recon" link passes a new search term, so this only needs to seed state
+  // once per mount, not react to prop changes.
+  const [searchTerm, setSearchTerm] = useState(initialSearch);
   const [sortCol, setSortCol] = useState(null);
   const [sortDir, setSortDir] = useState('asc');
   const [selectedOverride, setSelectedOverride] = useState(null);
@@ -410,30 +395,10 @@ export default function AgencyProductionRecon() {
 
   // ─── Memoized computations ─────────────────────────────────────────────────
   // matches: expand each production row into paid / chargeback / missing history
-  const matches = useMemo(() => {
-    const bsiKeysList = [...bsiUploadedKeys];
-    const rows = [];
-    // Rolling 90-day production repeats the same sale — one recon row per true sale.
-    const uniqueProduction = dedupeProductionSales(production);
-    for (const prod of uniqueProduction) {
-      const carrierBSI = _findCarrierBSIMatch(prod, carrierBSIRecords);
-      const heldRecord = _findHeldRecord(prod, carrierBSIRecords);
-      const prodCarrier = normalizeCarrier(prod.carrier || '');
-      const prodPeriod = prod.payment_period || prod.effective_date?.substring(0,7)?.replace('-','') || '';
-      const carrierUploaded = bsiUploadedKeys.has(`${prodCarrier}|${prodPeriod}`) ||
-        bsiKeysList.some(k => k.startsWith(`${prodCarrier}|`));
-      const lifecycleRows = expandOverrideLifecycle(prod, overrides);
-      for (const life of lifecycleRows) {
-        rows.push({
-          ...life,
-          carrierBSI: life.isHistory ? null : carrierBSI,
-          heldRecord: life.isHistory ? null : heldRecord,
-          carrierUploaded: life.isHistory ? false : carrierUploaded,
-        });
-      }
-    }
-    return rows;
-  }, [production, overrides, carrierBSIRecords, bsiUploadedKeys]);
+  const matches = useMemo(
+    () => buildOverrideMatches(production, overrides, carrierBSIRecords, bsiUploadedKeys),
+    [production, overrides, carrierBSIRecords, bsiUploadedKeys]
+  );
 
   // Aliases so JSX can call the stable outer functions by their original names
   const getThreeWayStatus = _getThreeWayStatus;
