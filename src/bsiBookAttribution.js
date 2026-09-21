@@ -22,6 +22,7 @@ const {
   normName,
 } = require('./payeeSchedules');
 const { calculateAlbaOverrideSplit } = require('./overrideRateEngine');
+const { rowNeedsBsiOverrideShareFill, splitFullOverridePot } = require('./overrideSplitMath');
 
 /** Canonical DB agent for Lina/Alba book (UI displays as Lina). */
 const ALBA_DB_AGENT = 'Alba Hernandez';
@@ -213,6 +214,12 @@ function applyBsiBookAgentProduction(records) {
   let remapped = 0;
   let peeled = 0;
   let review = 0;
+  const deductedPolicies = new Set();
+  for (const r of records) {
+    if (Number(r.subAgentOverride || r.sub_agent_override || 0)) {
+      deductedPolicies.add(r.policyNumber || r.policy_number);
+    }
+  }
 
   for (const r of records) {
     const classification = r.classification || '';
@@ -222,6 +229,22 @@ function applyBsiBookAgentProduction(records) {
       if (r.producerPayable == null) r.producerPayable = 0;
       if (r.splitApplies == null) r.splitApplies = false;
       if (!r.source) r.source = 'BSI';
+      // Carrier→BSI Humana/Devoted parsers store the full pot on `commission`
+      // and never write theiShare — House Statements then shows $0.00.
+      if (rowNeedsBsiOverrideShareFill(r)) {
+        const split = splitFullOverridePot(commission, {
+          agentName: r.agent,
+          paymentPeriod: r.period,
+          alreadyDeducted: deductedPolicies.has(r.policyNumber || r.policy_number),
+        });
+        r.theiShare = split.theiShare;
+        r.bsiShare = split.bsiShare;
+        r.grossCommission = split.grossCommission;
+        r.producerPayable = split.producerPayable;
+        r.subAgentOverride = split.subAgentOverride;
+        r.splitApplies = split.splitApplies;
+        if (split.subAgentOverride) deductedPolicies.add(r.policyNumber || r.policy_number);
+      }
       continue;
     }
 

@@ -17,6 +17,7 @@ const {
   filenameForOverrideExcel,
 } = require('../src/overrideExcelStatement');
 const { backfillDevotedCommissionGuards } = require('../src/theCarrierStatementClassify');
+const { backfillBsiOverrideMissingShares } = require('../src/bsiOverrideShareBackfill');
 
 /** Override Statements tab — Lina/agent production is Agent Payouts only. */
 const OVERRIDE_UI_TYPES = [
@@ -261,6 +262,16 @@ router.get('/preview', requireAuth, async (req, res) => {
     } catch (e) {
       console.warn('[override-statements] Devoted commission guards', e.message);
     }
+    if (type === STATEMENT_TYPES.THEI_BSI || type === STATEMENT_TYPES.BSI_OVERRIDE) {
+      try {
+        const shareFixed = await backfillBsiOverrideMissingShares(pool, period);
+        if (shareFixed) {
+          console.log(`[override-statements] filled THEI/BSI shares on ${shareFixed} BSI override rows`);
+        }
+      } catch (e) {
+        console.warn('[override-statements] BSI override share backfill', e.message);
+      }
+    }
     if (
       type === STATEMENT_TYPES.THEI_NHP ||
       type === STATEMENT_TYPES.THEI_BSI ||
@@ -383,6 +394,9 @@ router.get('/export-xlsx', requireAuth, requireAdmin, async (req, res) => {
     if (type === STATEMENT_TYPES.THEI_NHP) {
       try { await backfillNhpSourceFromUploads(pool); } catch (e) { /* best-effort */ }
     }
+    if (type === STATEMENT_TYPES.THEI_BSI || type === STATEMENT_TYPES.BSI_OVERRIDE) {
+      try { await backfillBsiOverrideMissingShares(pool, period); } catch (e) { /* best-effort */ }
+    }
     const rows = await fetchOverrideRows(pool, period, type);
     const bundle = buildOverrideStatements(rows, type, { period });
     const stmt = pickPayeeStatement(bundle, payee);
@@ -460,6 +474,9 @@ router.get('/export-all', requireAuth, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: `Invalid type. Use one of: ${OVERRIDE_UI_TYPES.join(', ')}` });
     }
     const pool = getPool();
+    if (type === STATEMENT_TYPES.THEI_BSI || type === STATEMENT_TYPES.BSI_OVERRIDE) {
+      try { await backfillBsiOverrideMissingShares(pool, period); } catch (e) { /* best-effort */ }
+    }
     const rows = await fetchOverrideRows(pool, period, type);
     const bundle = buildOverrideStatements(rows, type, { period });
 
@@ -501,6 +518,7 @@ router.get('/export-all-types', requireAuth, requireAdmin, async (req, res) => {
   try {
     const period = String(req.query.period || 'all');
     const pool = getPool();
+    try { await backfillBsiOverrideMissingShares(pool, period); } catch (e) { /* best-effort */ }
     // THEI/BSI fetch is a superset (Agency Override + Alba rate-peel). Marco/Integrity ignore extra rows.
     const rows = await fetchOverrideRows(pool, period, STATEMENT_TYPES.THEI_NHP);
     const files = [];
