@@ -1,12 +1,13 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { apiFetch } from '../api';
 import { formatCarrier } from '../utils/formatCarrier';
 import { formatDate as formatDateUtil } from '../utils/dateFormat';
 import { normalizeCarrier } from '../matchingNormalize';
-import { isOverrideStatementRow, getThreeWayOverrideStatus, getOverrideReconCategory, buildOverrideMatches } from '../agencyOverrideReconMatch';
-import { fetchAllPages, truncationMessage } from '../fetchAllPages';
-import TruncationBanner from '../components/TruncationBanner';
+import { getThreeWayOverrideStatus, getHoldDetail } from '../agencyOverrideReconMatch';
 import { expectedAgencyOverride, expectedOverrideLabel } from '../utils/agencyOverrideExpected';
+
+const PAGE_SIZE = 100;
+const RENDER_CAP = 200;
 
 // Version: 2026-08-15 — shared matchingNormalize (Omaha ≠ UHC, empty-carrier safe)
 
@@ -120,14 +121,22 @@ function formatDate(dateStr) {
 }
 
 /** Expected BSI→THEI cell — same visual language as Sales Recon Expected. */
-function ExpectedOverrideCell({ production, asTd = true }) {
+function ExpectedOverrideCell({ production, expected, asTd = true }) {
   let meta;
-  try {
-    meta = expectedAgencyOverride(production || {});
-  } catch {
-    meta = { amount: null, note: 'Rate lookup failed', kind: 'unknown' };
+  if (expected && (expected.amount != null || expected.label || expected.note)) {
+    meta = {
+      amount: expected.amount,
+      note: expected.note,
+      kind: expected.kind || 'unknown',
+    };
+  } else {
+    try {
+      meta = expectedAgencyOverride(production || {});
+    } catch {
+      meta = { amount: null, note: 'Rate lookup failed', kind: 'unknown' };
+    }
   }
-  const label = expectedOverrideLabel(meta) || meta.note || '';
+  const label = expected?.label || expectedOverrideLabel(meta) || meta.note || '';
   const inner = (
     <>
       {meta.amount == null ? (
@@ -222,41 +231,33 @@ function parseEffectiveDate(dateStr) {
 // function's comment. _getHoldDetail stays here: it's a rendering helper over an
 // already-built match, not part of building matches.)
 
-// Extract hold detail for held_licensing rows: { reason, state, county }
-// Prefers the carrierBSI Held record; falls back to heldRecord.
 function _getHoldDetail(m) {
-  const src = (m.carrierBSI && m.carrierBSI.classification === 'Held') ? m.carrierBSI
-            : m.heldRecord || null;
-  if (!src) return null;
-  try {
-    const rd = typeof src.raw_data === 'string' ? JSON.parse(src.raw_data) : (src.raw_data || {});
-    return {
-      reason: rd['Hold Reason'] || null,
-      state:  rd['Member State'] || null,
-      county: rd['Member County'] || null,
-    };
-  } catch { return null; }
+  return m?.hold || getHoldDetail(m);
 }
 
 // Aliases — shared three-way / tab logic lives in agencyOverrideReconMatch.js
 const _getThreeWayStatus = getThreeWayOverrideStatus;
-const _getCategory = getOverrideReconCategory;
 
 export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [production, setProduction] = useState([]);
-  const [overrides, setOverrides] = useState([]);
-  const [carrierBSIRecords, setCarrierBSIRecords] = useState([]);
-  const [bsiUploadedKeys, setBsiUploadedKeys] = useState(new Set()); // "CARRIER|PERIOD" keys
+  const [rows, setRows] = useState([]);
+  const [counts, setCounts] = useState({ missing: 0, planchange: 0, plandenied: 0, cancelled: 0, paid: 0 });
+  const [total, setTotal] = useState(0);
+  const [offset, setOffset] = useState(0);
+  const [scanned, setScanned] = useState({ production: 0, overrides: 0, carrierBSI: 0 });
   const [tab, setTab] = useState('missing'); // Missing holds Not on BSI / Chase / pending (status tags)
   const [filterCarriers, setFilterCarriers] = useState([]);
   const [filterAgents, setFilterAgents] = useState([]);
   const [filterEffDates, setFilterEffDates] = useState([]);
   const [filterOverrideStatus, setFilterOverrideStatus] = useState([]);
+  const [metaAgents, setMetaAgents] = useState([]);
+  const [metaCarriers, setMetaCarriers] = useState([]);
+  const [metaDates, setMetaDates] = useState([]);
   // App.js remounts this page (key includes pageParams.search) whenever All Data's
   // "View in Recon" link passes a new search term, so this only needs to seed state
   // once per mount, not react to prop changes.
+  const [searchInput, setSearchInput] = useState(initialSearch);
   const [searchTerm, setSearchTerm] = useState(initialSearch);
   const [sortCol, setSortCol] = useState(null);
   const [sortDir, setSortDir] = useState('asc');
@@ -264,15 +265,16 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
   const [selectedProduction, setSelectedProduction] = useState(null);
   const [editingMatch, setEditingMatch] = useState(null); // row opened via Edit button
   const [overrideSaving, setOverrideSaving] = useState(null); // id of row currently saving
-  const [truncationWarning, setTruncationWarning] = useState(null);
   const [gapAudit, setGapAudit] = useState(null);
   const [gapAuditLoading, setGapAuditLoading] = useState(false);
   const [gapAuditError, setGapAuditError] = useState(null);
   const [gapAuditFilter, setGapAuditFilter] = useState('returnee_clawback');
+  const requestSeq = useRef(0);
 
   useEffect(() => {
-    loadData();
-  }, []);
+    const handle = setTimeout(() => setSearchTerm(searchInput), 300);
+    return () => clearTimeout(handle);
+  }, [searchInput]);
 
   async function saveOverride(productionId, status) {
     setOverrideSaving(productionId);
@@ -282,14 +284,8 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: status || null })
       });
-      // Update local state immediately so the row re-renders without a full reload
-      setProduction(prev => prev.map(p =>
-        p.id === productionId
-          ? { ...p, manual_override_status: status || null,
-                    manual_override_at: status ? new Date().toISOString() : null }
-          : p
-      ));
       setEditingMatch(null);
+      await loadData();
     } catch (err) {
       alert('Failed to save override: ' + err.message);
     } finally {
@@ -346,117 +342,69 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
     URL.revokeObjectURL(url);
   }
 
-  async function loadData() {
+  function buildReconQuery({ off = offset, forExport = false } = {}) {
+    const params = new URLSearchParams();
+    params.set('category', tab);
+    params.set('limit', String(forExport ? 20000 : PAGE_SIZE));
+    params.set('offset', String(forExport ? 0 : off));
+    if (forExport) params.set('export', '1');
+    if (searchTerm.trim()) params.set('search', searchTerm.trim());
+    if (filterAgents.length) params.set('agents', filterAgents.join(','));
+    if (filterCarriers.length) params.set('carriers', filterCarriers.join(','));
+    if (filterEffDates.length) params.set('effective_dates', filterEffDates.join(','));
+    if (filterOverrideStatus.length) params.set('override_status', filterOverrideStatus.join(','));
+    if (sortCol) {
+      params.set('sortCol', sortCol);
+      params.set('sortDir', sortDir);
+    }
+    return `/agency-production/override-recon?${params.toString()}`;
+  }
+
+  async function loadData(off = offset) {
+    const seq = ++requestSeq.current;
     setLoading(true);
     setError(null);
-    setTruncationWarning(null);
     try {
-      const [prodPage, overridePage, carrierPage, bsiUploadsData] = await Promise.all([
-        fetchAllPages('/agency-production', { itemsKey: 'production', pageSize: 5000 }, apiFetch),
-        fetchAllPages(
-          '/records?exclude_upload_category=bsi_statement&classificationLike=override,chargeback&light=1',
-          { pageSize: 5000 },
-          apiFetch
-        ),
-        fetchAllPages(
-          '/records?upload_category=bsi_statement&light=1',
-          { pageSize: 5000 },
-          apiFetch
-        ),
-        apiFetch('/files/uploads?category=bsi_statement'),
-      ]);
-
-      setProduction(prodPage.items || []);
-
-      const overrideStatements = (overridePage.items || []).filter(isOverrideStatementRow);
-      setOverrides(overrideStatements);
-
-      setCarrierBSIRecords(carrierPage.items || []);
-
-      setTruncationWarning(truncationMessage([
-        prodPage.warning ? `Agency production: ${prodPage.warning}` : null,
-        overridePage.warning ? `Override statements: ${overridePage.warning}` : null,
-        carrierPage.warning ? `Carrier→BSI: ${carrierPage.warning}` : null,
-      ]));
-
-      const uploadedKeys = new Set();
-      (bsiUploadsData || []).forEach(u => {
-        const carrier = (u.carrier || '').split(',').map(c => c.trim()).filter(Boolean);
-        const period = u.payment_period || '';
-        carrier.forEach(c => uploadedKeys.add(`${normalizeCarrier(c)}|${period}`));
-      });
-      setBsiUploadedKeys(uploadedKeys);
+      const data = await apiFetch(buildReconQuery({ off }));
+      if (seq !== requestSeq.current) return;
+      setRows(data.rows || []);
+      setCounts(data.counts || { missing: 0, planchange: 0, plandenied: 0, cancelled: 0, paid: 0 });
+      setTotal(data.total || 0);
+      setScanned(data.scanned || { production: 0, overrides: 0, carrierBSI: 0 });
+      if (data.meta) {
+        setMetaAgents(data.meta.agents || []);
+        setMetaCarriers(data.meta.carriers || []);
+        setMetaDates(data.meta.effectiveDates || []);
+      }
     } catch (err) {
+      if (seq !== requestSeq.current) return;
       setError(err.message);
     } finally {
-      setLoading(false);
+      if (seq === requestSeq.current) setLoading(false);
     }
   }
 
-  // ─── Memoized computations ─────────────────────────────────────────────────
-  // matches: expand each production row into paid / chargeback / missing history
-  const matches = useMemo(
-    () => buildOverrideMatches(production, overrides, carrierBSIRecords, bsiUploadedKeys),
-    [production, overrides, carrierBSIRecords, bsiUploadedKeys]
-  );
+  useEffect(() => {
+    loadData(offset);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, filterAgents, filterCarriers, filterEffDates, filterOverrideStatus, searchTerm, sortCol, sortDir, offset]);
 
-  // Aliases so JSX can call the stable outer functions by their original names
-  const getThreeWayStatus = _getThreeWayStatus;
-  const getCategory = _getCategory;
-
-  // categorized: only reruns when matches changes
-  const categorized = useMemo(() => ({
-    missing:    matches.filter(m => _getCategory(m) === 'missing'),
-    planchange: matches.filter(m => _getCategory(m) === 'planchange'),
-    plandenied: matches.filter(m => _getCategory(m) === 'plandenied'),
-    cancelled:  matches.filter(m => _getCategory(m) === 'cancelled'),
-    paid:       matches.filter(m => _getCategory(m) === 'paid'),
-  }), [matches]);
-
-  // filtered: only reruns when data or filter state changes (NOT on tab switch)
-  const filtered = useMemo(() => {
-    function applyFilters(list) {
-      let result = list;
-      if (filterAgents.length > 0)
-        result = result.filter(m => filterAgents.includes(m.production.agent_name));
-      if (filterCarriers.length > 0)
-        result = result.filter(m => filterCarriers.some(fc => normalizeCarrier(fc) === normalizeCarrier(m.production.carrier)));
-      if (filterEffDates.length > 0)
-        result = result.filter(m => filterEffDates.includes(m.production.effective_date || ''));
-      if (filterOverrideStatus.length > 0)
-        result = result.filter(m => filterOverrideStatus.includes(_getThreeWayStatus(m)));
-      if (searchTerm.trim()) {
-        const search = searchTerm.toLowerCase();
-        result = result.filter(m =>
-          (m.production.client_name || '').toLowerCase().includes(search) ||
-          (m.production.agent_name || '').toLowerCase().includes(search) ||
-          (m.production.carrier || '').toLowerCase().includes(search)
-        );
-      }
-      return result;
-    }
-    return {
-      missing:    applyFilters(categorized.missing),
-      planchange: applyFilters(categorized.planchange),
-      plandenied: applyFilters(categorized.plandenied),
-      cancelled:  applyFilters(categorized.cancelled),
-      paid:       applyFilters(categorized.paid),
+  function resetAndSet(setter) {
+    return (value) => {
+      setter(value);
+      setOffset(0);
     };
-  }, [categorized, filterAgents, filterCarriers, filterEffDates, filterOverrideStatus, searchTerm]);
+  }
 
-  // rawDisplayData: only reruns on tab or filtered change
-  const rawDisplayData = useMemo(() => (
-    tab === 'missing'    ? (filtered.missing    || []) :
-    tab === 'planchange' ? (filtered.planchange || []) :
-    tab === 'plandenied' ? (filtered.plandenied || []) :
-    tab === 'cancelled'  ? (filtered.cancelled  || []) :
-    tab === 'paid'       ? (filtered.paid       || []) :
-    [...(filtered.missing||[]), ...(filtered.planchange||[]),
-     ...(filtered.plandenied||[]), ...(filtered.cancelled||[]), ...(filtered.paid||[])]
-  ), [filtered, tab]);
+  function changeTab(id) {
+    setTab(id);
+    setOffset(0);
+  }
 
-  // Sort helpers (stable refs, no memo needed)
+  const getThreeWayStatus = (m) => m?.status || _getThreeWayStatus(m);
+
   function toggleSort(col) {
+    setOffset(0);
     if (sortCol === col) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
     else { setSortCol(col); setSortDir('asc'); }
   }
@@ -465,73 +413,31 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
     return <span style={{ fontSize: 10 }}>{sortDir === 'asc' ? '↑' : '↓'}</span>;
   }
 
-  // displayData: only reruns when visible rows or sort changes
-  const displayData = useMemo(() => (
-    sortCol ? [...rawDisplayData].sort((a, b) => {
-      let va, vb;
-      if (sortCol === 'agent')    { va = a.production.agent_name || ''; vb = b.production.agent_name || ''; }
-      else if (sortCol === 'member')   { va = a.production.client_name || ''; vb = b.production.client_name || ''; }
-      else if (sortCol === 'carrier')  { va = a.production.carrier || ''; vb = b.production.carrier || ''; }
-      else if (sortCol === 'bsi_thei') { va = parseFloat(a.override?.commission || 0); vb = parseFloat(b.override?.commission || 0); }
-      else if (sortCol === 'c_bsi')    { va = parseFloat(a.carrierBSI?.commission || 0); vb = parseFloat(b.carrierBSI?.commission || 0); }
-      else if (sortCol === 'eff_date') { va = a.production.effective_date || ''; vb = b.production.effective_date || ''; }
-      else if (sortCol === 'expected') {
-        try {
-          va = expectedAgencyOverride(a.production).amount;
-          vb = expectedAgencyOverride(b.production).amount;
-        } catch {
-          va = -1;
-          vb = -1;
-        }
-        va = va == null ? -1 : va;
-        vb = vb == null ? -1 : vb;
-      }
-      else if (sortCol === 'status')   { va = _getThreeWayStatus(a); vb = _getThreeWayStatus(b); }
-      else                             { va = ''; vb = ''; }
-      if (typeof va === 'number') return sortDir === 'asc' ? va - vb : vb - va;
-      return sortDir === 'asc' ? String(va).localeCompare(String(vb)) : String(vb).localeCompare(String(va));
-    }) : rawDisplayData
-  ), [rawDisplayData, sortCol, sortDir]);
+  const displayData = rows.length > RENDER_CAP ? rows.slice(0, RENDER_CAP) : rows;
+  const allTabCount = (counts.missing || 0) + (counts.planchange || 0) + (counts.plandenied || 0) + (counts.cancelled || 0) + (counts.paid || 0);
 
-  // agents / carriers / effectiveDates: only reruns when production data changes
-  const agents = useMemo(
-    () => [...new Set(production.map(p => p.agent_name).filter(Boolean))].sort(),
-    [production]
-  );
+  const agents = metaAgents;
   const carriers = useMemo(() => {
-    const uniqueC = [...new Set(production.map(p => normalizeCarrier(p.carrier)).filter(Boolean))];
+    const uniqueC = [...new Set((metaCarriers || []).map((c) => normalizeCarrier(c)).filter(Boolean))];
     return uniqueC
-      .map(c => {
-        const original = production.find(p => normalizeCarrier(p.carrier) === c)?.carrier;
+      .map((c) => {
+        const original = (metaCarriers || []).find((p) => normalizeCarrier(p) === c);
         return formatCarrier(original || c);
       })
       .filter((v, i, arr) => arr.indexOf(v) === i)
       .sort();
-  }, [production]);
-  const effectiveDates = useMemo(
-    () => [...new Set(production.map(p => p.effective_date).filter(Boolean))].sort((a, b) => b.localeCompare(a)),
-    [production]
-  );
+  }, [metaCarriers]);
+  const effectiveDates = metaDates;
 
-  function exportToCSV() {
+  async function exportToCSV() {
+    let filename = `agency-overrides-${tab}-${new Date().toISOString().split('T')[0]}.csv`;
     let dataToExport = [];
-    let filename = '';
-    
-    if (tab === 'missing') {
-      dataToExport = filtered.missing || [];
-      filename = `agency-overrides-missing-${new Date().toISOString().split('T')[0]}.csv`;
-    } else if (tab === 'planchange') {
-      dataToExport = filtered.planchange || [];
-      filename = `agency-overrides-planchange-${new Date().toISOString().split('T')[0]}.csv`;
-    } else if (tab === 'cancelled') {
-      dataToExport = filtered.cancelled || [];
-      filename = `agency-overrides-cancelled-${new Date().toISOString().split('T')[0]}.csv`;
-    } else if (tab === 'paid') {
-      dataToExport = filtered.paid || [];
-      filename = `agency-overrides-paid-${new Date().toISOString().split('T')[0]}.csv`;
-    } else {
-      dataToExport = [...(filtered.missing || []), ...(filtered.planchange || []), ...(filtered.plandenied || []), ...(filtered.cancelled || []), ...(filtered.paid || [])];
-      filename = `agency-overrides-all-${new Date().toISOString().split('T')[0]}.csv`;
+    try {
+      const data = await apiFetch(buildReconQuery({ forExport: true }));
+      dataToExport = data.rows || [];
+    } catch (err) {
+      alert('Export failed: ' + (err.message || err));
+      return;
     }
     
     if (dataToExport.length === 0) {
@@ -548,9 +454,9 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
       const hd = _getHoldDetail(m);
       const state = (hd && hd.state) || m.production.state || '—';
       const effectiveDate = m.production.effective_date ? formatDate(m.production.effective_date) : '—';
-      const exp = expectedAgencyOverride(m.production);
+      const exp = m.expected || expectedAgencyOverride(m.production);
       const expectedAmt = exp.amount == null ? '—' : exp.amount;
-      const expectedNote = expectedOverrideLabel(exp);
+      const expectedNote = exp.label || expectedOverrideLabel(exp);
       const bsiThei = m.override ? (m.override.commission || m.override.commission_amount || '0') : '—';
       const cBSI = carrierBSIAmt(m) !== null ? carrierBSIAmt(m).toFixed(2) : '—';
       const enrollStatus = m.production.status || '—';
@@ -904,6 +810,7 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
         <div className="page-title">Agency Override Reconciliation</div>
         <div className="page-sub">
           Missing holds unpaid rows — use Override Status tags (Not on BSI, Chase BSI, Pending, Held). Filter Status to narrow.
+          Matching runs on the server; this page loads one slim page at a time.
         </div>
       </div>
 
@@ -917,8 +824,8 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
                   type="text"
                   className="filter-select"
                   placeholder="Client, agent, or carrier..."
-                  value={searchTerm}
-                  onChange={e => setSearchTerm(e.target.value)}
+                  value={searchInput}
+                  onChange={e => { setSearchInput(e.target.value); setOffset(0); }}
                   style={{ minWidth: 220 }}
                 />
               </div>
@@ -928,7 +835,7 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
                   label="Agents" 
                   options={agents} 
                   selected={filterAgents} 
-                  onChange={setFilterAgents} 
+                  onChange={resetAndSet(setFilterAgents)} 
                 />
               </div>
               <div>
@@ -937,7 +844,7 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
                   label="Carriers" 
                   options={carriers} 
                   selected={filterCarriers} 
-                  onChange={setFilterCarriers} 
+                  onChange={resetAndSet(setFilterCarriers)} 
                 />
               </div>
               <div>
@@ -946,7 +853,7 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
                   label="Dates" 
                   options={effectiveDates} 
                   selected={filterEffDates} 
-                  onChange={setFilterEffDates} 
+                  onChange={resetAndSet(setFilterEffDates)} 
                 />
               </div>
               <div>
@@ -955,7 +862,7 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
                   label="Status"
                   options={['paid','chargeback','chase_bsi','not_paid_to_bsi','request_audit','held_licensing','no_pay_expected','pending']}
                   selected={filterOverrideStatus}
-                  onChange={setFilterOverrideStatus}
+                  onChange={resetAndSet(setFilterOverrideStatus)}
                   formatOption={v => ({
                     paid: '🟢 Paid',
                     chargeback: '↩️ Chargeback',
@@ -1018,12 +925,18 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
               >
                 {gapAuditLoading ? 'Auditing…' : '🔎 Audit gaps'}
               </button>
-              <button className="btn btn-primary" onClick={loadData} disabled={loading}>
+              <button className="btn btn-primary" onClick={() => loadData(offset)} disabled={loading}>
                 {loading ? 'Loading...' : '🔄 Refresh'}
               </button>
             </div>
           </div>
         </div>
+
+        {loading && (
+          <div className="card" style={{ marginBottom: 12, padding: 12, fontSize: 13, color: 'var(--text-muted)' }}>
+            Loading override reconciliation from the server…
+          </div>
+        )}
 
         {error && (
           <div className="card" style={{ marginTop: 20, background: 'var(--red-light)', border: '1px solid var(--red)', padding: 16 }}>
@@ -1031,7 +944,11 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
           </div>
         )}
 
-        <TruncationBanner message={truncationWarning} />
+        {!loading && scanned.production > 0 && (
+          <div style={{ marginBottom: 10, fontSize: 12, color: 'var(--text-muted)' }}>
+            Server matched {scanned.production.toLocaleString()} production · {scanned.overrides.toLocaleString()} override/chargeback · {scanned.carrierBSI.toLocaleString()} Carrier→BSI rows. Showing {rows.length.toLocaleString()} of {total.toLocaleString()} on this tab.
+          </div>
+        )}
 
         {gapAuditError && (
           <div className="card" style={{ marginBottom: 14, background: 'var(--red-light)', border: '1px solid var(--red)', padding: 14, fontSize: 13 }}>
@@ -1125,32 +1042,31 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
           </div>
         )}
 
-        {!loading && (
-          <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+        <div className="card" style={{ padding: 0, overflow: 'hidden', opacity: loading ? 0.7 : 1 }}>
             <div style={{ borderBottom: '1px solid var(--border)', padding: '0 20px', display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-              <button style={tabStyle('missing')} onClick={() => setTab('missing')}
+              <button style={tabStyle('missing')} onClick={() => changeTab('missing')}
                 title="Unpaid override work — tags show Not on BSI, Chase BSI, Pending, Held, etc.">
-                Missing ({(filtered.missing || []).length})
+                Missing ({counts.missing || 0})
               </button>
-              <button style={tabStyle('planchange')} onClick={() => setTab('planchange')}
+              <button style={tabStyle('planchange')} onClick={() => changeTab('planchange')}
                 title="Client changed plans; original override may not apply">
-                Plan Change ({(filtered.planchange || []).length})
+                Plan Change ({counts.planchange || 0})
               </button>
-              <button style={tabStyle('plandenied')} onClick={() => setTab('plandenied')}
+              <button style={tabStyle('plandenied')} onClick={() => changeTab('plandenied')}
                 title="Application denied by the carrier; no override expected">
-                Plan Denied ({(filtered.plandenied || []).length})
+                Plan Denied ({counts.plandenied || 0})
               </button>
-              <button style={tabStyle('cancelled')} onClick={() => setTab('cancelled')}
+              <button style={tabStyle('cancelled')} onClick={() => changeTab('cancelled')}
                 title="Cancelled / disenrolled / override chargeback (left the plan)">
-                Cancelled ({(filtered.cancelled || []).length})
+                Cancelled ({counts.cancelled || 0})
               </button>
-              <button style={tabStyle('paid')} onClick={() => setTab('paid')}
+              <button style={tabStyle('paid')} onClick={() => changeTab('paid')}
                 title="Override commission paid (includes historical paid before a later chargeback)">
-                Paid ({(filtered.paid || []).length})
+                Paid ({counts.paid || 0})
               </button>
-              <button style={tabStyle('all')} onClick={() => setTab('all')}
+              <button style={tabStyle('all')} onClick={() => changeTab('all')}
                 title="All production records across every status category">
-                All ({(filtered.missing || []).length + (filtered.planchange || []).length + (filtered.plandenied || []).length + (filtered.cancelled || []).length + (filtered.paid || []).length})
+                All ({allTabCount})
               </button>
             </div>
             {/* One-line subtitle per tab */}
@@ -1173,8 +1089,10 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
             <div style={{ padding: 20 }}>
               {displayData.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-muted)' }}>
-                  {production.length === 0 
-                    ? 'No agency production data yet. Upload Hector\'s reports to get started!' 
+                  {loading
+                    ? 'Loading reconciliation…'
+                    : scanned.production === 0
+                    ? 'No agency production data yet. Upload Hector\'s reports to get started!'
                     : 'No results match your filters.'}
                 </div>
               ) : (
@@ -1307,7 +1225,7 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
                             <td style={{ ...tdBase, fontSize: 12, color: 'var(--text-muted)' }}>
                               {m.production.effective_date ? formatDate(m.production.effective_date) : '—'}
                             </td>
-                            <ExpectedOverrideCell production={m.production} />
+                            <ExpectedOverrideCell production={m.production} expected={m.expected} />
                             <td style={{ ...tdBase, textAlign: 'right' }}>
                               {m.override
                                 ? <span
@@ -1363,9 +1281,32 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
                   </table>
                 </div>
               )}
+              {total > PAGE_SIZE && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 14, gap: 12, flexWrap: 'wrap' }}>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                    Page {Math.floor(offset / PAGE_SIZE) + 1} of {Math.max(1, Math.ceil(total / PAGE_SIZE))}
+                    {rows.length > RENDER_CAP ? ` · rendering first ${RENDER_CAP} of this page` : ''}
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button
+                      className="btn btn-secondary"
+                      disabled={loading || offset <= 0}
+                      onClick={() => setOffset((o) => Math.max(0, o - PAGE_SIZE))}
+                    >
+                      ← Prev
+                    </button>
+                    <button
+                      className="btn btn-secondary"
+                      disabled={loading || offset + PAGE_SIZE >= total}
+                      onClick={() => setOffset((o) => o + PAGE_SIZE)}
+                    >
+                      Next →
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
-        )}
 
         <div style={{ marginTop: 30, padding: 16, background: 'var(--blue-light)', borderRadius: 6, borderLeft: '4px solid var(--blue)', color: 'var(--blue-dark)', fontSize: 13, lineHeight: 1.6 }}>
           <div style={{ fontWeight: 600, marginBottom: 8 }}>💡 How this works:</div>

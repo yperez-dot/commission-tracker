@@ -58,7 +58,7 @@ export function nameVariants(name) {
   return result;
 }
 
-function significantTokens(name) {
+export function significantTokens(name) {
   return normName(name)
     .toLowerCase()
     .split(/\s+/)

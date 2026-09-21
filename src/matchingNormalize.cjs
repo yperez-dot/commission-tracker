@@ -147,6 +147,7 @@ module.exports = {
   normName,
   nameVariants,
   namesLooseMatch,
+  significantTokens,
   normalizeCarrier,
   normCarrier,
   carriersMatch,
