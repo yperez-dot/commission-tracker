@@ -124,7 +124,7 @@ export function detectUploadDestination(filename) {
   ) {
     return {
       id: 'agent_payout',
-      label: 'Agent Payout Uploads',
+      label: 'Commission Statements',
       reason: 'Looks like a producer payout statement (Tailored / writing-agent NHP report)',
       confidence: 'high',
     };
@@ -212,7 +212,7 @@ export function detectUploadDestination(filename) {
 export const UPLOAD_PAGE_BY_DEST = {
   commission_statement: 'upload',
   bsi_statement: 'bsi-statements-upload',
-  agent_payout: 'agent-payout-uploads',
+  agent_payout: 'upload',
   medicarepro: 'medicarepro-upload',
   agency_production: 'agency-production-upload',
 };
@@ -221,16 +221,17 @@ export const UPLOAD_PAGE_BY_DEST = {
 export function uploadCategoryLabel(category) {
   const c = String(category || '').toLowerCase().trim();
   if (c === 'bsi_statement') return 'BSI Statements';
-  if (c === 'agent_payout') return 'Agent Payout Uploads';
+  if (c === 'agent_payout') return 'Agent payout';
   if (c === 'commission_statement' || !c) return 'Commission Statements';
   return c;
 }
 
 export function destinationMatchesTab(detectedId, currentTabId) {
   if (!detectedId || detectedId === 'unknown') return true;
-  if (currentTabId === 'commission_statement') return detectedId === 'commission_statement';
+  if (currentTabId === 'commission_statement') {
+    return detectedId === 'commission_statement' || detectedId === 'agent_payout';
+  }
   if (currentTabId === 'bsi_statement') return detectedId === 'bsi_statement';
-  if (currentTabId === 'agent_payout') return detectedId === 'agent_payout';
   if (currentTabId === 'medicarepro') return detectedId === 'medicarepro';
   if (currentTabId === 'agency_production') return detectedId === 'agency_production';
   return true;

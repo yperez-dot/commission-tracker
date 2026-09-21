@@ -79,6 +79,9 @@ export default function Upload({ user, onNavigate }) {
     try {
       const fd = new FormData();
       fd.append('file', file);
+      if (detectUploadDestination(file.name).id === 'agent_payout') {
+        fd.append('category', 'agent_payout');
+      }
       if (skipDuplicates) {
         fd.append('skipDuplicates', 'true');
         if (selectedDupes.length > 0) {
@@ -273,7 +276,7 @@ export default function Upload({ user, onNavigate }) {
 
       <UploadPageShell
         title="Commission Statements"
-        subtitle="THEI production, NHP house, and BSI→THE remittance. Agent pay files (Tailored / Jill / other ACA producers) → Uploads → Agent Payout Uploads. Carrier→BSI feeds → BSI Statements."
+        subtitle="THEI production, NHP house, BSI→THE remittance, and agent pay files (Tailored / Jill / other ACA producers). Carrier→BSI feeds → BSI Statements."
       >
         <UploadDropZone
           dragOver={dragOver}

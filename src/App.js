@@ -13,18 +13,27 @@ import MedicareProUpload from './pages/MedicareProUpload';
 import AgencyProductionUpload from './pages/AgencyProductionUpload';
 import AgencyProductionRecon from './pages/AgencyProductionRecon';
 import BSIStatementsUpload from './pages/BSIStatementsUpload';
-import AgentPayoutUploads from './pages/AgentPayoutUploads';
 import PassThroughChargebacks from './pages/PassThroughChargebacks';
-import AdpExport from './pages/AdpExport';
 import './App.css';
 
-const REMOVED_PAGES = new Set(['reports', 'agents', 'fix-aetna', 'fixaetna']);
+const REMOVED_PAGES = new Set(['reports', 'agents', 'fix-aetna', 'fixaetna', 'payroll-adp']);
+
+const PAGE_REDIRECTS = {
+  'payroll-history': { page: 'payroll-payouts', params: { payoutFilter: 'history' } },
+  'agent-payout-uploads': { page: 'upload' },
+};
+
+function resolvePage(p, params = {}) {
+  if (REMOVED_PAGES.has(p)) return { page: 'dashboard', params: {} };
+  const redirect = PAGE_REDIRECTS[p];
+  if (redirect) return { page: redirect.page, params: { ...redirect.params, ...params } };
+  return { page: p, params };
+}
 
 const THEI_ONLY_PAGES = new Set([
   'medicarepro-upload',
   'agency-production-upload',
   'agency-production-recon',
-  'agent-payout-uploads',
   'direct-recon',
   'renewals',
   'pass-through-chargebacks',
@@ -67,10 +76,11 @@ export default function App() {
       if (data?.user) {
         setUser(data.user);
         const saved = localStorage.getItem('he_page');
-        if (saved && !REMOVED_PAGES.has(saved)) setPage(saved);
-        else if (saved && REMOVED_PAGES.has(saved)) {
-          localStorage.setItem('he_page', 'dashboard');
-          setPage('dashboard');
+        if (saved) {
+          const resolved = resolvePage(saved);
+          setPage(resolved.page);
+          setPageParams(resolved.params);
+          if (resolved.page !== saved) localStorage.setItem('he_page', resolved.page);
         }
       }
     } catch {
@@ -109,10 +119,10 @@ export default function App() {
   }
 
   function navigate(p, params = {}) {
-    const next = REMOVED_PAGES.has(p) ? 'dashboard' : p;
-    setPage(next);
-    setPageParams(params);
-    localStorage.setItem('he_page', next);
+    const resolved = resolvePage(p, params);
+    setPage(resolved.page);
+    setPageParams(resolved.params);
+    localStorage.setItem('he_page', resolved.page);
   }
 
   if (loading) return (
@@ -132,7 +142,6 @@ export default function App() {
   const uploadChildren = [
     { id: 'upload', label: 'Commission Statements' },
     ...(!isBSI ? [
-      { id: 'agent-payout-uploads', label: 'Agent Payout Uploads' },
       { id: 'medicarepro-upload', label: 'MedicarePro Sales' },
       { id: 'agency-production-upload', label: 'Agency Production' },
     ] : []),
@@ -165,8 +174,6 @@ export default function App() {
         { id: 'payroll-payouts', label: 'Agent Payouts' },
         { id: 'payroll-overrides', label: 'House Statements' },
         { id: 'payroll-loa', label: 'LOA' },
-        { id: 'payroll-history', label: 'Payment History' },
-        ...(user.role === 'admin' ? [{ id: 'payroll-adp', label: 'ADP / 1099' }] : []),
       ]
     },
     ...(user.role === 'admin' ? [
@@ -186,7 +193,6 @@ export default function App() {
     'medicarepro-upload': <MedicareProUpload key={agencyView} user={effectiveUser} onNavigate={navigate} />,
     'agency-production-upload': <AgencyProductionUpload key={agencyView} user={effectiveUser} onNavigate={navigate} />,
     'bsi-statements-upload': <BSIStatementsUpload key={agencyView} user={effectiveUser} onNavigate={navigate} />,
-    'agent-payout-uploads': <AgentPayoutUploads key={agencyView} user={effectiveUser} onNavigate={navigate} />,
     'agency-production-recon': <AgencyProductionRecon key={`${agencyView}-${pageParams.search || ''}`} user={effectiveUser} initialSearch={pageParams.search} />,
     alldata: <AllData key={`${agencyView}-${JSON.stringify(pageParams)}`} user={effectiveUser} initialFilters={pageParams} onNavigate={navigate} />,
     bob: <BookOfBusiness key={agencyView} user={effectiveUser} />,
@@ -194,12 +200,10 @@ export default function App() {
     reconciliation: <Reconciliation key={agencyView} user={effectiveUser} />,
     'direct-recon': <Reconciliation key={agencyView} user={effectiveUser} />,
     'pass-through-chargebacks': <PassThroughChargebacks key={agencyView} user={effectiveUser} />,
-    payroll: <Payroll key={agencyView} user={effectiveUser} initialTab="payroll" onNavigate={navigate} />,
-    'payroll-payouts': <Payroll key={`${agencyView}-payouts`} user={effectiveUser} initialTab="payroll" onNavigate={navigate} />,
-    'payroll-overrides': <Payroll key={`${agencyView}-overrides`} user={effectiveUser} initialTab="overrides" onNavigate={navigate} />,
-    'payroll-loa': <Payroll key={`${agencyView}-loa`} user={effectiveUser} initialTab="loa" onNavigate={navigate} />,
-    'payroll-history': <Payroll key={`${agencyView}-history`} user={effectiveUser} initialTab="history" onNavigate={navigate} />,
-    'payroll-adp': <AdpExport key={`${agencyView}-adp`} user={effectiveUser} />,
+    payroll: <Payroll key={agencyView} user={effectiveUser} initialTab="payroll" initialPayoutFilter={pageParams.payoutFilter} onNavigate={navigate} />,
+    'payroll-payouts': <Payroll key={`${agencyView}-payouts`} user={effectiveUser} initialTab="payroll" initialPayoutFilter={pageParams.payoutFilter} onNavigate={navigate} />,
+    'payroll-overrides': <Payroll key={`${agencyView}-overrides`} user={effectiveUser} initialTab="overrides" />,
+    'payroll-loa': <Payroll key={`${agencyView}-loa`} user={effectiveUser} initialTab="loa" />,
     users: <AdminUsers key={agencyView} user={effectiveUser} />
   };
 

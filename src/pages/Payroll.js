@@ -650,9 +650,9 @@ function HouseOverridesPanel() {
   );
 }
 
-export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
+export default function Payroll({ user, initialTab = 'payroll', initialPayoutFilter, onNavigate }) {
   const tab =
-    initialTab === 'overrides' || initialTab === 'loa' || initialTab === 'history'
+    initialTab === 'overrides' || initialTab === 'loa'
       ? initialTab
       : 'payroll';
 
@@ -665,7 +665,9 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
   const [paidDates, setPaidDates] = useState({});
   const [history, setHistory] = useState([]);
   const [historySearch, setHistorySearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('unpaid'); // unpaid | paid | all
+  const [statusFilter, setStatusFilter] = useState(
+    initialTab === 'history' || initialPayoutFilter === 'history' ? 'history' : 'unpaid'
+  ); // unpaid | paid | all | history
   const [search, setSearch] = useState('');
   const [linaBusy, setLinaBusy] = useState(false);
   const [linaError, setLinaError] = useState('');
@@ -962,7 +964,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
   const pageMeta = {
     payroll: {
       title: 'Agent Payouts',
-      sub: 'Pay producers (ACA + Lina). Upload Tailored/Jill and other ACA pay statements under Uploads → Agent Payout Uploads. Marco / Integrity peels stay under House Statements.',
+      sub: 'Pay producers (ACA + Lina). Upload Tailored/Jill and other ACA pay statements under Uploads → Commission Statements. Marco / Integrity peels stay under House Statements.',
     },
     overrides: {
       title: 'House Statements',
@@ -971,10 +973,6 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
     loa: {
       title: 'LOA Statements',
       sub: 'Manual LOA compensation statements (e.g. Carolina Robles)',
-    },
-    history: {
-      title: 'Payment History',
-      sub: 'Shared record of agents marked paid',
     },
   }[tab] || { title: 'Payroll', sub: '' };
 
@@ -995,7 +993,30 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
                 Agent production only — ACA producer pay (100% pass-through) and{' '}
                 <strong>Lina Hernandez</strong> (NB / Renewal / Chargeback). Marco (Swan) and Integrity /
                 CAM are under <strong>House Statements</strong>.
+                {' '}Upload Tailored / Jill and other ACA pay statements under{' '}
+                {onNavigate ? (
+                  <button
+                    type="button"
+                    onClick={() => onNavigate('upload')}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      padding: 0,
+                      color: 'var(--accent-dark)',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      textDecoration: 'underline',
+                      fontSize: 12,
+                    }}
+                  >
+                    Uploads → Commission Statements
+                  </button>
+                ) : (
+                  <strong>Uploads → Commission Statements</strong>
+                )}
+                .
               </div>
+              {statusFilter !== 'history' && (
               <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
                 <div>
                   <div className="form-label">Month</div>
@@ -1038,19 +1059,21 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
                   </button>
                 )}
               </div>
-              {selectedPeriod && (
-                <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
-                  <button style={chipStyle(statusFilter === 'unpaid')} onClick={() => setStatusFilter('unpaid')}>
-                    Unpaid ({unpaidCount})
-                  </button>
-                  <button style={chipStyle(statusFilter === 'paid')} onClick={() => setStatusFilter('paid')}>
-                    Paid ({paidCount})
-                  </button>
-                  <button style={chipStyle(statusFilter === 'all')} onClick={() => setStatusFilter('all')}>
-                    All ({payouts.length})
-                  </button>
-                </div>
               )}
+              <div style={{ display: 'flex', gap: 8, marginTop: statusFilter === 'history' ? 0 : 12, flexWrap: 'wrap' }}>
+                <button style={chipStyle(statusFilter === 'unpaid')} onClick={() => setStatusFilter('unpaid')}>
+                  Unpaid ({unpaidCount})
+                </button>
+                <button style={chipStyle(statusFilter === 'paid')} onClick={() => setStatusFilter('paid')}>
+                  Paid ({paidCount})
+                </button>
+                <button style={chipStyle(statusFilter === 'all')} onClick={() => setStatusFilter('all')}>
+                  All ({payouts.length})
+                </button>
+                <button style={chipStyle(statusFilter === 'history')} onClick={() => setStatusFilter('history')}>
+                  History{history.length ? ` (${history.length})` : ''}
+                </button>
+              </div>
             </div>
 
             {loadError && (
@@ -1062,6 +1085,95 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
               </div>
             )}
 
+            {statusFilter === 'history' ? (
+          <div className="card" style={{ padding: 0 }}>
+            <div style={{ padding: '10px 14px', borderBottom: '0.5px solid var(--border)', fontSize: 13, fontWeight: 500 }}>
+              Payment history
+              {qHist ? ` (${visibleHistory.length} of ${history.length})` : ''}
+              <span style={{ marginLeft: 8, fontWeight: 400, color: 'var(--text-muted)', fontSize: 11 }}>
+                Shared team record (saved in database)
+              </span>
+            </div>
+            {history.length === 0 ? (
+              <div className="empty-state">
+                <div className="empty-title">No payments recorded yet</div>
+                <div className="empty-sub">Mark agents as paid on Unpaid or Paid to track them here</div>
+              </div>
+            ) : (
+              <>
+              <div style={{ padding: '10px 14px 0' }}>
+                <UploadListSearch
+                  value={historySearch}
+                  onChange={setHistorySearch}
+                  placeholder="Search agent or period…"
+                />
+              </div>
+              {visibleHistory.length === 0 ? (
+                <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+                  No payments match “{historySearch.trim()}”
+                </div>
+              ) : (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Period</th>
+                      <th>Agent</th>
+                      <th>Amount</th>
+                      <th>Date paid</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visibleHistory.map((r) => (
+                      <tr key={r.id || `${r.period}-${r.agent}-${r.date}`}>
+                        <td style={{ fontSize: 12 }}>{r.periodLabel}</td>
+                        <td style={{ fontWeight: 500 }}>{r.agent}</td>
+                        <td style={{ fontWeight: 500, color: 'var(--green)' }}>{fmt(r.amount)}</td>
+                        <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{r.date}</td>
+                        <td>
+                          <div style={{ display: 'flex', gap: 6 }}>
+                            <button
+                              className="btn"
+                              style={{ fontSize: 11, padding: '3px 10px' }}
+                              onClick={() => {
+                                setSelectedPeriod(r.period);
+                                setStatusFilter('all');
+                              }}
+                            >
+                              View
+                            </button>
+                            <button
+                              className="btn btn-danger"
+                              style={{ fontSize: 11, padding: '3px 10px' }}
+                              onClick={async () => {
+                                if (!r.id) return;
+                                try {
+                                  await apiFetch(`/payroll/payout-status/${r.id}?agency=${agencyParam}`, {
+                                    method: 'DELETE',
+                                  });
+                                  await loadPayoutHistory();
+                                  if (selectedPeriod === r.period) await loadPaidStatus(r.period);
+                                } catch (e) {
+                                  setLoadError(e.message || 'Failed to delete paid mark');
+                                }
+                              }}
+                            >
+                              Delete
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              )}
+              </>
+            )}
+          </div>
+            ) : (
+            <>
             <TruncationBanner message={truncationWarning} />
 
             {!selectedPeriod ? (
@@ -1177,95 +1289,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
                 </div>
               </div>
             )}
-          </div>
-        )}
-
-        {tab === 'history' && (
-          <div className="card" style={{ padding: 0 }}>
-            <div style={{ padding: '10px 14px', borderBottom: '0.5px solid var(--border)', fontSize: 13, fontWeight: 500 }}>
-              Payment history
-              {qHist ? ` (${visibleHistory.length} of ${history.length})` : ''}
-              <span style={{ marginLeft: 8, fontWeight: 400, color: 'var(--text-muted)', fontSize: 11 }}>
-                Shared team record (saved in database)
-              </span>
-            </div>
-            {history.length === 0 ? (
-              <div className="empty-state">
-                <div className="empty-title">No payments recorded yet</div>
-                <div className="empty-sub">Mark agents as paid on Agent Payouts to track them here</div>
-              </div>
-            ) : (
-              <>
-              <div style={{ padding: '10px 14px 0' }}>
-                <UploadListSearch
-                  value={historySearch}
-                  onChange={setHistorySearch}
-                  placeholder="Search agent or period…"
-                />
-              </div>
-              {visibleHistory.length === 0 ? (
-                <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
-                  No payments match “{historySearch.trim()}”
-                </div>
-              ) : (
-              <div className="table-wrap">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Period</th>
-                      <th>Agent</th>
-                      <th>Amount</th>
-                      <th>Date paid</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {visibleHistory.map((r) => (
-                      <tr key={r.id || `${r.period}-${r.agent}-${r.date}`}>
-                        <td style={{ fontSize: 12 }}>{r.periodLabel}</td>
-                        <td style={{ fontWeight: 500 }}>{r.agent}</td>
-                        <td style={{ fontWeight: 500, color: 'var(--green)' }}>{fmt(r.amount)}</td>
-                        <td style={{ fontSize: 12, color: 'var(--text-muted)' }}>{r.date}</td>
-                        <td>
-                          <div style={{ display: 'flex', gap: 6 }}>
-                            <button
-                              className="btn"
-                              style={{ fontSize: 11, padding: '3px 10px' }}
-                              onClick={() => {
-                                setSelectedPeriod(r.period);
-                                setStatusFilter('all');
-                                if (onNavigate) onNavigate('payroll-payouts', { period: r.period });
-                              }}
-                            >
-                              View
-                            </button>
-                            <button
-                              className="btn btn-danger"
-                              style={{ fontSize: 11, padding: '3px 10px' }}
-                              onClick={async () => {
-                                if (!r.id) return;
-                                try {
-                                  await apiFetch(`/payroll/payout-status/${r.id}?agency=${agencyParam}`, {
-                                    method: 'DELETE',
-                                  });
-                                  await loadPayoutHistory();
-                                  if (selectedPeriod === r.period) await loadPaidStatus(r.period);
-                                } catch (e) {
-                                  setLoadError(e.message || 'Failed to delete paid mark');
-                                }
-                              }}
-                            >
-                              Delete
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              )}
-              </>
+            </>
             )}
           </div>
         )}

@@ -14,7 +14,6 @@ The name? Olivia + commissions. Yahoska's daughter. The tool funding her future.
 - Parses carrier statements with AI-powered column mapping (Anthropic Claude).
 - Handles the THEI ↔ BSI 50/50 split logic for Medicare commissions.
 - Treats ACA correctly: THEI keeps 100% override (or passes through to producer for agency-only carriers).
-- Generates 1099-ready totals at year-end.
 - Built for AEP volume (Oct 15 – Dec 7) without breaking.
 
 ## Stack
