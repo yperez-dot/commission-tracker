@@ -14,6 +14,11 @@ const {
 } = require('./agencyOverrideReconMatch.cjs');
 const { normalizeCarrier } = require('./matchingNormalize.cjs');
 const { expectedAgencyOverride, expectedOverrideLabel } = require('./utils/agencyOverrideExpected');
+const {
+  normalizeReconPeriod,
+  stampProductionForPeriod,
+  keepPeriodScopedMatch,
+} = require('./overrideReconPeriod');
 
 const CATEGORIES = ['missing', 'planchange', 'plandenied', 'cancelled', 'paid'];
 const MAX_PAGE = 500;
@@ -210,7 +215,9 @@ function normalizeProductionRow(p) {
 }
 
 function assembleOverrideRecon(production, overrides, carrierBSIRecords, bsiUploadedKeys, filters = {}) {
-  const normalizedProduction = (production || []).map(normalizeProductionRow);
+  const period = normalizeReconPeriod(filters.period);
+  const stamped = stampProductionForPeriod(production, period);
+  const normalizedProduction = stamped.map(normalizeProductionRow);
   const matches = buildOverrideMatches(normalizedProduction, overrides, carrierBSIRecords, bsiUploadedKeys);
   const decorated = matches.map((m) => ({
     ...m,
@@ -219,7 +226,8 @@ function assembleOverrideRecon(production, overrides, carrierBSIRecords, bsiUplo
     expected: safeExpected(m.production),
   }));
 
-  const filtered = applyUserFilters(decorated, filters);
+  const periodScoped = period ? decorated.filter((m) => keepPeriodScopedMatch(m, period)) : decorated;
+  const filtered = applyUserFilters(periodScoped, filters);
   const counts = countCategories(filtered);
 
   const category = String(filters.category || filters.tab || 'missing').toLowerCase();
@@ -235,7 +243,9 @@ function assembleOverrideRecon(production, overrides, carrierBSIRecords, bsiUplo
   const offset = Math.max(0, parseInt(filters.offset, 10) || 0);
   const page = sorted.slice(offset, offset + limit);
 
-  const uniqueProduction = normalizedProduction;
+  const uniqueProduction = period
+    ? periodScoped.map((m) => m.production).filter(Boolean)
+    : normalizedProduction;
   return {
     rows: page.map(slimRow),
     total: sorted.length,
@@ -257,6 +267,7 @@ function assembleOverrideRecon(production, overrides, carrierBSIRecords, bsiUplo
       overrides: (overrides || []).length,
       carrierBSI: (carrierBSIRecords || []).length,
     },
+    period: period || null,
   };
 }
 
