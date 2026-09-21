@@ -7,6 +7,17 @@ const { requireAuth, requireAdmin } = require('./auth');
 const { isAetnaActivePolicy } = require('../src/agencyOverrideReconMatch.cjs');
 const { auditOverrideGaps } = require('../src/overrideGapAudit');
 const { assembleOverrideRecon } = require('../src/overrideReconAssemble');
+const {
+  normalizeReconPeriod,
+  formatReconPeriodLabel,
+  collectReconPeriods,
+  appendPaymentPeriodSql,
+  appendProductionPeriodSql,
+  corpusCacheKey,
+  getCachedCorpus,
+  setCachedCorpus,
+  clearOverrideReconCorpusCache,
+} = require('../src/overrideReconPeriod');
 const { agencyFilter } = require('./records');
 const { clientNameKey, clientNameKeySql } = require('../src/clientNameKey');
 const { normalizeCarrier } = require('../src/matchingNormalize.cjs');
@@ -790,13 +801,68 @@ const HOLD_REASON_SQL = `CASE WHEN cr.raw_data IS NULL OR TRIM(cr.raw_data::text
 const HOLD_STATE_SQL = `CASE WHEN cr.raw_data IS NULL OR TRIM(cr.raw_data::text) = '' THEN NULL ELSE cr.raw_data::jsonb->>'Member State' END`;
 const HOLD_COUNTY_SQL = `CASE WHEN cr.raw_data IS NULL OR TRIM(cr.raw_data::text) = '' THEN NULL ELSE cr.raw_data::jsonb->>'Member County' END`;
 
+function emptyOverrideReconPayload(extra = {}) {
+  return {
+    rows: [],
+    total: 0,
+    counts: { missing: 0, planchange: 0, plandenied: 0, cancelled: 0, paid: 0 },
+    limit: 100,
+    offset: 0,
+    meta: { agents: [], carriers: [], effectiveDates: [], batches: [] },
+    scanned: { production: 0, overrides: 0, carrierBSI: 0 },
+    period: null,
+    needsPeriod: true,
+    ...extra,
+  };
+}
+
+async function listOverrideReconPeriods(pool) {
+  const result = await pool.query(
+    `SELECT period FROM (
+       SELECT DISTINCT upload_batch AS period
+         FROM agency_production
+        WHERE upload_batch IS NOT NULL AND TRIM(upload_batch) <> ''
+       UNION
+       SELECT DISTINCT payment_period
+         FROM uploads
+        WHERE payment_period IS NOT NULL
+          AND TRIM(payment_period) <> ''
+          AND payment_period <> 'Unknown'
+      ) p`
+  );
+  const periods = collectReconPeriods(result.rows).map((period) => ({
+    period,
+    label: formatReconPeriodLabel(period),
+  }));
+  return {
+    periods,
+    defaultPeriod: periods[0]?.period || null,
+  };
+}
+
+/**
+ * GET /api/agency-production/override-recon/periods
+ * Cheap picker list — no production / override / BSI corpus load.
+ */
+router.get('/override-recon/periods', requireAuth, async (req, res) => {
+  try {
+    const listed = await listOverrideReconPeriods(getPool());
+    return res.json(listed);
+  } catch (err) {
+    console.error('[OVERRIDE-RECON] periods', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 /**
  * GET /api/agency-production/override-recon
  *
  * Paginated Agency Override Recon using the same JS match semantics as the
- * page (netting, lifecycle expansion, chase vs not-on-BSI). The v1
- * GET /reconcile CTE is left untouched — it is a single-best-row, no-netting
- * engine used by export-bsi-recon and does not match Katy's Paid/Not paid rules.
+ * page (netting, lifecycle expansion, chase vs not-on-BSI). Requires a
+ * YYYYMM payment period so the three corpus queries stay bounded.
+ *
+ * The v1 GET /reconcile CTE is left untouched — it is a single-best-row,
+ * no-netting engine used by export-bsi-recon.
  *
  * Browser receives one slim page of match rows (no raw_data, no allMatches).
  */
@@ -804,6 +870,7 @@ router.get('/override-recon', requireAuth, async (req, res) => {
   try {
     const pool = getPool();
     const {
+      period: periodRaw,
       batch,
       carrier,
       agent,
@@ -820,109 +887,143 @@ router.get('/override-recon', requireAuth, async (req, res) => {
       export: exportFlag,
     } = req.query;
 
-    const prodParams = [];
-    const prodConds = [];
-    if (batch) {
-      prodParams.push(batch);
-      prodConds.push(`ap.upload_batch = $${prodParams.length}`);
+    const period = normalizeReconPeriod(periodRaw);
+    if (!period) {
+      const listed = await listOverrideReconPeriods(pool);
+      return res.json(emptyOverrideReconPayload({
+        periods: listed.periods,
+        defaultPeriod: listed.defaultPeriod,
+        _note: 'override-recon: period required — no unbounded corpus load',
+      }));
     }
-    if (carrier) {
-      prodParams.push(`%${carrier}%`);
-      prodConds.push(`ap.carrier ILIKE $${prodParams.length}`);
-    }
-    if (agent) {
-      prodParams.push(`%${agent}%`);
-      prodConds.push(`ap.agent_name ILIKE $${prodParams.length}`);
-    }
-    const prodWhere = prodConds.length ? `WHERE ${prodConds.join(' AND ')}` : '';
 
-    const [prodResult, overrideResult, bsiResult, bsiUploads] = await Promise.all([
-      pool.query(
-        `SELECT
-           ap.id, ap.agent_name, ap.client_name, ap.carrier, ap.plan_name, ap.policy_number,
-           ap.effective_date, ap.status, ap.policy_type, ap.enrollment_type, ap.state, ap.county,
-           ap.upload_batch, ap.uploaded_at,
-           ap.manual_override_status, ap.manual_override_by, ap.manual_override_at,
-           apu.filename as upload_filename,
-           apu.uploaded_at as upload_date,
-           apu.uploaded_by as uploaded_by_user,
-           ${PROD_RAW_SLIM} as raw_data
-         FROM agency_production ap
-         LEFT JOIN LATERAL (
-           SELECT u.filename, u.uploaded_at, u.uploaded_by
-           FROM agency_production_uploads u
-           WHERE u.id = ap.upload_id
-              OR (ap.upload_id IS NULL
-                  AND u.upload_batch = ap.upload_batch
-                  AND u.carrier = ap.carrier)
-           ORDER BY u.uploaded_at DESC
-           LIMIT 1
-         ) apu ON true
-         ${prodWhere}`,
-        prodParams
-      ),
-      pool.query(
-        `SELECT cr.id, cr.client_full_name, cr.carrier, cr.commission, cr.classification,
-                cr.payment_period, cr.policy_number, cr.agent_name, cr.plan_type, cr.payee, cr.source,
-                u.original_name as upload_name, u.original_name as upload_original_name
-         FROM commission_records cr
-         JOIN uploads u ON cr.upload_id = u.id
-         WHERE (u.category IS NULL OR u.category = 'commission_statement')
-           AND (
-             cr.classification ILIKE '%override%'
-             OR cr.classification ILIKE '%chargeback%'
-           )`
-      ),
-      pool.query(
-        `SELECT cr.id, cr.client_full_name, cr.carrier, cr.commission, cr.classification,
-                cr.payment_period, cr.policy_number, cr.agent_name,
-                ${HOLD_REASON_SQL} AS hold_reason,
-                ${HOLD_STATE_SQL} AS member_state,
-                ${HOLD_COUNTY_SQL} AS member_county
-         FROM commission_records cr
-         JOIN uploads u ON cr.upload_id = u.id
-         WHERE u.category = 'bsi_statement'`
-      ),
-      pool.query(
-        `SELECT carrier, payment_period FROM uploads
-         WHERE category = 'bsi_statement'
-           AND carrier IS NOT NULL AND TRIM(carrier) <> ''`
-      ),
-    ]);
+    const filters = {
+      period,
+      agents: agents || agent,
+      carriers: carriers || carrier,
+      search,
+      category,
+      override_status,
+      effective_dates,
+      sortCol,
+      sortDir,
+      limit,
+      offset,
+      export: exportFlag,
+    };
 
-    const bsiUploadedKeys = new Set();
-    (bsiUploads.rows || []).forEach((u) => {
-      const period = u.payment_period || '';
-      String(u.carrier || '')
-        .split(',')
-        .map((c) => c.trim())
-        .filter(Boolean)
-        .forEach((c) => bsiUploadedKeys.add(`${normalizeCarrier(c)}|${period}`));
-    });
+    const cacheKey = corpusCacheKey({ period, batch, carrier, agent });
+    let corpus = getCachedCorpus(cacheKey);
+
+    if (!corpus) {
+      const prodParams = [];
+      const prodConds = [];
+      appendProductionPeriodSql(prodConds, prodParams, period);
+      if (batch) {
+        prodParams.push(batch);
+        prodConds.push(`ap.upload_batch = $${prodParams.length}`);
+      }
+      if (carrier) {
+        prodParams.push(`%${carrier}%`);
+        prodConds.push(`ap.carrier ILIKE $${prodParams.length}`);
+      }
+      if (agent) {
+        prodParams.push(`%${agent}%`);
+        prodConds.push(`ap.agent_name ILIKE $${prodParams.length}`);
+      }
+
+      const overrideParams = [];
+      const overrideConds = [
+        `(u.category IS NULL OR u.category = 'commission_statement')`,
+      ];
+      appendPaymentPeriodSql(overrideConds, overrideParams, period);
+      overrideConds.push(`(cr.classification ILIKE '%override%' OR cr.classification ILIKE '%chargeback%')`);
+
+      const bsiParams = [];
+      const bsiConds = [`u.category = 'bsi_statement'`];
+      appendPaymentPeriodSql(bsiConds, bsiParams, period);
+
+      const uploadParams = [];
+      const uploadConds = [
+        `category = 'bsi_statement'`,
+        `carrier IS NOT NULL AND TRIM(carrier) <> ''`,
+      ];
+      appendPaymentPeriodSql(uploadConds, uploadParams, period, 'payment_period');
+
+      const [prodResult, overrideResult, bsiResult, bsiUploads] = await Promise.all([
+        pool.query(
+          `SELECT
+             ap.id, ap.agent_name, ap.client_name, ap.carrier, ap.plan_name, ap.policy_number,
+             ap.effective_date, ap.status, ap.policy_type, ap.enrollment_type, ap.state, ap.county,
+             ap.upload_batch, ap.uploaded_at,
+             ap.manual_override_status, ap.manual_override_by, ap.manual_override_at,
+             apu.filename as upload_filename,
+             apu.uploaded_at as upload_date,
+             apu.uploaded_by as uploaded_by_user,
+             ${PROD_RAW_SLIM} as raw_data
+           FROM agency_production ap
+           LEFT JOIN agency_production_uploads apu ON apu.id = ap.upload_id
+           WHERE ${prodConds.join(' AND ')}`,
+          prodParams
+        ),
+        pool.query(
+          `SELECT cr.id, cr.client_full_name, cr.carrier, cr.commission, cr.classification,
+                  cr.payment_period, cr.policy_number, cr.agent_name, cr.plan_type, cr.payee, cr.source,
+                  u.original_name as upload_name, u.original_name as upload_original_name
+           FROM commission_records cr
+           JOIN uploads u ON cr.upload_id = u.id
+           WHERE ${overrideConds.join(' AND ')}`,
+          overrideParams
+        ),
+        pool.query(
+          `SELECT cr.id, cr.client_full_name, cr.carrier, cr.commission, cr.classification,
+                  cr.payment_period, cr.policy_number, cr.agent_name,
+                  ${HOLD_REASON_SQL} AS hold_reason,
+                  ${HOLD_STATE_SQL} AS member_state,
+                  ${HOLD_COUNTY_SQL} AS member_county
+           FROM commission_records cr
+           JOIN uploads u ON cr.upload_id = u.id
+           WHERE ${bsiConds.join(' AND ')}`,
+          bsiParams
+        ),
+        pool.query(
+          `SELECT carrier, payment_period FROM uploads
+           WHERE ${uploadConds.join(' AND ')}`,
+          uploadParams
+        ),
+      ]);
+
+      const bsiUploadedKeys = new Set();
+      (bsiUploads.rows || []).forEach((u) => {
+        const uploadPeriod = u.payment_period || '';
+        String(u.carrier || '')
+          .split(',')
+          .map((c) => c.trim())
+          .filter(Boolean)
+          .forEach((c) => bsiUploadedKeys.add(`${normalizeCarrier(c)}|${uploadPeriod}`));
+      });
+
+      corpus = {
+        production: prodResult.rows,
+        overrides: overrideResult.rows,
+        carrierBSI: bsiResult.rows,
+        bsiUploadedKeys,
+      };
+      setCachedCorpus(cacheKey, corpus);
+    }
 
     const payload = assembleOverrideRecon(
-      prodResult.rows,
-      overrideResult.rows,
-      bsiResult.rows,
-      bsiUploadedKeys,
-      {
-        agents: agents || agent,
-        carriers: carriers || carrier,
-        search,
-        category,
-        override_status,
-        effective_dates,
-        sortCol,
-        sortDir,
-        limit,
-        offset,
-        export: exportFlag,
-      }
+      corpus.production,
+      corpus.overrides,
+      corpus.carrierBSI,
+      corpus.bsiUploadedKeys,
+      filters
     );
 
     return res.json({
       ...payload,
-      _note: 'override-recon: server-side buildOverrideMatches; slim page only; no raw_data',
+      needsPeriod: false,
+      _note: 'override-recon: period-scoped SQL; server-side buildOverrideMatches; slim page only; no raw_data',
     });
   } catch (err) {
     console.error('[OVERRIDE-RECON]', err);
@@ -1086,6 +1187,7 @@ router.patch('/:id/override', requireAuth, requireAdmin, async (req, res) => {
          WHERE id = $1`,
         [id]
       );
+      clearOverrideReconCorpusCache();
       return res.json({ success: true, id, manual_override_status: null, cleared: true });
     } else {
       // Set override
@@ -1098,6 +1200,7 @@ router.patch('/:id/override', requireAuth, requireAdmin, async (req, res) => {
          WHERE id = $3`,
         [status, by, id]
       );
+      clearOverrideReconCorpusCache();
       return res.json({ success: true, id, manual_override_status: status, set_by: by });
     }
   } catch (err) {

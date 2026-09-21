@@ -269,6 +269,9 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
   const [gapAuditLoading, setGapAuditLoading] = useState(false);
   const [gapAuditError, setGapAuditError] = useState(null);
   const [gapAuditFilter, setGapAuditFilter] = useState('returnee_clawback');
+  const [selectedPeriod, setSelectedPeriod] = useState('');
+  const [periods, setPeriods] = useState([]);
+  const [periodsLoading, setPeriodsLoading] = useState(true);
   const requestSeq = useRef(0);
 
   useEffect(() => {
@@ -342,8 +345,28 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
     URL.revokeObjectURL(url);
   }
 
+  useEffect(() => {
+    let cancelled = false;
+    setPeriodsLoading(true);
+    apiFetch('/agency-production/override-recon/periods')
+      .then((data) => {
+        if (cancelled) return;
+        const list = data.periods || [];
+        setPeriods(list);
+        setSelectedPeriod(data.defaultPeriod || list[0]?.period || '');
+      })
+      .catch((err) => {
+        if (!cancelled) setError(err.message || 'Failed to load payment periods');
+      })
+      .finally(() => {
+        if (!cancelled) setPeriodsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
   function buildReconQuery({ off = offset, forExport = false } = {}) {
     const params = new URLSearchParams();
+    params.set('period', selectedPeriod);
     params.set('category', tab);
     params.set('limit', String(forExport ? 20000 : PAGE_SIZE));
     params.set('offset', String(forExport ? 0 : off));
@@ -361,6 +384,14 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
   }
 
   async function loadData(off = offset) {
+    if (!selectedPeriod) {
+      setRows([]);
+      setTotal(0);
+      setCounts({ missing: 0, planchange: 0, plandenied: 0, cancelled: 0, paid: 0 });
+      setScanned({ production: 0, overrides: 0, carrierBSI: 0 });
+      setLoading(false);
+      return;
+    }
     const seq = ++requestSeq.current;
     setLoading(true);
     setError(null);
@@ -387,7 +418,7 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
   useEffect(() => {
     loadData(offset);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, filterAgents, filterCarriers, filterEffDates, filterOverrideStatus, searchTerm, sortCol, sortDir, offset]);
+  }, [selectedPeriod, tab, filterAgents, filterCarriers, filterEffDates, filterOverrideStatus, searchTerm, sortCol, sortDir, offset]);
 
   function resetAndSet(setter) {
     return (value) => {
@@ -430,7 +461,11 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
   const effectiveDates = metaDates;
 
   async function exportToCSV() {
-    let filename = `agency-overrides-${tab}-${new Date().toISOString().split('T')[0]}.csv`;
+    if (!selectedPeriod) {
+      alert('Select a payment period before exporting.');
+      return;
+    }
+    let filename = `agency-overrides-${selectedPeriod}-${tab}-${new Date().toISOString().split('T')[0]}.csv`;
     let dataToExport = [];
     try {
       const data = await apiFetch(buildReconQuery({ forExport: true }));
@@ -809,8 +844,8 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
       <div className="page-header">
         <div className="page-title">Agency Override Reconciliation</div>
         <div className="page-sub">
-          Missing holds unpaid rows — use Override Status tags (Not on BSI, Chase BSI, Pending, Held). Filter Status to narrow.
-          Matching runs on the server; this page loads one slim page at a time.
+          Pick a payment period first — the server only loads that month's production, overrides, and BSI.
+          Missing holds unpaid rows — use Override Status tags (Not on BSI, Chase BSI, Pending, Held).
         </div>
       </div>
 
@@ -818,6 +853,28 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
         <div className="card" style={{ marginBottom: 14 }}>
           <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap', justifyContent: 'space-between' }}>
             <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+              <div>
+                <div className="form-label">Payment period</div>
+                <select
+                  className="filter-select"
+                  value={selectedPeriod}
+                  onChange={(e) => {
+                    setSelectedPeriod(e.target.value);
+                    setOffset(0);
+                    setRows([]);
+                    setGapAudit(null);
+                  }}
+                  disabled={periodsLoading}
+                  style={{ minWidth: 160 }}
+                >
+                  <option value="">{periodsLoading ? 'Loading periods…' : 'Select period...'}</option>
+                  {periods.map((p) => (
+                    <option key={p.period} value={p.period}>
+                      {p.label || formatPeriodLabel(p.period)}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <div>
                 <div className="form-label">Search</div>
                 <input 
@@ -877,7 +934,7 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
               </div>
             </div>
             <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
-              <button className="btn btn-secondary" onClick={exportToCSV} disabled={loading}>
+              <button className="btn btn-secondary" onClick={exportToCSV} disabled={loading || !selectedPeriod}>
                 📥 Export CSV
               </button>
               {/* BSI Recon Export — cutoff date required, always blank */}
@@ -925,16 +982,22 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
               >
                 {gapAuditLoading ? 'Auditing…' : '🔎 Audit gaps'}
               </button>
-              <button className="btn btn-primary" onClick={() => loadData(offset)} disabled={loading}>
+              <button className="btn btn-primary" onClick={() => loadData(offset)} disabled={loading || !selectedPeriod}>
                 {loading ? 'Loading...' : '🔄 Refresh'}
               </button>
             </div>
           </div>
         </div>
 
-        {loading && (
+        {!selectedPeriod && !periodsLoading && (
+          <div className="card" style={{ marginBottom: 12, padding: 16, fontSize: 13, color: 'var(--text-muted)' }}>
+            Select a payment period to load Override Recon. The server will not scan all-time production, overrides, or BSI until a month is chosen.
+          </div>
+        )}
+
+        {loading && selectedPeriod && (
           <div className="card" style={{ marginBottom: 12, padding: 12, fontSize: 13, color: 'var(--text-muted)' }}>
-            Loading override reconciliation from the server…
+            Loading {formatPeriodLabel(selectedPeriod)} override reconciliation from the server…
           </div>
         )}
 
@@ -1089,10 +1152,12 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
             <div style={{ padding: 20 }}>
               {displayData.length === 0 ? (
                 <div style={{ textAlign: 'center', padding: 40, color: 'var(--text-muted)' }}>
-                  {loading
+                  {!selectedPeriod
+                    ? 'Select a payment period to load this month\'s recon.'
+                    : loading
                     ? 'Loading reconciliation…'
                     : scanned.production === 0
-                    ? 'No agency production data yet. Upload Hector\'s reports to get started!'
+                    ? 'No agency production in this period. Upload Hector\'s reports or pick another month.'
                     : 'No results match your filters.'}
                 </div>
               ) : (
