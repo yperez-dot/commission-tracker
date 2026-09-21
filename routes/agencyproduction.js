@@ -6,8 +6,10 @@ const { getPool } = require('../db/database');
 const { requireAuth, requireAdmin } = require('./auth');
 const { isAetnaActivePolicy } = require('../src/agencyOverrideReconMatch.cjs');
 const { auditOverrideGaps } = require('../src/overrideGapAudit');
+const { assembleOverrideRecon } = require('../src/overrideReconAssemble');
 const { agencyFilter } = require('./records');
 const { clientNameKey, clientNameKeySql } = require('../src/clientNameKey');
+const { normalizeCarrier } = require('../src/matchingNormalize.cjs');
 
 // Builds "col ILIKE %term%" (partial, order-sensitive) OR'd with a full-name,
 // order/format-independent match via the same normalized key used by
@@ -756,6 +758,174 @@ router.get('/override-gap-audit', requireAuth, async (req, res) => {
     });
   } catch (err) {
     console.error('Override gap audit error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// Slim rate-engine keys only — never ship full production raw_data to matching.
+const PROD_RAW_SLIM = `jsonb_strip_nulls(jsonb_build_object(
+  'Sales Event', ap.raw_data->>'Sales Event',
+  'Sales_Event', ap.raw_data->>'Sales_Event',
+  'Comp Type', ap.raw_data->>'Comp Type',
+  'Comp_Type', ap.raw_data->>'Comp_Type',
+  'First Year/Renewal', ap.raw_data->>'First Year/Renewal',
+  'First Year / Renewal', ap.raw_data->>'First Year / Renewal',
+  'First_Year_Renewal', ap.raw_data->>'First_Year_Renewal',
+  'Commission Action', ap.raw_data->>'Commission Action',
+  'Commission_Action', ap.raw_data->>'Commission_Action',
+  'Enrollment_Type', ap.raw_data->>'Enrollment_Type',
+  'Plan ID', ap.raw_data->>'Plan ID',
+  'Plan_ID', ap.raw_data->>'Plan_ID',
+  'PlanId', ap.raw_data->>'PlanId',
+  'Contract Plan ID', ap.raw_data->>'Contract Plan ID',
+  'Affinitypolicyid', ap.raw_data->>'Affinitypolicyid',
+  'Member State', ap.raw_data->>'Member State',
+  'STATE', ap.raw_data->>'STATE',
+  'State', ap.raw_data->>'State',
+  'App_State', ap.raw_data->>'App_State',
+  'Beneficiary_State', ap.raw_data->>'Beneficiary_State'
+))`;
+
+const HOLD_REASON_SQL = `CASE WHEN cr.raw_data IS NULL OR TRIM(cr.raw_data::text) = '' THEN NULL ELSE cr.raw_data::jsonb->>'Hold Reason' END`;
+const HOLD_STATE_SQL = `CASE WHEN cr.raw_data IS NULL OR TRIM(cr.raw_data::text) = '' THEN NULL ELSE cr.raw_data::jsonb->>'Member State' END`;
+const HOLD_COUNTY_SQL = `CASE WHEN cr.raw_data IS NULL OR TRIM(cr.raw_data::text) = '' THEN NULL ELSE cr.raw_data::jsonb->>'Member County' END`;
+
+/**
+ * GET /api/agency-production/override-recon
+ *
+ * Paginated Agency Override Recon using the same JS match semantics as the
+ * page (netting, lifecycle expansion, chase vs not-on-BSI). The v1
+ * GET /reconcile CTE is left untouched — it is a single-best-row, no-netting
+ * engine used by export-bsi-recon and does not match Katy's Paid/Not paid rules.
+ *
+ * Browser receives one slim page of match rows (no raw_data, no allMatches).
+ */
+router.get('/override-recon', requireAuth, async (req, res) => {
+  try {
+    const pool = getPool();
+    const {
+      batch,
+      carrier,
+      agent,
+      agents,
+      carriers,
+      search,
+      category,
+      override_status,
+      effective_dates,
+      sortCol,
+      sortDir,
+      limit,
+      offset,
+      export: exportFlag,
+    } = req.query;
+
+    const prodParams = [];
+    const prodConds = [];
+    if (batch) {
+      prodParams.push(batch);
+      prodConds.push(`ap.upload_batch = $${prodParams.length}`);
+    }
+    if (carrier) {
+      prodParams.push(`%${carrier}%`);
+      prodConds.push(`ap.carrier ILIKE $${prodParams.length}`);
+    }
+    if (agent) {
+      prodParams.push(`%${agent}%`);
+      prodConds.push(`ap.agent_name ILIKE $${prodParams.length}`);
+    }
+    const prodWhere = prodConds.length ? `WHERE ${prodConds.join(' AND ')}` : '';
+
+    const [prodResult, overrideResult, bsiResult, bsiUploads] = await Promise.all([
+      pool.query(
+        `SELECT
+           ap.id, ap.agent_name, ap.client_name, ap.carrier, ap.plan_name, ap.policy_number,
+           ap.effective_date, ap.status, ap.policy_type, ap.enrollment_type, ap.state, ap.county,
+           ap.upload_batch, ap.uploaded_at,
+           ap.manual_override_status, ap.manual_override_by, ap.manual_override_at,
+           apu.filename as upload_filename,
+           apu.uploaded_at as upload_date,
+           apu.uploaded_by as uploaded_by_user,
+           ${PROD_RAW_SLIM} as raw_data
+         FROM agency_production ap
+         LEFT JOIN LATERAL (
+           SELECT u.filename, u.uploaded_at, u.uploaded_by
+           FROM agency_production_uploads u
+           WHERE u.id = ap.upload_id
+              OR (ap.upload_id IS NULL
+                  AND u.upload_batch = ap.upload_batch
+                  AND u.carrier = ap.carrier)
+           ORDER BY u.uploaded_at DESC
+           LIMIT 1
+         ) apu ON true
+         ${prodWhere}`,
+        prodParams
+      ),
+      pool.query(
+        `SELECT cr.id, cr.client_full_name, cr.carrier, cr.commission, cr.classification,
+                cr.payment_period, cr.policy_number, cr.agent_name, cr.plan_type, cr.payee, cr.source,
+                u.original_name as upload_name, u.original_name as upload_original_name
+         FROM commission_records cr
+         JOIN uploads u ON cr.upload_id = u.id
+         WHERE (u.category IS NULL OR u.category = 'commission_statement')
+           AND (
+             cr.classification ILIKE '%override%'
+             OR cr.classification ILIKE '%chargeback%'
+           )`
+      ),
+      pool.query(
+        `SELECT cr.id, cr.client_full_name, cr.carrier, cr.commission, cr.classification,
+                cr.payment_period, cr.policy_number, cr.agent_name,
+                ${HOLD_REASON_SQL} AS hold_reason,
+                ${HOLD_STATE_SQL} AS member_state,
+                ${HOLD_COUNTY_SQL} AS member_county
+         FROM commission_records cr
+         JOIN uploads u ON cr.upload_id = u.id
+         WHERE u.category = 'bsi_statement'`
+      ),
+      pool.query(
+        `SELECT carrier, payment_period FROM uploads
+         WHERE category = 'bsi_statement'
+           AND carrier IS NOT NULL AND TRIM(carrier) <> ''`
+      ),
+    ]);
+
+    const bsiUploadedKeys = new Set();
+    (bsiUploads.rows || []).forEach((u) => {
+      const period = u.payment_period || '';
+      String(u.carrier || '')
+        .split(',')
+        .map((c) => c.trim())
+        .filter(Boolean)
+        .forEach((c) => bsiUploadedKeys.add(`${normalizeCarrier(c)}|${period}`));
+    });
+
+    const payload = assembleOverrideRecon(
+      prodResult.rows,
+      overrideResult.rows,
+      bsiResult.rows,
+      bsiUploadedKeys,
+      {
+        agents: agents || agent,
+        carriers: carriers || carrier,
+        search,
+        category,
+        override_status,
+        effective_dates,
+        sortCol,
+        sortDir,
+        limit,
+        offset,
+        export: exportFlag,
+      }
+    );
+
+    return res.json({
+      ...payload,
+      _note: 'override-recon: server-side buildOverrideMatches; slim page only; no raw_data',
+    });
+  } catch (err) {
+    console.error('[OVERRIDE-RECON]', err);
     return res.status(500).json({ error: err.message });
   }
 });

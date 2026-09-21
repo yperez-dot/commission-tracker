@@ -1,7 +1,7 @@
 'use strict';
 
 /** CJS bridge — keep in sync with agencyOverrideReconMatch.js */
-const { normName, normalizeCarrier, carriersMatch, namesLooseMatch } = require('./matchingNormalize.cjs');
+const { normName, normalizeCarrier, carriersMatch, namesLooseMatch, significantTokens } = require('./matchingNormalize.cjs');
 
 /** Token-sorted client key (same idea as clientNameKey). */
 function saleClientKey(name) {
@@ -95,18 +95,65 @@ function isOverrideStatementRow(row) {
 }
 
 /**
+ * Name indexes so findOverrideMatch is O(candidates) instead of O(overrides).
+ * Lookup is a superset: exact normName plus any shared significant token.
+ * Callers still apply the same namesLooseMatch + carriersMatch predicates.
+ */
+function buildNameIndex(rows, nameField) {
+  const field = nameField || 'client_full_name';
+  const byNormName = new Map();
+  const byToken = new Map();
+  for (const row of rows || []) {
+    const name = row?.[field];
+    const nn = normName(name).toLowerCase();
+    if (nn) {
+      const list = byNormName.get(nn);
+      if (list) list.push(row);
+      else byNormName.set(nn, [row]);
+    }
+    for (const tok of significantTokens(name)) {
+      const list = byToken.get(tok);
+      if (list) list.push(row);
+      else byToken.set(tok, [row]);
+    }
+  }
+  return {
+    byNormName,
+    byToken,
+    lookup(name) {
+      const seen = new Set();
+      const out = [];
+      const add = (row) => {
+        if (seen.has(row)) return;
+        seen.add(row);
+        out.push(row);
+      };
+      const nn = normName(name).toLowerCase();
+      (byNormName.get(nn) || []).forEach(add);
+      for (const tok of significantTokens(name)) {
+        (byToken.get(tok) || []).forEach(add);
+      }
+      return out;
+    },
+  };
+}
+
+/**
  * Match agency production → BSI→THEI override commission rows.
  * Nets ALL matching rows for client+carrier so +$80 override and −$80
  * chargeback → override_net 0 → Missing (not falsely Paid).
+ *
+ * Optional `index` from buildNameIndex(overrides) — same predicates, fewer scans.
  */
-function findOverrideMatch(production, overrides) {
+function findOverrideMatch(production, overrides, index) {
   const prodClient = production.client_name;
   const prodClientNorm = normName(prodClient);
   const prodCarrier = normalizeCarrier(production.carrier);
   if (!prodClientNorm || !prodCarrier) return null;
 
+  const pool = index ? index.lookup(prodClient) : (overrides || []);
   const matches = [];
-  for (const override of overrides || []) {
+  for (const override of pool) {
     const overrideClient = override.client_full_name;
     const overrideClientNorm = normName(overrideClient);
     const overrideCarrier = normalizeCarrier(override.carrier);
@@ -144,16 +191,64 @@ function isOverridePaid(overrideMatch) {
   return net > 0;
 }
 
-function isLicensingHoldRecord(record) {
-  if (!record || record.classification !== 'Held') return false;
+function holdReasonOf(record) {
+  if (!record) return '';
+  if (record.hold_reason != null && record.hold_reason !== '') {
+    return String(record.hold_reason);
+  }
   try {
     const rd =
       typeof record.raw_data === 'string' ? JSON.parse(record.raw_data) : record.raw_data || {};
-    const reason = String(rd['Hold Reason'] || '').toLowerCase();
-    return reason.includes('not licensed') || reason.includes('not appointed');
+    return String(rd['Hold Reason'] || '');
   } catch {
-    return false;
+    return '';
   }
+}
+
+function holdStateOf(record) {
+  if (!record) return '';
+  if (record.member_state != null && record.member_state !== '') {
+    return String(record.member_state);
+  }
+  try {
+    const rd =
+      typeof record.raw_data === 'string' ? JSON.parse(record.raw_data) : record.raw_data || {};
+    return String(rd['Member State'] || '');
+  } catch {
+    return '';
+  }
+}
+
+function holdCountyOf(record) {
+  if (!record) return '';
+  if (record.member_county != null && record.member_county !== '') {
+    return String(record.member_county);
+  }
+  try {
+    const rd =
+      typeof record.raw_data === 'string' ? JSON.parse(record.raw_data) : record.raw_data || {};
+    return String(rd['Member County'] || '');
+  } catch {
+    return '';
+  }
+}
+
+function isLicensingHoldRecord(record) {
+  if (!record || record.classification !== 'Held') return false;
+  const reason = holdReasonOf(record).toLowerCase();
+  return reason.includes('not licensed') || reason.includes('not appointed');
+}
+
+/** Held-reason pill for Override Recon. Prefers slim extracted fields over raw_data. */
+function getHoldDetail(m) {
+  const src = (m && m.carrierBSI && m.carrierBSI.classification === 'Held') ? m.carrierBSI
+            : (m && m.heldRecord) || null;
+  if (!src) return null;
+  const reason = holdReasonOf(src) || null;
+  const state = holdStateOf(src) || null;
+  const county = holdCountyOf(src) || null;
+  if (!reason && !state && !county) return null;
+  return { reason, state, county };
 }
 
 /**
@@ -247,11 +342,12 @@ function wrapSingleOverride(row) {
  * show the full story: Paid (+override), Cancelled (chargeback/left),
  * and Missing again when she returns with no open override.
  */
-function expandOverrideLifecycle(production, overrides) {
+function expandOverrideLifecycle(production, overrides, index) {
   const prodId = production?.id != null ? String(production.id) : 'unknown';
   // Never expand agent NB/renewal lines into history — override/chargeback only.
-  const overrideOnly = (overrides || []).filter(isOverrideStatementRow);
-  const bundled = findOverrideMatch(production, overrideOnly);
+  // When an index is supplied, the caller already filtered to override rows.
+  const overrideOnly = index ? (overrides || []) : (overrides || []).filter(isOverrideStatementRow);
+  const bundled = findOverrideMatch(production, overrideOnly, index);
 
   if (!bundled) {
     return [
@@ -308,6 +404,57 @@ function expandOverrideLifecycle(production, overrides) {
   return rows;
 }
 
+function _findCarrierBSIMatch(prod, carrierRecords, index) {
+  const prodPeriod = prod.payment_period || '';
+  if (prodPeriod) {
+    const pool = index ? index.lookup(prod.client_name) : carrierRecords;
+    const samePeriod = pool.filter((r) => r.payment_period === prodPeriod);
+    const periodMatch = findOverrideMatch(prod, samePeriod);
+    if (periodMatch) return periodMatch;
+  }
+  return findOverrideMatch(prod, carrierRecords, index);
+}
+
+function _findHeldRecord(prod, carrierRecords, index) {
+  const prodClientNorm = normName(prod.client_name);
+  const prodCarrier = normalizeCarrier(prod.carrier);
+  const pool = index
+    ? (index.byNormName.get(prodClientNorm.toLowerCase()) || [])
+    : (carrierRecords || []);
+  return pool.find((r) =>
+    r.classification === 'Held' &&
+    normName(r.client_full_name) === prodClientNorm &&
+    carriersMatch(r.carrier, prodCarrier)
+  ) || null;
+}
+
+function buildOverrideMatches(production, overrides, carrierBSIRecords, bsiUploadedKeys) {
+  const bsiKeysList = [...bsiUploadedKeys];
+  const rows = [];
+  const overrideRows = (overrides || []).filter(isOverrideStatementRow);
+  const overrideIndex = buildNameIndex(overrideRows, 'client_full_name');
+  const bsiIndex = buildNameIndex(carrierBSIRecords, 'client_full_name');
+  const uniqueProduction = dedupeProductionSales(production);
+  for (const prod of uniqueProduction) {
+    const carrierBSI = _findCarrierBSIMatch(prod, carrierBSIRecords, bsiIndex);
+    const heldRecord = _findHeldRecord(prod, carrierBSIRecords, bsiIndex);
+    const prodCarrier = normalizeCarrier(prod.carrier || '');
+    const prodPeriod = prod.payment_period || (prod.effective_date && String(prod.effective_date).substring(0, 7).replace('-', '')) || '';
+    const carrierUploaded = bsiUploadedKeys.has(`${prodCarrier}|${prodPeriod}`) ||
+      bsiKeysList.some((k) => k.startsWith(`${prodCarrier}|`));
+    const lifecycleRows = expandOverrideLifecycle(prod, overrideRows, overrideIndex);
+    for (const life of lifecycleRows) {
+      rows.push({
+        ...life,
+        carrierBSI: life.isHistory ? null : carrierBSI,
+        heldRecord: life.isHistory ? null : heldRecord,
+        carrierUploaded: life.isHistory ? false : carrierUploaded,
+      });
+    }
+  }
+  return rows;
+}
+
 /**
  * Aetna returnee-safe active check.
  * If Enroll_Status is Active / Future Active, keep even when Exit/Term still
@@ -337,4 +484,8 @@ module.exports = {
   isOverrideStatementRow,
   getThreeWayOverrideStatus,
   getOverrideReconCategory,
+  buildNameIndex,
+  buildOverrideMatches,
+  holdReasonOf,
+  getHoldDetail,
 };

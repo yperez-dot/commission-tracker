@@ -206,10 +206,10 @@ router.get('/', requireAuth, async (req, res) => {
     const pool = getPool();
     const { sortCol, sortDir = 'asc', limit = 100, offset = 0, light } = req.query;
     // light=1: skip the per-row termed-policy EXISTS check and the full-set SUM query,
-    // and only run the full-set COUNT on the first page. Callers that only need the raw
-    // rows (e.g. Agency Override Recon, which recomputes its own status client-side)
-    // opt in with light=1 — default behavior (is_termed + sums + count every page) is
-    // unchanged for callers like AllData / Reconciliation that rely on them.
+    // only run the full-set COUNT on the first page, and omit fat raw_data JSON
+    // (Held reason/state/county are extracted as slim columns instead).
+    // Default behavior (raw_data + is_termed + sums + count every page) is unchanged
+    // for callers like All Data's main table that still need the blob.
     const isLight = light === '1' || light === 'true';
     const { where, params, idx: startIdx, needsUploadJoin } = buildRecordListFilters(req);
     let idx = startIdx;
@@ -238,13 +238,19 @@ router.get('/', requireAuth, async (req, res) => {
     const orderDir = sortDir.toLowerCase() === 'desc' ? 'DESC' : 'ASC';
     const orderBy = `ORDER BY ${orderCol} ${orderDir}`;
 
+    const holdCols = `CASE WHEN cr.raw_data IS NULL OR TRIM(cr.raw_data::text) = '' THEN NULL ELSE cr.raw_data::jsonb->>'Hold Reason' END AS hold_reason,
+        CASE WHEN cr.raw_data IS NULL OR TRIM(cr.raw_data::text) = '' THEN NULL ELSE cr.raw_data::jsonb->>'Member State' END AS member_state,
+        CASE WHEN cr.raw_data IS NULL OR TRIM(cr.raw_data::text) = '' THEN NULL ELSE cr.raw_data::jsonb->>'Member County' END AS member_county`;
+    // light=1: omit fat raw_data JSON. Held-reason UI uses the slim extracted columns.
+    const rawCol = isLight ? 'NULL::text as raw_data' : 'cr.raw_data';
     const records = await pool.query(
       `SELECT cr.id, cr.agent_name, cr.carrier,
         COALESCE(cr.plan_type, '') as plan_type,
         cr.client_full_name, cr.effective_date, cr.premium, cr.commission,
         cr.classification, cr.payment_period, cr.policy_number, cr.created_at,
         cr.upload_id, cr.payee, cr.source, COALESCE(cr.mga, '') as mga,
-        cr.raw_data, u.original_name as upload_name, u.category as upload_category,
+        ${rawCol}, ${holdCols},
+        u.original_name as upload_name, u.category as upload_category,
         u.uploaded_at as upload_uploaded_at,
         cr.lob, cr.gross_commission, cr.thei_share, cr.bsi_share,
         cr.producer_payable, cr.sub_agent_override,
