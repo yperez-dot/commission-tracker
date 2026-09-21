@@ -650,7 +650,7 @@ function HouseOverridesPanel() {
   );
 }
 
-export default function Payroll({ user, initialTab = 'payroll', initialPayoutFilter }) {
+export default function Payroll({ user, initialTab = 'payroll', initialPayoutFilter, onNavigate }) {
   const tab =
     initialTab === 'overrides' || initialTab === 'loa'
       ? initialTab
@@ -964,7 +964,7 @@ export default function Payroll({ user, initialTab = 'payroll', initialPayoutFil
   const pageMeta = {
     payroll: {
       title: 'Agent Payouts',
-      sub: 'Pay producers (ACA + Lina). Upload Tailored/Jill and other ACA pay statements under Uploads → Agent Payout Uploads. Marco / Integrity peels stay under House Statements.',
+      sub: 'Pay producers (ACA + Lina). Upload Tailored/Jill and other ACA pay statements under Uploads → Commission Statements. Marco / Integrity peels stay under House Statements.',
     },
     overrides: {
       title: 'House Statements',
@@ -993,6 +993,28 @@ export default function Payroll({ user, initialTab = 'payroll', initialPayoutFil
                 Agent production only — ACA producer pay (100% pass-through) and{' '}
                 <strong>Lina Hernandez</strong> (NB / Renewal / Chargeback). Marco (Swan) and Integrity /
                 CAM are under <strong>House Statements</strong>.
+                {' '}Upload Tailored / Jill and other ACA pay statements under{' '}
+                {onNavigate ? (
+                  <button
+                    type="button"
+                    onClick={() => onNavigate('upload')}
+                    style={{
+                      background: 'none',
+                      border: 'none',
+                      padding: 0,
+                      color: 'var(--accent-dark)',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      textDecoration: 'underline',
+                      fontSize: 12,
+                    }}
+                  >
+                    Uploads → Commission Statements
+                  </button>
+                ) : (
+                  <strong>Uploads → Commission Statements</strong>
+                )}
+                .
               </div>
               {statusFilter !== 'history' && (
               <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>

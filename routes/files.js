@@ -4566,7 +4566,7 @@ router.get('/uploads', requireAuth, async (req, res) => {
     } else if (category === 'agent_payout') {
       query = `SELECT u.*, usr.name as uploaded_by_name FROM uploads u LEFT JOIN users usr ON u.uploaded_by = usr.id WHERE u.category = 'agent_payout' ORDER BY u.uploaded_at DESC`;
     } else if (req.user.role === 'agent') {
-      query = `SELECT u.*, usr.name as uploaded_by_name FROM uploads u LEFT JOIN users usr ON u.uploaded_by = usr.id WHERE u.uploaded_by = $1 AND (u.category IS NULL OR u.category = 'commission_statement') ORDER BY u.uploaded_at DESC`;
+      query = `SELECT u.*, usr.name as uploaded_by_name FROM uploads u LEFT JOIN users usr ON u.uploaded_by = usr.id WHERE u.uploaded_by = $1 AND (u.category IS NULL OR u.category IN ('commission_statement', 'agent_payout')) ORDER BY u.uploaded_at DESC`;
       params = [req.user.id];
     } else if (agency) {
       const isBSI = agency.toLowerCase().includes('broker society');
@@ -4574,10 +4574,10 @@ router.get('/uploads', requireAuth, async (req, res) => {
       const carrierClause = isBSI
         ? `carrier = ANY($1)`
         : `carrier != ALL($1)`;
-      query = `SELECT DISTINCT u.*, usr.name as uploaded_by_name FROM uploads u LEFT JOIN users usr ON u.uploaded_by = usr.id WHERE u.id IN (SELECT DISTINCT upload_id FROM commission_records WHERE ${carrierClause}) AND (u.category IS NULL OR u.category = 'commission_statement') ORDER BY u.uploaded_at DESC`;
+      query = `SELECT DISTINCT u.*, usr.name as uploaded_by_name FROM uploads u LEFT JOIN users usr ON u.uploaded_by = usr.id WHERE u.id IN (SELECT DISTINCT upload_id FROM commission_records WHERE ${carrierClause}) AND (u.category IS NULL OR u.category IN ('commission_statement', 'agent_payout')) ORDER BY u.uploaded_at DESC`;
       params = [bsiCarriers];
     } else {
-      query = `SELECT u.*, usr.name as uploaded_by_name FROM uploads u LEFT JOIN users usr ON u.uploaded_by = usr.id WHERE (u.category IS NULL OR u.category = 'commission_statement') ORDER BY u.uploaded_at DESC`;
+      query = `SELECT u.*, usr.name as uploaded_by_name FROM uploads u LEFT JOIN users usr ON u.uploaded_by = usr.id WHERE (u.category IS NULL OR u.category IN ('commission_statement', 'agent_payout')) ORDER BY u.uploaded_at DESC`;
     }
     const result = await pool.query(query, params);
     res.json(result.rows);

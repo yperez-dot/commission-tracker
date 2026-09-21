@@ -13,7 +13,6 @@ import MedicareProUpload from './pages/MedicareProUpload';
 import AgencyProductionUpload from './pages/AgencyProductionUpload';
 import AgencyProductionRecon from './pages/AgencyProductionRecon';
 import BSIStatementsUpload from './pages/BSIStatementsUpload';
-import AgentPayoutUploads from './pages/AgentPayoutUploads';
 import PassThroughChargebacks from './pages/PassThroughChargebacks';
 import './App.css';
 
@@ -21,6 +20,7 @@ const REMOVED_PAGES = new Set(['reports', 'agents', 'fix-aetna', 'fixaetna', 'pa
 
 const PAGE_REDIRECTS = {
   'payroll-history': { page: 'payroll-payouts', params: { payoutFilter: 'history' } },
+  'agent-payout-uploads': { page: 'upload' },
 };
 
 function resolvePage(p, params = {}) {
@@ -34,7 +34,6 @@ const THEI_ONLY_PAGES = new Set([
   'medicarepro-upload',
   'agency-production-upload',
   'agency-production-recon',
-  'agent-payout-uploads',
   'direct-recon',
   'renewals',
   'pass-through-chargebacks',
@@ -143,7 +142,6 @@ export default function App() {
   const uploadChildren = [
     { id: 'upload', label: 'Commission Statements' },
     ...(!isBSI ? [
-      { id: 'agent-payout-uploads', label: 'Agent Payout Uploads' },
       { id: 'medicarepro-upload', label: 'MedicarePro Sales' },
       { id: 'agency-production-upload', label: 'Agency Production' },
     ] : []),
@@ -195,7 +193,6 @@ export default function App() {
     'medicarepro-upload': <MedicareProUpload key={agencyView} user={effectiveUser} onNavigate={navigate} />,
     'agency-production-upload': <AgencyProductionUpload key={agencyView} user={effectiveUser} onNavigate={navigate} />,
     'bsi-statements-upload': <BSIStatementsUpload key={agencyView} user={effectiveUser} onNavigate={navigate} />,
-    'agent-payout-uploads': <AgentPayoutUploads key={agencyView} user={effectiveUser} onNavigate={navigate} />,
     'agency-production-recon': <AgencyProductionRecon key={`${agencyView}-${pageParams.search || ''}`} user={effectiveUser} initialSearch={pageParams.search} />,
     alldata: <AllData key={`${agencyView}-${JSON.stringify(pageParams)}`} user={effectiveUser} initialFilters={pageParams} onNavigate={navigate} />,
     bob: <BookOfBusiness key={agencyView} user={effectiveUser} />,
@@ -203,8 +200,8 @@ export default function App() {
     reconciliation: <Reconciliation key={agencyView} user={effectiveUser} />,
     'direct-recon': <Reconciliation key={agencyView} user={effectiveUser} />,
     'pass-through-chargebacks': <PassThroughChargebacks key={agencyView} user={effectiveUser} />,
-    payroll: <Payroll key={agencyView} user={effectiveUser} initialTab="payroll" initialPayoutFilter={pageParams.payoutFilter} />,
-    'payroll-payouts': <Payroll key={`${agencyView}-payouts`} user={effectiveUser} initialTab="payroll" initialPayoutFilter={pageParams.payoutFilter} />,
+    payroll: <Payroll key={agencyView} user={effectiveUser} initialTab="payroll" initialPayoutFilter={pageParams.payoutFilter} onNavigate={navigate} />,
+    'payroll-payouts': <Payroll key={`${agencyView}-payouts`} user={effectiveUser} initialTab="payroll" initialPayoutFilter={pageParams.payoutFilter} onNavigate={navigate} />,
     'payroll-overrides': <Payroll key={`${agencyView}-overrides`} user={effectiveUser} initialTab="overrides" />,
     'payroll-loa': <Payroll key={`${agencyView}-loa`} user={effectiveUser} initialTab="loa" />,
     users: <AdminUsers key={agencyView} user={effectiveUser} />
