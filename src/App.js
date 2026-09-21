@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { apiFetch, clearToken, setToken } from './api';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
@@ -16,26 +17,24 @@ import BSIStatementsUpload from './pages/BSIStatementsUpload';
 import AgentPayoutUploads from './pages/AgentPayoutUploads';
 import PassThroughChargebacks from './pages/PassThroughChargebacks';
 import AdpExport from './pages/AdpExport';
+import {
+  KNOWN_PAGES,
+  REMOVED_PAGES,
+  pageFromPath,
+  pageParamsFromLocation,
+  pathForPage,
+  resolveCanonicalPage,
+  sameLocationTarget,
+} from './appNavigation';
 import './App.css';
 
-const REMOVED_PAGES = new Set(['reports', 'agents', 'fix-aetna', 'fixaetna']);
-
-const THEI_ONLY_PAGES = new Set([
-  'medicarepro-upload',
-  'agency-production-upload',
-  'agency-production-recon',
-  'agent-payout-uploads',
-  'direct-recon',
-  'renewals',
-  'pass-through-chargebacks',
-  'reconciliation',
-]);
-
 export default function App() {
+  const location = useLocation();
+  const routerNavigate = useNavigate();
+  const page = pageFromPath(location.pathname) || 'dashboard';
+  const pageParams = pageParamsFromLocation(location);
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [page, setPage] = useState('dashboard');
-  const [pageParams, setPageParams] = useState({});
   const [expandedMenus, setExpandedMenus] = useState({ uploads: false, reconciliation: false, payroll: false });
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     localStorage.getItem('olicomm_sidebar_collapsed') === 'true'
@@ -54,7 +53,7 @@ export default function App() {
     setAgencyView(val);
     localStorage.setItem('olicomm_agency_view', val);
     window.__olicomm_agency_override = val;
-    setPageParams({});
+    routerNavigate({ pathname: location.pathname, search: location.search }, { replace: true, state: {} });
   }
 
   React.useEffect(() => {
@@ -66,12 +65,6 @@ export default function App() {
       const data = await apiFetch('/auth/me');
       if (data?.user) {
         setUser(data.user);
-        const saved = localStorage.getItem('he_page');
-        if (saved && !REMOVED_PAGES.has(saved)) setPage(saved);
-        else if (saved && REMOVED_PAGES.has(saved)) {
-          localStorage.setItem('he_page', 'dashboard');
-          setPage('dashboard');
-        }
       }
     } catch {
       clearToken();
@@ -84,35 +77,45 @@ export default function App() {
 
   const isBSI = agencyView.toLowerCase().includes('broker society');
 
-  useEffect(() => {
-    if (!user) return;
-    if (isBSI && THEI_ONLY_PAGES.has(page)) {
-      setPage('dashboard');
-      setPageParams({});
-      localStorage.setItem('he_page', 'dashboard');
+  const navigate = useCallback((p, params = {}, opts = {}) => {
+    const next = REMOVED_PAGES.has(p) || !KNOWN_PAGES.has(p) ? 'dashboard' : p;
+    const replace = !!opts.replace;
+    if (!replace && sameLocationTarget(location.pathname, location.search, location.state, next, params)) {
+      return;
     }
-  }, [isBSI, page, user]);
+    localStorage.setItem('he_page', next);
+    routerNavigate(pathForPage(next, params), { replace, state: params });
+  }, [location.pathname, location.search, location.state, routerNavigate]);
+
+  useEffect(() => {
+    if (loading || !user) return;
+    const { page: next, replace } = resolveCanonicalPage({
+      pathname: location.pathname,
+      savedPage: localStorage.getItem('he_page'),
+      isBsi: isBSI,
+    });
+    if (!replace) {
+      localStorage.setItem('he_page', next);
+      return;
+    }
+    localStorage.setItem('he_page', next);
+    routerNavigate(pathForPage(next), { replace: true, state: {} });
+  }, [isBSI, loading, location.pathname, routerNavigate, user]);
 
   function handleLogin(token, userData) {
     setToken(token);
     localStorage.setItem('he_user', JSON.stringify(userData));
     setUser(userData);
-    setPage('dashboard');
+    if (!pageFromPath(window.location.pathname)) {
+      localStorage.setItem('he_page', 'dashboard');
+    }
   }
 
   function handleLogout() {
     clearToken();
     localStorage.removeItem('he_user');
     setUser(null);
-    setPage('dashboard');
-    setPageParams({});
-  }
-
-  function navigate(p, params = {}) {
-    const next = REMOVED_PAGES.has(p) ? 'dashboard' : p;
-    setPage(next);
-    setPageParams(params);
-    localStorage.setItem('he_page', next);
+    routerNavigate('/dashboard', { replace: true, state: {} });
   }
 
   if (loading) return (

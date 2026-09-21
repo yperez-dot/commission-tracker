@@ -4,3 +4,9 @@
 
 [build.environment]
   NODE_VERSION = "20"
+
+# SPA fallback so /payroll-payouts (and other in-app routes) serve index.html
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

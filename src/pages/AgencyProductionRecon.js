@@ -5,6 +5,7 @@ import { formatDate as formatDateUtil } from '../utils/dateFormat';
 import { normalizeCarrier } from '../matchingNormalize';
 import { getThreeWayOverrideStatus, getHoldDetail } from '../agencyOverrideReconMatch';
 import { expectedAgencyOverride, expectedOverrideLabel } from '../utils/agencyOverrideExpected';
+import { useScreenTab } from '../useScreenTab';
 
 const PAGE_SIZE = 100;
 const RENDER_CAP = 200;
@@ -246,7 +247,7 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
   const [total, setTotal] = useState(0);
   const [offset, setOffset] = useState(0);
   const [scanned, setScanned] = useState({ production: 0, overrides: 0, carrierBSI: 0 });
-  const [tab, setTab] = useState('missing'); // Missing holds Not on BSI / Chase / pending (status tags)
+  const [tab, setTab] = useScreenTab(['missing', 'planchange', 'plandenied', 'cancelled', 'paid', 'all'], 'missing');
   const [filterCarriers, setFilterCarriers] = useState([]);
   const [filterAgents, setFilterAgents] = useState([]);
   const [filterEffDates, setFilterEffDates] = useState([]);

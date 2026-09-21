@@ -6,6 +6,7 @@ import { formatDate } from '../utils/dateFormat';
 import { countSplitDepositClients, groupClientDeposits } from '../utils/salesReconPayment';
 import { fetchAllPages } from '../fetchAllPages';
 import TruncationBanner from '../components/TruncationBanner';
+import { useScreenTab } from '../useScreenTab';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -665,7 +666,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
   const [paidDates, setPaidDates] = useState({});
   const [history, setHistory] = useState([]);
   const [historySearch, setHistorySearch] = useState('');
-  const [statusFilter, setStatusFilter] = useState('unpaid'); // unpaid | paid | all
+  const [statusFilter, setStatusFilter] = useScreenTab(['unpaid', 'paid', 'all'], 'unpaid');
   const [search, setSearch] = useState('');
   const [linaBusy, setLinaBusy] = useState(false);
   const [linaError, setLinaError] = useState('');
