@@ -7,6 +7,7 @@ import { commissionUploadExportPath, exportUploadFile } from '../utils/exportUpl
 import { uploadCategoryLabel } from '../utils/uploadDestination';
 import { classifyClientFileStream } from '../clientFileStream';
 import { normalizeCarrier } from '../matchingNormalize';
+import { useScreenTab } from '../useScreenTab';
 import {
   isOverrideStatementRow,
   buildOverrideMatches,
@@ -194,7 +195,7 @@ export default function AllData({ user, initialFilters = {}, onNavigate }) {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [hideTermed, setHideTermed] = useState(false);
-  const [listMode, setListMode] = useState('clients'); // clients | payments
+  const [listMode, setListMode] = useScreenTab(['clients', 'payments'], 'clients');
   const [clients, setClients] = useState([]);
   const PAGE_SIZE = 100;
   const [policyModal, setPolicyModal] = useState(null);

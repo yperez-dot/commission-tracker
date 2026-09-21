@@ -11,6 +11,7 @@ import { THEI_DIRECT_AGENTS, isTheiDirectAgent, directAgentsLabel } from '../the
 import { normName, normalizeCarrier, carriersMatch } from '../matchingNormalize';
 import { fetchAllPages, truncationMessage } from '../fetchAllPages';
 import TruncationBanner from '../components/TruncationBanner';
+import { useScreenTab } from '../useScreenTab';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -359,7 +360,7 @@ export default function Reconciliation({ user }) {
   const [commissions, setCommissions] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
-  const [tab, setTab] = useState('unpaid');
+  const [tab, setTab] = useScreenTab(['unpaid', 'partial', 'paid'], 'unpaid');
   const [filterAgent, setFilterAgent] = useState('all');
   const [filterCarrier, setFilterCarrier] = useState('all');
   const [filterPeriod, setFilterPeriod] = useState('all');

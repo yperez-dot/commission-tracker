@@ -5,7 +5,7 @@
   "scripts": {
     "start": "node server.js",
     "build": "react-scripts build",
-    "test": "react-scripts test --watchAll=false --testPathPattern='commissionEngine|overrideStatements|theRemittance|bsiPayee|linaCompensation|bsiBookAttribution|overrideExcel|missingRenewalsLogic|uploadDestination|theiPrincipalAgents|writerPassThroughAgents|uploadSafe|matchingNormalize|fetchAllPages|renewalsAutoResolve|uploadBatchDedupe|adpExport|lobCardMetrics|nhpOverrideSplit|nhpStatementParse|agentViewCommissionReport|salesReconPayment|medSuppCommissionSchedule|nhpUploadName|nhpPeriod|tailoredAcaPay|tailoredJillNhpCsv|uploadDataExport|theCarrierStatementClassify|clientFileKey|clientNameKey|agencyOverrideReconMatch|overrideReconAssemble|overrideGapAudit|agencyOverrideExpected|bobClientIdentifiers|dateFormat|statementDisplayName|serviceAuth'"
+    "test": "react-scripts test --watchAll=false --testPathPattern='commissionEngine|overrideStatements|theRemittance|bsiPayee|linaCompensation|bsiBookAttribution|overrideExcel|missingRenewalsLogic|uploadDestination|theiPrincipalAgents|writerPassThroughAgents|uploadSafe|matchingNormalize|fetchAllPages|renewalsAutoResolve|uploadBatchDedupe|adpExport|lobCardMetrics|nhpOverrideSplit|nhpStatementParse|agentViewCommissionReport|salesReconPayment|medSuppCommissionSchedule|nhpUploadName|nhpPeriod|tailoredAcaPay|tailoredJillNhpCsv|uploadDataExport|theCarrierStatementClassify|clientFileKey|clientNameKey|agencyOverrideReconMatch|overrideReconAssemble|overrideGapAudit|agencyOverrideExpected|bobClientIdentifiers|dateFormat|statementDisplayName|serviceAuth|appNavigation|useScreenTab|appHistory'"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.20.1",
@@ -22,6 +22,7 @@
     "pg": "^8.11.3",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
+    "react-router-dom": "^6.30.6",
     "react-scripts": "5.0.1",
     "xlsx": "^0.18.5"
   },

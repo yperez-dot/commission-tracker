@@ -4,6 +4,7 @@ import { fetchAllPages, truncationMessage } from '../fetchAllPages';
 import TruncationBanner from '../components/TruncationBanner';
 import { formatCarrier } from '../utils/formatCarrier';
 import { formatDate, formatDateTime } from '../utils/dateFormat';
+import { useScreenTab } from '../useScreenTab';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -89,7 +90,7 @@ export default function BookOfBusiness({ user }) {
   const [clients, setClients] = useState([]);
   const [clientsTruncationWarning, setClientsTruncationWarning] = useState(null);
   const [periods, setPeriods] = useState([]);
-  const [tab, setTab] = useState('all');
+  const [tab, setTab] = useScreenTab(['all', 'termed', 'planchanges', 'carriers', 'setup'], 'all');
   const [filterCarrier, setFilterCarrier] = useState([]);
   const [filterAgent, setFilterAgent] = useState([]);
   const [filterLOB, setFilterLOB] = useState([]);
@@ -120,7 +121,12 @@ export default function BookOfBusiness({ user }) {
 
   useEffect(() => {
     if (tab === 'setup' && !isAdmin) setTab('all');
-  }, [tab, isAdmin]);
+  }, [tab, isAdmin, setTab]);
+
+  useEffect(() => {
+    if (tab === 'all') setFilterStatus('active');
+    if (tab === 'termed') setFilterStatus('termed');
+  }, [tab]);
 
   const loadPlanCandidates = useCallback(async () => {
     setPlanLoading(true);
