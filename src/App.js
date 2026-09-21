@@ -19,6 +19,17 @@ import './App.css';
 
 const REMOVED_PAGES = new Set(['reports', 'agents', 'fix-aetna', 'fixaetna', 'payroll-adp']);
 
+const PAGE_REDIRECTS = {
+  'payroll-history': { page: 'payroll-payouts', params: { payoutFilter: 'history' } },
+};
+
+function resolvePage(p, params = {}) {
+  if (REMOVED_PAGES.has(p)) return { page: 'dashboard', params: {} };
+  const redirect = PAGE_REDIRECTS[p];
+  if (redirect) return { page: redirect.page, params: { ...redirect.params, ...params } };
+  return { page: p, params };
+}
+
 const THEI_ONLY_PAGES = new Set([
   'medicarepro-upload',
   'agency-production-upload',
@@ -66,10 +77,11 @@ export default function App() {
       if (data?.user) {
         setUser(data.user);
         const saved = localStorage.getItem('he_page');
-        if (saved && !REMOVED_PAGES.has(saved)) setPage(saved);
-        else if (saved && REMOVED_PAGES.has(saved)) {
-          localStorage.setItem('he_page', 'dashboard');
-          setPage('dashboard');
+        if (saved) {
+          const resolved = resolvePage(saved);
+          setPage(resolved.page);
+          setPageParams(resolved.params);
+          if (resolved.page !== saved) localStorage.setItem('he_page', resolved.page);
         }
       }
     } catch {
@@ -108,10 +120,10 @@ export default function App() {
   }
 
   function navigate(p, params = {}) {
-    const next = REMOVED_PAGES.has(p) ? 'dashboard' : p;
-    setPage(next);
-    setPageParams(params);
-    localStorage.setItem('he_page', next);
+    const resolved = resolvePage(p, params);
+    setPage(resolved.page);
+    setPageParams(resolved.params);
+    localStorage.setItem('he_page', resolved.page);
   }
 
   if (loading) return (
@@ -164,7 +176,6 @@ export default function App() {
         { id: 'payroll-payouts', label: 'Agent Payouts' },
         { id: 'payroll-overrides', label: 'House Statements' },
         { id: 'payroll-loa', label: 'LOA' },
-        { id: 'payroll-history', label: 'Payment History' },
       ]
     },
     ...(user.role === 'admin' ? [
@@ -192,11 +203,10 @@ export default function App() {
     reconciliation: <Reconciliation key={agencyView} user={effectiveUser} />,
     'direct-recon': <Reconciliation key={agencyView} user={effectiveUser} />,
     'pass-through-chargebacks': <PassThroughChargebacks key={agencyView} user={effectiveUser} />,
-    payroll: <Payroll key={agencyView} user={effectiveUser} initialTab="payroll" onNavigate={navigate} />,
-    'payroll-payouts': <Payroll key={`${agencyView}-payouts`} user={effectiveUser} initialTab="payroll" onNavigate={navigate} />,
-    'payroll-overrides': <Payroll key={`${agencyView}-overrides`} user={effectiveUser} initialTab="overrides" onNavigate={navigate} />,
-    'payroll-loa': <Payroll key={`${agencyView}-loa`} user={effectiveUser} initialTab="loa" onNavigate={navigate} />,
-    'payroll-history': <Payroll key={`${agencyView}-history`} user={effectiveUser} initialTab="history" onNavigate={navigate} />,
+    payroll: <Payroll key={agencyView} user={effectiveUser} initialTab="payroll" initialPayoutFilter={pageParams.payoutFilter} />,
+    'payroll-payouts': <Payroll key={`${agencyView}-payouts`} user={effectiveUser} initialTab="payroll" initialPayoutFilter={pageParams.payoutFilter} />,
+    'payroll-overrides': <Payroll key={`${agencyView}-overrides`} user={effectiveUser} initialTab="overrides" />,
+    'payroll-loa': <Payroll key={`${agencyView}-loa`} user={effectiveUser} initialTab="loa" />,
     users: <AdminUsers key={agencyView} user={effectiveUser} />
   };
 
