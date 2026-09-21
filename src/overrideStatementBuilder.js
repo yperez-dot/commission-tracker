@@ -29,6 +29,7 @@ const {
 } = require('./payeeSchedules');
 const { formatEffectiveDate } = require('./effectiveDateFormat');
 const { formatNhpCyclePeriodLabel } = require('./nhpPeriod');
+const { resolveBsiBookShare } = require('./overrideSplitMath');
 
 function num(v) {
   const n = parseFloat(v);
@@ -99,7 +100,12 @@ function classifyTheiShareLine(row) {
   const clsOverride = isAgencyOverride(row.classification);
   const albaPeeled = isAlbaPeeledOverrideShare(row);
   if (!clsOverride && !albaPeeled) return null;
-  const amount = num(row.thei_share);
+  let amount = num(row.thei_share);
+  // BSI remittance uploads often store the full pot on commission and leave
+  // thei_share null/0 — still list the line, but pay THEI its schedule share.
+  if (amount === 0 && clsOverride && !albaPeeled && isBsiRemitSource(row.source, row)) {
+    amount = resolveBsiBookShare(row, 'thei_share');
+  }
   if (amount === 0 && num(row.commission) === 0) return null;
   if (albaPeeled && amount === 0) return null;
   const pot = overridePot(row);
@@ -139,7 +145,10 @@ function classifyOverrideLine(row, statementType) {
       // ACA / Oscar are NHP-book only — never BSI Overrides.
       if (isAcaNhpHouseRow(row)) return null;
       if (!clsOverride && !albaPeeled) return null;
-      const amount = num(row.bsi_share);
+      let amount = num(row.bsi_share);
+      if (amount === 0 && clsOverride && !albaPeeled && isBsiRemitSource(row.source, row)) {
+        amount = resolveBsiBookShare(row, 'bsi_share');
+      }
       if (amount === 0 && num(row.commission) === 0) return null;
       if (albaPeeled && amount === 0) return null;
       const pot = overridePot(row);

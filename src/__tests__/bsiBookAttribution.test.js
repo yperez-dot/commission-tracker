@@ -76,8 +76,46 @@ describe('bsiBookAttribution', () => {
     applyBsiBookAgentProduction(records);
     expect(records[0].agent).toBe('Broker Society Insurance');
     expect(records[0].producerPayable).toBe(0);
+    expect(records[0].theiShare).toBe(37.5);
+    expect(records[0].bsiShare).toBe(37.5);
+    expect(records[0].source).toBe('BSI');
     expect(records[1].agent).toBe('Broker Society Insurance');
     expect(records[1].producerPayable).toBe(0);
+    expect(records[1].theiShare).toBeUndefined();
+  });
+
+  it('splits Integrity Agency Override 50/25/25 (not 50/50)', () => {
+    const records = [
+      {
+        agent: 'Christian Munoz',
+        classification: 'Agency Override',
+        commission: 80,
+        carrier: 'Humana',
+        period: '202608',
+      },
+    ];
+    applyBsiBookAgentProduction(records);
+    expect(records[0].producerPayable).toBe(40);
+    expect(records[0].theiShare).toBe(20);
+    expect(records[0].bsiShare).toBe(20);
+  });
+
+  it('does not overwrite Agency Override shares that were already written', () => {
+    const records = [
+      {
+        agent: 'Christian Munoz',
+        classification: 'Agency Override',
+        commission: 80,
+        theiShare: 20,
+        bsiShare: 20,
+        producerPayable: 40,
+        source: 'BSI',
+      },
+    ];
+    applyBsiBookAgentProduction(records);
+    expect(records[0].theiShare).toBe(20);
+    expect(records[0].bsiShare).toBe(20);
+    expect(records[0].producerPayable).toBe(40);
   });
 
   it('peels Alba-named Aetna renewals with state rate', () => {

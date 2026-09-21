@@ -125,6 +125,62 @@ function isBsiBookPayee(payee, filename) {
   );
 }
 
+/**
+ * True when an Agency Override row has dollars on `commission` but no THEI/BSI shares.
+ * Carrier→BSI Humana/Devoted uploads wrote commission only (House Statements then shows $0).
+ */
+function rowNeedsBsiOverrideShareFill(row = {}) {
+  const cls = String(row.classification || '').toLowerCase();
+  if (!cls.includes('override')) return false;
+  const thei = num(row.thei_share != null ? row.thei_share : row.theiShare);
+  const bsi = num(row.bsi_share != null ? row.bsi_share : row.bsiShare);
+  const comm = num(row.commission);
+  return thei === 0 && bsi === 0 && comm !== 0;
+}
+
+/**
+ * Stored THEI/BSI share, or the BSI-book split of `commission` when shares were never written.
+ * Does not invent a share when the other side is already populated.
+ */
+function resolveBsiBookShare(row, field) {
+  const storedThei = num(row.thei_share != null ? row.thei_share : row.theiShare);
+  const storedBsi = num(row.bsi_share != null ? row.bsi_share : row.bsiShare);
+  const stored = field === 'bsi_share' ? storedBsi : storedThei;
+  if (stored !== 0) return stored;
+  if (storedThei !== 0 || storedBsi !== 0) return stored;
+  if (!rowNeedsBsiOverrideShareFill(row)) return stored;
+  const split = splitFullOverridePot(num(row.commission), {
+    agentName: row.agent_name || row.agent,
+    paymentPeriod: row.payment_period || row.period,
+    alreadyDeducted:
+      num(row.sub_agent_override != null ? row.sub_agent_override : row.subAgentOverride) !== 0,
+  });
+  return field === 'bsi_share' ? split.bsiShare : split.theiShare;
+}
+
+/**
+ * Compute persistable THEI/BSI share updates for BSI Agency Override rows.
+ * `deductedPolicies` is a Set of policy numbers that already took Marco's $10.
+ */
+function computeBsiOverrideShareUpdates(rows, deductedPolicies) {
+  const deducted = deductedPolicies instanceof Set ? deductedPolicies : new Set(deductedPolicies || []);
+  const sorted = [...(rows || [])].sort((a, b) => {
+    const p = String(a.payment_period || a.period || '').localeCompare(String(b.payment_period || b.period || ''));
+    if (p !== 0) return p;
+    return (Number(a.id) || 0) - (Number(b.id) || 0);
+  });
+  return sorted.map((row) => {
+    const policy = row.policy_number || row.policyNumber;
+    const split = splitFullOverridePot(num(row.commission), {
+      agentName: row.agent_name || row.agent,
+      paymentPeriod: row.payment_period || row.period,
+      alreadyDeducted: deducted.has(policy),
+    });
+    if (split.subAgentOverride) deducted.add(policy);
+    return { id: row.id, policyNumber: policy, ...split };
+  });
+}
+
 module.exports = {
   num,
   round2,
@@ -132,4 +188,7 @@ module.exports = {
   splitTheRemittanceHalf,
   normalizeFilename,
   isBsiBookPayee,
+  rowNeedsBsiOverrideShareFill,
+  resolveBsiBookShare,
+  computeBsiOverrideShareUpdates,
 };

@@ -95,6 +95,67 @@ describe('overrideStatementBuilder', () => {
     expect(bundle.statements[0].lines[0].override_pot).toBe(300); // thei+bsi for first row
   });
 
+  it('THEI BSI remittance falls back to BSI-book split when thei_share is 0 but commission has dollars', () => {
+    const devoted = {
+      id: 801,
+      agent_name: 'Christian Munoz',
+      client_full_name: 'Devoted Client',
+      policy_number: 'DEV1',
+      carrier: 'Devoted Health',
+      payment_period: '202608',
+      classification: 'Agency Override',
+      commission: 80,
+      thei_share: 0,
+      bsi_share: 0,
+      producer_payable: 0,
+      sub_agent_override: 0,
+      source: 'BSI',
+    };
+    const humana = {
+      ...devoted,
+      id: 802,
+      agent_name: 'Yahoska Perez',
+      client_full_name: 'Humana Client',
+      policy_number: 'HUM1',
+      carrier: 'Humana',
+      commission: 81.25,
+    };
+    const zeroBoth = {
+      ...devoted,
+      id: 803,
+      commission: 0,
+      thei_share: 0,
+    };
+    expect(classifyOverrideLine(devoted, STATEMENT_TYPES.THEI_BSI)?.amount).toBe(20);
+    expect(classifyOverrideLine(humana, STATEMENT_TYPES.THEI_BSI)?.amount).toBe(40.63);
+    expect(classifyOverrideLine(zeroBoth, STATEMENT_TYPES.THEI_BSI)).toBeNull();
+    const bundle = buildOverrideStatements([devoted, humana, zeroBoth], STATEMENT_TYPES.THEI_BSI, {
+      period: '202608',
+    });
+    expect(bundle.statements[0].lineCount).toBe(2);
+    expect(bundle.grandTotal).toBe(60.63);
+    expect(bundle.statements[0].lines.every((l) => l.amount !== 0)).toBe(true);
+    expect(classifyOverrideLine(humana, STATEMENT_TYPES.BSI_OVERRIDE)?.amount).toBe(40.63);
+  });
+
+  it('THEI BSI remittance does not double-split rows that already have thei_share', () => {
+    const row = {
+      id: 804,
+      agent_name: 'Yahoska Perez',
+      client_full_name: 'Already Split',
+      policy_number: 'HUM2',
+      carrier: 'Humana',
+      payment_period: '202608',
+      classification: 'Agency Override',
+      commission: 81.25,
+      thei_share: 40.63,
+      bsi_share: 40.62,
+      producer_payable: 0,
+      source: 'BSI',
+    };
+    expect(classifyOverrideLine(row, STATEMENT_TYPES.THEI_BSI)?.amount).toBe(40.63);
+  });
+
   it('THEI NHP statement includes only NHP source rows', () => {
     const sourced = [
       { ...rows[0], source: 'NHP', thei_share: 80, bsi_share: 80 },
@@ -366,6 +427,35 @@ describe('overrideSplitMath', () => {
     expect(s.producerPayable).toBe(100);
     expect(s.theiShare).toBe(50);
     expect(s.bsiShare).toBe(50);
+  });
+
+  it('fills missing BSI override shares from commission (Integrity 25%, standard 50%)', () => {
+    const {
+      rowNeedsBsiOverrideShareFill,
+      resolveBsiBookShare,
+      computeBsiOverrideShareUpdates,
+    } = require('../overrideSplitMath');
+    const missing = {
+      classification: 'Agency Override',
+      commission: 80,
+      thei_share: 0,
+      bsi_share: 0,
+      agent_name: 'Christian Munoz',
+      payment_period: '202608',
+    };
+    expect(rowNeedsBsiOverrideShareFill(missing)).toBe(true);
+    expect(resolveBsiBookShare(missing, 'thei_share')).toBe(20);
+    expect(resolveBsiBookShare({ ...missing, agent_name: 'Yahoska Perez' }, 'thei_share')).toBe(40);
+    expect(rowNeedsBsiOverrideShareFill({ ...missing, thei_share: 20, bsi_share: 20 })).toBe(false);
+    const updates = computeBsiOverrideShareUpdates(
+      [
+        { id: 1, ...missing },
+        { id: 2, ...missing, agent_name: 'Yahoska Perez', commission: 81.25 },
+      ],
+      new Set()
+    );
+    expect(updates[0].theiShare).toBe(20);
+    expect(updates[1].theiShare).toBe(40.63);
   });
 
   it('THE remittance half-model mirrors THEI half to BSI', () => {
