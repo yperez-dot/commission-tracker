@@ -817,14 +817,16 @@ function emptyOverrideReconPayload(extra = {}) {
 }
 
 async function listOverrideReconPeriods(pool) {
+  // payment_period lives on commission_records, not uploads (uploads has category/carrier only).
+  // agency_production uses upload_batch (YYYY-MM / YYYYMM). Union both for the picker.
   const result = await pool.query(
     `SELECT period FROM (
        SELECT DISTINCT upload_batch AS period
          FROM agency_production
         WHERE upload_batch IS NOT NULL AND TRIM(upload_batch) <> ''
        UNION
-       SELECT DISTINCT payment_period
-         FROM uploads
+       SELECT DISTINCT payment_period AS period
+         FROM commission_records
         WHERE payment_period IS NOT NULL
           AND TRIM(payment_period) <> ''
           AND payment_period <> 'Unknown'
@@ -943,12 +945,14 @@ router.get('/override-recon', requireAuth, async (req, res) => {
       const bsiConds = [`u.category = 'bsi_statement'`];
       appendPaymentPeriodSql(bsiConds, bsiParams, period);
 
+      // BSI "uploaded for carrier|period" keys: derive from commission_records joined to
+      // uploads. uploads has no payment_period column — period is on the rows.
       const uploadParams = [];
       const uploadConds = [
-        `category = 'bsi_statement'`,
-        `carrier IS NOT NULL AND TRIM(carrier) <> ''`,
+        `u.category = 'bsi_statement'`,
+        `u.carrier IS NOT NULL AND TRIM(u.carrier) <> ''`,
       ];
-      appendPaymentPeriodSql(uploadConds, uploadParams, period, 'payment_period');
+      appendPaymentPeriodSql(uploadConds, uploadParams, period, 'cr.payment_period');
 
       const [prodResult, overrideResult, bsiResult, bsiUploads] = await Promise.all([
         pool.query(
@@ -987,8 +991,10 @@ router.get('/override-recon', requireAuth, async (req, res) => {
           bsiParams
         ),
         pool.query(
-          `SELECT carrier, payment_period FROM uploads
-           WHERE ${uploadConds.join(' AND ')}`,
+          `SELECT DISTINCT u.carrier, cr.payment_period
+             FROM uploads u
+             JOIN commission_records cr ON cr.upload_id = u.id
+            WHERE ${uploadConds.join(' AND ')}`,
           uploadParams
         ),
       ]);

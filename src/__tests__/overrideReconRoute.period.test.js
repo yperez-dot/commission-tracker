@@ -9,7 +9,7 @@ jest.mock('../../db/database', () => ({
     query: jest.fn(async (sql, params = []) => {
       recorded.push({ sql: String(sql), params });
       if (/api_keys/.test(sql)) return { rows: [] };
-      if (/DISTINCT upload_batch/.test(sql)) {
+      if (/DISTINCT upload_batch/.test(sql) || /DISTINCT payment_period/.test(sql)) {
         return { rows: [{ period: '2026-03' }, { period: '202602' }] };
       }
       if (/FROM agency_production ap/.test(sql)) {
@@ -130,5 +130,31 @@ describe('GET /override-recon period gate', () => {
     expect(afterFirst).toBeGreaterThanOrEqual(3);
     await invoke('/override-recon?period=202603&category=paid&limit=100');
     expect(corpusSql().length).toBe(afterFirst);
+  });
+
+  test('never selects payment_period from uploads (column does not exist)', async () => {
+    await invoke('/override-recon/periods');
+    await invoke('/override-recon?period=202603&category=missing&limit=100');
+    const bad = recorded.filter((q) =>
+      /FROM\s+uploads\b/i.test(q.sql) &&
+      /payment_period/i.test(q.sql) &&
+      !/JOIN\s+commission_records/i.test(q.sql) &&
+      !/commission_records\s+cr/i.test(q.sql)
+    );
+    // Allow JOIN forms that read cr.payment_period while selecting from uploads.
+    const bareUploadsPaymentPeriod = recorded.filter((q) => {
+      const sql = q.sql.replace(/\s+/g, ' ');
+      return (
+        /FROM uploads(?!\s+\w*\s+JOIN)/i.test(sql) === false
+          ? /SELECT[^;]*payment_period[^;]*FROM uploads\b/i.test(sql) &&
+            !/JOIN commission_records/i.test(sql)
+          : false
+      ) || (
+        /SELECT\s+carrier,\s*payment_period\s+FROM\s+uploads\b/i.test(sql)
+      ) || (
+        /SELECT\s+DISTINCT\s+payment_period\s+FROM\s+uploads\b/i.test(sql)
+      );
+    });
+    expect(bareUploadsPaymentPeriod).toEqual([]);
   });
 });
