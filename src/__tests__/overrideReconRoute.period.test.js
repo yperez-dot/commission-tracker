@@ -8,6 +8,12 @@ jest.mock('../../db/database', () => ({
   getPool: () => ({
     query: jest.fn(async (sql, params = []) => {
       recorded.push({ sql: String(sql), params });
+      if (/WITH held AS MATERIALIZED/.test(sql)) {
+        return { rows: [{ rows: [
+          { id: 91, classification: 'Held', hold_reason: 'not licensed', member_state: 'AL', payment_period: '202601', client_full_name: 'Alabama Member', carrier: 'Aetna' },
+          { id: 92, classification: 'Held', hold_reason: 'not appointed', member_state: 'KS', payment_period: '202603', client_full_name: 'Kansas Member', carrier: 'Aetna' },
+        ], held_total: 2, held_scanned: 2, meta: { agents: [], carriers: ['Aetna'], effectiveDates: [], batches: [] } }] };
+      }
       if (/api_keys/.test(sql)) return { rows: [] };
       if (/DISTINCT upload_batch/.test(sql) || /DISTINCT payment_period/.test(sql)) {
         return { rows: [{ period: '2026-03' }, { period: '202602' }] };
@@ -156,5 +162,33 @@ describe('GET /override-recon period gate', () => {
       );
     });
     expect(bareUploadsPaymentPeriod).toEqual([]);
+  });
+});
+
+// The all-period route must never call the single-period corpus matcher.
+describe('dedicated all-period Held–Licensing route', () => {
+  beforeEach(() => { recorded.length = 0; clearOverrideReconCorpusCache(); });
+  test('only queries Held licensing SQL, with SQL paging and states across periods', async () => {
+    const { status, body } = await invoke('/override-recon/held-licensing?period=all&override_status=held_licensing&limit=100');
+    expect(status).toBe(200);
+    expect(body.period).toBe('all');
+    expect(body.rows.map((r) => r.memberState)).toEqual(['AL', 'KS']);
+    expect(body.rows.map((r) => r.carrierBSI.payment_period)).toEqual(['202601', '202603']);
+    expect(body.rows.every((r) => r.status === 'held_licensing')).toBe(true);
+    expect(body.rows.every((r) => !r.carrierBSI.raw_data)).toBe(true);
+    const queries = recorded.filter((q) => !/api_keys/.test(q.sql));
+    expect(queries).toHaveLength(1);
+    expect(queries[0].sql).toContain("u.category = 'bsi_statement' AND cr.classification = 'Held'");
+    expect(queries[0].sql).toContain("ILIKE '%not licensed%'");
+    expect(queries[0].sql).toContain("ILIKE '%not appointed%'");
+    expect(queries[0].sql).toMatch(/LIMIT \$\d+ OFFSET \$\d+/);
+    expect(queries[0].params).toEqual([100, 0]);
+    expect(queries[0].sql).not.toContain("classification ILIKE '%override%'");
+    expect(queries[0].sql).not.toContain('buildOverrideMatches');
+  });
+  test('period=all on the old route cannot bypass the period gate', async () => {
+    const { body } = await invoke('/override-recon?period=all');
+    expect(body.needsPeriod).toBe(true);
+    expect(corpusSql()).toHaveLength(0);
   });
 });

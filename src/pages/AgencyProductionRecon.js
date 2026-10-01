@@ -380,7 +380,8 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
       params.set('sortCol', sortCol);
       params.set('sortDir', sortDir);
     }
-    return `/agency-production/override-recon?${params.toString()}`;
+    const path = selectedPeriod === 'all' ? 'override-recon/held-licensing' : 'override-recon';
+    return `/agency-production/${path}?${params.toString()}`;
   }
 
   async function loadData(off = offset) {
@@ -449,6 +450,7 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
 
   const agents = metaAgents;
   const carriers = useMemo(() => {
+    if (selectedPeriod === 'all') return [...metaCarriers].sort();
     const uniqueC = [...new Set((metaCarriers || []).map((c) => normalizeCarrier(c)).filter(Boolean))];
     return uniqueC
       .map((c) => {
@@ -457,7 +459,7 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
       })
       .filter((v, i, arr) => arr.indexOf(v) === i)
       .sort();
-  }, [metaCarriers]);
+  }, [metaCarriers, selectedPeriod]);
   const effectiveDates = metaDates;
 
   async function exportToCSV() {
@@ -487,7 +489,7 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
       const clientName = m.production.client_name || '—';
       const carrier = formatCarrier(m.production.carrier) || '—';
       const hd = _getHoldDetail(m);
-      const state = (hd && hd.state) || m.production.state || '—';
+      const state = m.memberState || (hd && hd.state) || m.production.state || '—';
       const effectiveDate = m.production.effective_date ? formatDate(m.production.effective_date) : '—';
       const exp = m.expected || expectedAgencyOverride(m.production);
       const expectedAmt = exp.amount == null ? '—' : exp.amount;
@@ -844,7 +846,7 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
       <div className="page-header">
         <div className="page-title">Agency Override Reconciliation</div>
         <div className="page-sub">
-          Pick a payment period first — the server only loads that month's production, overrides, and BSI.
+          Pick a payment period, or All periods for the Held–Licensing work queue.
           Missing holds unpaid rows — use Override Status tags (Not on BSI, Chase BSI, Pending, Held).
         </div>
       </div>
@@ -857,9 +859,18 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
                 <div className="form-label">Payment period</div>
                 <select
                   className="filter-select"
+                  aria-label="Payment period"
                   value={selectedPeriod}
                   onChange={(e) => {
                     setSelectedPeriod(e.target.value);
+                    if (e.target.value === 'all') {
+                      setTab('missing');
+                      setSortCol(null);
+                      setFilterOverrideStatus(['held_licensing']);
+                      setFilterCarriers([]);
+                      setFilterAgents([]);
+                      setFilterEffDates([]);
+                    }
                     setOffset(0);
                     setRows([]);
                     setGapAudit(null);
@@ -868,6 +879,7 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
                   style={{ minWidth: 160 }}
                 >
                   <option value="">{periodsLoading ? 'Loading periods…' : 'Select period...'}</option>
+                  <option value="all">All periods</option>
                   {periods.map((p) => (
                     <option key={p.period} value={p.period}>
                       {p.label || formatPeriodLabel(p.period)}
@@ -1157,7 +1169,7 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
                     : loading
                     ? 'Loading reconciliation…'
                     : scanned.production === 0
-                    ? 'No agency production in this period. Upload Hector\'s reports or pick another month.'
+                    ? (selectedPeriod === 'all' ? 'No Held–Licensing results match your filters.' : 'No agency production in this period. Upload Hector\'s reports or pick another month.')
                     : 'No results match your filters.'}
                 </div>
               ) : (
@@ -1166,32 +1178,34 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
                     <colgroup>
                       <col style={{ width: '12%' }} />
                       <col style={{ width: '13%' }} />
+                      <col style={{ width: '5%' }} />
                       <col style={{ width: '10%' }} />
                       <col style={{ width: '8%' }} />
                       <col style={{ width: '11%' }} />
                       <col style={{ width: '9%' }} />
                       <col style={{ width: '9%' }} />
-                      <col style={{ width: '16%' }} />
-                      <col style={{ width: '12%' }} />
+                      <col style={{ width: '13%' }} />
+                      <col style={{ width: '10%' }} />
                     </colgroup>
                     <thead style={{ position: 'sticky', top: 0, background: 'var(--bg)', zIndex: 1 }}>
                       <tr>
                         {[
                           ['Writing Agent','left','agent'],
                           ['Member Name','left','member'],
+                          ['State','left',null],
                           ['Carrier','left','carrier'],
                           ['Eff Date','left','eff_date'],
-                          ['Expected','right','expected'],
-                          ['BSI→THEI','right','bsi_thei'],
+                          ['Expected','right',selectedPeriod === 'all' ? null : 'expected'],
+                          ['BSI→THEI','right',selectedPeriod === 'all' ? null : 'bsi_thei'],
                           ['Carrier→BSI','right','c_bsi'],
-                          ['Override Status','center','status'],
+                          ['Override Status','center',selectedPeriod === 'all' ? null : 'status'],
                           ['Actions','center',null]
                         ].map(([label, align, col], i) => (
                           <th key={i} onClick={col ? () => toggleSort(col) : undefined} style={{
                             padding: '8px 10px', textAlign: align, fontSize: 11, fontWeight: 600,
                             whiteSpace: 'normal', wordWrap: 'break-word', overflowWrap: 'break-word',
                             verticalAlign: 'top', borderBottom: '2px solid var(--border)',
-                            background: (i === 4 || i === 5 || i === 6) ? 'var(--accent-light, #EDE9FE)' : 'var(--bg)',
+                            background: (i === 5 || i === 6 || i === 7) ? 'var(--accent-light, #EDE9FE)' : 'var(--bg)',
                             cursor: col ? 'pointer' : 'default', userSelect: 'none'
                           }}>
                             <span style={{ display:'inline-flex', alignItems:'center', gap:3 }}>
@@ -1285,7 +1299,9 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
                                 onMouseOut={e=>e.currentTarget.style.borderBottom='1px dashed var(--blue)'}
                               >{m.production.client_name}</a>
 
+                              {selectedPeriod === 'all' && <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{formatPeriodLabel(m.carrierBSI?.payment_period)}</div>}
                             </td>
+                            <td style={tdBase}>{m.memberState || _getHoldDetail(m)?.state || m.production.state || '—'}</td>
                             <td style={{ ...tdBase, fontSize: 12 }}>{formatCarrier(m.production.carrier)}</td>
                             <td style={{ ...tdBase, fontSize: 12, color: 'var(--text-muted)' }}>
                               {m.production.effective_date ? formatDate(m.production.effective_date) : '—'}
@@ -1326,7 +1342,7 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
                                   type="button"
                                   className="btn btn-secondary"
                                   onClick={() => setEditingMatch(m)}
-                                  disabled={overrideSaving === m.production.id}
+                                  disabled={!m.production.id || overrideSaving === m.production.id}
                                   title={isManual ? 'Edit manual override status' : 'Edit override status'}
                                   style={{
                                     fontSize: 11,
