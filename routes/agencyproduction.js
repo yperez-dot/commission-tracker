@@ -7,6 +7,7 @@ const { requireAuth, requireAdmin } = require('./auth');
 const { isAetnaActivePolicy } = require('../src/agencyOverrideReconMatch.cjs');
 const { auditOverrideGaps } = require('../src/overrideGapAudit');
 const { assembleOverrideRecon } = require('../src/overrideReconAssemble');
+const { loadHeldLicensingRecon } = require('../src/overrideReconHeld');
 const {
   normalizeReconPeriod,
   formatReconPeriodLabel,
@@ -856,6 +857,16 @@ router.get('/override-recon/periods', requireAuth, async (req, res) => {
   }
 });
 
+/** All periods is exclusively the SQL-filtered, paginated BSI Held–Licensing queue. */
+router.get('/override-recon/held-licensing', requireAuth, async (req, res) => {
+  try {
+    return res.json(await loadHeldLicensingRecon(getPool(), req.query));
+  } catch (err) {
+    console.error('[OVERRIDE-RECON] held-licensing', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 /**
  * GET /api/agency-production/override-recon
  *
@@ -973,6 +984,7 @@ router.get('/override-recon', requireAuth, async (req, res) => {
         pool.query(
           `SELECT cr.id, cr.client_full_name, cr.carrier, cr.commission, cr.classification,
                   cr.payment_period, cr.policy_number, cr.agent_name, cr.plan_type, cr.payee, cr.source,
+                  ${HOLD_STATE_SQL} AS member_state,
                   u.original_name as upload_name, u.original_name as upload_original_name
            FROM commission_records cr
            JOIN uploads u ON cr.upload_id = u.id

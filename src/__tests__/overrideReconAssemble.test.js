@@ -234,3 +234,24 @@ describe('assembleOverrideRecon', () => {
     expect(rows.map((r) => r.lifecycle).sort()).toEqual(['chargeback', 'missing', 'paid']);
   });
 });
+
+describe('visible member state', () => {
+  const { resolveMemberState, slimRow } = require('../overrideReconAssemble');
+  test('commission raw Member State precedes Held member_state and production', () => {
+    const m = { carrierBSI: { classification: 'Held', raw_data: '{"Member State":" al "}', member_state: 'KS' }, production: { state: 'FL' } };
+    expect(resolveMemberState(m)).toBe('AL');
+    expect(slimRow(m).memberState).toBe('AL');
+    expect(slimRow(m).carrierBSI.raw_data).toBeUndefined();
+  });
+  test('Held member_state, production, then em dash; blank values fall through', () => {
+    expect(resolveMemberState({ heldRecord: { member_state: ' ks ' }, production: { state: 'FL' } })).toBe('KS');
+    expect(resolveMemberState({ carrierBSI: { member_state: ' ', raw_data: { 'Member State': ' ' } }, production: { state: 'fl' } })).toBe('FL');
+    expect(resolveMemberState({ production: {} })).toBe('—');
+  });
+  test('single-period assembled Held row retains the state', () => {
+    const production = [prod({ policy_number: 'P1', upload_batch: '2026-03', state: 'FL' })];
+    const held = [{ id: 500, client_full_name: production[0].client_name, carrier: 'Aetna', policy_number: 'P1', classification: 'Held', commission: 0, hold_reason: 'not licensed', member_state: 'AL', payment_period: '202603' }];
+    const result = assembleOverrideRecon(production, [], held, new Set(), { period: '202603', category: 'all' });
+    expect(result.rows.find((r) => r.status === 'held_licensing').memberState).toBe('AL');
+  });
+});

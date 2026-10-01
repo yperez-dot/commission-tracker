@@ -95,6 +95,22 @@ function slimProduction(p) {
   };
 }
 
+function resolveMemberState(m) {
+  const records = [m.carrierBSI, m.heldRecord, m.override].filter(Boolean);
+  for (const r of records) {
+    try {
+      const raw = typeof r.raw_data === 'string' ? JSON.parse(r.raw_data) : r.raw_data;
+      const state = String(raw?.['Member State'] || '').trim();
+      if (state) return state.toUpperCase();
+    } catch { /* Slim SQL fields remain available when raw_data is absent. */ }
+  }
+  for (const r of records) {
+    const state = String(r.member_state || '').trim();
+    if (state) return state.toUpperCase();
+  }
+  return String(m.production?.state || '').trim().toUpperCase() || '—';
+}
+
 function slimRow(m) {
   const hold = getHoldDetail(m);
   return {
@@ -110,6 +126,7 @@ function slimRow(m) {
     heldRecord: slimCommission(m.heldRecord),
     expected: m.expected || safeExpected(m.production),
     hold,
+    memberState: resolveMemberState(m),
   };
 }
 
@@ -275,6 +292,7 @@ module.exports = {
   assembleOverrideRecon,
   applyUserFilters,
   slimRow,
+  resolveMemberState,
   slimProduction,
   slimCommission,
   parseList,
