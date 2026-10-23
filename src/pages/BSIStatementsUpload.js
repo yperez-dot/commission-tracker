@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { apiFetch, apiUpload } from '../api';
+import { apiFetch, apiUpload, apiDownload } from '../api';
 import { formatDateTime } from '../utils/dateFormat';
 import UploadRouteConfirm from '../components/UploadRouteConfirm';
 import {
@@ -22,6 +22,87 @@ import { bsiUploadTitle, compareBsiUploadsByTitle } from '../bsiStatementTitle';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/** Chargebacks that exceed what was paid (or with no payment found) — to dispute with the carrier. */
+function ChargebackFlagTable({ rows }) {
+  if (!rows || !rows.length) return null;
+  const th = { textAlign: 'left', padding: '4px 6px', borderBottom: '1px solid #e5e7eb', whiteSpace: 'nowrap' };
+  const td = { padding: '4px 6px', borderBottom: '1px solid #f3f4f6', whiteSpace: 'nowrap' };
+  return (
+    <div style={{ overflowX: 'auto', marginTop: 6, maxHeight: 320, overflowY: 'auto' }}>
+      <table style={{ borderCollapse: 'collapse', fontSize: 12, width: '100%' }}>
+        <thead>
+          <tr>
+            <th style={th}>Status</th><th style={th}>Carrier</th><th style={th}>Client</th>
+            <th style={th}>Policy</th><th style={th}>Effective</th><th style={th}>Period</th>
+            <th style={th}>Agent</th><th style={{ ...th, textAlign: 'right' }}>Chargeback</th>
+            <th style={{ ...th, textAlign: 'right' }}>Total paid</th>
+            <th style={{ ...th, textAlign: 'right' }}>Total charged back</th>
+            <th style={{ ...th, textAlign: 'right' }}>Over paid</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={r.id || i}>
+              <td style={td}>{r.status === 'no_payment' ? 'No payment found' : 'Exceeds paid'}</td>
+              <td style={td}>{r.carrier}</td><td style={td}>{r.client}</td><td style={td}>{r.policy}</td>
+              <td style={td}>{r.effectiveDate}</td><td style={td}>{r.period}</td><td style={td}>{r.agent}</td>
+              <td style={{ ...td, textAlign: 'right' }}>{fmt(r.amount)}</td>
+              <td style={{ ...td, textAlign: 'right' }}>{fmt(r.paid)}</td>
+              <td style={{ ...td, textAlign: 'right' }}>{fmt(r.chargedBack)}</td>
+              <td style={{ ...td, textAlign: 'right', fontWeight: 600 }}>{fmt(r.excess)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ChargebackCheckPanel() {
+  const [period, setPeriod] = useState('');
+  const [data, setData] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const qs = /^\d{6}$/.test(period) ? `?period=${period}` : '';
+  const run = async () => {
+    setBusy(true); setErr('');
+    try { setData(await apiFetch(`/records/chargeback-paid-check${qs}`)); }
+    catch (e) { setErr(e.message || 'Check failed'); }
+    finally { setBusy(false); }
+  };
+  const exportXlsx = async () => {
+    try {
+      await apiDownload(`/records/chargeback-paid-check${qs ? qs + '&' : '?'}format=xlsx`,
+        `chargebacks_over_paid_${qs ? period : 'all'}.xlsx`);
+    } catch (e) { setErr(e.message || 'Export failed'); }
+  };
+  return (
+    <div style={{ margin: '12px 0', padding: 12, border: '1px solid #e5e7eb', borderRadius: 8 }}>
+      <div style={{ fontWeight: 600, marginBottom: 6 }}>Chargebacks vs. paid</div>
+      <div style={{ fontSize: 12, color: '#6b7280', marginBottom: 8 }}>
+        Chargebacks that are more than the carrier paid on the policy (all BSI uploads), or with no payment found.
+      </div>
+      <input
+        value={period}
+        onChange={(e) => setPeriod(e.target.value.trim())}
+        placeholder="Period YYYYMM (blank = all)"
+        style={{ padding: '4px 8px', marginRight: 8, width: 190 }}
+      />
+      <button type="button" onClick={run} disabled={busy}>{busy ? 'Checking…' : 'Check'}</button>{' '}
+      <button type="button" onClick={exportXlsx} disabled={busy}>Export</button>
+      {err && <div style={{ color: '#b91c1c', marginTop: 6 }}>{err}</div>}
+      {data && (
+        <div style={{ marginTop: 8 }}>
+          {data.summary
+            ? <div style={{ fontWeight: 600, color: '#b45309' }}>⚠ {data.summary.message}</div>
+            : <div>No chargebacks over what was paid.</div>}
+          <ChargebackFlagTable rows={data.rows} />
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default function BSIStatementsUpload({ user, onNavigate }) {
@@ -302,6 +383,12 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
                 ⚠ {uploadResult.unsplitWarning.message}
               </div>
             )}
+            {uploadResult.chargebackWarning && (
+              <div style={{ marginTop: 4, fontWeight: 600, color: '#b45309' }}>
+                ⚠ {uploadResult.chargebackWarning.message}
+                <ChargebackFlagTable rows={uploadResult.chargebackFlags} />
+              </div>
+            )}
             {uploadResult.internalDuplicatesRemoved > 0 && (
               <div style={{ marginTop: 4 }}>
                 Skipped {uploadResult.internalDuplicatesRemoved} exact duplicate line
@@ -316,6 +403,8 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
             )}
           </UploadAlert>
         )}
+
+        <ChargebackCheckPanel />
 
         {uploads.length > 0 && (
           <UploadListToolbar
