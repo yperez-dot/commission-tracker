@@ -2,6 +2,13 @@ const express = require('express');
 const router = express.Router();
 const { getPool } = require('../db/database');
 const { requireAuth, requireAdmin } = require('./auth');
+const closeStore = require('./payrollCloseStore');
+
+// A paid month is locked (routes/payroll-close.js). Clearing its paid mark has to go
+// through POST /api/payroll-close/unlock (admin + reason, logged), not these legacy routes.
+async function lockedGuard(pool, agencyKey, period, agent) {
+  return !!(await closeStore.activeLock(pool, agencyKey, agent, period));
+}
 
 async function ensurePayoutStatusTable(pool) {
   await pool.query(`
@@ -97,6 +104,9 @@ router.put('/payout-status', requireAuth, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'period and agent are required' });
     }
     const agencyKey = agencyKeyFromReq(req);
+    if (!paid && (await lockedGuard(pool, agencyKey, period, agent))) {
+      return res.status(409).json({ error: 'This month is paid and locked. Unlock it (admin, with a reason) to clear the paid mark.' });
+    }
     const amount =
       req.body?.amount != null && req.body.amount !== ''
         ? Number(req.body.amount)
@@ -170,6 +180,13 @@ router.delete('/payout-status/:id', requireAuth, requireAdmin, async (req, res) 
     const pool = getPool();
     await ensurePayoutStatusTable(pool);
     const agencyKey = agencyKeyFromReq(req);
+    const cur = await pool.query(
+      `SELECT payment_period, agent_name FROM payroll_payout_status WHERE id = $1 AND agency_key = $2`,
+      [req.params.id, agencyKey]
+    );
+    if (cur.rows.length && (await lockedGuard(pool, agencyKey, cur.rows[0].payment_period, cur.rows[0].agent_name))) {
+      return res.status(409).json({ error: 'This month is paid and locked. Unlock it (admin, with a reason) instead of deleting the paid mark.' });
+    }
     const result = await pool.query(
       `DELETE FROM payroll_payout_status
        WHERE id = $1 AND agency_key = $2

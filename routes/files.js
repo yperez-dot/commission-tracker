@@ -1,5 +1,19 @@
 const express = require('express');
 const router = express.Router();
+const { logChange } = require('./change-log');
+function uploadPeriodsForLog(records) {
+  const set = new Set();
+  for (const r of records || []) if (r && (r.period || r.payment_period)) set.add(String(r.period || r.payment_period));
+  return [...set].sort();
+}
+function uploadPeriodForLog(records) {
+  const p = uploadPeriodsForLog(records);
+  return p.length === 1 ? p[0] : null;
+}
+function moneyForLog(n) {
+  const v = Math.round((Number(n) || 0) * 100) / 100;
+  return (v < 0 ? '-$' : '$') + Math.abs(v).toFixed(2);
+}
 const multer = require('multer');
 const XLSX = require('xlsx');
 const path = require('path');
@@ -4611,6 +4625,12 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
       nhpRenamed: storedOriginalName !== req.file.originalname,
     };
     
+    await logChange(pool, req, {
+      type: 'upload.created', entityType: 'upload', entityId: uploadId,
+      period: uploadPeriodForLog(records),
+      summary: `Uploaded ${storedOriginalName} (${carriers.join(', ') || 'unknown carrier'}): ${records.length} records, ${moneyForLog(commissionSum)}`,
+      details: { fileName: storedOriginalName, category: uploadCategory, carriers, recordCount: records.length, total: commissionSum, periods: uploadPeriodsForLog(records) },
+    });
     res.json(response);
 
   } catch (err) {
@@ -4736,7 +4756,13 @@ router.patch('/uploads/:id/title', requireAuth, requireAdmin, async (req, res) =
       }).title;
       source = 'auto';
     }
+    const prevTitle = await pool.query(`SELECT display_title FROM uploads WHERE id = $1`, [id]);
     await pool.query(`UPDATE uploads SET display_title = $1, display_title_source = $2 WHERE id = $3`, [title, source, id]);
+    await logChange(pool, req, {
+      type: 'upload.renamed', entityType: 'upload', entityId: id,
+      summary: `Renamed upload ${u.original_name}: "${(prevTitle.rows[0] && prevTitle.rows[0].display_title) || ''}" → "${title}" (${source})`,
+      details: { fileName: u.original_name, from: prevTitle.rows[0] ? prevTitle.rows[0].display_title : null, to: title, source },
+    });
     res.json({ success: true, id, display_title: title, display_title_source: source });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -4744,7 +4770,28 @@ router.patch('/uploads/:id/title', requireAuth, requireAdmin, async (req, res) =
 router.delete('/uploads/:id', requireAuth, requireAdmin, async (req, res) => {
   try {
     const pool = getPool();
+    // Capture what the upload contained before it goes (for the change log).
+    const before = await pool.query(
+      `SELECT u.id, u.original_name, u.carrier, u.category, u.uploaded_at, u.row_count,
+              COALESCE(u.display_title, '') AS display_title,
+              (SELECT COUNT(*) FROM commission_records r WHERE r.upload_id = u.id) AS record_count,
+              (SELECT COALESCE(SUM(r.commission),0) FROM commission_records r WHERE r.upload_id = u.id) AS total,
+              (SELECT ARRAY_AGG(DISTINCT r.payment_period) FROM commission_records r WHERE r.upload_id = u.id) AS periods
+         FROM uploads u WHERE u.id = $1`,
+      [req.params.id]
+    ).catch(() => ({ rows: [] }));
     await pool.query('DELETE FROM uploads WHERE id = $1', [req.params.id]);
+    if (before.rows.length) {
+      const b = before.rows[0];
+      const periods = (b.periods || []).filter(Boolean);
+      await logChange(pool, req, {
+        type: 'upload.deleted', entityType: 'upload', entityId: b.id,
+        period: periods.length === 1 ? periods[0] : null,
+        summary: `Deleted upload ${b.display_title || b.original_name} (${b.carrier || 'unknown carrier'}): ${Number(b.record_count)} records, ${moneyForLog(b.total)}`,
+        details: { fileName: b.original_name, title: b.display_title || null, carrier: b.carrier, category: b.category,
+          uploadedAt: b.uploaded_at, recordCount: Number(b.record_count), total: Number(b.total), periods },
+      });
+    }
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -5551,6 +5598,12 @@ router.post('/upload-bsi-statement', requireAuth, requireAdmin, upload.single('f
       console.error('[BSI-UPLOAD] Plan change detection failed:', err.message);
     });
 
+    await logChange(pool, req, {
+      type: 'upload.created', entityType: 'upload', entityId: uploadId,
+      period: uploadPeriodForLog(records),
+      summary: `Uploaded BSI statement "${titleInfo.title}" (${origName}, ${carriers.join(', ') || 'unknown carrier'}): ${records.length} records, ${moneyForLog(commissionSum)}`,
+      details: { fileName: origName, title: titleInfo.title, category: 'bsi_statement', carriers, recordCount: records.length, total: commissionSum, periods: uploadPeriodsForLog(records) },
+    });
     res.json({
       success: true,
       message: `BSI statement uploaded: ${records.length} records imported`,

@@ -6,6 +6,9 @@ import { formatDate } from '../utils/dateFormat';
 import { countSplitDepositClients, groupClientDeposits } from '../utils/salesReconPayment';
 import { fetchAllPages } from '../fetchAllPages';
 import TruncationBanner from '../components/TruncationBanner';
+import {
+  usePayrollMeta, PayModal, ReasonModal, AdjustmentsPanel, PaymentRecords, MonthClosePanel, ChangeLogPanel,
+} from '../components/PayrollClose';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -300,13 +303,18 @@ function StoredStatements({ period, isAdmin }) {
   );
 }
 
-function PayoutRow({ p, isPaid, paidDate, paidAmount, carry, onTogglePaid, onExport, exportLabel, exportDisabled }) {
+function PayoutRow({ p, isPaid, paidDate, paidAmount, carry, lock, adjTotal, amount, onTogglePaid, onExport, exportLabel, exportDisabled }) {
   const [expanded, setExpanded] = useState(false);
   const posCount = p.records.filter((r) => recordAmount(r) > 0).length;
   const negCount = p.records.filter((r) => recordAmount(r) < 0).length;
   const negSum = p.records.filter((r) => recordAmount(r) < 0).reduce((s, r) => s + recordAmount(r), 0);
-  const owedNow = carry ? carry.payable : p.total;
-  const hasCarry = !!carry && (carry.carryIn !== 0 || carry.net < 0);
+  // amount = what you pay: frozen lock snapshot if paid/closed, else carry payable, else rows + adjustments
+  const owedNow = amount != null ? amount : (carry ? carry.payable : p.total);
+  const shownCarry = lock
+    ? { periodTotal: Number(lock.period_total), carryIn: Number(lock.carry_in), carryOut: Number(lock.carry_out), net: Number(lock.net) }
+    : carry;
+  const hasCarry = !!shownCarry && (shownCarry.carryIn !== 0 || shownCarry.net < 0);
+  const lockDrift = lock ? Math.round((p.total - Number(lock.data_total)) * 100) / 100 : 0;
   const isLina = p.agent === 'Lina Hernandez';
   const splitClients = isLina
     ? countSplitDepositClients(p.records, (r) => parseFloat(r.producer_payable || 0))
@@ -356,10 +364,25 @@ function PayoutRow({ p, isPaid, paidDate, paidAmount, carry, onTogglePaid, onExp
                 · {splitClients} client{splitClients !== 1 ? 's' : ''} with split deposits
               </span>
             )}
+            {!!adjTotal && (
+              <span style={{ marginLeft: 8, color: adjTotal < 0 ? 'var(--red)' : 'var(--text)', fontWeight: 500 }}>
+                · adjustments {fmt(adjTotal)}
+              </span>
+            )}
             {hasCarry && (
               <span style={{ marginLeft: 8, color: 'var(--red)', fontWeight: 500 }}>
-                · {fmt(carry.periodTotal)} this month{carry.carryIn !== 0 ? ` ${fmt(carry.carryIn)} carried in` : ''}
-                {carry.carryOut < 0 ? ` · ${fmt(carry.carryOut)} carries to next month` : ''}
+                · {fmt(shownCarry.periodTotal)} this month{shownCarry.carryIn !== 0 ? ` ${fmt(shownCarry.carryIn)} carried in` : ''}
+                {shownCarry.carryOut < 0 ? ` · ${fmt(shownCarry.carryOut)} carries to next month` : ''}
+              </span>
+            )}
+            {lock && (
+              <span style={{ marginLeft: 8, fontWeight: 600 }} title={`Locked by ${lock.locked_by || '?'} (${lock.source === 'close' ? 'month closed' : 'marked paid'})`}>
+                · 🔒 Locked
+              </span>
+            )}
+            {lock && Math.abs(lockDrift) >= 0.01 && (
+              <span style={{ marginLeft: 8, color: '#B45309', fontWeight: 600 }}>
+                · ⚠ data changed {fmt(lockDrift)} since locked — post it as a prior-period correction in an open month
               </span>
             )}
             {isPaid && paidDate && (
@@ -813,7 +836,8 @@ function HouseOverridesPanel() {
 
 export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
   const tab =
-    initialTab === 'overrides' || initialTab === 'loa' || initialTab === 'history'
+    initialTab === 'overrides' || initialTab === 'loa' || initialTab === 'history' ||
+    initialTab === 'close' || initialTab === 'changelog'
       ? initialTab
       : 'payroll';
 
@@ -834,6 +858,12 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
   const [linaError, setLinaError] = useState('');
   const [statusBusy, setStatusBusy] = useState(false);
   const [truncationWarning, setTruncationWarning] = useState(null);
+  const [periodState, setPeriodState] = useState(null);
+  const [payFor, setPayFor] = useState(null);
+  const [payBusy, setPayBusy] = useState(false);
+  const [payError, setPayError] = useState('');
+  const [unlockFor, setUnlockFor] = useState(null);
+  const meta = usePayrollMeta();
   const isBSI = (user.agency || '').toLowerCase().includes('broker society');
   const agencyParam = encodeURIComponent(user.agency || 'thei');
 
@@ -865,6 +895,17 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
       setPaidStatus({});
       setPaidDates({});
       setPaidAmounts({});
+    }
+  }
+
+  /** Locks, adjustments, payments, close state and suggested corrections for one period. */
+  async function loadPeriodState(period) {
+    if (!period || !/^\d{6}$/.test(String(period))) { setPeriodState(null); return; }
+    try {
+      setPeriodState(await apiFetch(`/payroll-close/period?period=${encodeURIComponent(period)}&agency=${agencyParam}`));
+    } catch (e) {
+      console.error(e);
+      setPeriodState(null);
     }
   }
 
@@ -1028,6 +1069,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
           .sort((a, b) => b.total - a.total)
       );
       await loadPaidStatus(period);
+      await loadPeriodState(period);
       // Negative balances (chargebacks > earnings) carried in from prior months
       if (!isBSI && /^\d{6}$/.test(String(period))) {
         try {
@@ -1047,43 +1089,74 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
 
   async function togglePaid(agent) {
     if (!selectedPeriod || selectedPeriod === 'all' || statusBusy) return;
-    const makingPaid = !paidStatus[agent];
-    const payout = payouts.find((p) => p.agent === agent);
-    const paidDate = new Date().toISOString().slice(0, 10);
-    setStatusBusy(true);
-    // Optimistic UI
-    const prevPaid = { ...paidStatus };
-    const prevDates = { ...paidDates };
-    if (makingPaid) {
-      setPaidStatus({ ...paidStatus, [agent]: true });
-      setPaidDates({ ...paidDates, [agent]: paidDate });
-    } else {
-      const nextPaid = { ...paidStatus };
-      const nextDates = { ...paidDates };
-      delete nextPaid[agent];
-      delete nextDates[agent];
-      setPaidStatus(nextPaid);
-      setPaidDates(nextDates);
+    if (!/^\d{6}$/.test(String(selectedPeriod))) {
+      setLoadError('Pick a monthly period (e.g. Sep 2026) to mark payments.');
+      return;
     }
+    const row = displayPayouts.find((p) => p.agent === agent);
+    if (paidStatus[agent]) {
+      if (!meta.canUnlock) {
+        setLoadError(`${agent} is paid and locked for ${periodLabel}. Only an admin can unlock it.`);
+        return;
+      }
+      setUnlockFor(agent);
+      return;
+    }
+    if (!meta.isStaff) {
+      setLoadError('Your account cannot record payments.');
+      return;
+    }
+    setPayError('');
+    setPayFor(row || { agent, records: [], total: 0, amount: 0 });
+  }
+
+  async function submitPay(form) {
+    if (!payFor) return;
+    setPayBusy(true);
+    setPayError('');
     try {
-      await apiFetch(`/payroll/payout-status?agency=${agencyParam}`, {
-        method: 'PUT',
+      await apiFetch(`/payroll-close/pay?agency=${agencyParam}`, {
+        method: 'POST',
         body: JSON.stringify({
           period: selectedPeriod,
-          agent,
-          paid: makingPaid,
-          amount: payout ? (carryMap[payout.agent] ? carryMap[payout.agent].payable : payout.total) : null,
-          paidDate: makingPaid ? paidDate : null,
+          agent: payFor.agent,
+          method: form.method,
+          reference: form.reference,
+          payDate: form.payDate,
+          amount: form.amount,
+          notes: form.notes,
+          dataTotal: Math.round(payFor.total * 100) / 100,
+          rawAgentNames: Array.from(new Set(payFor.records.map((r) => r.agent_name).filter(Boolean))),
+          recordIds: payFor.records.map((r) => r.id).filter((x) => x != null),
           agency: user.agency || 'thei',
         }),
       });
+      setPayFor(null);
       await loadPayoutHistory();
       await loadPaidStatus(selectedPeriod);
+      await loadPeriodState(selectedPeriod);
     } catch (e) {
-      console.error(e);
-      setPaidStatus(prevPaid);
-      setPaidDates(prevDates);
-      setLoadError(e.message || 'Failed to save paid status');
+      setPayError(e.message || 'Failed to record payment');
+    } finally {
+      setPayBusy(false);
+    }
+  }
+
+  async function submitUnlock(reason) {
+    setStatusBusy(true);
+    try {
+      await apiFetch(`/payroll-close/unlock?agency=${agencyParam}`, {
+        method: 'POST',
+        body: JSON.stringify({ period: selectedPeriod, agent: unlockFor, reason, agency: user.agency || 'thei' }),
+      });
+      setUnlockFor(null);
+      await loadPayoutHistory();
+      await loadPaidStatus(selectedPeriod);
+      await loadPeriodState(selectedPeriod);
+      await loadPayouts(selectedPeriod);
+    } catch (e) {
+      setLoadError(e.message || 'Unlock failed');
+      setUnlockFor(null);
     } finally {
       setStatusBusy(false);
     }
@@ -1132,9 +1205,35 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
   const periodLabel =
     selectedPeriod === 'all' ? 'All Periods' : formatPeriodLabel(selectedPeriod) || selectedPeriod;
 
+  // What each agent is actually paid this period:
+  //   locked (paid / month closed) -> frozen snapshot payable
+  //   Lina / Munoz / Mendieta      -> server carry-forward payable (includes adjustments)
+  //   everyone else                -> rows + manual adjustments
+  const displayPayouts = useMemo(() => {
+    const locks = {};
+    ((periodState && periodState.locks) || []).forEach((l) => { locks[l.agent_name] = l; });
+    const adj = {};
+    ((periodState && periodState.adjustments) || []).filter((a) => a.status !== 'void').forEach((a) => {
+      adj[a.agent_name] = Math.round(((adj[a.agent_name] || 0) + Number(a.amount)) * 100) / 100;
+    });
+    const list = payouts.slice();
+    Object.keys(adj).concat(Object.keys(locks)).forEach((name) => {
+      if (!list.some((p) => p.agent === name)) list.push({ agent: name, records: [], total: 0, hasPositivePayable: true });
+    });
+    return list.map((p) => {
+      const lock = locks[p.agent] || null;
+      const carry = carryMap[p.agent];
+      const adjTotal = adj[p.agent] || 0;
+      const amount = lock
+        ? Number(lock.payable)
+        : carry ? carry.payable : Math.round((p.total + adjTotal) * 100) / 100;
+      return { ...p, lock, adjTotal, amount };
+    });
+  }, [payouts, periodState, carryMap]);
+
   const filteredPayouts = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return payouts
+    return displayPayouts
       .filter((p) => {
         if (statusFilter === 'unpaid' && paidStatus[p.agent]) return false;
         if (statusFilter === 'paid' && !paidStatus[p.agent]) return false;
@@ -1145,9 +1244,9 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
         const aPaid = !!paidStatus[a.agent];
         const bPaid = !!paidStatus[b.agent];
         if (statusFilter === 'all' && aPaid !== bPaid) return aPaid ? 1 : -1;
-        return b.total - a.total;
+        return b.amount - a.amount;
       });
-  }, [payouts, paidStatus, statusFilter, search]);
+  }, [displayPayouts, paidStatus, statusFilter, search]);
 
   const qHist = historySearch.trim().toLowerCase();
   const visibleHistory = !qHist
@@ -1160,11 +1259,12 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
         return hay.includes(qHist);
       });
 
-  const totalOwed = payouts.reduce((s, p) => s + p.total, 0);
-  const totalPaid = payouts.filter((p) => paidStatus[p.agent]).reduce((s, p) => s + p.total, 0);
+  const totalOwed = displayPayouts.reduce((s, p) => s + p.amount, 0);
+  const totalPaid = displayPayouts.filter((p) => paidStatus[p.agent]).reduce((s, p) => s + p.amount, 0);
   const totalUnpaid = totalOwed - totalPaid;
-  const paidCount = payouts.filter((p) => paidStatus[p.agent]).length;
-  const unpaidCount = payouts.length - paidCount;
+  const paidCount = displayPayouts.filter((p) => paidStatus[p.agent]).length;
+  const unpaidCount = displayPayouts.length - paidCount;
+  const monthlyPeriods = periods.filter((p) => /^\d{6}$/.test(String(p)));
 
   const pageMeta = {
     payroll: {
@@ -1182,6 +1282,14 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
     history: {
       title: 'Payment History',
       sub: 'Shared record of agents marked paid',
+    },
+    close: {
+      title: 'Month Close',
+      sub: 'Carrier checklist, THEI deposit reconciliation, and closing (locking) a payroll month',
+    },
+    changelog: {
+      title: 'Change Log',
+      sub: 'Who uploaded, deleted, renamed, edited, paid, adjusted, locked or closed what — and when',
     },
   }[tab] || { title: 'Payroll', sub: '' };
 
@@ -1255,7 +1363,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
                     Paid ({paidCount})
                   </button>
                   <button style={chipStyle(statusFilter === 'all')} onClick={() => setStatusFilter('all')}>
-                    All ({payouts.length})
+                    All ({displayPayouts.length})
                   </button>
                 </div>
               )}
@@ -1305,7 +1413,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
                   <div className="kpi-card">
                     <div className="kpi-label">Agents</div>
                     <div className="kpi-value">
-                      {paidCount} / {payouts.length}
+                      {paidCount} / {displayPayouts.length}
                     </div>
                   </div>
                 </div>
@@ -1371,6 +1479,9 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
                         paidDate={paidDates[p.agent]}
                         paidAmount={paidAmounts[p.agent]}
                         carry={carryMap[p.agent]}
+                        lock={p.lock}
+                        adjTotal={p.adjTotal}
+                        amount={p.amount}
                         onTogglePaid={togglePaid}
                         exportLabel="Statement"
                         exportDisabled={!!STATEMENT_PAYEE_KEYS[p.agent] && linaBusy}
@@ -1385,12 +1496,75 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
                     ))
                   )}
                 </div>
+                {/^\d{6}$/.test(String(selectedPeriod)) && (
+                  <AdjustmentsPanel
+                    period={selectedPeriod}
+                    agents={displayPayouts.map((p) => p.agent)}
+                    state={periodState}
+                    meta={meta}
+                    onChanged={async () => { await loadPeriodState(selectedPeriod); await loadPayouts(selectedPeriod); }}
+                  />
+                )}
                 {!isBSI && selectedPeriod && selectedPeriod !== 'all' && (
                   <StoredStatements period={selectedPeriod} isAdmin={user.role === 'admin'} />
                 )}
               </div>
             )}
           </div>
+        )}
+
+        {tab === 'close' && (
+          <div>
+            <div className="card" style={{ marginBottom: 14 }}>
+              <div className="form-label">Month</div>
+              <select className="filter-select" value={/^\d{6}$/.test(String(selectedPeriod)) ? selectedPeriod : ''}
+                onChange={(e) => setSelectedPeriod(e.target.value)} style={{ minWidth: 160 }}>
+                <option value="">Select month...</option>
+                {monthlyPeriods.map((p) => <option key={p} value={p}>{formatPeriodLabel(p)}</option>)}
+              </select>
+              {loading && <span style={{ marginLeft: 10, fontSize: 12, color: 'var(--text-muted)' }}>Loading payouts…</span>}
+            </div>
+            {/^\d{6}$/.test(String(selectedPeriod)) && !loading && (
+              <MonthClosePanel
+                key={selectedPeriod}
+                period={selectedPeriod}
+                meta={meta}
+                payeesForClose={async () => displayPayouts.map((p) => ({
+                  agent: p.agent,
+                  dataTotal: Math.round(p.total * 100) / 100,
+                  rawAgentNames: Array.from(new Set(p.records.map((r) => r.agent_name).filter(Boolean))),
+                  recordIds: p.records.map((r) => r.id).filter((x) => x != null),
+                }))}
+              />
+            )}
+          </div>
+        )}
+
+        {tab === 'changelog' && <ChangeLogPanel />}
+
+        {tab === 'history' && <PaymentRecords />}
+
+        {payFor && (
+          <PayModal
+            agent={payFor.agent}
+            period={periodLabel}
+            payable={payFor.amount}
+            meta={meta}
+            busy={payBusy}
+            error={payError}
+            onCancel={() => setPayFor(null)}
+            onSubmit={submitPay}
+          />
+        )}
+        {unlockFor && (
+          <ReasonModal
+            title={`Unlock ${unlockFor} — ${periodLabel}`}
+            help="Clears the paid mark and voids its payment record. The frozen amounts are kept in the change log. Admin only."
+            confirmLabel="Unlock"
+            busy={statusBusy}
+            onCancel={() => setUnlockFor(null)}
+            onSubmit={submitUnlock}
+          />
         )}
 
         {tab === 'history' && (

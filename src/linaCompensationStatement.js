@@ -13,6 +13,7 @@
  */
 
 const ExcelJS = require('exceljs');
+const { writeAdjustmentsSection } = require('./payrollStatementExtras');
 const {
   ALBA_DISPLAY_NAME,
   isAlbaHernandez,
@@ -247,6 +248,10 @@ async function buildLinaCompensationWorkbook(statement) {
   ws.getCell(`F${rowIdx}`).value = statement.balance;
   ws.getCell(`F${rowIdx}`).numFmt = moneyFmt;
   ws.getCell(`F${rowIdx}`).font = { bold: true, size: 12 };
+
+  if (statement.adjustments && statement.adjustments.length) {
+    rowIdx = writeAdjustmentsSection(ws, rowIdx + 2, statement, 'F') - 1;
+  }
 
   if (statement.carry && (statement.carry.carryIn !== 0 || statement.carry.net < 0)) {
     rowIdx += 1;

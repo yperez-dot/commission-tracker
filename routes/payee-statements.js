@@ -28,7 +28,11 @@ const {
   filenameForIntegrityStatement,
 } = require('../src/integrityStatement');
 const { compareStatementTotals } = require('../src/payeeStatementCompare');
-const { computeCarry, totalsByPeriodFromLines } = require('../src/payeeCarryForward');
+const { totalsByPeriodFromLines, DEFAULT_CARRY_START } = require('../src/payeeCarryForward');
+const { computeCarryWithLocks } = require('../src/payrollLock');
+const { attachAdjustments } = require('../src/payrollStatementExtras');
+const store = require('./payrollCloseStore');
+const { logChange } = require('./change-log');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
 
@@ -110,26 +114,45 @@ async function periodTotals(pool, payeeKey) {
   return totalsByPeriodFromLines(st.lines);
 }
 
-async function buildFor(pool, payeeKey, period) {
+/**
+ * Carry-forward for a statement payee, honoring month locks (frozen snapshots)
+ * and manual adjustment lines. See src/payrollLock.js.
+ */
+async function carryFor(pool, payeeKey, period, ak = 'thei') {
+  const name = store.STATEMENT_PAYEE_NAMES[payeeKey];
+  return computeCarryWithLocks(
+    await periodTotals(pool, payeeKey),
+    await store.adjustmentTotals(pool, ak, name),
+    await store.loadLocks(pool, ak, name),
+    period,
+    DEFAULT_CARRY_START
+  );
+}
+
+async function buildFor(pool, payeeKey, period, ak = 'thei') {
   const rows = await fetchRows(pool, payeeKey, period);
-  const carry = /^\d{6}$/.test(period)
-    ? computeCarry(await periodTotals(pool, payeeKey), period)
-    : null;
+  const monthly = /^\d{6}$/.test(period);
+  const carry = monthly ? await carryFor(pool, payeeKey, period, ak) : null;
+  const adjustments = monthly
+    ? await store.loadAdjustments(pool, ak, store.STATEMENT_PAYEE_NAMES[payeeKey], period)
+    : [];
   if (payeeKey === 'lina') {
     const statement = buildLinaCompensationStatement(rows, { period });
+    attachAdjustments(statement, adjustments);
     statement.carry = carry;
     const wb = await buildLinaCompensationWorkbook(statement);
     return {
-      statement, total: statement.balance, lines: statement.lines,
+      statement, total: statement.balanceAfterAdjustments, lines: statement.lines, carry,
       buffer: Buffer.from(await wb.xlsx.writeBuffer()),
       filename: filenameForLinaStatement(statement),
     };
   }
   const statement = buildIntegrityStatement(rows, payeeKey, { period });
+  attachAdjustments(statement, adjustments);
   statement.carry = carry;
   const wb = await buildIntegrityWorkbook(statement);
   return {
-    statement, total: statement.balance, lines: statement.lines,
+    statement, total: statement.balanceAfterAdjustments, lines: statement.lines, carry,
     buffer: Buffer.from(await wb.xlsx.writeBuffer()),
     filename: filenameForIntegrityStatement(statement),
   };
@@ -141,10 +164,10 @@ router.get('/carry', requireAuth, async (req, res) => {
     const period = String(req.query.period || '');
     if (!/^\d{6}$/.test(period)) return res.status(400).json({ error: 'period must be YYYYMM' });
     const pool = getPool();
+    const ak = agencyKey(req);
     const out = {};
     for (const key of Object.keys(PAYEES)) {
-      out[PAYEES[key].name === 'Alba Hernandez (Lina)' ? 'Lina Hernandez' : PAYEES[key].name] =
-        computeCarry(await periodTotals(pool, key), period);
+      out[store.STATEMENT_PAYEE_NAMES[key]] = await carryFor(pool, key, period, ak);
     }
     res.json(out);
   } catch (err) {
@@ -160,7 +183,7 @@ router.get('/preview', requireAuth, async (req, res) => {
     if (!PAYEES[payee]) return res.status(400).json({ error: 'unknown payee' });
     if (!period) return res.status(400).json({ error: 'period is required' });
     const pool = getPool();
-    const built = await buildFor(pool, payee, String(period));
+    const built = await buildFor(pool, payee, String(period), agencyKey(req));
     res.json(built.statement);
   } catch (err) {
     console.error('[payee-statements] preview', err);
@@ -174,7 +197,21 @@ router.get('/preview-download', requireAuth, async (req, res) => {
     const { payee, period } = req.query;
     if (!PAYEES[payee]) return res.status(400).json({ error: 'unknown payee' });
     if (!period) return res.status(400).json({ error: 'period is required' });
-    const built = await buildFor(getPool(), payee, String(period));
+    const pool = getPool();
+    // Locked (paid / closed) month: hand back the frozen statement, not a rebuild.
+    if (/^\d{6}$/.test(String(period))) {
+      const lock = await store.activeLock(pool, agencyKey(req), store.STATEMENT_PAYEE_NAMES[payee], String(period));
+      if (lock && lock.statement_id) {
+        await ensureTable(pool);
+        const f = await pool.query(`SELECT file_name, file_data FROM payee_statements WHERE id=$1`, [lock.statement_id]);
+        if (f.rows.length && f.rows[0].file_data) {
+          res.setHeader('Content-Type', XLSX);
+          res.setHeader('Content-Disposition', `attachment; filename="${String(f.rows[0].file_name || 'statement.xlsx').replace(/"/g, '')}"`);
+          return res.send(f.rows[0].file_data);
+        }
+      }
+    }
+    const built = await buildFor(pool, payee, String(period), agencyKey(req));
     res.setHeader('Content-Type', XLSX);
     res.setHeader('Content-Disposition', `attachment; filename="${built.filename}"`);
     res.send(built.buffer);
@@ -193,12 +230,25 @@ router.post('/issue', requireAuth, requireAdmin, async (req, res) => {
       return res.status(400).json({ error: 'period must be YYYYMM' });
     }
     const pool = getPool();
+    const ak = agencyKey(req);
+    if (await store.activeLock(pool, ak, store.STATEMENT_PAYEE_NAMES[payee], String(period))) {
+      return res.status(409).json({ error: 'That month is locked (paid or closed). Unlock it first, or post a prior-period correction in an open month.' });
+    }
+    const row = await issueStatement(pool, req, payee, String(period), notes);
+    if (!row) return res.status(400).json({ error: 'No lines for that payee/period — nothing to issue' });
+    res.json(row);
+  } catch (err) {
+    console.error('[payee-statements] issue', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** Snapshot + store a statement version. Returns the stored row (no bytes) or null if empty. */
+async function issueStatement(pool, req, payee, period, notes, prebuilt) {
     await ensureTable(pool);
     const ak = agencyKey(req);
-    const built = await buildFor(pool, payee, String(period));
-    if (!built.lines.length) {
-      return res.status(400).json({ error: 'No lines for that payee/period — nothing to issue' });
-    }
+    const built = prebuilt || await buildFor(pool, payee, String(period), ak);
+    if (!built.lines.length && !(built.statement.adjustments || []).length) return null;
     const prev = await pool.query(
       `SELECT COALESCE(MAX(version),0) AS v FROM payee_statements
         WHERE agency_key=$1 AND payee_key=$2 AND payment_period=$3 AND source='olicomm'`,
@@ -221,12 +271,14 @@ router.post('/issue', requireAuth, requireAdmin, async (req, res) => {
         JSON.stringify(built.lines), built.filename, XLSX, built.buffer, notes || null,
         (req.user && (req.user.email || req.user.username)) || null]
     );
-    res.json(ins.rows[0]);
-  } catch (err) {
-    console.error('[payee-statements] issue', err);
-    res.status(500).json({ error: err.message });
-  }
-});
+    await logChange(pool, req, {
+      type: 'statement.issued', entityType: 'payee_statement', entityId: ins.rows[0].id,
+      period, payee: store.STATEMENT_PAYEE_NAMES[payee],
+      summary: `Issued ${store.STATEMENT_PAYEE_NAMES[payee]} statement v${version} for ${period}: ${Number(built.total).toFixed(2)}`,
+      details: { version, total: built.total, lineCount: built.lines.length },
+    });
+    return ins.rows[0];
+}
 
 /** POST /received (multipart: file, payee, period, total, notes) — BSI's copy */
 router.post('/received', requireAuth, requireAdmin, upload.single('file'), async (req, res) => {
@@ -285,7 +337,7 @@ router.get('/compare', requireAuth, async (req, res) => {
     const pool = getPool();
     await ensureTable(pool);
     const ak = agencyKey(req);
-    const live = await buildFor(pool, payee, String(period));
+    const live = await buildFor(pool, payee, String(period), ak);
     const stored = await pool.query(
       `SELECT ${COLS} FROM payee_statements
         WHERE agency_key=$1 AND payee_key=$2 AND payment_period=$3 AND status='issued'
@@ -348,6 +400,12 @@ router.post('/:id(\\d+)/void', requireAuth, requireAdmin, async (req, res) => {
       [req.params.id, agencyKey(req)]
     );
     if (!r.rows.length) return res.status(404).json({ error: 'not found' });
+    await logChange(pool, req, {
+      type: 'statement.voided', entityType: 'payee_statement', entityId: r.rows[0].id,
+      period: r.rows[0].payment_period, payee: r.rows[0].payee_name,
+      summary: `Voided ${r.rows[0].payee_name} statement v${r.rows[0].version} for ${r.rows[0].payment_period}`,
+      details: { reason: (req.body && req.body.reason) || null },
+    });
     res.json(r.rows[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -355,3 +413,9 @@ router.post('/:id(\\d+)/void', requireAuth, requireAdmin, async (req, res) => {
 });
 
 module.exports = router;
+module.exports.PAYEES = PAYEES;
+module.exports.buildFor = buildFor;
+module.exports.carryFor = carryFor;
+module.exports.periodTotals = periodTotals;
+module.exports.issueStatement = issueStatement;
+module.exports.ensureStatementTable = ensureTable;

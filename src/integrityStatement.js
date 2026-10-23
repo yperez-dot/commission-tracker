@@ -12,6 +12,7 @@
 
 const ExcelJS = require('exceljs');
 const { isAgencyOverride } = require('./payeeSchedules');
+const { writeAdjustmentsSection } = require('./payrollStatementExtras');
 
 // Chargebacks on Integrity books are stored as 'Chargeback' (not 'Agency Override');
 // new sales on BSI UHC / Aetna feeds are 'New Business'. Renewals are never paid.
@@ -224,6 +225,10 @@ async function buildIntegrityWorkbook(statement) {
     ws.getCell(`F${r}`).numFmt = money;
     ws.getCell(`F${r}`).font = { bold: true, color: section.balance < 0 ? red.color : undefined };
     r += 2;
+  }
+
+  if (statement.adjustments && statement.adjustments.length) {
+    r = writeAdjustmentsSection(ws, r, statement, 'F') + 1;
   }
 
   if (statement.carry && (statement.carry.carryIn !== 0 || statement.carry.net < 0)) {
