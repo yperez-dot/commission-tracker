@@ -24,7 +24,7 @@ describe('integrity statements', () => {
       row({ id: 3, agent_name: 'CAM Insurance Solutions Corp', policy_number: 'P3', producer_payable: 20 }),
       row({ id: 4, carrier: 'Humana', policy_number: 'P4', producer_payable: 5 }),
       row({ id: 5, agent_name: 'Horacio Mendieta', producer_payable: 99 }),
-      row({ id: 6, classification: 'New Business', producer_payable: 50 }),
+      row({ id: 6, classification: 'Renewal', producer_payable: 50 }),
       row({ id: 7, payment_period: '202608', producer_payable: 7 }),
     ];
     const s = buildIntegrityStatement(rows, 'christian-munoz', { period: '202609' });
@@ -34,6 +34,31 @@ describe('integrity statements', () => {
     expect(s.balance).toBe(43.75);
     expect(s.chargebacks).toBe(-18.75);
     expect(s.lineCount).toBe(4);
+  });
+
+  test('new-sale lines from BSI UHC / Aetna feeds are on the statement; renewals are not', () => {
+    const rows = [
+      row({ id: 21, classification: 'New Business', producer_payable: 75 }),
+      row({ id: 22, policy_number: 'P22', classification: 'Renewal', producer_payable: 0 }),
+      row({ id: 23, policy_number: 'P23', classification: 'Chargeback', producer_payable: -75 }),
+    ];
+    const s = buildIntegrityStatement(rows, 'christian-munoz', { period: '202609' });
+    expect(s.lineCount).toBe(2);
+    expect(s.balance).toBe(0);
+  });
+
+  test('Mendieta statement only has his own rows (not other writing agents)', () => {
+    const rows = [
+      row({ id: 31, agent_name: 'Horacio Mendieta', classification: 'New Business', producer_payable: 75 }),
+      row({ id: 32, agent_name: 'Edgar Piloto', policy_number: 'P32', producer_payable: 5 }),
+      row({ id: 33, agent_name: 'Mr. Edgar Piloto', policy_number: 'P33', producer_payable: 5 }),
+      row({ id: 34, agent_name: 'Ivan Santiago', policy_number: 'P34', classification: 'Chargeback', producer_payable: -61.88 }),
+    ];
+    const s = buildIntegrityStatement(rows, 'horacio-mendieta', { period: '202609' });
+    expect(s.lineCount).toBe(1);
+    expect(s.balance).toBe(75);
+    expect(payeeKeyForAgent('Edgar Piloto')).toBeNull();
+    expect(payeeKeyForAgent('Ivan Santiago')).toBeNull();
   });
 
   test('exact duplicate ids are collapsed', () => {

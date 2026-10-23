@@ -10,7 +10,13 @@
  *   BSI and set gross = 2× commission.
  */
 
-const { isIntegrityAgent, isMarcoAgent } = require('./payeeSchedules');
+const {
+  isIntegrityAgent,
+  isIntegrityChargeback,
+  isIntegrityRenewal,
+  isIntegrityNewBusiness,
+  isMarcoAgent,
+} = require('./payeeSchedules');
 
 function num(v) {
   const n = parseFloat(v);
@@ -82,6 +88,59 @@ function splitFullOverridePot(pot, opts = {}) {
     splitApplies: true,
     schedule: 'standard_50_50',
   };
+}
+
+/**
+ * Integrity (Munoz / CAM / Mendieta) chargeback → same 50 / 25 / 25 split as the
+ * override it reverses, so the producer gives back exactly what they were paid.
+ * Returns null for any other agent or classification (caller keeps its logic).
+ */
+function splitIntegrityChargeback(amount, agentName, classification) {
+  if (!isIntegrityChargeback(agentName, classification)) return null;
+  const gross = num(amount);
+  return {
+    grossCommission: gross,
+    theiShare: round2(gross * 0.25),
+    bsiShare: round2(gross * 0.25),
+    producerPayable: round2(gross * 0.5),
+    subAgentOverride: 0,
+    splitApplies: false,
+    schedule: 'integrity_chargeback_50_25_25',
+  };
+}
+
+/**
+ * Integrity (Munoz / CAM / Mendieta) renewal on a BSI feed → not paid to the
+ * producer; the line is house pot split THEI 50% / BSI 50%.
+ * Returns null for any other agent or classification.
+ */
+function splitIntegrityRenewal(amount, agentName, classification) {
+  if (!isIntegrityRenewal(agentName, classification)) return null;
+  return splitHouseOnly(amount);
+}
+
+/** Producer 0, whole line split THEI 50% / BSI 50% (odd cent to BSI). */
+function splitHouseOnly(amount) {
+  const gross = num(amount);
+  const theiShare = round2(gross / 2);
+  return {
+    grossCommission: gross,
+    theiShare,
+    bsiShare: round2(gross - theiShare),
+    producerPayable: 0,
+    subAgentOverride: 0,
+    splitApplies: true,
+    schedule: 'integrity_renewal_house_50_50',
+  };
+}
+
+/**
+ * Integrity (Munoz / CAM / Mendieta) new sale on a BSI UHC / Aetna feed → 50% producer,
+ * 25% THEI, 25% BSI. Returns null for any other agent or classification.
+ */
+function splitIntegrityNewBusiness(amount, agentName, classification) {
+  if (!isIntegrityNewBusiness(agentName, classification)) return null;
+  return { ...splitFullOverridePot(amount, { agentName }), schedule: 'integrity_new_sale_50_25_25' };
 }
 
 /**
@@ -185,6 +244,10 @@ module.exports = {
   num,
   round2,
   splitFullOverridePot,
+  splitIntegrityChargeback,
+  splitIntegrityRenewal,
+  splitIntegrityNewBusiness,
+  splitHouseOnly,
   splitTheRemittanceHalf,
   normalizeFilename,
   isBsiBookPayee,

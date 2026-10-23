@@ -1056,6 +1056,11 @@ router.get('/agency-summary', requireAuth, requireAdmin, async (req, res) => {
 
 router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, res) => {
   try {
+    const {
+      splitIntegrityChargeback,
+      splitIntegrityNewBusiness,
+      splitIntegrityRenewal,
+    } = require('../src/overrideSplitMath');
     const pool = getPool();
 
     const NO_SPLIT_AGENTS = [
@@ -1158,7 +1163,15 @@ router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, r
       const isMarcoAgent = MARCO_AGENTS_LIST.some(n => agentLcB.includes(n)) && !isJendyPostCutoff;
       const isBsiFullPot = payeeLc === 'bsi';
 
-      if (isCommissionRow || isAgentDirectRow) {
+      // Integrity (Munoz / CAM / Mendieta): new sales 50/25/25, chargebacks take the same
+      // 50/25/25 back, renewals are not paid (producer 0, THEI/BSI 50/50).
+      const integrityCb =
+        splitIntegrityChargeback(netCommission, agent, classification) ||
+        splitIntegrityNewBusiness(netCommission, agent, classification) ||
+        splitIntegrityRenewal(netCommission, agent, classification);
+      if (integrityCb) {
+        ({ splitApplies, theiShare, bsiShare, producerPayable, grossCommission } = integrityCb);
+      } else if (isCommissionRow || isAgentDirectRow) {
         // Agent production (Agent Commission / NB / Renewal / Chargeback) is paid to agents —
         // never Agency THEI Share. Must run BEFORE the direct_carrier 100% THEI branch.
         splitApplies = false;

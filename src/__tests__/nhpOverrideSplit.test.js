@@ -102,4 +102,108 @@ describe('nhpOverrideSplit', () => {
     expect(houseNewSale.bsiShare).toBe(50);
     expect(houseNewSale.producerPayable).toBe(0);
   });
+
+  describe('Integrity: renewals not paid, fixed-cut chargebacks take back the cut', () => {
+    test('NHP Integrity renewal → producer 0, THEI/BSI 50/50 (THEI only before BSI split)', () => {
+      const s = splitNhpMedicareOverride({
+        pot: 20, agentName: 'Horacio Mendieta', carrier: 'Humana', classification: 'Renewal', isBsiEligible: true,
+      });
+      expect(s.producerPayable).toBe(0);
+      expect(s.theiShare).toBe(10);
+      expect(s.bsiShare).toBe(10);
+      const pre = splitNhpMedicareOverride({
+        pot: 20, agentName: 'CAM Insurance Solutions Corp', carrier: 'Humana', classification: 'Renewal', isBsiEligible: false,
+      });
+      expect(pre.producerPayable).toBe(0);
+      expect(pre.theiShare).toBe(20);
+      expect(pre.bsiShare).toBe(0);
+    });
+
+    test('full chargeback of a fixed-cut sale takes back the whole cut', () => {
+      const s = splitNhpMedicareOverride({
+        pot: -175, agentName: 'Christian Munoz', carrier: 'Doctors', classification: 'New Business',
+        isBsiEligible: true, originalSale: { gross: 175, producer: 50 },
+      });
+      expect(s.producerPayable).toBe(-50);
+      expect(s.theiShare).toBe(-62.5);
+      expect(s.bsiShare).toBe(-62.5);
+      expect(s.needsReview).toBe(false);
+    });
+
+    test('partial chargeback takes back the cut in the same proportion', () => {
+      const s = splitNhpMedicareOverride({
+        pot: -82.5, agentName: 'Horacio Mendieta', carrier: 'UnitedHealthcare', classification: 'Chargeback',
+        isBsiEligible: true, originalSale: { gross: 165, producer: 82.5 },
+      });
+      expect(s.producerPayable).toBe(-41.25);
+      expect(s.producerPayable + s.theiShare + s.bsiShare).toBeCloseTo(-82.5, 2);
+    });
+
+    test('original sale unknown → full fixed cut (capped at the line) and flagged for review', () => {
+      const s = splitNhpMedicareOverride({
+        pot: -175, agentName: 'Christian Munoz', carrier: 'Solis', classification: 'Chargeback', isBsiEligible: true,
+      });
+      expect(s.producerPayable).toBe(-62.5);
+      expect(s.needsReview).toBe(true);
+      const small = splitNhpMedicareOverride({
+        pot: -20, agentName: 'Christian Munoz', carrier: 'Solis', classification: 'Chargeback', isBsiEligible: true,
+      });
+      expect(small.producerPayable).toBe(-20);
+    });
+
+    test('CAM and non-fixed carriers keep 50/25/25 chargebacks; other agents unchanged', () => {
+      const cam = splitNhpMedicareOverride({
+        pot: -100, agentName: 'CAM Insurance Solutions Corp', carrier: 'Doctors', classification: 'Chargeback', isBsiEligible: true,
+      });
+      expect(cam.producerPayable).toBe(-50);
+      const humana = splitNhpMedicareOverride({
+        pot: -100, agentName: 'Horacio Mendieta', carrier: 'Humana', classification: 'Chargeback', isBsiEligible: true,
+      });
+      expect(humana.producerPayable).toBe(-50);
+      for (const agent of ['Edgar Piloto', 'Ivan Santiago']) {
+        const o = splitNhpMedicareOverride({
+          pot: -100, agentName: agent, carrier: 'UnitedHealthcare', classification: 'Chargeback', isBsiEligible: true,
+        });
+        expect(o.producerPayable).toBe(0);
+        expect(o.theiShare).toBe(-50);
+      }
+    });
+  });
+
+  describe('UHC plan year 2026 fixed $82.50 (Chris incl. CAM, and Horacio)', () => {
+    for (const agent of ['Christian Munoz', 'CAM Insurance Solutions Corp', 'Horacio Mendieta']) {
+      test(`${agent}: $150 pot → producer 82.50, BSI keeps 25%, THEI absorbs the extra`, () => {
+        const s = splitNhpMedicareOverride({
+          pot: 150, agentName: agent, carrier: 'UnitedHealthcare', classification: 'New Business',
+          isBsiEligible: true, effectiveDate: '2026-03-01',
+        });
+        expect(s.producerPayable).toBe(82.5);
+        expect(s.bsiShare).toBe(37.5);
+        expect(s.theiShare).toBe(30);
+        const back = splitNhpMedicareOverride({
+          pot: -150, agentName: agent, carrier: 'UnitedHealthcare', classification: 'Chargeback',
+          isBsiEligible: true, effectiveDate: '2026-03-01', originalSale: { gross: 150, producer: 82.5 },
+        });
+        expect(back.producerPayable).toBe(-82.5);
+        expect(back.bsiShare).toBe(-37.5);
+        expect(back.theiShare).toBe(-30);
+      });
+    }
+
+    test('CAM stays 50/25/25 on Doctors / Solis / HealthSun; Piloto / Santiago never fixed', () => {
+      const cam = splitNhpMedicareOverride({
+        pot: 175, agentName: 'CAM Insurance Solutions Corp', carrier: 'Doctors', classification: 'New Business', isBsiEligible: true,
+      });
+      expect(cam.producerPayable).toBe(87.5);
+      for (const agent of ['Edgar Piloto', 'Ivan Santiago']) {
+        const o = splitNhpMedicareOverride({
+          pot: 150, agentName: agent, carrier: 'UnitedHealthcare', classification: 'New Business',
+          isBsiEligible: true, effectiveDate: '2026-03-01',
+        });
+        expect(o.producerPayable).toBe(0);
+        expect(o.theiShare).toBe(75);
+        expect(o.bsiShare).toBe(75);
+      }
+    });
+  });
 });

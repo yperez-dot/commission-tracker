@@ -12,7 +12,7 @@
 const XLSX = require('xlsx');
 const { normalizeAgentName } = require('../routes/normalize');
 const { resolveNhpPaymentPeriod } = require('./nhpPeriod');
-const { splitNhpMedicareOverride } = require('./nhpOverrideSplit');
+const { splitNhpMedicareOverride, isChrisOrHoracioFixedCarrier } = require('./nhpOverrideSplit');
 const { round2 } = require('./overrideSplitMath');
 const {
   isTailoredAcaPassThrough,
@@ -222,6 +222,12 @@ function parseNhpWorkbook(wb, uploadPeriod, filename = '', helpers = {}) {
 
   const records = [];
   const marcoDeductedPolicies = new Set();
+  // Chris/Horacio fixed-cut new sales by policy ({ gross, producer }) — from earlier uploads
+  // (helpers.integrityOriginalSales) plus sales seen earlier in this file — so a chargeback
+  // takes back exactly the cut that was paid.
+  const integrityOriginalSales = new Map(
+    helpers.integrityOriginalSales instanceof Map ? helpers.integrityOriginalSales : []
+  );
   const ws = wb.Sheets[wb.SheetNames[0]];
   if (!ws || !ws['!ref']) return records;
   const range = XLSX.utils.decode_range(ws['!ref']);
@@ -433,8 +439,17 @@ function parseNhpWorkbook(wb, uploadPeriod, filename = '', helpers = {}) {
         paymentPeriod: period,
         isBsiEligible,
         alreadyDeducted,
+        originalSale: policyKey ? integrityOriginalSales.get(policyKey) : undefined,
+        effectiveDate: isoEff || effectiveDate,
       });
       if (split.subAgentOverride && policyKey) marcoDeductedPolicies.add(policyKey);
+      if (policyKey && grossCommission > 0 && split.producerPayable > 0 &&
+          isChrisOrHoracioFixedCarrier(agent, carrier)) {
+        integrityOriginalSales.set(policyKey, { gross: grossCommission, producer: split.producerPayable });
+      }
+      if (split.needsReview) {
+        mga = 'Integrity fixed-cut chargeback: original sale not found — full cut taken back, please verify';
+      }
       splitApplies = split.splitApplies;
       theiShare = split.theiShare;
       bsiShare = split.bsiShare;

@@ -14,9 +14,11 @@ const ExcelJS = require('exceljs');
 const { isAgencyOverride } = require('./payeeSchedules');
 const { writeAdjustmentsSection } = require('./payrollStatementExtras');
 
-// Chargebacks on Integrity books are stored as 'Chargeback' (not 'Agency Override').
+// Chargebacks on Integrity books are stored as 'Chargeback' (not 'Agency Override');
+// new sales on BSI UHC / Aetna feeds are 'New Business'. Renewals are never paid.
 function isIntegrityLineClass(classification) {
-  return isAgencyOverride(classification) || String(classification || '').toLowerCase().includes('chargeback');
+  const c = String(classification || '').toLowerCase();
+  return isAgencyOverride(classification) || c.includes('chargeback') || c.includes('new business');
 }
 
 const ISSUING_AGENCY = 'The Health Experts Insurance';
