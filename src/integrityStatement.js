@@ -13,6 +13,11 @@
 const ExcelJS = require('exceljs');
 const { isAgencyOverride } = require('./payeeSchedules');
 
+// Chargebacks on Integrity books are stored as 'Chargeback' (not 'Agency Override').
+function isIntegrityLineClass(classification) {
+  return isAgencyOverride(classification) || String(classification || '').toLowerCase().includes('chargeback');
+}
+
 const ISSUING_AGENCY = 'The Health Experts Insurance';
 
 const INTEGRITY_PAYEES = Object.freeze({
@@ -76,7 +81,7 @@ function selectIntegrityRows(rows, payeeKey, period) {
   const seen = new Set();
   return (rows || []).filter((r) => {
     if (payeeKeyForAgent(r.agent_name) !== payeeKey) return false;
-    if (!isAgencyOverride(r.classification)) return false;
+    if (!isIntegrityLineClass(r.classification)) return false;
     if (num(r.producer_payable) === 0) return false;
     if (period && period !== 'all' && String(r.payment_period) !== String(period)) return false;
     // Collapse exact re-imports of the same line.

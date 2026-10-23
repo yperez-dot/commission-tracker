@@ -20,7 +20,7 @@ describe('integrity statements', () => {
   test('sections per carrier, balances, chargebacks, CAM included for Munoz', () => {
     const rows = [
       row({ id: 1, producer_payable: 37.5 }),
-      row({ id: 2, policy_number: 'P2', producer_payable: -18.75 }),
+      row({ id: 2, policy_number: 'P2', producer_payable: -18.75, classification: 'Chargeback' }),
       row({ id: 3, agent_name: 'CAM Insurance Solutions Corp', policy_number: 'P3', producer_payable: 20 }),
       row({ id: 4, carrier: 'Humana', policy_number: 'P4', producer_payable: 5 }),
       row({ id: 5, agent_name: 'Horacio Mendieta', producer_payable: 99 }),
