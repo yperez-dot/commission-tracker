@@ -18,7 +18,7 @@ import {
 } from '../components/UploadPageLayout';
 import { commissionUploadExportPath, exportUploadFile } from '../utils/exportUpload';
 import { statementSearchText } from '../utils/statementDisplayName';
-import { bsiUploadTitle } from '../bsiStatementTitle';
+import { bsiUploadTitle, compareBsiUploadsByTitle } from '../bsiStatementTitle';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -153,7 +153,7 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
   async function renameUpload(u) {
     const current = bsiUploadTitle(u);
     const next = window.prompt(
-      'Statement title (standard: BSI · Carrier · YYYY-MM).\nLeave blank to reset to the automatic title.',
+      'Statement title (standard: BSI · Carrier · MM-YYYY).\nLeave blank to reset to the automatic title.',
       current
     );
     if (next === null) return;
@@ -219,7 +219,7 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
         case 'carrier':
           return (a.carrier || '').localeCompare(b.carrier || '');
         case 'title':
-          return bsiUploadTitle(a).localeCompare(bsiUploadTitle(b));
+          return compareBsiUploadsByTitle(a, b);
         case 'date_desc':
         default:
           return new Date(b.uploaded_at) - new Date(a.uploaded_at);
