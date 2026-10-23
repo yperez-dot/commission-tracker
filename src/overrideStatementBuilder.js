@@ -17,6 +17,7 @@
 const {
   STATEMENT_TYPES,
   isIntegrityAgent,
+  isBsiHouseSplitLine,
   isIntegrityChargeback,
   isIntegrityNewBusiness,
   isMarcoAgent,
@@ -105,8 +106,13 @@ function isIntegrityExtraLine(row) {
     isIntegrityNewBusiness(row.agent_name, row.classification);
 }
 
+/** Non-override rows that still belong on the house statements (Integrity extras, BSI other-agent house lines). */
+function isHouseExtraLine(row) {
+  return isIntegrityExtraLine(row) || isBsiHouseSplitLine(row);
+}
+
 function classifyTheiShareLine(row) {
-  const integrityCb = isIntegrityExtraLine(row);
+  const integrityCb = isHouseExtraLine(row);
   const clsOverride = isAgencyOverride(row.classification) || integrityCb;
   const albaPeeled = isAlbaPeeledOverrideShare(row);
   if (!clsOverride && !albaPeeled) return null;
@@ -138,8 +144,9 @@ function classifyTheiShareLine(row) {
 
 function classifyOverrideLine(row, statementType) {
   // Integrity chargebacks reverse an override: list them on the THEI / BSI / Integrity
-  // statements (only when the 50/25/25 split was stored on the row).
-  const integrityCb = isIntegrityExtraLine(row);
+  // statements (only when the 50/25/25 split was stored on the row). BSI other-agent
+  // house lines (stored 50/50, Marco $10) are listed the same way.
+  const integrityCb = isHouseExtraLine(row);
   const clsOverride = isAgencyOverride(row.classification) || integrityCb;
   const albaPeeled = isAlbaPeeledOverrideShare(row);
 
@@ -321,7 +328,8 @@ function buildTheiBsiBreakdown(rows, opts = {}) {
     }
     if (!isAgencyOverride(row.classification)) {
       // Integrity chargebacks reverse an override — include them once their split is stored.
-      if (!isIntegrityExtraLine(row)) continue;
+      // BSI other-agent house lines (and their chargebacks) likewise.
+      if (!isHouseExtraLine(row)) continue;
       if (num(row.thei_share) === 0 && num(row.bsi_share) === 0 && num(row.producer_payable) === 0) continue;
     }
     const key = lineKey(row);

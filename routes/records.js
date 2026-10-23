@@ -1083,7 +1083,15 @@ router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, r
     }
 
     const force = req.query.force === 'true';
-    const whereClause = force ? '' : 'WHERE cr.source IS NULL';
+    // BSI upload rows carry their split from upload time (Lina peel, Integrity rules, other
+    // agents' 50/50 house split with Marco $10, chargebacks). Never recompute them here, even
+    // with force=true, so a re-run can't double or wipe a stored split.
+    const keepBsiSplit = `NOT (
+        UPPER(COALESCE(cr.source, '')) IN ('BSI', 'BSI_PAYEE')
+        AND (COALESCE(cr.thei_share, 0) <> 0 OR COALESCE(cr.bsi_share, 0) <> 0
+          OR COALESCE(cr.producer_payable, 0) <> 0 OR COALESCE(cr.sub_agent_override, 0) <> 0)
+      )`;
+    const whereClause = force ? `WHERE ${keepBsiSplit}` : `WHERE cr.source IS NULL AND ${keepBsiSplit}`;
 
     const sel = await pool.query(`
       SELECT cr.id, cr.agent_name, cr.carrier, cr.commission, cr.classification,

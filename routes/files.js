@@ -1397,7 +1397,7 @@ const {
   parseTheRemittanceStatement,
 } = require('../src/theRemittanceStatement');
 
-const { applyBsiBookAgentProduction } = require('../src/bsiBookAttribution');
+const { applyBsiBookAgentProduction, isUnsplitBsiLine } = require('../src/bsiBookAttribution');
 const {
   classifyBsiNonMemberRow,
   sumSummaryActivity,
@@ -1452,6 +1452,40 @@ async function loadIntegrityBsiUhcOriginalSales(pool) {
     console.warn('[BSI-UPLOAD] Could not load Integrity original sales:', e.message);
   }
   return map;
+}
+
+/**
+ * Marco (Swan) $10 already stored, for the BSI other-agent house split:
+ *  - deductedPolicies: policy numbers that already gave Marco $10 (no second $10)
+ *  - marcoOriginals: policy (lower-case) → { gross, sub, reversed } so a chargeback
+ *    reverses Marco's share in proportion and never more than was taken.
+ */
+async function loadMarcoHouseHistory(pool) {
+  const deductedPolicies = new Set();
+  const marcoOriginals = new Map();
+  try {
+    const r = await pool.query(`
+      SELECT TRIM(policy_number) AS policy,
+             SUM(CASE WHEN sub_agent_override > 0 THEN sub_agent_override ELSE 0 END)::float AS sub,
+             SUM(CASE WHEN sub_agent_override > 0
+                      THEN COALESCE(NULLIF(gross_commission, 0), commission, 0) ELSE 0 END)::float AS gross,
+             SUM(CASE WHEN sub_agent_override < 0 THEN -sub_agent_override ELSE 0 END)::float AS reversed
+      FROM commission_records
+      WHERE COALESCE(sub_agent_override, 0) <> 0
+        AND COALESCE(TRIM(policy_number), '') <> ''
+      GROUP BY TRIM(policy_number)`);
+    for (const row of r.rows) {
+      if ((row.sub || 0) > 0) deductedPolicies.add(row.policy);
+      marcoOriginals.set(String(row.policy).toLowerCase(), {
+        gross: row.gross || 0,
+        sub: row.sub || 0,
+        reversed: row.reversed || 0,
+      });
+    }
+  } catch (e) {
+    console.warn('[BSI-UPLOAD] Could not load Marco $10 history:', e.message);
+  }
+  return { deductedPolicies, marcoOriginals };
 }
 
 async function loadIntegrityOriginalSales(pool) {
@@ -5367,7 +5401,8 @@ router.post('/upload-bsi-statement', requireAuth, requireAdmin, upload.single('f
     // Agency Override / Held stay under Broker Society; other agents unchanged.
     const carrierReconciliation = records.reconciliation || null;
     const integrityOriginalSales = await loadIntegrityBsiUhcOriginalSales(pool);
-    applyBsiBookAgentProduction(records, { integrityOriginalSales });
+    const { deductedPolicies, marcoOriginals } = await loadMarcoHouseHistory(pool);
+    applyBsiBookAgentProduction(records, { integrityOriginalSales, deductedPolicies, marcoOriginals });
 
     const beforeInternal = records.length;
     const collapsed = collapseInternalDuplicates(records);
@@ -5387,6 +5422,16 @@ router.post('/upload-bsi-statement', requireAuth, requireAdmin, upload.single('f
 
     const commissionSum = records.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0);
     const carriers = [...new Set(records.map(r => r.carrier).filter(Boolean))];
+    // Guard: other agents' lines and chargebacks must carry a THEI/BSI share.
+    const unsplitRows = records.filter((r) => isUnsplitBsiLine(r));
+    const unsplitWarning = unsplitRows.length
+      ? {
+        count: unsplitRows.length,
+        total: Math.round(unsplitRows.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0) * 100) / 100,
+        message: `${unsplitRows.length} line(s) have dollars but no THEI/BSI split — flagged for review`,
+      }
+      : null;
+    if (unsplitWarning) console.warn('[BSI-UPLOAD] UNSPLIT:', unsplitWarning.message);
     const carrierWarning = carrierMismatchWarning({ expected, layout: detectedLayout, importedCarriers: carriers });
     if (carrierWarning) console.warn('[BSI-UPLOAD] CARRIER MISMATCH:', carrierWarning);
 
@@ -5528,6 +5573,7 @@ router.post('/upload-bsi-statement', requireAuth, requireAdmin, upload.single('f
       reconciliation,
       detectedLayout,
       carrierWarning,
+      unsplitWarning,
     });
 
   } catch (err) {

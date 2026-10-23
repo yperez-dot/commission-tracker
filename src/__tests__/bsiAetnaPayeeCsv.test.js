@@ -122,8 +122,9 @@ describe('BSI Aetna payee CSV', () => {
     expect(trueup.producerPayable).toBe(62.5);
     expect(trueup.theiShare).toBe(31.25);
     expect(trueup.bsiShare).toBe(31.25);
-    // other agents untouched
-    expect(records[0].producerPayable).toBeUndefined();
+    // other agents: house split, no agent share
+    expect(records[0].producerPayable).toBe(0);
+    expect(records[0].theiShare + records[0].bsiShare).toBeCloseTo(records[0].commission, 2);
   });
 });
 

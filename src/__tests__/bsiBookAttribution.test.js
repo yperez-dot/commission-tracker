@@ -160,7 +160,7 @@ describe('bsiBookAttribution', () => {
     ).toBeCloseTo(-175.83, 2);
   });
 
-  it('leaves other individual agents unchanged', () => {
+  it('other individual agents: house split, not remapped (Swan/Marco agent: $10 first)', () => {
     const records = [
       {
         agent: 'Kelly Carpenter',
@@ -171,7 +171,10 @@ describe('bsiBookAttribution', () => {
     ];
     applyBsiBookAgentProduction(records);
     expect(records[0].agent).toBe('Kelly Carpenter');
-    expect(records[0].producerPayable).toBeUndefined();
+    expect(records[0].producerPayable).toBe(0);
+    expect(records[0].subAgentOverride).toBe(10);
+    expect(records[0].theiShare).toBe(70);
+    expect(records[0].bsiShare).toBe(70);
   });
 
   it('detects BSI house agent names and normalizes carriers', () => {
@@ -364,23 +367,22 @@ describe('Integrity chargebacks on BSI feeds', () => {
       { ...base, agent: 'Ivan Santiago', classification: 'Renewal', commission: 6 },
     ];
     applyBsiBookAgentProduction(records);
+    // They get the other-agent house split (producer 0, THEI/BSI 50/50), never 50/25/25.
     for (const r of records) {
-      expect(r.producerPayable).toBeUndefined();
-      expect(r.theiShare).toBeUndefined();
+      expect(r.producerPayable).toBe(0);
+      expect(r.theiShare + r.bsiShare).toBeCloseTo(r.commission, 2);
+      expect(r.theiShare).toBeCloseTo(r.commission / 2, 2);
     }
   });
 
-  it('leaves non-Integrity renewals and non-Integrity chargebacks unchanged', () => {
+  it('non-Integrity renewals and chargebacks get the house split (no agent share)', () => {
     const records = [
       { ...base, agent: 'Test Agent Example', classification: 'Renewal', commission: 6 },
       { ...base, agent: 'Test Agent Example', classification: 'Chargeback', commission: -50 },
     ];
     applyBsiBookAgentProduction(records);
-    for (const r of records) {
-      expect(r.producerPayable).toBeUndefined();
-      expect(r.theiShare).toBeUndefined();
-      expect(r.bsiShare).toBeUndefined();
-    }
+    expect(records[0]).toMatchObject({ producerPayable: 0, theiShare: 3, bsiShare: 3 });
+    expect(records[1]).toMatchObject({ producerPayable: 0, theiShare: -25, bsiShare: -25 });
   });
 
   it('does not overwrite a split a parser already set', () => {
@@ -496,10 +498,9 @@ describe('Integrity BSI UHC rate table (plan year 2026 = $82.50 on a full $150 l
       { ...uhc, agent: 'Ivan Santiago', policyNumber: 'TEST-O2', classification: 'Chargeback', commission: -150 },
     ];
     applyBsiBookAgentProduction(records, { integrityOriginalSales: new Map([['test-o2', { gross: 150, producer: 82.5 }]]) });
-    for (const r of records) {
-      expect(r.producerPayable).toBeUndefined();
-      expect(r.theiShare).toBeUndefined();
-    }
+    // house split 50/50, never the fixed $82.50 or a producer share
+    expect(records[0]).toMatchObject({ producerPayable: 0, theiShare: 75, bsiShare: 75 });
+    expect(records[1]).toMatchObject({ producerPayable: 0, theiShare: -75, bsiShare: -75 });
   });
 });
 

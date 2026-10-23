@@ -786,6 +786,11 @@ function HouseOverridesPanel() {
             </span>
             <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--green)' }}>{fmt(preview.grandTotal)}</span>
           </div>
+          {preview.unsplitBsiWarning && (
+            <div style={{ padding: '8px 14px', borderBottom: '0.5px solid var(--border)', fontSize: 12, fontWeight: 600, color: '#b45309' }}>
+              ⚠ {preview.unsplitBsiWarning.message}
+            </div>
+          )}
           {(preview.sourceUploads || []).length > 0 && (
             <div style={{ padding: '10px 14px', borderBottom: '0.5px solid var(--border)', fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.45 }}>
               <button

@@ -12,9 +12,11 @@
  *       producer_payable = albaComp   → Lina agent statement / payroll
  *       thei_share / bsi_share        → Override Statements for THEI & BSI (50/50)
  *  3. Agency Override / Held rows stay under the house label (not Lina pay)
- *  4. Other agents on the feed are left untouched, except Integrity chargebacks
- *     (50/25/25 split of the override they reverse), Integrity new sales
- *     (50/25/25) and Integrity renewals (not paid: producer 0, THEI/BSI 50/50)
+ *  4. Integrity (Munoz / CAM / Mendieta): new sales 50/25/25 (UHC 2026 fixed rate),
+ *     renewals not paid (producer 0, THEI/BSI 50/50), chargebacks take back what was paid.
+ *  5. Other agents (paid their own commission by the carrier): the BSI line is the agency
+ *     override → house, THEI/BSI 50/50 (Swan/Marco: $10 first). Chargebacks reverse the
+ *     same shares. Lines left with no split are flagged (anomaly).
  */
 
 const {
@@ -22,6 +24,7 @@ const {
   isAlbaAgentCommission,
   isAgencyOverride,
   isIntegrityAgent,
+  isMarcoAgent,
   firstYearRenewalIsRenewal,
   normName,
 } = require('./payeeSchedules');
@@ -414,6 +417,120 @@ function integrityBsiUhcChargeback(r, commission, original) {
   };
 }
 
+/** HRA (paid to Lina) and BSI fees are never house-split. */
+function isHraOrFee(classification) {
+  const c = String(classification || '').toLowerCase();
+  return c.includes('hra') || c.includes('bsi fee');
+}
+
+const zero = (v) => v == null || Math.abs(Number(v) || 0) < 0.005;
+
+function hasNoSplit(r) {
+  return zero(r.producerPayable) && zero(r.theiShare) && zero(r.bsiShare) && zero(r.subAgentOverride);
+}
+
+function policyKey(r) {
+  return String(r.policyNumber || r.policy_number || '').trim().toLowerCase();
+}
+
+/**
+ * "Other agent" on a BSI feed: a real writing agent who is not Lina/Alba, not
+ * Integrity (Munoz / CAM / Mendieta), not the BSI house label and not THEI itself.
+ * The carrier pays these agents their own commission, so the BSI line is the
+ * agency override and belongs to the house.
+ */
+function isOtherBsiAgent(agent) {
+  if (isBsiHouseAgent(agent) || isAlbaHernandez(agent) || isIntegrityAgent(agent)) return false;
+  return !/health experts/.test(normName(agent));
+}
+
+/**
+ * Guard: a BSI line with dollars whose split is missing.
+ * - Other agents' lines and every chargeback (negative line) need a THEI/BSI share.
+ * - Lina / Integrity positive lines need at least one stored share (agent, THEI or BSI).
+ * HRA and fee rows are never split, so they're never flagged.
+ */
+function isUnsplitBsiLine(r) {
+  const amount = parseFloat(r.commission != null ? r.commission : r.amount) || 0;
+  if (Math.abs(amount) < 0.005) return false;
+  const cls = r.classification;
+  if (isHraOrFee(cls)) return false;
+  const agent = r.agent != null ? r.agent : r.agent_name;
+  const row = {
+    producerPayable: r.producerPayable != null ? r.producerPayable : r.producer_payable,
+    theiShare: r.theiShare != null ? r.theiShare : r.thei_share,
+    bsiShare: r.bsiShare != null ? r.bsiShare : r.bsi_share,
+    subAgentOverride: r.subAgentOverride != null ? r.subAgentOverride : r.sub_agent_override,
+  };
+  if (amount < 0 || isOtherBsiAgent(agent)) return zero(row.theiShare) && zero(row.bsiShare);
+  return hasNoSplit(row);
+}
+
+/**
+ * House split for other agents' lines (see isOtherBsiAgent): producer 0, THEI/BSI 50/50.
+ * Swan/Marco agents use the existing Marco rule (splitFullOverridePot, the same call the
+ * Humana/Devoted Agency Override path uses): $10 off the top on the first line seen per
+ * policy, then 50/50. Chargebacks are handled after the main loop (reverseHouseSplit).
+ * Only fills lines nothing else has split. Returns 'filled', 'deferred' or null.
+ */
+function fillHouseSplit(r, commission, deductedPolicies) {
+  if (!hasNoSplit(r) || Math.abs(commission) < 0.005) return null;
+  if (!isOtherBsiAgent(r.agent) || isHraOrFee(r.classification)) return null;
+  if (commission < 0) return 'deferred';
+  const policy = r.policyNumber || r.policy_number;
+  const already = deductedPolicies.has(policy) || deductedPolicies.has(policyKey(r));
+  const split = splitFullOverridePot(commission, {
+    agentName: r.agent,
+    paymentPeriod: r.period,
+    alreadyDeducted: already,
+  });
+  if (split.subAgentOverride && policy) {
+    deductedPolicies.add(policy);
+    deductedPolicies.add(policyKey(r));
+  }
+  applySplit(r, { ...split, producerPayable: 0 });
+  r.subAgentOverride = split.subAgentOverride || 0;
+  r.splitApplies = true;
+  return 'filled';
+}
+
+/**
+ * Other agent's chargeback / reversal: take back the shares in the same proportions as
+ * the sale. THEI and BSI go negative 50/50. For Swan/Marco agents Marco's $10 is reversed
+ * too: in proportion to the original sale when it's known (this file or an earlier upload),
+ * otherwise $10 (flagged). Never reverses more of Marco's $10 than was taken on the policy.
+ */
+function reverseHouseSplit(r, commission, marcoOriginals) {
+  const abs = Math.abs(commission);
+  let marcoBack = 0;
+  if (isMarcoAgent(r.agent, r.period)) {
+    const pk = policyKey(r);
+    const orig = pk ? marcoOriginals.get(pk) : null;
+    if (orig && orig.sub > 0) {
+      const remaining = Math.max(0, round2(orig.sub - (orig.reversed || 0)));
+      const ratio = orig.gross > 0 ? Math.min(1, abs / orig.gross) : 1;
+      marcoBack = Math.min(remaining, round2(orig.sub * ratio), abs);
+      orig.reversed = round2((orig.reversed || 0) + marcoBack);
+    } else if (orig && orig.sub <= 0) {
+      marcoBack = 0;
+    } else if (abs >= 10) {
+      marcoBack = 10;
+      if (pk) marcoOriginals.set(pk, { gross: abs, sub: 10, reversed: 10 });
+      addNote(r, "Marco chargeback: original sale not found — reversed Marco's $10, please verify");
+    }
+  }
+  const rest = round2(abs - marcoBack);
+  const thei = round2(rest / 2);
+  applySplit(r, {
+    grossCommission: commission,
+    producerPayable: 0,
+    theiShare: -thei,
+    bsiShare: -round2(rest - thei),
+  });
+  r.subAgentOverride = marcoBack ? -marcoBack : 0;
+  r.splitApplies = true;
+}
+
 function applySplit(r, split) {
   r.grossCommission = split.grossCommission;
   r.producerPayable = split.producerPayable;
@@ -434,6 +551,7 @@ function applyBsiBookAgentProduction(records, opts = {}) {
     opts.integrityOriginalSales instanceof Map ? opts.integrityOriginalSales : []
   );
   const deferredIntegrityChargebacks = [];
+  let houseFilled = 0;
 
   let remapped = 0;
   let peeled = 0;
@@ -444,6 +562,26 @@ function applyBsiBookAgentProduction(records, opts = {}) {
       deductedPolicies.add(r.policyNumber || r.policy_number);
     }
   }
+  // Other-agent house split (UHC / Aetna / chargebacks on every BSI feed).
+  // houseDeducted: policies that already gave Marco his $10 (earlier uploads via opts,
+  // or earlier in this file). The Humana/Devoted Agency Override path above keeps its
+  // own file-only set, unchanged.
+  const houseDeducted = new Set([
+    ...deductedPolicies,
+    ...(opts.deductedPolicies ? [...opts.deductedPolicies] : []),
+  ]);
+  // marcoOriginals: policy (lower-case) → { gross, sub, reversed } of Marco's $10 already
+  // stored, so a chargeback reverses his share in proportion.
+  const marcoOriginals = new Map();
+  if (opts.marcoOriginals instanceof Map) {
+    for (const [k, v] of opts.marcoOriginals) marcoOriginals.set(k, { ...v });
+  }
+  const deferredHouseChargebacks = [];
+  const tryHouseSplit = (r, commission) => {
+    const res = fillHouseSplit(r, commission, houseDeducted);
+    if (res === 'filled') houseFilled += 1;
+    if (res === 'deferred') deferredHouseChargebacks.push(r);
+  };
 
   for (const r of records) {
     const classification = r.classification || '';
@@ -529,6 +667,9 @@ function applyBsiBookAgentProduction(records, opts = {}) {
         }
       }
       if (integritySplit && unsplit) applySplit(r, integritySplit);
+      // Other agents (not Lina, not Integrity): override goes to the house, 50/50
+      // (Marco $10 first for Swan agents).
+      tryHouseSplit(r, commission);
       continue;
     }
 
@@ -585,8 +726,31 @@ function applyBsiBookAgentProduction(records, opts = {}) {
     if (note) addNote(r, note);
   }
 
+  // Other agents' chargebacks, after the loop so a sale later in this file is found too.
+  for (const r of records) {
+    const sub = Number(r.subAgentOverride) || 0;
+    const pk = policyKey(r);
+    if (sub > 0 && pk && (Number(r.commission) || 0) > 0 && !marcoOriginals.has(pk)) {
+      marcoOriginals.set(pk, { gross: Number(r.commission) || 0, sub, reversed: 0 });
+    }
+  }
+  for (const r of deferredHouseChargebacks) {
+    reverseHouseSplit(r, parseFloat(r.commission) || 0, marcoOriginals);
+    houseFilled += 1;
+  }
+
+  // Guard: any line with dollars that still has no split is flagged for review.
+  let unsplit = 0;
+  for (const r of records) {
+    if (!isUnsplitBsiLine(r)) continue;
+    unsplit += 1;
+    r.anomaly = true;
+    addNote(r, 'No THEI/BSI split stored for this line — review');
+  }
+
   console.log(
-    `[BSI-ATTR] Alba peeled=${peeled}, needsReview=${review}, BSI-house→Alba remapped=${remapped}`
+    `[BSI-ATTR] Alba peeled=${peeled}, needsReview=${review}, BSI-house→Alba remapped=${remapped}, ` +
+    `house 50/50 filled=${houseFilled}, unsplit flagged=${unsplit}`
   );
   return records;
 }
@@ -596,6 +760,8 @@ module.exports = {
   ALBA_NPN,
   isBsiHouseAgent,
   applyBsiBookAgentProduction,
+  isUnsplitBsiLine,
+  isOtherBsiAgent,
   extractWritingNpn,
   normalizeRateCarrier,
   extractMemberState,

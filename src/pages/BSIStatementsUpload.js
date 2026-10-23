@@ -297,6 +297,11 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
                 {uploadResult.carrierWarning}
               </div>
             )}
+            {uploadResult.unsplitWarning && (
+              <div style={{ marginTop: 4, fontWeight: 600, color: '#b45309' }}>
+                ⚠ {uploadResult.unsplitWarning.message}
+              </div>
+            )}
             {uploadResult.internalDuplicatesRemoved > 0 && (
               <div style={{ marginTop: 4 }}>
                 Skipped {uploadResult.internalDuplicatesRemoved} exact duplicate line
