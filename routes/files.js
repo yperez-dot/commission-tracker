@@ -23,7 +23,7 @@ const {
   resolveNhpUploadOriginalName,
 } = require('../src/nhpUploadName');
 const { classifyTHECarrierTransaction, classifyHumanaDevotedBSITransaction } = require('../src/theCarrierStatementClassify');
-const { buildBsiStatementTitle, cleanManualTitle } = require('../src/bsiStatementTitle');
+const { buildBsiStatementTitle, cleanManualTitle, normalizeAutoTitle } = require('../src/bsiStatementTitle');
 const {
   ensureTitleColumns,
   periodCountsFromRecords,
@@ -4574,8 +4574,9 @@ router.get('/uploads', requireAuth, async (req, res) => {
     
     if (category === 'bsi_statement') {
       // BSI Statements only — every row gets a standardized display_title
-      // ("BSI · Humana · 2026-09"). Stored title wins; otherwise computed from
-      // the rows' statement period, then the filename.
+      // ("BSI · Humana · 09-2026"). Stored title wins; otherwise computed from
+      // the rows' statement period, then the filename. Older auto titles stored
+      // as "YYYY-MM" are flipped to month-first here; manual titles are untouched.
       try { await ensureTitleColumns(pool); } catch (e) { console.warn('[uploads] display_title columns', e.message); }
       const bsi = await pool.query(
         `SELECT u.*, usr.name as uploaded_by_name FROM uploads u LEFT JOIN users usr ON u.uploaded_by = usr.id WHERE u.category = 'bsi_statement' ORDER BY u.uploaded_at DESC`
@@ -4583,7 +4584,10 @@ router.get('/uploads', requireAuth, async (req, res) => {
       let periodMap = new Map();
       try { periodMap = await loadPeriodCounts(pool, bsi.rows.map((u) => u.id)); } catch (e) { console.warn('[uploads] period counts', e.message); }
       return res.json(bsi.rows.map((u) => {
-        if (u.display_title) return { ...u, display_title_source: u.display_title_source || 'auto' };
+        if (u.display_title) {
+          const src = u.display_title_source || 'auto';
+          return { ...u, display_title: src === 'manual' ? u.display_title : normalizeAutoTitle(u.display_title), display_title_source: src };
+        }
         const built = buildBsiStatementTitle({
           filename: u.original_name,
           carrier: u.carrier,
@@ -5369,7 +5373,7 @@ router.post('/upload-bsi-statement', requireAuth, requireAdmin, upload.single('f
       );
     }
 
-    // Standardized title: "BSI · Carrier · YYYY-MM" from the rows' statement
+    // Standardized title: "BSI · Carrier · MM-YYYY" from the rows' statement
     // period (fallback: filename). Users never type it, so it's always uniform.
     const titleInfo = buildBsiStatementTitle({
       filename: origName,

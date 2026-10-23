@@ -3,7 +3,7 @@
 
 /**
  * Standardize titles of existing BSI statement uploads:
- *   "BSI · Carrier · YYYY-MM"  (or "… · YYYY-MM to YYYY-MM" for multi-month files)
+ *   "BSI · Carrier · MM-YYYY"  (or "… · MM-YYYY to MM-YYYY" for multi-month files)
  *
  * DRY RUN by default — prints old → new and writes nothing (session is READ ONLY).
  *
