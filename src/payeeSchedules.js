@@ -55,6 +55,44 @@ function isIntegrityAgent(agentName) {
   return INTEGRITY_AGENTS.some((a) => n.includes(a));
 }
 
+/**
+ * Integrity chargeback: a 'Chargeback' line for Munoz / CAM / Mendieta.
+ * They are paid 50% of the override, so a chargeback takes back the same 50%
+ * (and THEI / BSI give back their 25% each) — never 100% of the line.
+ */
+function isIntegrityChargeback(agentName, classification) {
+  return isIntegrityAgent(agentName) &&
+    String(classification || '').toLowerCase().trim() === 'chargeback';
+}
+
+/**
+ * Integrity renewal: a 'Renewal' line for Munoz / CAM / Mendieta. They are not
+ * paid renewals — the whole line is house pot (THEI / BSI 50/50), producer 0.
+ */
+function isIntegrityRenewal(agentName, classification) {
+  return isIntegrityAgent(agentName) &&
+    String(classification || '').toLowerCase().trim() === 'renewal';
+}
+
+/** Integrity new sale: a 'New Business' line for Munoz / CAM / Mendieta (paid 50%). */
+function isIntegrityNewBusiness(agentName, classification) {
+  return isIntegrityAgent(agentName) &&
+    String(classification || '').toLowerCase().trim() === 'new business';
+}
+
+/**
+ * Humana/Devoted BSI feeds carry a 'First Year/Renewal' column. Returns true when it
+ * says renewal, false when it says first year, null when the column is missing/blank.
+ */
+function firstYearRenewalIsRenewal(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const key = Object.keys(raw).find((k) => /^\s*first\s*year\s*\/\s*renewal\s*$/i.test(k));
+  if (!key) return null;
+  const v = String(raw[key] == null ? '' : raw[key]).trim().toLowerCase();
+  if (!v) return null;
+  return v.includes('renew') || v === 'rn' || v === 'r';
+}
+
 function isMarcoAgent(agentName, paymentPeriod) {
   const n = normName(agentName);
   if (!MARCO_AGENTS.some((a) => n.includes(a))) return false;
@@ -164,6 +202,10 @@ module.exports = {
   STATEMENT_TYPES,
   ALBA_DISPLAY_NAME,
   isIntegrityAgent,
+  isIntegrityChargeback,
+  isIntegrityRenewal,
+  isIntegrityNewBusiness,
+  firstYearRenewalIsRenewal,
   isMarcoAgent,
   isAlbaHernandez,
   isAlbaAgentCommission,

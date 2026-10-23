@@ -133,6 +133,15 @@ async function backfillAcaOscarToNhpSource(pool) {
   return result.rowCount || 0;
 }
 
+// Integrity new sales and chargebacks (Munoz / CAM / Mendieta): 50% producer,
+// 25% THEI, 25% BSI — so they belong on the Integrity, THEI and BSI statements too.
+const INTEGRITY_CHARGEBACK_SQL = `(
+         LOWER(TRIM(cr.classification)) IN ('chargeback', 'new business')
+         AND (cr.agent_name ILIKE '%christian munoz%'
+           OR cr.agent_name ILIKE '%horacio mendieta%'
+           OR cr.agent_name ILIKE '%cam insurance solutions corp%')
+       )`;
+
 async function fetchOverrideRows(pool, period, type) {
   const params = [];
   // THEI/BSI: Agency Override rows PLUS Alba rate-peeled agent-production shares.
@@ -140,7 +149,7 @@ async function fetchOverrideRows(pool, period, type) {
   // Lina's producer_payable itself is Agent Payouts / Lina Excel — not these statements.
   const includeAlbaPeel = isTheiHouseType(type) || type === STATEMENT_TYPES.BSI_OVERRIDE;
   let where = includeAlbaPeel
-    ? `WHERE (
+    ? `WHERE ((
          cr.classification ILIKE '%override%'
          OR (
            (cr.agent_name ILIKE '%alba%hernandez%' OR cr.agent_name ILIKE '%lina%hernandez%' OR cr.agent_name ILIKE '%alba%ritela%')
@@ -148,8 +157,10 @@ async function fetchOverrideRows(pool, period, type) {
            AND cr.classification NOT ILIKE '%held%'
            AND (COALESCE(cr.thei_share,0) <> 0 OR COALESCE(cr.bsi_share,0) <> 0)
          )
+       )
+       OR ${INTEGRITY_CHARGEBACK_SQL}
        )`
-    : `WHERE cr.classification ILIKE '%override%'`;
+    : `WHERE (cr.classification ILIKE '%override%' OR ${INTEGRITY_CHARGEBACK_SQL})`;
   if (period && period !== 'all') {
     params.push(period);
     where += ` AND cr.payment_period = $${params.length}`;

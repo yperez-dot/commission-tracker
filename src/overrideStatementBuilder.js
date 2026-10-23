@@ -17,6 +17,8 @@
 const {
   STATEMENT_TYPES,
   isIntegrityAgent,
+  isIntegrityChargeback,
+  isIntegrityNewBusiness,
   isMarcoAgent,
   isAlbaHernandez,
   isAlbaAgentCommission,
@@ -97,10 +99,18 @@ function isAlbaPeeledOverrideShare(row) {
   return num(row.thei_share) !== 0 || num(row.bsi_share) !== 0;
 }
 
+/** Integrity chargeback or new sale (not classified as an override) — on statements once split. */
+function isIntegrityExtraLine(row) {
+  return isIntegrityChargeback(row.agent_name, row.classification) ||
+    isIntegrityNewBusiness(row.agent_name, row.classification);
+}
+
 function classifyTheiShareLine(row) {
-  const clsOverride = isAgencyOverride(row.classification);
+  const integrityCb = isIntegrityExtraLine(row);
+  const clsOverride = isAgencyOverride(row.classification) || integrityCb;
   const albaPeeled = isAlbaPeeledOverrideShare(row);
   if (!clsOverride && !albaPeeled) return null;
+  if (integrityCb && num(row.thei_share) === 0) return null;
   let amount = num(row.thei_share);
   // BSI remittance uploads often store the full pot on commission and leave
   // thei_share null/0 — still list the line, but pay THEI its schedule share.
@@ -127,7 +137,10 @@ function classifyTheiShareLine(row) {
 }
 
 function classifyOverrideLine(row, statementType) {
-  const clsOverride = isAgencyOverride(row.classification);
+  // Integrity chargebacks reverse an override: list them on the THEI / BSI / Integrity
+  // statements (only when the 50/25/25 split was stored on the row).
+  const integrityCb = isIntegrityExtraLine(row);
+  const clsOverride = isAgencyOverride(row.classification) || integrityCb;
   const albaPeeled = isAlbaPeeledOverrideShare(row);
 
   switch (statementType) {
@@ -146,6 +159,7 @@ function classifyOverrideLine(row, statementType) {
       // ACA / Oscar are NHP-book only — never BSI Overrides.
       if (isAcaNhpHouseRow(row)) return null;
       if (!clsOverride && !albaPeeled) return null;
+      if (integrityCb && num(row.bsi_share) === 0) return null;
       let amount = num(row.bsi_share);
       if (amount === 0 && clsOverride && !albaPeeled && isBsiRemitSource(row.source, row)) {
         amount = resolveBsiBookShare(row, 'bsi_share');
@@ -186,6 +200,7 @@ function classifyOverrideLine(row, statementType) {
     case STATEMENT_TYPES.INTEGRITY: {
       if (!clsOverride) return null;
       if (!isIntegrityAgent(row.agent_name)) return null;
+      if (integrityCb && num(row.producer_payable) === 0) return null;
       // Prefer producer_payable (correct field). Fall back to sub_agent_override for
       // legacy NHP rows that wrongly stored Chris/Horacio cuts there.
       const payable = num(row.producer_payable);
@@ -304,7 +319,11 @@ function buildTheiBsiBreakdown(rows, opts = {}) {
     if (opts.period && opts.period !== 'all' && String(row.payment_period) !== String(opts.period)) {
       continue;
     }
-    if (!isAgencyOverride(row.classification)) continue;
+    if (!isAgencyOverride(row.classification)) {
+      // Integrity chargebacks reverse an override — include them once their split is stored.
+      if (!isIntegrityExtraLine(row)) continue;
+      if (num(row.thei_share) === 0 && num(row.bsi_share) === 0 && num(row.producer_payable) === 0) continue;
+    }
     const key = lineKey(row);
     if (seen.has(key)) continue;
     seen.add(key);

@@ -267,3 +267,237 @@ describe('chargeback override proration (UHC, Alba book)', () => {
     expect(chargebackUnearnedFactor({ raw: {} })).toBeNull();
   });
 });
+
+describe('Integrity chargebacks on BSI feeds', () => {
+  const base = {
+    carrier: 'UnitedHealthcare',
+    client: 'SAMPLE, MEMBER',
+    policyNumber: 'TEST-CB-1',
+    period: '202609',
+    payee: 'BSI',
+    raw: {},
+  };
+
+  it('splits a -50 Integrity chargeback 50/25/25 (producer -25, THEI -12.50, BSI -12.50)', () => {
+    const records = [
+      { ...base, agent: 'Christian Munoz', classification: 'Chargeback', commission: -50 },
+      { ...base, agent: 'Cam Insurance Solutions Corp', classification: 'Chargeback', commission: -50 },
+      { ...base, agent: 'Horacio Mendieta', classification: 'Chargeback', commission: -50 },
+    ];
+    applyBsiBookAgentProduction(records);
+    for (const r of records) {
+      expect(r.producerPayable).toBe(-25);
+      expect(r.theiShare).toBe(-12.5);
+      expect(r.bsiShare).toBe(-12.5);
+      expect(r.grossCommission).toBe(-50);
+      expect(r.source).toBe('BSI');
+      expect(r.agent).not.toBe(ALBA_DB_AGENT);
+    }
+  });
+
+  it('Integrity renewals: producer 0, amount split 50/50 THEI/BSI', () => {
+    const records = [
+      { ...base, agent: 'Christian Munoz', classification: 'Renewal', commission: 6 },
+      { ...base, agent: 'Cam Insurance Solutions Corp', classification: 'Renewal', commission: 6 },
+      { ...base, agent: 'Horacio Mendieta', classification: 'Renewal', commission: 6.25 },
+    ];
+    applyBsiBookAgentProduction(records);
+    expect(records[0].producerPayable).toBe(0);
+    expect(records[0].theiShare).toBe(3);
+    expect(records[0].bsiShare).toBe(3);
+    expect(records[1].producerPayable).toBe(0);
+    expect(records[2].producerPayable).toBe(0);
+    expect(records[2].theiShare + records[2].bsiShare).toBeCloseTo(6.25, 2);
+    for (const r of records) {
+      expect(r.grossCommission).toBe(r.commission);
+      expect(r.agent).not.toBe(ALBA_DB_AGENT);
+    }
+  });
+
+  it('Integrity new sales on UHC / Aetna feeds: 50/25/25', () => {
+    const records = [
+      { ...base, agent: 'Christian Munoz', classification: 'New Business', commission: 150 },
+      { ...base, carrier: 'Aetna', agent: 'Horacio Mendieta', classification: 'New Business', commission: 150 },
+    ];
+    applyBsiBookAgentProduction(records);
+    for (const r of records) {
+      expect(r.producerPayable).toBe(75);
+      expect(r.theiShare).toBe(37.5);
+      expect(r.bsiShare).toBe(37.5);
+    }
+  });
+
+  it('Humana/Devoted: Integrity renewal rows (First Year/Renewal) are not paid; first-year rows are', () => {
+    const hd = { ...base, carrier: 'Humana', classification: 'Agency Override', commission: 165 };
+    const records = [
+      { ...hd, agent: 'Christian Munoz', raw: { 'First Year/Renewal': 'Renewal' } },
+      { ...hd, agent: 'Horacio Mendieta', raw: { 'First Year/Renewal': 'First Year' } },
+      { ...hd, agent: 'Horacio Mendieta', raw: { 'First Year/Renewal': '' } },
+      { ...hd, agent: 'Horacio Mendieta', raw: {} },
+      { ...hd, agent: 'Test Agent Example', raw: { 'First Year/Renewal': 'Renewal' } },
+      { ...hd, agent: 'Christian Munoz', classification: 'Chargeback', commission: -165,
+        raw: { 'First Year/Renewal': 'Renewal' } },
+    ];
+    applyBsiBookAgentProduction(records);
+    expect(records[0].producerPayable).toBe(0);
+    expect(records[0].theiShare).toBe(82.5);
+    expect(records[0].bsiShare).toBe(82.5);
+    // first year / blank / missing column → normal 50/25/25
+    for (const r of records.slice(1, 4)) {
+      expect(r.producerPayable).toBe(82.5);
+      expect(r.theiShare).toBe(41.25);
+    }
+    // other agents keep the standard 50/50 house split
+    expect(records[4].producerPayable).toBe(0);
+    expect(records[4].theiShare).toBe(82.5);
+    // chargeback of a renewal was never paid → nothing back from the producer
+    expect(records[5].producerPayable).toBe(0);
+    expect(records[5].theiShare).toBe(-82.5);
+    expect(records[5].bsiShare).toBe(-82.5);
+  });
+
+  it('Integrity rules never apply to other writing agents (e.g. Piloto, Santiago)', () => {
+    const records = [
+      { ...base, agent: 'Edgar Piloto', classification: 'New Business', commission: 150 },
+      { ...base, agent: 'Ivan Santiago', classification: 'Chargeback', commission: -61.88 },
+      { ...base, agent: 'Ivan Santiago', classification: 'Renewal', commission: 6 },
+    ];
+    applyBsiBookAgentProduction(records);
+    for (const r of records) {
+      expect(r.producerPayable).toBeUndefined();
+      expect(r.theiShare).toBeUndefined();
+    }
+  });
+
+  it('leaves non-Integrity renewals and non-Integrity chargebacks unchanged', () => {
+    const records = [
+      { ...base, agent: 'Test Agent Example', classification: 'Renewal', commission: 6 },
+      { ...base, agent: 'Test Agent Example', classification: 'Chargeback', commission: -50 },
+    ];
+    applyBsiBookAgentProduction(records);
+    for (const r of records) {
+      expect(r.producerPayable).toBeUndefined();
+      expect(r.theiShare).toBeUndefined();
+      expect(r.bsiShare).toBeUndefined();
+    }
+  });
+
+  it('does not overwrite a split a parser already set', () => {
+    const records = [
+      {
+        ...base, agent: 'Horacio Mendieta', classification: 'Chargeback', commission: -50,
+        producerPayable: 0, theiShare: -25, bsiShare: -25,
+      },
+    ];
+    applyBsiBookAgentProduction(records);
+    expect(records[0].producerPayable).toBe(0);
+    expect(records[0].theiShare).toBe(-25);
+  });
+});
+
+describe('Integrity BSI UHC rate table (plan year 2026 = $82.50 on a full $150 line)', () => {
+  const uhc = {
+    carrier: 'UnitedHealthcare', client: 'SAMPLE, MEMBER', period: '202609', payee: 'BSI', raw: {},
+  };
+
+  it('full $150 2026 line → producer 82.50, BSI 37.50, THEI 30 for Munoz, CAM and Mendieta', () => {
+    const records = ['Christian Munoz', 'Cam Insurance Solutions Corp', 'Horacio Mendieta'].map((agent, i) => ({
+      ...uhc, agent, policyNumber: `TEST-F${i}`, classification: 'New Business', commission: 150, effectiveDate: '03/01/2026',
+    }));
+    applyBsiBookAgentProduction(records);
+    for (const r of records) {
+      expect(r.producerPayable).toBe(82.5);
+      expect(r.bsiShare).toBe(37.5);
+      expect(r.theiShare).toBe(30);
+      expect(r.mga).toMatch(/pending confirmation/);
+    }
+  });
+
+  it('partial 2026 line stays at 50% and is flagged; other plan years use 50% (no extrapolation)', () => {
+    const records = [
+      { ...uhc, agent: 'Horacio Mendieta', policyNumber: 'TEST-P1', classification: 'New Business', commission: 37.5, effectiveDate: '06/01/2026' },
+      { ...uhc, agent: 'Christian Munoz', policyNumber: 'TEST-P2', classification: 'New Business', commission: 150, effectiveDate: '01/01/2027' },
+      { ...uhc, agent: 'Christian Munoz', policyNumber: 'TEST-P3', classification: 'New Business', commission: 150, effectiveDate: '12/01/2025' },
+      { ...uhc, carrier: 'Aetna', agent: 'Christian Munoz', policyNumber: 'TEST-P4', classification: 'New Business', commission: 150, effectiveDate: '03/01/2026' },
+    ];
+    applyBsiBookAgentProduction(records);
+    expect(records[0].producerPayable).toBe(18.75);
+    expect(records[0].mga).toMatch(/review/);
+    for (const r of records.slice(1)) {
+      expect(r.producerPayable).toBe(75);
+      expect(r.theiShare).toBe(37.5);
+      expect(r.bsiShare).toBe(37.5);
+    }
+  });
+
+  it('chargeback takes back exactly what was paid on the policy (earlier upload or same file)', () => {
+    const originals = new Map([['test-c1', { gross: 150, producer: 82.5 }], ['test-c2', { gross: 37.5, producer: 18.75 }]]);
+    const records = [
+      { ...uhc, agent: 'Horacio Mendieta', policyNumber: 'TEST-C1', classification: 'Chargeback', commission: -150 },
+      { ...uhc, agent: 'Christian Munoz', policyNumber: 'TEST-C2', classification: 'Chargeback', commission: -37.5 },
+      // chargeback listed before its sale in the same file
+      { ...uhc, agent: 'Christian Munoz', policyNumber: 'TEST-C3', classification: 'Chargeback', commission: -150 },
+      { ...uhc, agent: 'Christian Munoz', policyNumber: 'TEST-C3', classification: 'New Business', commission: 150, effectiveDate: '02/01/2026' },
+      // partial chargeback of a fixed-rate sale → same proportion of what was paid
+      { ...uhc, agent: 'Horacio Mendieta', policyNumber: 'TEST-C1', classification: 'Chargeback', commission: -75 },
+    ];
+    applyBsiBookAgentProduction(records, { integrityOriginalSales: originals });
+    expect(records[0].producerPayable).toBe(-82.5);
+    expect(records[0].bsiShare).toBe(-37.5);
+    expect(records[0].theiShare).toBe(-30);
+    expect(records[1].producerPayable).toBe(-18.75);
+    expect(records[2].producerPayable).toBe(-82.5);
+    expect(records[4].producerPayable).toBe(-41.25);
+    for (const r of [records[0], records[1], records[2], records[4]]) {
+      expect(r.producerPayable + r.theiShare + r.bsiShare).toBeCloseTo(r.commission, 2);
+      expect(r.mga || '').not.toMatch(/not found/);
+    }
+  });
+
+  it('chargeback with no original, plan year 2026 → fixed $82.50 share of the line, flagged', () => {
+    const records = [
+      { ...uhc, agent: 'Horacio Mendieta', policyNumber: 'TEST-Y1', classification: 'Chargeback', commission: -150, effectiveDate: '04/01/2026' },
+      { ...uhc, agent: 'Cam Insurance Solutions Corp', policyNumber: 'TEST-Y2', classification: 'Chargeback', commission: -75, effectiveDate: '04/01/2026' },
+      { ...uhc, agent: 'Christian Munoz', policyNumber: 'TEST-Y3', classification: 'Chargeback', commission: -62.5, effectiveDate: '04/01/2026' },
+    ];
+    applyBsiBookAgentProduction(records);
+    expect(records[0].producerPayable).toBe(-82.5);
+    expect(records[0].bsiShare).toBe(-37.5);
+    expect(records[0].theiShare).toBe(-30);
+    expect(records[1].producerPayable).toBe(-41.25);
+    expect(records[1].bsiShare).toBe(-18.75);
+    expect(records[1].theiShare).toBe(-15);
+    expect(records[2].producerPayable).toBe(-34.38);
+    for (const r of records) {
+      expect(r.producerPayable + r.theiShare + r.bsiShare).toBeCloseTo(r.commission, 2);
+      expect(Math.abs(r.producerPayable)).toBeLessThanOrEqual(Math.abs(r.commission));
+      expect(r.mga).toMatch(/not found/);
+    }
+  });
+
+  it('chargeback with no original and no plan-year entry → 50% of the line, flagged', () => {
+    const records = [
+      { ...uhc, agent: 'Horacio Mendieta', policyNumber: 'TEST-N1', classification: 'Chargeback', commission: -150 },
+      { ...uhc, agent: 'Horacio Mendieta', policyNumber: 'TEST-N2', classification: 'Chargeback', commission: -150, effectiveDate: '12/01/2025' },
+    ];
+    applyBsiBookAgentProduction(records);
+    for (const r of records) {
+      expect(r.producerPayable).toBe(-75);
+      expect(r.theiShare).toBe(-37.5);
+      expect(r.bsiShare).toBe(-37.5);
+      expect(r.mga).toMatch(/not found/);
+    }
+  });
+
+  it('other writing agents never get the Integrity rate', () => {
+    const records = [
+      { ...uhc, agent: 'Edgar Piloto', policyNumber: 'TEST-O1', classification: 'New Business', commission: 150, effectiveDate: '03/01/2026' },
+      { ...uhc, agent: 'Ivan Santiago', policyNumber: 'TEST-O2', classification: 'Chargeback', commission: -150 },
+    ];
+    applyBsiBookAgentProduction(records, { integrityOriginalSales: new Map([['test-o2', { gross: 150, producer: 82.5 }]]) });
+    for (const r of records) {
+      expect(r.producerPayable).toBeUndefined();
+      expect(r.theiShare).toBeUndefined();
+    }
+  });
+});

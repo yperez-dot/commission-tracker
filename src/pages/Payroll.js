@@ -968,7 +968,11 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
 
           // Integrity agents (Munoz incl. CAM, Mendieta): 50% producer share of the override pot
           if (integrityPayeeName(r.agent_name)) {
-            return producerPayable !== 0 && (classification.includes('override') || classification.includes('chargeback'));
+            return producerPayable !== 0 && (
+              classification.includes('override') ||
+              classification.includes('chargeback') ||
+              classification.includes('new business')
+            );
           }
 
           if (isAlba) {

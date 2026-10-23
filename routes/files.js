@@ -1510,14 +1510,75 @@ const {
 } = require('../src/nhpPeriod');
 const { parseNhpWorkbook } = require('../src/nhpStatementParse');
 
-function parseNHPRows(wb, uploadPeriod, filename = '') {
+function parseNHPRows(wb, uploadPeriod, filename = '', integrityOriginalSales = null) {
   return parseNhpWorkbook(wb, uploadPeriod, filename, {
     formatDate,
     derivePlanType,
     normalizeAgentName,
     normalizeNHPCarrier,
     isValidClientName,
+    integrityOriginalSales,
   });
+}
+
+/**
+ * Chris (Munoz + CAM) / Horacio NHP new sales already stored (policy → { gross, producer }), so a later
+ * chargeback takes back exactly the fixed cut that was paid. Latest sale per policy wins.
+ */
+/**
+ * Integrity (Munoz / CAM / Mendieta) BSI UHC new sales already stored
+ * (policy → { gross, producer }), so a chargeback takes back exactly what was paid.
+ */
+async function loadIntegrityBsiUhcOriginalSales(pool) {
+  const map = new Map();
+  try {
+    const r = await pool.query(`
+      SELECT LOWER(TRIM(policy_number)) AS policy, commission, producer_payable
+      FROM commission_records
+      WHERE UPPER(COALESCE(source, '')) = 'BSI'
+        AND LOWER(TRIM(classification)) = 'new business'
+        AND carrier ILIKE '%united%'
+        AND COALESCE(producer_payable, 0) > 0
+        AND COALESCE(commission, 0) > 0
+        AND COALESCE(TRIM(policy_number), '') <> ''
+        AND (agent_name ILIKE '%christian munoz%' OR agent_name ILIKE '%horacio mendieta%'
+          OR agent_name ILIKE '%cam insurance solutions corp%')
+      ORDER BY id`);
+    for (const row of r.rows) {
+      map.set(row.policy, {
+        gross: parseFloat(row.commission) || 0,
+        producer: parseFloat(row.producer_payable) || 0,
+      });
+    }
+  } catch (e) {
+    console.warn('[BSI-UPLOAD] Could not load Integrity original sales:', e.message);
+  }
+  return map;
+}
+
+async function loadIntegrityOriginalSales(pool) {
+  const map = new Map();
+  try {
+    const r = await pool.query(`
+      SELECT LOWER(TRIM(policy_number)) AS policy, gross_commission, producer_payable
+      FROM commission_records
+      WHERE UPPER(COALESCE(source, '')) = 'NHP'
+        AND COALESCE(producer_payable, 0) > 0
+        AND COALESCE(gross_commission, 0) > 0
+        AND COALESCE(TRIM(policy_number), '') <> ''
+        AND (agent_name ILIKE '%christian munoz%' OR agent_name ILIKE '%horacio mendieta%'
+          OR agent_name ILIKE '%cam insurance solutions corp%')
+      ORDER BY id`);
+    for (const row of r.rows) {
+      map.set(row.policy, {
+        gross: parseFloat(row.gross_commission) || 0,
+        producer: parseFloat(row.producer_payable) || 0,
+      });
+    }
+  } catch (e) {
+    console.warn('[NHP] Could not load Integrity original sales:', e.message);
+  }
+  return map;
 }
 
 // ─── MOLINA ACA PARSER ────────────────────────────────────────────────────────
@@ -4152,7 +4213,8 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
         // One file = one NHP payment-cycle batch (deposit/statement), not coverage month.
         const now = new Date();
         const uploadPeriod = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}`;
-        records = parseNHPRows(wb, uploadPeriod, req.file.originalname);
+        const integrityOriginalSales = await loadIntegrityOriginalSales(pool);
+        records = parseNHPRows(wb, uploadPeriod, req.file.originalname, integrityOriginalSales);
         const periods = {};
         for (const r of records) {
           periods[r.period] = (periods[r.period] || 0) + 1;
@@ -4257,6 +4319,11 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
       // Sort by period ASC so Marco's $10 deduction always hits earliest occurrence per policy
       records.sort((a, b) => (a.period || '').localeCompare(b.period || ''));
 
+      const {
+        splitIntegrityChargeback,
+        splitIntegrityNewBusiness,
+        splitIntegrityRenewal,
+      } = require('../src/overrideSplitMath');
       records = records.map(r => {
         if (r.source) return r;
 
@@ -4283,7 +4350,15 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
         let splitApplies, theiShare, bsiShare, producerPayable, grossCommission;
         let subAgentOverride = 0;
 
-        if (isCommissionRow || isAgentDirectRow) {
+        // Integrity (Munoz / CAM / Mendieta): new sales 50/25/25, chargebacks take the same
+        // 50/25/25 back, renewals are not paid (producer 0, THEI/BSI 50/50).
+        const integrityCb =
+          splitIntegrityChargeback(netCommission, r.agent, classification) ||
+          splitIntegrityNewBusiness(netCommission, r.agent, classification) ||
+          splitIntegrityRenewal(netCommission, r.agent, classification);
+        if (integrityCb) {
+          ({ splitApplies, theiShare, bsiShare, producerPayable, grossCommission } = integrityCb);
+        } else if (isCommissionRow || isAgentDirectRow) {
           // Agent production is paid to agents — never Agency THEI Share.
           // Must run BEFORE the direct_carrier 100% THEI branch (Solis/HealthSun/etc.).
           splitApplies = false;
@@ -5340,7 +5415,8 @@ router.post('/upload-bsi-statement', requireAuth, requireAdmin, upload.single('f
     // carrier×state override rates into producer_payable (Lina pay) + THEI/BSI shares.
     // Agency Override / Held stay under Broker Society; other agents unchanged.
     const carrierReconciliation = records.reconciliation || null;
-    applyBsiBookAgentProduction(records);
+    const integrityOriginalSales = await loadIntegrityBsiUhcOriginalSales(pool);
+    applyBsiBookAgentProduction(records, { integrityOriginalSales });
 
     const beforeInternal = records.length;
     const collapsed = collapseInternalDuplicates(records);
