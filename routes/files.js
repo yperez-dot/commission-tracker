@@ -23,6 +23,13 @@ const {
   resolveNhpUploadOriginalName,
 } = require('../src/nhpUploadName');
 const { classifyTHECarrierTransaction, classifyHumanaDevotedBSITransaction } = require('../src/theCarrierStatementClassify');
+const { buildBsiStatementTitle, cleanManualTitle } = require('../src/bsiStatementTitle');
+const {
+  ensureTitleColumns,
+  periodCountsFromRecords,
+  loadPeriodCounts,
+  planBsiTitles,
+} = require('../src/bsiStatementTitleDb');
 let pdfParse;
 try { pdfParse = require('pdf-parse'); } catch(e) { console.log('pdf-parse not installed'); }
 
@@ -4566,8 +4573,25 @@ router.get('/uploads', requireAuth, async (req, res) => {
     let query, params = [];
     
     if (category === 'bsi_statement') {
-      // BSI Statements only
-      query = `SELECT u.*, usr.name as uploaded_by_name FROM uploads u LEFT JOIN users usr ON u.uploaded_by = usr.id WHERE u.category = 'bsi_statement' ORDER BY u.uploaded_at DESC`;
+      // BSI Statements only — every row gets a standardized display_title
+      // ("BSI · Humana · 2026-09"). Stored title wins; otherwise computed from
+      // the rows' statement period, then the filename.
+      try { await ensureTitleColumns(pool); } catch (e) { console.warn('[uploads] display_title columns', e.message); }
+      const bsi = await pool.query(
+        `SELECT u.*, usr.name as uploaded_by_name FROM uploads u LEFT JOIN users usr ON u.uploaded_by = usr.id WHERE u.category = 'bsi_statement' ORDER BY u.uploaded_at DESC`
+      );
+      let periodMap = new Map();
+      try { periodMap = await loadPeriodCounts(pool, bsi.rows.map((u) => u.id)); } catch (e) { console.warn('[uploads] period counts', e.message); }
+      return res.json(bsi.rows.map((u) => {
+        if (u.display_title) return { ...u, display_title_source: u.display_title_source || 'auto' };
+        const built = buildBsiStatementTitle({
+          filename: u.original_name,
+          carrier: u.carrier,
+          periods: periodMap.get(u.id) || [],
+          uploadedAt: u.uploaded_at,
+        });
+        return { ...u, display_title: built.title, display_title_source: 'computed' };
+      }));
     } else if (category === 'agent_payout') {
       query = `SELECT u.*, usr.name as uploaded_by_name FROM uploads u LEFT JOIN users usr ON u.uploaded_by = usr.id WHERE u.category = 'agent_payout' ORDER BY u.uploaded_at DESC`;
     } else if (req.user.role === 'agent') {
@@ -4586,6 +4610,55 @@ router.get('/uploads', requireAuth, async (req, res) => {
     }
     const result = await pool.query(query, params);
     res.json(result.rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+/**
+ * GET /api/files/bsi-statement-titles/preview — admin, read-only.
+ * Old → new standardized title for every BSI statement upload (same logic as
+ * scripts/backfill-bsi-statement-titles.js dry run).
+ */
+router.get('/bsi-statement-titles/preview', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const plan = await planBsiTitles(getPool());
+    res.json({ count: plan.length, changed: plan.filter((p) => p.changed).length, plan });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+/**
+ * PATCH /api/files/uploads/:id/title — admin. Body { title }.
+ * Non-empty title → stored as a manual title. Empty title → reset to the
+ * standardized auto title.
+ */
+router.patch('/uploads/:id/title', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const pool = getPool();
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid upload id' });
+    await ensureTitleColumns(pool);
+    const up = await pool.query(`SELECT id, original_name, carrier, uploaded_at, category FROM uploads WHERE id = $1`, [id]);
+    if (!up.rows.length) return res.status(404).json({ error: 'Upload not found' });
+    const u = up.rows[0];
+    if (u.category !== 'bsi_statement') return res.status(400).json({ error: 'Only BSI statement titles can be edited here' });
+
+    const typed = cleanManualTitle(req.body && req.body.title);
+    let title;
+    let source;
+    if (typed) {
+      title = typed;
+      source = 'manual';
+    } else {
+      const periodMap = await loadPeriodCounts(pool, [id]);
+      title = buildBsiStatementTitle({
+        filename: u.original_name,
+        carrier: u.carrier,
+        periods: periodMap.get(id) || [],
+        uploadedAt: u.uploaded_at,
+      }).title;
+      source = 'auto';
+    }
+    await pool.query(`UPDATE uploads SET display_title = $1, display_title_source = $2 WHERE id = $3`, [title, source, id]);
+    res.json({ success: true, id, display_title: title, display_title_source: source });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -5296,12 +5369,23 @@ router.post('/upload-bsi-statement', requireAuth, requireAdmin, upload.single('f
       );
     }
 
+    // Standardized title: "BSI · Carrier · YYYY-MM" from the rows' statement
+    // period (fallback: filename). Users never type it, so it's always uniform.
+    const titleInfo = buildBsiStatementTitle({
+      filename: origName,
+      carrier: carriers.join(', '),
+      periods: periodCountsFromRecords(records),
+      fallbackTitle: req.body && req.body.title,
+      uploadedAt: new Date(),
+    });
+    await ensureTitleColumns(pool);
+
     // Insert upload metadata
     const uploadResult = await pool.query(
-      `INSERT INTO uploads (filename, original_name, carrier, row_count, commission_sum, uploaded_by, category)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO uploads (filename, original_name, carrier, row_count, commission_sum, uploaded_by, category, display_title, display_title_source)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'auto')
        RETURNING id`,
-      [req.file.filename, origName, carriers.join(', '), records.length, commissionSum, req.user.id, 'bsi_statement']
+      [req.file.filename, origName, carriers.join(', '), records.length, commissionSum, req.user.id, 'bsi_statement', titleInfo.title]
     );
     const uploadId = uploadResult.rows[0].id;
 
@@ -5391,6 +5475,9 @@ router.post('/upload-bsi-statement', requireAuth, requireAdmin, upload.single('f
       success: true,
       message: `BSI statement uploaded: ${records.length} records imported`,
       filename: origName,
+      title: titleInfo.title,
+      titleConfidence: titleInfo.confidence,
+      titleNotes: titleInfo.notes,
       uploadId,
       rowCount: records.length,
       commissionSum,
