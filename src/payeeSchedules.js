@@ -74,6 +74,25 @@ function isIntegrityRenewal(agentName, classification) {
     String(classification || '').toLowerCase().trim() === 'renewal';
 }
 
+/** Integrity new sale: a 'New Business' line for Munoz / CAM / Mendieta (paid 50%). */
+function isIntegrityNewBusiness(agentName, classification) {
+  return isIntegrityAgent(agentName) &&
+    String(classification || '').toLowerCase().trim() === 'new business';
+}
+
+/**
+ * Humana/Devoted BSI feeds carry a 'First Year/Renewal' column. Returns true when it
+ * says renewal, false when it says first year, null when the column is missing/blank.
+ */
+function firstYearRenewalIsRenewal(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const key = Object.keys(raw).find((k) => /^\s*first\s*year\s*\/\s*renewal\s*$/i.test(k));
+  if (!key) return null;
+  const v = String(raw[key] == null ? '' : raw[key]).trim().toLowerCase();
+  if (!v) return null;
+  return v.includes('renew') || v === 'rn' || v === 'r';
+}
+
 function isMarcoAgent(agentName, paymentPeriod) {
   const n = normName(agentName);
   if (!MARCO_AGENTS.some((a) => n.includes(a))) return false;
@@ -185,6 +204,8 @@ module.exports = {
   isIntegrityAgent,
   isIntegrityChargeback,
   isIntegrityRenewal,
+  isIntegrityNewBusiness,
+  firstYearRenewalIsRenewal,
   isMarcoAgent,
   isAlbaHernandez,
   isAlbaAgentCommission,

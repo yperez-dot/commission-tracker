@@ -13,14 +13,16 @@
  *       thei_share / bsi_share        → Override Statements for THEI & BSI (50/50)
  *  3. Agency Override / Held rows stay under the house label (not Lina pay)
  *  4. Other agents on the feed are left untouched, except Integrity chargebacks
- *     (50/25/25 split of the override they reverse) and Integrity renewals
- *     (not paid to the producer: producer 0, THEI/BSI 50/50)
+ *     (50/25/25 split of the override they reverse), Integrity new sales
+ *     (50/25/25) and Integrity renewals (not paid: producer 0, THEI/BSI 50/50)
  */
 
 const {
   isAlbaHernandez,
   isAlbaAgentCommission,
   isAgencyOverride,
+  isIntegrityAgent,
+  firstYearRenewalIsRenewal,
   normName,
 } = require('./payeeSchedules');
 const { calculateAlbaOverrideSplit } = require('./overrideRateEngine');
@@ -29,6 +31,8 @@ const {
   splitFullOverridePot,
   splitIntegrityChargeback,
   splitIntegrityRenewal,
+  splitIntegrityNewBusiness,
+  splitHouseOnly,
 } = require('./overrideSplitMath');
 
 /** Canonical DB agent for Lina/Alba book (UI displays as Lina). */
@@ -298,11 +302,18 @@ function applyBsiBookAgentProduction(records) {
       // Carrier→BSI Humana/Devoted parsers store the full pot on `commission`
       // and never write theiShare — House Statements then shows $0.00.
       if (rowNeedsBsiOverrideShareFill(r)) {
-        const split = splitFullOverridePot(commission, {
-          agentName: r.agent,
-          paymentPeriod: r.period,
-          alreadyDeducted: deductedPolicies.has(r.policyNumber || r.policy_number),
-        });
+        // Integrity agents are not paid renewals: Humana/Devoted rows whose
+        // 'First Year/Renewal' says renewal → producer 0, THEI/BSI 50/50.
+        // Missing/blank column → keep the normal split.
+        const integrityRenewal =
+          isIntegrityAgent(r.agent) && firstYearRenewalIsRenewal(r.raw) === true;
+        const split = integrityRenewal
+          ? splitHouseOnly(commission)
+          : splitFullOverridePot(commission, {
+            agentName: r.agent,
+            paymentPeriod: r.period,
+            alreadyDeducted: deductedPolicies.has(r.policyNumber || r.policy_number),
+          });
         r.theiShare = split.theiShare;
         r.bsiShare = split.bsiShare;
         r.grossCommission = split.grossCommission;
@@ -332,9 +343,18 @@ function applyBsiBookAgentProduction(records) {
       // Integrity (Munoz / CAM / Mendieta) chargebacks: 50% producer, 25% THEI, 25% BSI —
       // the same split as the override they reverse. Only fills rows a parser left unsplit.
       // Integrity renewals are not paid to the producer: producer 0, THEI/BSI 50/50.
-      const integritySplit =
-        splitIntegrityChargeback(commission, r.agent, classification) ||
-        splitIntegrityRenewal(commission, r.agent, classification);
+      // Integrity new sales (UHC / Aetna feeds): 50/25/25.
+      // A chargeback the feed marks as a renewal ('First Year/Renewal') was never paid,
+      // so nothing comes back from the producer either.
+      const chargebackOfRenewal =
+        String(classification).toLowerCase().trim() === 'chargeback' &&
+        isIntegrityAgent(r.agent) &&
+        firstYearRenewalIsRenewal(r.raw) === true;
+      const integritySplit = chargebackOfRenewal
+        ? splitHouseOnly(commission)
+        : splitIntegrityChargeback(commission, r.agent, classification) ||
+          splitIntegrityRenewal(commission, r.agent, classification) ||
+          splitIntegrityNewBusiness(commission, r.agent, classification);
       if (integritySplit && r.producerPayable == null && r.theiShare == null && r.bsiShare == null) {
         r.grossCommission = integritySplit.grossCommission;
         r.producerPayable = integritySplit.producerPayable;

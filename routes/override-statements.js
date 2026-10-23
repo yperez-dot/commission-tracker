@@ -133,10 +133,10 @@ async function backfillAcaOscarToNhpSource(pool) {
   return result.rowCount || 0;
 }
 
-// Integrity chargebacks (Munoz / CAM / Mendieta) reverse an override: 50% producer,
+// Integrity new sales and chargebacks (Munoz / CAM / Mendieta): 50% producer,
 // 25% THEI, 25% BSI — so they belong on the Integrity, THEI and BSI statements too.
 const INTEGRITY_CHARGEBACK_SQL = `(
-         LOWER(TRIM(cr.classification)) = 'chargeback'
+         LOWER(TRIM(cr.classification)) IN ('chargeback', 'new business')
          AND (cr.agent_name ILIKE '%christian munoz%'
            OR cr.agent_name ILIKE '%horacio mendieta%'
            OR cr.agent_name ILIKE '%cam insurance solutions corp%')

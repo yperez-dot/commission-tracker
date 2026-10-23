@@ -314,9 +314,63 @@ describe('Integrity chargebacks on BSI feeds', () => {
     }
   });
 
-  it('leaves Integrity New Business, non-Integrity renewals and non-Integrity chargebacks unchanged', () => {
+  it('Integrity new sales on UHC / Aetna feeds: 50/25/25', () => {
     const records = [
-      { ...base, agent: 'Christian Munoz', classification: 'New Business', commission: 75 },
+      { ...base, agent: 'Christian Munoz', classification: 'New Business', commission: 150 },
+      { ...base, carrier: 'Aetna', agent: 'Horacio Mendieta', classification: 'New Business', commission: 150 },
+    ];
+    applyBsiBookAgentProduction(records);
+    for (const r of records) {
+      expect(r.producerPayable).toBe(75);
+      expect(r.theiShare).toBe(37.5);
+      expect(r.bsiShare).toBe(37.5);
+    }
+  });
+
+  it('Humana/Devoted: Integrity renewal rows (First Year/Renewal) are not paid; first-year rows are', () => {
+    const hd = { ...base, carrier: 'Humana', classification: 'Agency Override', commission: 165 };
+    const records = [
+      { ...hd, agent: 'Christian Munoz', raw: { 'First Year/Renewal': 'Renewal' } },
+      { ...hd, agent: 'Horacio Mendieta', raw: { 'First Year/Renewal': 'First Year' } },
+      { ...hd, agent: 'Horacio Mendieta', raw: { 'First Year/Renewal': '' } },
+      { ...hd, agent: 'Horacio Mendieta', raw: {} },
+      { ...hd, agent: 'Test Agent Example', raw: { 'First Year/Renewal': 'Renewal' } },
+      { ...hd, agent: 'Christian Munoz', classification: 'Chargeback', commission: -165,
+        raw: { 'First Year/Renewal': 'Renewal' } },
+    ];
+    applyBsiBookAgentProduction(records);
+    expect(records[0].producerPayable).toBe(0);
+    expect(records[0].theiShare).toBe(82.5);
+    expect(records[0].bsiShare).toBe(82.5);
+    // first year / blank / missing column → normal 50/25/25
+    for (const r of records.slice(1, 4)) {
+      expect(r.producerPayable).toBe(82.5);
+      expect(r.theiShare).toBe(41.25);
+    }
+    // other agents keep the standard 50/50 house split
+    expect(records[4].producerPayable).toBe(0);
+    expect(records[4].theiShare).toBe(82.5);
+    // chargeback of a renewal was never paid → nothing back from the producer
+    expect(records[5].producerPayable).toBe(0);
+    expect(records[5].theiShare).toBe(-82.5);
+    expect(records[5].bsiShare).toBe(-82.5);
+  });
+
+  it('Integrity rules never apply to other writing agents (e.g. Piloto, Santiago)', () => {
+    const records = [
+      { ...base, agent: 'Edgar Piloto', classification: 'New Business', commission: 150 },
+      { ...base, agent: 'Ivan Santiago', classification: 'Chargeback', commission: -61.88 },
+      { ...base, agent: 'Ivan Santiago', classification: 'Renewal', commission: 6 },
+    ];
+    applyBsiBookAgentProduction(records);
+    for (const r of records) {
+      expect(r.producerPayable).toBeUndefined();
+      expect(r.theiShare).toBeUndefined();
+    }
+  });
+
+  it('leaves non-Integrity renewals and non-Integrity chargebacks unchanged', () => {
+    const records = [
       { ...base, agent: 'Test Agent Example', classification: 'Renewal', commission: 6 },
       { ...base, agent: 'Test Agent Example', classification: 'Chargeback', commission: -50 },
     ];

@@ -10,7 +10,13 @@
  *   BSI and set gross = 2× commission.
  */
 
-const { isIntegrityAgent, isIntegrityChargeback, isIntegrityRenewal, isMarcoAgent } = require('./payeeSchedules');
+const {
+  isIntegrityAgent,
+  isIntegrityChargeback,
+  isIntegrityRenewal,
+  isIntegrityNewBusiness,
+  isMarcoAgent,
+} = require('./payeeSchedules');
 
 function num(v) {
   const n = parseFloat(v);
@@ -110,6 +116,11 @@ function splitIntegrityChargeback(amount, agentName, classification) {
  */
 function splitIntegrityRenewal(amount, agentName, classification) {
   if (!isIntegrityRenewal(agentName, classification)) return null;
+  return splitHouseOnly(amount);
+}
+
+/** Producer 0, whole line split THEI 50% / BSI 50% (odd cent to BSI). */
+function splitHouseOnly(amount) {
   const gross = num(amount);
   const theiShare = round2(gross / 2);
   return {
@@ -121,6 +132,15 @@ function splitIntegrityRenewal(amount, agentName, classification) {
     splitApplies: true,
     schedule: 'integrity_renewal_house_50_50',
   };
+}
+
+/**
+ * Integrity (Munoz / CAM / Mendieta) new sale on a BSI UHC / Aetna feed → 50% producer,
+ * 25% THEI, 25% BSI. Returns null for any other agent or classification.
+ */
+function splitIntegrityNewBusiness(amount, agentName, classification) {
+  if (!isIntegrityNewBusiness(agentName, classification)) return null;
+  return { ...splitFullOverridePot(amount, { agentName }), schedule: 'integrity_new_sale_50_25_25' };
 }
 
 /**
@@ -226,6 +246,8 @@ module.exports = {
   splitFullOverridePot,
   splitIntegrityChargeback,
   splitIntegrityRenewal,
+  splitIntegrityNewBusiness,
+  splitHouseOnly,
   splitTheRemittanceHalf,
   normalizeFilename,
   isBsiBookPayee,
