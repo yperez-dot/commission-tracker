@@ -1,0 +1,324 @@
+'use strict';
+
+/**
+ * Stored payee statements.
+ *  - POST /issue          snapshot + store an OliComm statement (Lina, Munoz, Mendieta)
+ *  - POST /received       store a statement BSI sent us (reference copy + total)
+ *  - GET  /               list (no file bytes)      ?payee=&period=
+ *  - GET  /compare        OliComm vs BSI total      ?payee=&period=
+ *  - GET  /:id            full snapshot incl. lines
+ *  - GET  /:id/download   original file
+ *  - POST /:id/void       void a statement
+ */
+
+const express = require('express');
+const multer = require('multer');
+const router = express.Router();
+const { getPool } = require('../db/database');
+const { requireAuth, requireAdmin } = require('./auth');
+const {
+  buildLinaCompensationStatement,
+  buildLinaCompensationWorkbook,
+  filenameForLinaStatement,
+} = require('../src/linaCompensationStatement');
+const {
+  INTEGRITY_PAYEES,
+  buildIntegrityStatement,
+  buildIntegrityWorkbook,
+  filenameForIntegrityStatement,
+} = require('../src/integrityStatement');
+const { compareStatementTotals } = require('../src/payeeStatementCompare');
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
+
+const XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+const PAYEES = {
+  lina: { key: 'lina', name: 'Alba Hernandez (Lina)' },
+  'christian-munoz': { key: 'christian-munoz', name: INTEGRITY_PAYEES['christian-munoz'].displayName },
+  'horacio-mendieta': { key: 'horacio-mendieta', name: INTEGRITY_PAYEES['horacio-mendieta'].displayName },
+};
+
+function agencyKey(req) {
+  const raw = req.query.agency || (req.body && req.body.agency) ||
+    req.headers['x-agency-override'] || (req.user && req.user.agency) || 'thei';
+  const s = String(raw || 'thei').toLowerCase();
+  return s.includes('broker society') || s === 'bsi' ? 'bsi' : 'thei';
+}
+
+let tableReady = false;
+async function ensureTable(pool) {
+  if (tableReady) return;
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS payee_statements (
+      id SERIAL PRIMARY KEY,
+      agency_key TEXT NOT NULL DEFAULT 'thei',
+      payee_key TEXT NOT NULL,
+      payee_name TEXT NOT NULL,
+      payment_period TEXT NOT NULL,
+      source TEXT NOT NULL DEFAULT 'olicomm',
+      status TEXT NOT NULL DEFAULT 'issued',
+      version INTEGER NOT NULL DEFAULT 1,
+      total NUMERIC(12, 2) NOT NULL DEFAULT 0,
+      line_count INTEGER NOT NULL DEFAULT 0,
+      lines JSONB,
+      file_name TEXT,
+      file_type TEXT,
+      file_data BYTEA,
+      notes TEXT,
+      issued_date DATE NOT NULL DEFAULT CURRENT_DATE,
+      created_by TEXT,
+      created_at TIMESTAMP DEFAULT NOW()
+    )`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_payee_statements_lookup
+    ON payee_statements (agency_key, payee_key, payment_period, source)`);
+  tableReady = true;
+}
+
+const COLS = `id, agency_key, payee_key, payee_name, payment_period, source, status, version,
+  total, line_count, file_name, file_type, notes, issued_date, created_by, created_at`;
+
+const ROW_COLS = `id, agent_name, client_full_name, policy_number, carrier, effective_date,
+  payment_period, classification, producer_payable, commission, source`;
+
+async function fetchRows(pool, payeeKey, period) {
+  const params = [period];
+  let agentSql;
+  if (payeeKey === 'lina') {
+    agentSql = `(agent_name ILIKE '%alba%hernandez%' OR agent_name ILIKE '%lina%hernandez%' OR agent_name ILIKE '%alba%ritela%')`;
+  } else if (payeeKey === 'christian-munoz') {
+    agentSql = `(agent_name ILIKE '%christian munoz%' OR agent_name ILIKE '%cam insurance solutions corp%')`;
+  } else {
+    agentSql = `agent_name ILIKE '%horacio mendieta%'`;
+  }
+  const r = await pool.query(
+    `SELECT ${ROW_COLS} FROM commission_records
+      WHERE ${agentSql} AND COALESCE(producer_payable,0) <> 0
+        AND ($1 = 'all' OR payment_period = $1)
+      ORDER BY carrier, policy_number, id`,
+    params
+  );
+  return r.rows;
+}
+
+async function buildFor(pool, payeeKey, period) {
+  const rows = await fetchRows(pool, payeeKey, period);
+  if (payeeKey === 'lina') {
+    const statement = buildLinaCompensationStatement(rows, { period });
+    const wb = await buildLinaCompensationWorkbook(statement);
+    return {
+      statement, total: statement.balance, lines: statement.lines,
+      buffer: Buffer.from(await wb.xlsx.writeBuffer()),
+      filename: filenameForLinaStatement(statement),
+    };
+  }
+  const statement = buildIntegrityStatement(rows, payeeKey, { period });
+  const wb = await buildIntegrityWorkbook(statement);
+  return {
+    statement, total: statement.balance, lines: statement.lines,
+    buffer: Buffer.from(await wb.xlsx.writeBuffer()),
+    filename: filenameForIntegrityStatement(statement),
+  };
+}
+
+/** GET /preview?payee=&period= — live (unstored) statement, any signed-in user */
+router.get('/preview', requireAuth, async (req, res) => {
+  try {
+    const { payee, period } = req.query;
+    if (!PAYEES[payee]) return res.status(400).json({ error: 'unknown payee' });
+    if (!period) return res.status(400).json({ error: 'period is required' });
+    const pool = getPool();
+    const built = await buildFor(pool, payee, String(period));
+    res.json(built.statement);
+  } catch (err) {
+    console.error('[payee-statements] preview', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** GET /preview-download?payee=&period= — live Excel download */
+router.get('/preview-download', requireAuth, async (req, res) => {
+  try {
+    const { payee, period } = req.query;
+    if (!PAYEES[payee]) return res.status(400).json({ error: 'unknown payee' });
+    if (!period) return res.status(400).json({ error: 'period is required' });
+    const built = await buildFor(getPool(), payee, String(period));
+    res.setHeader('Content-Type', XLSX);
+    res.setHeader('Content-Disposition', `attachment; filename="${built.filename}"`);
+    res.send(built.buffer);
+  } catch (err) {
+    console.error('[payee-statements] preview-download', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** POST /issue { payee, period, notes } */
+router.post('/issue', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const { payee, period, notes } = req.body || {};
+    if (!PAYEES[payee]) return res.status(400).json({ error: 'unknown payee' });
+    if (!/^\d{6}$/.test(String(period || ''))) {
+      return res.status(400).json({ error: 'period must be YYYYMM' });
+    }
+    const pool = getPool();
+    await ensureTable(pool);
+    const ak = agencyKey(req);
+    const built = await buildFor(pool, payee, String(period));
+    if (!built.lines.length) {
+      return res.status(400).json({ error: 'No lines for that payee/period — nothing to issue' });
+    }
+    const prev = await pool.query(
+      `SELECT COALESCE(MAX(version),0) AS v FROM payee_statements
+        WHERE agency_key=$1 AND payee_key=$2 AND payment_period=$3 AND source='olicomm'`,
+      [ak, payee, period]
+    );
+    const version = Number(prev.rows[0].v) + 1;
+    await pool.query(
+      `UPDATE payee_statements SET status='superseded'
+        WHERE agency_key=$1 AND payee_key=$2 AND payment_period=$3
+          AND source='olicomm' AND status='issued'`,
+      [ak, payee, period]
+    );
+    const ins = await pool.query(
+      `INSERT INTO payee_statements
+         (agency_key, payee_key, payee_name, payment_period, source, status, version,
+          total, line_count, lines, file_name, file_type, file_data, notes, created_by)
+       VALUES ($1,$2,$3,$4,'olicomm','issued',$5,$6,$7,$8,$9,$10,$11,$12,$13)
+       RETURNING ${COLS}`,
+      [ak, payee, PAYEES[payee].name, period, version, built.total, built.lines.length,
+        JSON.stringify(built.lines), built.filename, XLSX, built.buffer, notes || null,
+        (req.user && (req.user.email || req.user.username)) || null]
+    );
+    res.json(ins.rows[0]);
+  } catch (err) {
+    console.error('[payee-statements] issue', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** POST /received (multipart: file, payee, period, total, notes) — BSI's copy */
+router.post('/received', requireAuth, requireAdmin, upload.single('file'), async (req, res) => {
+  try {
+    const { payee, period, notes } = req.body || {};
+    const total = parseFloat(req.body && req.body.total);
+    if (!PAYEES[payee]) return res.status(400).json({ error: 'unknown payee' });
+    if (!/^\d{6}$/.test(String(period || ''))) return res.status(400).json({ error: 'period must be YYYYMM' });
+    if (!Number.isFinite(total)) return res.status(400).json({ error: 'total (balance on the BSI statement) is required' });
+    if (!req.file) return res.status(400).json({ error: 'file is required' });
+    const pool = getPool();
+    await ensureTable(pool);
+    const ak = agencyKey(req);
+    const ins = await pool.query(
+      `INSERT INTO payee_statements
+         (agency_key, payee_key, payee_name, payment_period, source, status, version,
+          total, line_count, file_name, file_type, file_data, notes, created_by)
+       VALUES ($1,$2,$3,$4,'bsi_received','issued',1,$5,0,$6,$7,$8,$9,$10)
+       RETURNING ${COLS}`,
+      [ak, payee, PAYEES[payee].name, period, Math.round(total * 100) / 100,
+        req.file.originalname, req.file.mimetype, req.file.buffer, notes || null,
+        (req.user && (req.user.email || req.user.username)) || null]
+    );
+    res.json(ins.rows[0]);
+  } catch (err) {
+    console.error('[payee-statements] received', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** GET / ?payee=&period= */
+router.get('/', requireAuth, async (req, res) => {
+  try {
+    const pool = getPool();
+    await ensureTable(pool);
+    const params = [agencyKey(req)];
+    let where = 'WHERE agency_key = $1';
+    if (req.query.payee) { params.push(req.query.payee); where += ` AND payee_key = $${params.length}`; }
+    if (req.query.period) { params.push(req.query.period); where += ` AND payment_period = $${params.length}`; }
+    const r = await pool.query(
+      `SELECT ${COLS} FROM payee_statements ${where} ORDER BY payment_period DESC, payee_key, created_at DESC`,
+      params
+    );
+    res.json(r.rows);
+  } catch (err) {
+    console.error('[payee-statements] list', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/** GET /compare?payee=&period= — current OliComm total vs issued vs BSI-received */
+router.get('/compare', requireAuth, async (req, res) => {
+  try {
+    const { payee, period } = req.query;
+    if (!PAYEES[payee] || !period) return res.status(400).json({ error: 'payee and period are required' });
+    const pool = getPool();
+    await ensureTable(pool);
+    const ak = agencyKey(req);
+    const live = await buildFor(pool, payee, String(period));
+    const stored = await pool.query(
+      `SELECT ${COLS} FROM payee_statements
+        WHERE agency_key=$1 AND payee_key=$2 AND payment_period=$3 AND status='issued'
+        ORDER BY created_at DESC`,
+      [ak, payee, period]
+    );
+    const issued = stored.rows.find((s) => s.source === 'olicomm') || null;
+    const received = stored.rows.find((s) => s.source === 'bsi_received') || null;
+    res.json(compareStatementTotals({
+      liveTotal: live.total,
+      issuedTotal: issued ? Number(issued.total) : null,
+      receivedTotal: received ? Number(received.total) : null,
+      issued, received,
+    }));
+  } catch (err) {
+    console.error('[payee-statements] compare', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/:id(\\d+)', requireAuth, async (req, res) => {
+  try {
+    const pool = getPool();
+    await ensureTable(pool);
+    const r = await pool.query(
+      `SELECT ${COLS}, lines FROM payee_statements WHERE id=$1 AND agency_key=$2`,
+      [req.params.id, agencyKey(req)]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'not found' });
+    res.json(r.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/:id(\\d+)/download', requireAuth, async (req, res) => {
+  try {
+    const pool = getPool();
+    await ensureTable(pool);
+    const r = await pool.query(
+      `SELECT file_name, file_type, file_data FROM payee_statements WHERE id=$1 AND agency_key=$2`,
+      [req.params.id, agencyKey(req)]
+    );
+    if (!r.rows.length || !r.rows[0].file_data) return res.status(404).json({ error: 'no file stored' });
+    const row = r.rows[0];
+    res.setHeader('Content-Type', row.file_type || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `attachment; filename="${String(row.file_name || 'statement').replace(/"/g, '')}"`);
+    res.send(row.file_data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/:id(\\d+)/void', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const pool = getPool();
+    await ensureTable(pool);
+    const r = await pool.query(
+      `UPDATE payee_statements SET status='void' WHERE id=$1 AND agency_key=$2 RETURNING ${COLS}`,
+      [req.params.id, agencyKey(req)]
+    );
+    if (!r.rows.length) return res.status(404).json({ error: 'not found' });
+    res.json(r.rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+module.exports = router;
