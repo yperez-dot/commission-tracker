@@ -187,6 +187,9 @@ function buildCloseChecklist(opts) {
       });
     }
   });
+  (o.missingShareWarnings || []).forEach(function (m) {
+    warnings.push({ type: 'missing_thei_share', payer: m.payer, message: m.payer + ': ' + m.rows + ' row(s) have no stored THEI share (counted as $0 in expected deposit)' });
+  });
   (o.depositWarnings || []).forEach(function (d) {
     warnings.push({
       type: 'deposit_difference', payer: d.payer,

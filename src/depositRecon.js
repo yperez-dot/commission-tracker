@@ -6,10 +6,13 @@
  *
  * HOW "EXPECTED" IS DERIVED (kept deliberately simple — see routes/payroll-close.js
  * expectedByPayer() for the SQL):
- *   - Payer "BSI": every BSI statement upload (uploads.category = 'bsi_statement')
- *     for the period. Expected = SUM(commission - bsi_share) over those rows, i.e.
- *     everything on the statement except BSI's own cut. That is THEI's share plus the
- *     producer pay THEI now passes through to agents (Lina / Integrity / ACA).
+ *   - Payer "BSI": BSI pays the agents directly; THEI only builds their statements.
+ *     So the BSI deposit to THEI is THEI's share only: SUM(thei_share) over every BSI
+ *     statement upload (uploads.category = 'bsi_statement') for the period. thei_share
+ *     is the split stored at upload time (Integrity 50/25/25 with the fixed 2026 UHC
+ *     rate, where THEI absorbs the difference — PR #93; 50/50 house overrides; etc.).
+ *     Producer pay and BSI's share are NOT expected. Rows with no stored thei_share
+ *     count as $0 and are reported (missingShareRows) so they can be checked.
  *     Licensing/appointment fees are not stored as rows, so if BSI nets fees out of
  *     the wire the difference will show here.
  *   - Direct carrier statements paid straight to THEI (category commission_statement
@@ -34,6 +37,33 @@ function depositPayer(d) {
 
 function payerKey(name) {
   return String(name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+/**
+ * Expected BSI deposit from stored BSI statement lines: THEI's share only.
+ * rows: [{upload_id, upload_name, thei_share, commission}]
+ * Returns {payer:'BSI', expected, missingShareRows, uploads:[{id,name,amount,missingShareRows}]} or null.
+ */
+function bsiExpectedFromRows(rows) {
+  if (!rows || !rows.length) return null;
+  var by = {};
+  var order = [];
+  rows.forEach(function (r) {
+    var id = r.upload_id;
+    if (!by[id]) { by[id] = { id: id, name: r.upload_name || '', amount: 0, missingShareRows: 0 }; order.push(id); }
+    if (r.thei_share == null || r.thei_share === '') {
+      if ((Number(r.commission) || 0) !== 0) by[id].missingShareRows += 1;
+    } else {
+      by[id].amount = round2(by[id].amount + (Number(r.thei_share) || 0));
+    }
+  });
+  var uploads = order.map(function (id) { return by[id]; });
+  return {
+    payer: 'BSI',
+    expected: round2(uploads.reduce(function (s, u) { return s + u.amount; }, 0)),
+    missingShareRows: uploads.reduce(function (s, u) { return s + u.missingShareRows; }, 0),
+    uploads: uploads,
+  };
 }
 
 /** Check that allocations add up to no more than the deposit. Returns error or null. */
@@ -69,13 +99,14 @@ function reconcileDeposits(opts) {
   var rows = {};
   function row(name) {
     var k = payerKey(name);
-    if (!rows[k]) rows[k] = { payer: name, expected: 0, received: 0, deposits: [], uploads: [] };
+    if (!rows[k]) rows[k] = { payer: name, expected: 0, received: 0, deposits: [], uploads: [], missingShareRows: 0 };
     return rows[k];
   }
   (o.expected || []).forEach(function (e) {
     var r = row(e.payer);
     r.expected = round2(r.expected + (Number(e.expected) || 0));
     r.uploads = r.uploads.concat(e.uploads || []);
+    r.missingShareRows = (r.missingShareRows || 0) + (Number(e.missingShareRows) || 0);
   });
 
   var unmatched = [];
@@ -129,6 +160,7 @@ module.exports = {
   depositPayer: depositPayer,
   payerKey: payerKey,
   validateDeposit: validateDeposit,
+  bsiExpectedFromRows: bsiExpectedFromRows,
   reconcileDeposits: reconcileDeposits,
   depositWarnings: depositWarnings,
 };

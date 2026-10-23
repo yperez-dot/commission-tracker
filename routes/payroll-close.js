@@ -28,7 +28,7 @@ const {
 const {
   buildCloseChecklist, previousPeriods, canonicalCarrier, DEFAULT_EXPECTED_CARRIERS,
 } = require('../src/payrollCloseChecklist');
-const { PAYERS, validateDeposit, reconcileDeposits, depositWarnings, depositPayer } = require('../src/depositRecon');
+const { PAYERS, validateDeposit, reconcileDeposits, depositWarnings, depositPayer, bsiExpectedFromRows } = require('../src/depositRecon');
 
 function agencyKey(req) {
   const raw = req.query.agency || (req.body && req.body.agency) ||
@@ -372,12 +372,12 @@ router.get('/payments', requireAuth, wrap(async (req, res) => {
 // ─── monthly close checklist ────────────────────────────────────────────────
 async function expectedByPayer(pool, period) {
   // See src/depositRecon.js header for how "expected" is defined.
+  // BSI pays agents directly: expected from BSI = stored thei_share only (bsiExpectedFromRows).
   const bsi = await pool.query(
-    `SELECT u.id, COALESCE(u.display_title, u.original_name) AS name,
-            COALESCE(SUM(COALESCE(r.commission,0) - COALESCE(r.bsi_share,0)),0) AS expected
+    `SELECT u.id AS upload_id, COALESCE(u.display_title, u.original_name) AS upload_name, r.thei_share, r.commission
        FROM commission_records r JOIN uploads u ON u.id = r.upload_id
       WHERE u.category = 'bsi_statement' AND r.payment_period = $1
-      GROUP BY u.id`, [period]);
+      ORDER BY u.id`, [period]);
   const direct = await pool.query(
     `SELECT u.id, u.original_name AS name, u.carrier,
             COALESCE(SUM(COALESCE(r.commission,0)),0) AS expected
@@ -385,13 +385,8 @@ async function expectedByPayer(pool, period) {
       WHERE (u.category IS NULL OR u.category = 'commission_statement') AND r.payment_period = $1
       GROUP BY u.id`, [period]);
   const out = [];
-  if (bsi.rows.length) {
-    out.push({
-      payer: 'BSI',
-      expected: round2(bsi.rows.reduce((s, r) => s + Number(r.expected), 0)),
-      uploads: bsi.rows.map((r) => ({ id: r.id, name: r.name, amount: round2(r.expected) })),
-    });
-  }
+  const bsiExpected = bsiExpectedFromRows(bsi.rows);
+  if (bsiExpected) out.push(bsiExpected);
   for (const r of direct.rows) {
     out.push({
       payer: canonicalCarrier(String(r.carrier || '').split(',')[0]) || 'Unknown carrier',
@@ -455,6 +450,7 @@ async function checklistFor(pool, ak, period) {
     recentCarriers: recent.rows.map((r) => r.carrier),
     nones: nones.rows,
     depositWarnings: depositWarnings(recon),
+    missingShareWarnings: recon.rows.filter((r) => r.missingShareRows > 0).map((r) => ({ payer: r.payer, rows: r.missingShareRows })),
   });
   checklist.close = await store.monthClose(pool, ak, period);
   const hist = await pool.query(

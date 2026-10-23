@@ -1,4 +1,4 @@
-const { reconcileDeposits, validateDeposit, depositWarnings } = require('../depositRecon');
+const { reconcileDeposits, validateDeposit, depositWarnings, bsiExpectedFromRows } = require('../depositRecon');
 
 describe('deposit reconciliation', () => {
   const expected = [{ payer: 'BSI', expected: 500 }, { payer: 'Aetna', expected: 120 }];
@@ -54,5 +54,38 @@ describe('deposit reconciliation', () => {
     expect(validateDeposit(Object.assign({}, base, { allocations: [{ period: '202609', amount: 150 }] }))).toMatch(/more than/);
     expect(validateDeposit(Object.assign({}, base, { payer: 'Other' }))).toMatch(/payer name/);
     expect(validateDeposit(Object.assign({}, base, { amount: 0 }))).toMatch(/greater than 0/);
+  });
+});
+
+describe('expected BSI deposit = THEI share only (BSI pays agents directly)', () => {
+  // Stored splits as written at upload (PR #93): Integrity $150 UHC 2026 pot -> producer 82.50,
+  // BSI 37.50 (25%), THEI absorbs the rest 30.00; Integrity chargeback reverses it; house override 50/50.
+  const rows = [
+    { upload_id: 1, upload_name: 'BSI · UHC · 09-2026', commission: 150, thei_share: 30 },
+    { upload_id: 1, upload_name: 'BSI · UHC · 09-2026', commission: -150, thei_share: -30 },
+    { upload_id: 1, upload_name: 'BSI · UHC · 09-2026', commission: 80, thei_share: 40 },
+    { upload_id: 2, upload_name: 'BSI · Humana · 09-2026', commission: 60, thei_share: '30.00' },
+    // agent production BSI pays straight to the agent: THEI share 0, nothing expected
+    { upload_id: 2, upload_name: 'BSI · Humana · 09-2026', commission: 150, thei_share: 0 },
+  ];
+
+  test('sums stored thei_share, never producer pay or BSI share', () => {
+    const e = bsiExpectedFromRows(rows);
+    expect(e.payer).toBe('BSI');
+    expect(e.expected).toBe(70);
+    expect(e.uploads.map((u) => [u.id, u.amount])).toEqual([[1, 40], [2, 30]]);
+    expect(e.missingShareRows).toBe(0);
+  });
+
+  test('lines with no stored THEI share count as $0 and are reported', () => {
+    const e = bsiExpectedFromRows(rows.concat([{ upload_id: 2, commission: 25, thei_share: null }, { upload_id: 2, commission: 0, thei_share: null }]));
+    expect(e.expected).toBe(70);
+    expect(e.missingShareRows).toBe(1);
+    const r = reconcileDeposits({ period: '202609', expected: [e], deposits: [] });
+    expect(r.rows[0].missingShareRows).toBe(1);
+  });
+
+  test('no BSI lines -> no BSI expected row', () => {
+    expect(bsiExpectedFromRows([])).toBeNull();
   });
 });

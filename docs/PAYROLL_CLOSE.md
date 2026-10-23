@@ -34,9 +34,11 @@ THEI runs agent payroll itself. These are the rules the code follows.
 - Deposits: date, payer (pick list + Other), amount, reference, memo, months covered (split allowed), entered by.
   Edit / delete need a reason and are logged. `source` / `external_id` columns are there for a future QuickBooks import.
 - Expected per payer per month:
-  - **BSI**: all BSI statement uploads for the month, `SUM(commission − bsi_share)` = THEI's share plus the producer
-    pay THEI passes through. Licensing/appointment fees aren't stored as rows, so a fee netted out of BSI's wire shows
-    up as a difference.
+  - **BSI**: BSI pays the agents directly; THEI only builds their statements. So expected = THEI's share only:
+    `SUM(thei_share)` over all BSI statement uploads for the month, using the split stored on each line at upload
+    (Integrity 50/25/25 with the fixed 2026 UHC rate where THEI absorbs the difference, 50/50 house overrides, …).
+    Producer pay and BSI's share are not expected. Lines with no stored THEI share count as $0 and are flagged.
+    Licensing/appointment fees aren't stored as rows, so a fee netted out of BSI's wire shows up as a difference.
   - **Direct carriers** (commission statement uploads): `SUM(commission)` for that carrier.
 - Received = deposits assigned to that payer + month. Unassigned money is listed as unmatched.
 

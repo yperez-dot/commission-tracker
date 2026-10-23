@@ -79,4 +79,10 @@ describe('close checklist', () => {
     expect(c.canClose).toBe(true);
     expect(c.warnings.some((w) => w.type === 'deposit_difference')).toBe(true);
   });
+
+  test('rows missing a stored THEI share show as a warning, not a blocker', () => {
+    const c = buildCloseChecklist({ period: '202609', uploads: allFive(), missingShareWarnings: [{ payer: 'BSI', rows: 2 }] });
+    expect(c.canClose).toBe(true);
+    expect(c.warnings.find((w) => w.type === 'missing_thei_share').message).toMatch(/2 row/);
+  });
 });

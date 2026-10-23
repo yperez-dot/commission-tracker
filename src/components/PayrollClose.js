@@ -506,8 +506,8 @@ export function DepositsPanel({ period, meta, recon, onChanged }) {
         <div>
           <div style={{ fontWeight: 600, fontSize: 14 }}>Deposit reconciliation — {period}</div>
           <div style={small}>
-            Expected: BSI = statement amounts minus BSI&apos;s share (THEI share + producer pay THEI passes through);
-            direct carriers = their statement totals. Received = THEI bank deposits tagged to this month.
+            Expected: BSI = THEI&apos;s share only (the split stored on each BSI statement line — BSI pays the agents
+            directly); direct carriers = their statement totals. Received = THEI bank deposits tagged to this month.
           </div>
         </div>
         {meta.isStaff && !form && <button className="btn btn-primary" onClick={() => setForm(emptyDeposit(period, meta.payers))}>Add deposit</button>}
@@ -522,7 +522,10 @@ export function DepositsPanel({ period, meta, recon, onChanged }) {
             {recon.rows.length === 0 && <tr><td colSpan={5} style={{ padding: 8, ...small }}>No statements or deposits for this month yet.</td></tr>}
             {recon.rows.map((r) => (
               <tr key={r.payer} style={{ borderBottom: '0.5px solid var(--border)' }}>
-                <td style={{ padding: 6, fontWeight: 500 }}>{r.payer}</td>
+                <td style={{ padding: 6, fontWeight: 500 }}>
+                  {r.payer}
+                  {r.missingShareRows > 0 && <div style={{ ...warnStyle, fontSize: 11 }}>⚠ {r.missingShareRows} row(s) with no THEI share stored (counted as $0)</div>}
+                </td>
                 <td style={{ padding: 6, textAlign: 'right' }}>{fmt(r.expected)}</td>
                 <td style={{ padding: 6, textAlign: 'right' }}>{fmt(r.received)}</td>
                 <td style={{ padding: 6, textAlign: 'right', ...(r.ok ? {} : red) }}>{fmt(r.difference)}</td>
