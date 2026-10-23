@@ -119,7 +119,8 @@ describe('bsiBookAttribution', () => {
   });
 
   it('peels Alba-named Aetna renewals with state rate', () => {
-    // Aetna National Renewal override = $45 → albaComp = 90 − 45 = 45
+    // Aetna National Renewal override = $45 a year. A $90 line is 90 / (347 + 45) of the
+    // annual renewal, so only that share of the override comes off: 45 × 90/392 = 10.33.
     const records = [
       {
         agent: 'Alba Hernandez',
@@ -132,9 +133,9 @@ describe('bsiBookAttribution', () => {
     ];
     applyBsiBookAgentProduction(records);
     expect(records[0].agent).toBe(ALBA_DB_AGENT);
-    expect(records[0].producerPayable).toBe(45);
-    expect(records[0].theiShare).toBe(22.5);
-    expect(records[0].bsiShare).toBe(22.5);
+    expect(records[0].producerPayable).toBe(79.67);
+    expect(records[0].theiShare).toBe(5.17);
+    expect(records[0].bsiShare).toBe(5.16);
   });
 
   it('signs chargeback peels', () => {
@@ -159,7 +160,7 @@ describe('bsiBookAttribution', () => {
     ).toBeCloseTo(-175.83, 2);
   });
 
-  it('leaves other individual agents unchanged', () => {
+  it('other individual agents: house split, not remapped (Swan/Marco agent: $10 first)', () => {
     const records = [
       {
         agent: 'Kelly Carpenter',
@@ -170,7 +171,10 @@ describe('bsiBookAttribution', () => {
     ];
     applyBsiBookAgentProduction(records);
     expect(records[0].agent).toBe('Kelly Carpenter');
-    expect(records[0].producerPayable).toBeUndefined();
+    expect(records[0].producerPayable).toBe(0);
+    expect(records[0].subAgentOverride).toBe(10);
+    expect(records[0].theiShare).toBe(70);
+    expect(records[0].bsiShare).toBe(70);
   });
 
   it('detects BSI house agent names and normalizes carriers', () => {
@@ -363,23 +367,22 @@ describe('Integrity chargebacks on BSI feeds', () => {
       { ...base, agent: 'Ivan Santiago', classification: 'Renewal', commission: 6 },
     ];
     applyBsiBookAgentProduction(records);
+    // They get the other-agent house split (producer 0, THEI/BSI 50/50), never 50/25/25.
     for (const r of records) {
-      expect(r.producerPayable).toBeUndefined();
-      expect(r.theiShare).toBeUndefined();
+      expect(r.producerPayable).toBe(0);
+      expect(r.theiShare + r.bsiShare).toBeCloseTo(r.commission, 2);
+      expect(r.theiShare).toBeCloseTo(r.commission / 2, 2);
     }
   });
 
-  it('leaves non-Integrity renewals and non-Integrity chargebacks unchanged', () => {
+  it('non-Integrity renewals and chargebacks get the house split (no agent share)', () => {
     const records = [
       { ...base, agent: 'Test Agent Example', classification: 'Renewal', commission: 6 },
       { ...base, agent: 'Test Agent Example', classification: 'Chargeback', commission: -50 },
     ];
     applyBsiBookAgentProduction(records);
-    for (const r of records) {
-      expect(r.producerPayable).toBeUndefined();
-      expect(r.theiShare).toBeUndefined();
-      expect(r.bsiShare).toBeUndefined();
-    }
+    expect(records[0]).toMatchObject({ producerPayable: 0, theiShare: 3, bsiShare: 3 });
+    expect(records[1]).toMatchObject({ producerPayable: 0, theiShare: -25, bsiShare: -25 });
   });
 
   it('does not overwrite a split a parser already set', () => {
@@ -495,9 +498,93 @@ describe('Integrity BSI UHC rate table (plan year 2026 = $82.50 on a full $150 l
       { ...uhc, agent: 'Ivan Santiago', policyNumber: 'TEST-O2', classification: 'Chargeback', commission: -150 },
     ];
     applyBsiBookAgentProduction(records, { integrityOriginalSales: new Map([['test-o2', { gross: 150, producer: 82.5 }]]) });
-    for (const r of records) {
-      expect(r.producerPayable).toBeUndefined();
-      expect(r.theiShare).toBeUndefined();
-    }
+    // house split 50/50, never the fixed $82.50 or a producer share
+    expect(records[0]).toMatchObject({ producerPayable: 0, theiShare: 75, bsiShare: 75 });
+    expect(records[1]).toMatchObject({ producerPayable: 0, theiShare: -75, bsiShare: -75 });
+  });
+});
+
+describe('Lina Aetna monthly renewals: override prorated to the line', () => {
+  // Made-up lines. Annual renewal amount = CMS renewal FMV for the state + annual override.
+  const base = {
+    agent: 'Alba Hernandez',
+    carrier: 'Aetna',
+    classification: 'Renewal',
+    policyNumber: 'TEST-R1',
+    period: '202609',
+    payee: 'BSI',
+  };
+
+  it('a 1/12 monthly line gives back 1/12 of the annual override (National: 347 + 45)', () => {
+    const line = 32.67; // (347 + 45) / 12
+    const records = [{ ...base, commission: line, memberState: 'GA', raw: { 'Sales Event': 'Renewal', 'Member State': 'GA' } }];
+    applyBsiBookAgentProduction(records);
+    const r = records[0];
+    expect(r.theiShare + r.bsiShare).toBeCloseTo(3.75, 2);
+    expect(r.producerPayable).toBe(28.92);
+    expect(r.producerPayable + r.theiShare + r.bsiShare).toBeCloseTo(line, 2);
+    expect(r.mga).toMatch(/prorated to this line/);
+  });
+
+  it('uses the state FMV (CA: 432 + 50) and the plan group (FL D-SNP: 347 + 240)', () => {
+    const records = [
+      { ...base, commission: 40.17, memberState: 'CA', raw: { 'Sales Event': 'Renewal' } },
+      { ...base, commission: 48.92, memberState: 'FL', planId: 'H1609-043', raw: { 'Sales Event': 'Renewal', 'Plan ID': 'H1609-043' } },
+    ];
+    applyBsiBookAgentProduction(records);
+    expect(records[0].theiShare + records[0].bsiShare).toBeCloseTo(4.17, 2);
+    expect(records[0].producerPayable).toBe(36);
+    expect(records[1].theiShare + records[1].bsiShare).toBeCloseTo(20, 2);
+    expect(records[1].producerPayable).toBe(28.92);
+  });
+
+  it('a full annual renewal line still gives back the full annual override', () => {
+    const records = [{ ...base, commission: 392, memberState: 'GA', raw: { 'Sales Event': 'Renewal' } }];
+    applyBsiBookAgentProduction(records);
+    expect(records[0].theiShare + records[0].bsiShare).toBeCloseTo(45, 2);
+    expect(records[0].producerPayable).toBe(347);
+  });
+
+  it('no member state → 1/12 of the override, flagged; never negative for Lina', () => {
+    const records = [
+      { ...base, commission: 30, raw: { 'Sales Event': 'Renewal' } },
+      { ...base, policyNumber: 'TEST-R2', commission: 2, raw: { 'Sales Event': 'Renewal' } },
+    ];
+    applyBsiBookAgentProduction(records);
+    expect(records[0].theiShare + records[0].bsiShare).toBeCloseTo(3.75, 2);
+    expect(records[0].producerPayable).toBe(26.25);
+    expect(records[0].mga).toMatch(/1\/12/);
+    // 1/12 of 45 = 3.75 > the $2 line → capped at the line, Lina 0
+    expect(records[1].theiShare + records[1].bsiShare).toBeCloseTo(2, 2);
+    expect(records[1].producerPayable).toBe(0);
+  });
+
+  it('Aetna new business, UHC renewals and chargebacks keep their existing peel', () => {
+    const records = [
+      { ...base, classification: 'New Business', commission: 694 + 125, memberState: 'GA', raw: { 'Sales Event': 'New Business' } },
+      { ...base, carrier: 'UnitedHealthcare', commission: 211, raw: { 'Comp Type': 'R', 'Commission Action': 'Renewal', 'Member State': 'FL' } },
+    ];
+    applyBsiBookAgentProduction(records);
+    expect(records[0].theiShare + records[0].bsiShare).toBeCloseTo(125, 2);
+    expect(records[0].producerPayable).toBe(694);
+    expect(records[1].producerPayable).toBe(136);
+  });
+
+  it('Lina CMS Trueup splits like a new sale; the override never exceeds the line', () => {
+    const records = [
+      // full National initial override paid on its own → all override, Lina 0
+      { ...base, policyNumber: 'TEST-T1', classification: 'New Business', commission: 125, memberState: 'GA', raw: { 'Sales Event': 'CMS Trueup' } },
+      // smaller trueup → capped at the line, Lina never negative
+      { ...base, policyNumber: 'TEST-T2', classification: 'New Business', commission: 41.66, memberState: 'GA', raw: { 'Sales Event': 'CMS Trueup' } },
+      // trueup that includes Lina's own commission → normal new-sale peel
+      { ...base, policyNumber: 'TEST-T3', classification: 'New Business', commission: 819, memberState: 'GA', raw: { 'Sales Event': 'CMS Trueup' } },
+    ];
+    applyBsiBookAgentProduction(records);
+    expect(records[0].producerPayable).toBe(0);
+    expect(records[0].theiShare + records[0].bsiShare).toBeCloseTo(125, 2);
+    expect(records[1].producerPayable).toBe(0);
+    expect(records[1].theiShare + records[1].bsiShare).toBeCloseTo(41.66, 2);
+    expect(records[2].producerPayable).toBe(694);
+    expect(records[2].theiShare + records[2].bsiShare).toBeCloseTo(125, 2);
   });
 });

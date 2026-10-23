@@ -292,6 +292,16 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
                   : `Does NOT tie to carrier Commission Summary: imported $${Number(uploadResult.reconciliation.importedTotal).toFixed(2)} vs summary $${Number(uploadResult.reconciliation.summaryTotal).toFixed(2)} (variance $${Number(uploadResult.reconciliation.variance).toFixed(2)}). Some rows were dropped or misread — check before using this upload.`}
               </div>
             )}
+            {uploadResult.carrierWarning && (
+              <div style={{ marginTop: 4, fontWeight: 600, color: '#b91c1c' }}>
+                {uploadResult.carrierWarning}
+              </div>
+            )}
+            {uploadResult.unsplitWarning && (
+              <div style={{ marginTop: 4, fontWeight: 600, color: '#b45309' }}>
+                ⚠ {uploadResult.unsplitWarning.message}
+              </div>
+            )}
             {uploadResult.internalDuplicatesRemoved > 0 && (
               <div style={{ marginTop: 4 }}>
                 Skipped {uploadResult.internalDuplicatesRemoved} exact duplicate line

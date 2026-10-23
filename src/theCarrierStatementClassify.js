@@ -72,6 +72,8 @@ async function backfillDevotedBsiToOverride(pool) {
     WHERE cr.upload_id = u.id
       AND cr.classification IN ('New Business', 'Renewal', 'Agent Commission')
       AND COALESCE(cr.commission, 0) >= 0
+      -- Rows that already carry Marco's $10 (BSI other-agent house split) keep their stored split.
+      AND COALESCE(cr.sub_agent_override, 0) = 0
       AND (
         u.category = 'bsi_statement'
         OR UPPER(COALESCE(cr.source, '')) IN ('BSI', 'BSI_PAYEE')

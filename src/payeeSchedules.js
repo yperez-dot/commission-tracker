@@ -187,6 +187,28 @@ function isBsiRemitSource(source, row = null) {
   return s === 'BSI' || s === 'BSI_PAYEE';
 }
 
+/**
+ * BSI other-agent house line: a BSI-feed row (not classified as an override) for an agent who
+ * is not Lina/Alba, not Integrity and not THEI, with a stored THEI/BSI/Marco share. Upload
+ * stores the 50/50 house split (Marco $10 first) on these rows, chargebacks included, so
+ * House Statements list them as stored (never re-split at read time).
+ */
+function isBsiHouseSplitLine(row = {}) {
+  if (!isBsiRemitSource(row.source, row)) return false;
+  const cls = String(row.classification || '').toLowerCase();
+  // Agent-production classes only (New Business / Renewal / Chargeback / Agent Commission),
+  // and only rows the upload marked as split (split_applies) — older rows never qualify.
+  if (!isAlbaAgentCommission(cls)) return false;
+  const applies = row.split_applies != null ? row.split_applies : row.splitApplies;
+  if (applies !== true && applies !== 't' && applies !== 'true') return false;
+  const agent = row.agent_name != null ? row.agent_name : row.agent;
+  if (isAlbaHernandez(agent) || isIntegrityAgent(agent)) return false;
+  const n = normName(agent);
+  if (!n || n.includes('broker society') || n.includes('health experts')) return false;
+  const v = (x) => Math.abs(parseFloat(x) || 0) >= 0.005;
+  return v(row.thei_share) || v(row.bsi_share) || v(row.sub_agent_override);
+}
+
 function isTheiHouseType(statementType) {
   return (
     statementType === STATEMENT_TYPES.THEI_OVERRIDE ||
@@ -196,6 +218,7 @@ function isTheiHouseType(statementType) {
 }
 
 module.exports = {
+  isBsiHouseSplitLine,
   INTEGRITY_AGENTS,
   MARCO_AGENTS,
   MARCO_JENDY_CUTOFF,

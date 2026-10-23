@@ -548,23 +548,8 @@ function isOscarIFPFile(wb) {
 }
 
 // ─── 2026 CMS Maximum FMV Caps ──────────────────────────────────────────────
-// Source: Yahoska Perez 2026-07-01
 // Used for agency override anomaly flagging (non-Alba rows only)
-const CMS_FMV_CAPS_2026 = {
-  CA: { initial: 864, renewal: 432 },
-  NJ: { initial: 864, renewal: 432 },
-  CT: { initial: 781, renewal: 391 },
-  PA: { initial: 781, renewal: 391 },
-  DC: { initial: 781, renewal: 391 },
-  PR: { initial: 474, renewal: 237 },
-  VI: { initial: 474, renewal: 237 },
-};
-const CMS_FMV_DEFAULT_2026 = { initial: 694, renewal: 347 };
-
-function getCMSCap2026(state, eventType) {
-  const caps = CMS_FMV_CAPS_2026[(state || '').toUpperCase()] || CMS_FMV_DEFAULT_2026;
-  return caps[eventType] || caps.initial;
-}
+const { getCMSCap2026 } = require('../src/cmsFmvCaps2026');
 
 // ─── AETNA BSI CSV ────────────────────────────────────────────────────────────
 // Format: Aetna-to-BSI consolidated statement CSV
@@ -572,142 +557,41 @@ function getCMSCap2026(state, eventType) {
 // Alba Hernandez (NPN 21209073) is BSI's principal licensed agent;
 // her rows are individual agent commissions — skip CMS cap validation.
 
+const {
+  parseAetnaBsiPayeeRows,
+  periodFromFilename: aetnaPeriodFromFilename,
+} = require('../src/aetnaBsiPayeeCsv');
+const {
+  BSI_LAYOUTS,
+  detectBsiWorkbookLayout,
+  expectedCarrier,
+  carrierMismatchWarning,
+} = require('../src/bsiCarrierDetect');
+
 function isAetnaBSICSVFilename(filename) {
   const f = filename.toLowerCase().replace(/[\s()]/g, '_');
   return f.includes('aetna_bsi_statement') || f.includes('aetna_bsi');
 }
 
 function parseAetnaBSICSV(wb, filename) {
-  const records = [];
   console.log('[AETNA-BSI] Parser triggered for:', filename);
-
-  function classifySalesEvent(se) {
-    const s = (se || '').trim().toLowerCase();
-    if (s === 'new business' || s === 'pronew') return 'initial';
-    if (s === 'renewal' || s.includes('residual')) return 'renewal';
-    // chargebacks, disenrollments, CMS trueups, HRA → skip
-    return 'skip';
-  }
-
-  function parseDate(raw) {
-    if (!raw) return null;
-    const s = String(raw).trim();
-    const m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
-    if (m) {
-      let y = m[3]; if (y.length === 2) y = `20${y}`;
-      return `${m[1].padStart(2,'0')}/${m[2].padStart(2,'0')}/${y}`;
-    }
-    return s || null;
-  }
-
   try {
     const ws = wb.Sheets[wb.SheetNames[0]];
     const rawRows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: false });
-    // Strip BOM from column names
-    const rows = rawRows.map(row => {
-      const clean = {};
-      for (const [k, v] of Object.entries(row)) {
-        clean[k.replace(/^[\ufeff\uFEFF]/, '').trim()] = v;
-      }
-      return clean;
+    const { records, footerTotal } = parseAetnaBsiPayeeRows(rawRows, {
+      filename,
+      getCap: getCMSCap2026,
     });
-
-    console.log('[AETNA-BSI] Total rows (raw):', rows.length);
-
-    for (const row of rows) {
-      const paymentDate  = String(row['Payment Date'] || '').trim();
-      const memberName   = String(row['Member Name']  || '').trim();
-      const amtRaw       = row['Payee Amount'];
-      const memberStateRaw = String(row['State'] || row['Member State'] || '').trim().split('-')[0].toUpperCase();
-      const memberState    = /^[A-Z]{2}$/.test(memberStateRaw) ? memberStateRaw : null;
-      const salesEvent   = String(row['Sales Event']  || '').trim();
-      const writingNPN   = String(row['Writing Agent NPN']   || '').trim();
-      const writingAgent = String(row['Writing Agent Name']  || '').trim();
-      const memberId     = String(row['Member ID']     || '').trim();
-      const coveragePeriod = String(row['Coverage Period'] || '').trim();
-      const effectiveDateRaw = row['Effective Date'];
-      const product      = String(row['Product'] || '').trim();
-
-      // Skip summary rows (no Payment Date) or total rows
-      if (!paymentDate || paymentDate.toLowerCase().startsWith('total')) continue;
-
-      // Parse amount
-      let amount = 0;
-      if (typeof amtRaw === 'number') {
-        amount = amtRaw;
-      } else {
-        amount = parseFloat(String(amtRaw).replace(/[$,]/g, '')) || 0;
-      }
-      if (amount === 0 && !memberName) continue; // blank row
-
-      // Derive period from Coverage Period (MM/DD/YYYY → YYYYMM)
-      let period = '';
-      const pm = coveragePeriod.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/);
-      if (pm) {
-        let y = pm[3]; if (y.length === 2) y = `20${y}`;
-        period = `${y}${pm[1].padStart(2,'0')}`;
-      }
-
-      const effectiveDate = parseDate(effectiveDateRaw);
-
-      // Plan type
-      let planType = 'Aetna MAPD';
-      const prodL = product.toLowerCase();
-      if (prodL.includes('pdp')) planType = 'Aetna PDP';
-      else if (prodL.includes('ppo') || prodL.includes('mapd')) planType = 'Aetna MAPD';
-
-      const eventType  = classifySalesEvent(salesEvent);
-      // Aetna→BSI carrier feed (payee BSI). Writing-agent Alba/Lina rows are her
-      // agent production that BSI remits; upload attribution sets producer_payable.
-      // Agency-level override dollars appear under other BSI feeds / remittance.
-      let classification;
-      if (amount < 0 || eventType === 'skip') {
-        classification = 'Chargeback';
-      } else {
-        classification = eventType === 'renewal' ? 'Renewal' : 'New Business';
-      }
-
-      // CMS cap anomaly check on all non-chargeback rows
-      let anomaly = false;
-      if (amount > 0 && eventType !== 'skip') {
-        const cap = getCMSCap2026(memberState, eventType);
-        if (amount > cap) {
-          anomaly = true;
-          console.log(`[AETNA-BSI] ⚠️  ANOMALY: ${memberName} | ${memberState} | ${salesEvent} | $${amount} > cap $${cap}`);
-        }
-      }
-
-      // Normalize agent name: "Hernandez, Alba" → "Alba Hernandez"
-      const agentNormalized = writingAgent
-        ? writingAgent.replace(/^([^,]+),\s*(.+)$/, '$2 $1').trim()
-        : 'Broker Society Insurance';
-
-      records.push({
-        agent:          agentNormalized,
-        carrier:        'Aetna',
-        planType,
-        client:         memberName,
-        effectiveDate,
-        premium:        0,
-        commission:     amount,
-        classification,
-        period,
-        policyNumber:   memberId,
-        payee:          'BSI',
-        mga:            '',
-        anomaly,
-        memberState,
-        raw: row,
-      });
-    }
-
-    const total = records.reduce((s, r) => s + r.commission, 0);
-    console.log(`[AETNA-BSI] Parsed ${records.length} records, total $${total.toFixed(2)}`);
+    // Tie the import to the file's own "Total Payee Amount" footer.
+    if (footerTotal != null) records.reconciliation = reconcileToSummary(records, footerTotal, 0);
+    const total = records.reduce((sum, r) => sum + r.commission, 0);
+    console.log(`[AETNA-BSI] Parsed ${records.length} records, total $${total.toFixed(2)}` +
+      (footerTotal != null ? ` (footer $${footerTotal.toFixed(2)})` : ''));
+    return records;
   } catch (err) {
     console.error('[AETNA-BSI] Parser error:', err.message);
+    return [];
   }
-
-  return records;
 }
 
 function isAetnaFile(filename) {
@@ -1513,7 +1397,7 @@ const {
   parseTheRemittanceStatement,
 } = require('../src/theRemittanceStatement');
 
-const { applyBsiBookAgentProduction } = require('../src/bsiBookAttribution');
+const { applyBsiBookAgentProduction, isUnsplitBsiLine } = require('../src/bsiBookAttribution');
 const {
   classifyBsiNonMemberRow,
   sumSummaryActivity,
@@ -1568,6 +1452,40 @@ async function loadIntegrityBsiUhcOriginalSales(pool) {
     console.warn('[BSI-UPLOAD] Could not load Integrity original sales:', e.message);
   }
   return map;
+}
+
+/**
+ * Marco (Swan) $10 already stored, for the BSI other-agent house split:
+ *  - deductedPolicies: policy numbers that already gave Marco $10 (no second $10)
+ *  - marcoOriginals: policy (lower-case) → { gross, sub, reversed } so a chargeback
+ *    reverses Marco's share in proportion and never more than was taken.
+ */
+async function loadMarcoHouseHistory(pool) {
+  const deductedPolicies = new Set();
+  const marcoOriginals = new Map();
+  try {
+    const r = await pool.query(`
+      SELECT TRIM(policy_number) AS policy,
+             SUM(CASE WHEN sub_agent_override > 0 THEN sub_agent_override ELSE 0 END)::float AS sub,
+             SUM(CASE WHEN sub_agent_override > 0
+                      THEN COALESCE(NULLIF(gross_commission, 0), commission, 0) ELSE 0 END)::float AS gross,
+             SUM(CASE WHEN sub_agent_override < 0 THEN -sub_agent_override ELSE 0 END)::float AS reversed
+      FROM commission_records
+      WHERE COALESCE(sub_agent_override, 0) <> 0
+        AND COALESCE(TRIM(policy_number), '') <> ''
+      GROUP BY TRIM(policy_number)`);
+    for (const row of r.rows) {
+      if ((row.sub || 0) > 0) deductedPolicies.add(row.policy);
+      marcoOriginals.set(String(row.policy).toLowerCase(), {
+        gross: row.gross || 0,
+        sub: row.sub || 0,
+        reversed: row.reversed || 0,
+      });
+    }
+  } catch (e) {
+    console.warn('[BSI-UPLOAD] Could not load Marco $10 history:', e.message);
+  }
+  return { deductedPolicies, marcoOriginals };
 }
 
 async function loadIntegrityOriginalSales(pool) {
@@ -5138,7 +5056,8 @@ function parseHumanaDevotedBSIRows(wb, filename) {
 
   // Period from YYYY-MM-DD in filename
   const dateMatch = filename.match(/(20\d{2})-(0[1-9]|1[0-2])-\d{2}/);
-  const statementPeriod = dateMatch ? dateMatch[1] + dateMatch[2] : 'Unknown';
+  // Fallback: "BSI-Humana-09.2026.xlsx" style names (MM.YYYY / YYYYMM)
+  const statementPeriod = dateMatch ? dateMatch[1] + dateMatch[2] : (aetnaPeriodFromFilename(filename) || 'Unknown');
 
   const ws = wb.Sheets[wb.SheetNames[0]];
   const rawRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
@@ -5406,6 +5325,12 @@ router.post('/upload-bsi-statement', requireAuth, requireAdmin, upload.single('f
     // ── Parse the file using existing parsers ──────────────────────────────
     let records = [];
     const origName = req.file.originalname;
+    let detectedLayout = null;
+    const expected = expectedCarrier({
+      selectedCarrier: req.body && req.body.carrier,
+      title: req.body && req.body.title,
+      filename: origName,
+    });
     const nameLower = origName.toLowerCase().replace(/\s+/g, '_');
 
     // Helper: extract period from YYYY-MM-DD date in filename (e.g. UHC_BSI_STATEMENT_2026-01-01.xlsx → 202601)
@@ -5431,7 +5356,11 @@ router.post('/upload-bsi-statement', requireAuth, requireAdmin, upload.single('f
       // Carrier→BSI statements only (Humana/Devoted/Aetna/UHC carrier feeds).
       // BSI→THE remittance CSVs ("JULY - THE" / T.H.E_STATEMENTS) go to Commission Statements.
       const wb = XLSX.readFile(req.file.path);
-      if (isAetnaBSICSVFilename(origName)) {
+      // Route by column signature first, so a non-UHC file never falls through to the
+      // UHC parser (which hard-codes carrier UnitedHealthcare).
+      detectedLayout = detectBsiWorkbookLayout(wb, XLSX);
+      console.log(`[BSI-UPLOAD] Layout detected: ${detectedLayout || 'none'}; expected carrier: ${expected || 'none'}`);
+      if (isAetnaBSICSVFilename(origName) || detectedLayout === BSI_LAYOUTS.AETNA_PAYEE) {
         console.log('[BSI-UPLOAD] Matched Aetna BSI CSV parser for:', origName);
         records = parseAetnaBSICSV(wb, origName);
       } else if (isAMLPortalExportFile(origName, wb)) {
@@ -5441,15 +5370,24 @@ router.post('/upload-bsi-statement', requireAuth, requireAdmin, upload.single('f
           try { fs.unlinkSync(req.file.path); } catch(e) {}
           return res.status(400).json({ error: 'No records found in AML portal export. Verify this is a Contracts/CommissionDetails CSV.' });
         }
-      } else if (isHumanaDevotedBSIFile(origName)) {
+      } else if (isHumanaDevotedBSIFile(origName) || detectedLayout === BSI_LAYOUTS.HUMANA_DEVOTED) {
         console.log('[BSI-UPLOAD] Matched Humana/Devoted BSI parser for:', origName);
         records = parseHumanaDevotedBSIRows(wb, origName);
       } else if (isBSIFile(origName) || /statement-health_experts|statement_health_experts/.test(nameLower)) {
         console.log('[BSI-UPLOAD] Matched generic BSI rows parser for:', origName);
         records = parseBSIRows(wb, origName);
-      } else {
-        // Dedicated BSI carrier statement parser (handles files where Agent = BSI, not THEI)
+      } else if (detectedLayout === BSI_LAYOUTS.UHC && (!expected || expected === 'UHC')) {
+        // Dedicated UHC→BSI carrier statement parser (Agent = BSI, not THEI)
         records = parseBSICarrierStatementRows(wb, origName);
+      } else {
+        // Unknown layout (or a UHC layout on a file named/selected for another carrier):
+        // never import it as UnitedHealthcare by default.
+        try { fs.unlinkSync(req.file.path); } catch (e) {}
+        return res.status(400).json({
+          error: detectedLayout === BSI_LAYOUTS.UHC
+            ? `This file is named/selected as ${expected}, but its columns are UHC's. Not imported — check the file or its name.`
+            : `Couldn't recognize this BSI file's columns${expected ? ` (named/selected as ${expected})` : ''}. Not imported, so nothing was saved under the wrong carrier.`,
+        });
       }
     }
 
@@ -5463,7 +5401,8 @@ router.post('/upload-bsi-statement', requireAuth, requireAdmin, upload.single('f
     // Agency Override / Held stay under Broker Society; other agents unchanged.
     const carrierReconciliation = records.reconciliation || null;
     const integrityOriginalSales = await loadIntegrityBsiUhcOriginalSales(pool);
-    applyBsiBookAgentProduction(records, { integrityOriginalSales });
+    const { deductedPolicies, marcoOriginals } = await loadMarcoHouseHistory(pool);
+    applyBsiBookAgentProduction(records, { integrityOriginalSales, deductedPolicies, marcoOriginals });
 
     const beforeInternal = records.length;
     const collapsed = collapseInternalDuplicates(records);
@@ -5483,6 +5422,18 @@ router.post('/upload-bsi-statement', requireAuth, requireAdmin, upload.single('f
 
     const commissionSum = records.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0);
     const carriers = [...new Set(records.map(r => r.carrier).filter(Boolean))];
+    // Guard: other agents' lines and chargebacks must carry a THEI/BSI share.
+    const unsplitRows = records.filter((r) => isUnsplitBsiLine(r));
+    const unsplitWarning = unsplitRows.length
+      ? {
+        count: unsplitRows.length,
+        total: Math.round(unsplitRows.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0) * 100) / 100,
+        message: `${unsplitRows.length} line(s) have dollars but no THEI/BSI split — flagged for review`,
+      }
+      : null;
+    if (unsplitWarning) console.warn('[BSI-UPLOAD] UNSPLIT:', unsplitWarning.message);
+    const carrierWarning = carrierMismatchWarning({ expected, layout: detectedLayout, importedCarriers: carriers });
+    if (carrierWarning) console.warn('[BSI-UPLOAD] CARRIER MISMATCH:', carrierWarning);
 
     // Re-check against the carrier summary on the FINAL record set (after dedupe),
     // so rows collapsed above also show up as a variance.
@@ -5620,6 +5571,9 @@ router.post('/upload-bsi-statement', requireAuth, requireAdmin, upload.single('f
       resolvedRenewalsCount: resolvedRenewals.length,
       internalDuplicatesRemoved: internalDuplicatesRemoved || 0,
       reconciliation,
+      detectedLayout,
+      carrierWarning,
+      unsplitWarning,
     });
 
   } catch (err) {

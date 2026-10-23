@@ -18,6 +18,7 @@ const {
 } = require('../src/overrideExcelStatement');
 const { backfillDevotedCommissionGuards } = require('../src/theCarrierStatementClassify');
 const { backfillBsiOverrideMissingShares } = require('../src/bsiOverrideShareBackfill');
+const { isUnsplitBsiLine } = require('../src/bsiBookAttribution');
 
 /** Override Statements tab — Lina/agent production is Agent Payouts only. */
 const OVERRIDE_UI_TYPES = [
@@ -42,7 +43,7 @@ function requireAdmin(req, res, next) {
 const SELECT_COLS = `
   cr.id, cr.agent_name, cr.client_full_name, cr.policy_number, cr.carrier, cr.effective_date,
   cr.payment_period, cr.classification, cr.commission, cr.gross_commission, cr.thei_share, cr.bsi_share,
-  cr.producer_payable, cr.sub_agent_override, cr.payee, cr.source, cr.lob, cr.plan_type,
+  cr.producer_payable, cr.sub_agent_override, cr.payee, cr.source, cr.lob, cr.plan_type, cr.split_applies,
   u.original_name AS upload_original_name
 `;
 
@@ -142,6 +143,50 @@ const INTEGRITY_CHARGEBACK_SQL = `(
            OR cr.agent_name ILIKE '%cam insurance solutions corp%')
        )`;
 
+// BSI other-agent house lines (not override-classified): stored 50/50 THEI/BSI (Marco $10)
+// at upload, chargebacks included. The JS classifier (isBsiHouseSplitLine) narrows it further.
+const BSI_HOUSE_SPLIT_SQL = `(
+         UPPER(COALESCE(cr.source, '')) IN ('BSI', 'BSI_PAYEE')
+         AND cr.classification NOT ILIKE '%override%'
+         AND cr.classification NOT ILIKE '%held%'
+         AND cr.split_applies IS TRUE
+         AND (COALESCE(cr.thei_share,0) <> 0 OR COALESCE(cr.bsi_share,0) <> 0 OR COALESCE(cr.sub_agent_override,0) <> 0)
+       )`;
+
+/**
+ * Guard: BSI rows (other agents' lines, or any chargeback) with dollars but no THEI/BSI share.
+ * Read-only. Returns null when there are none.
+ */
+async function findUnsplitBsiRows(pool, period) {
+  const params = [];
+  let periodClause = '';
+  if (period && period !== 'all') {
+    params.push(period);
+    periodClause = `AND cr.payment_period = $${params.length}`;
+  }
+  const r = await pool.query(
+    `SELECT cr.id, cr.agent_name, cr.classification, cr.commission, cr.thei_share, cr.bsi_share,
+            cr.producer_payable, cr.sub_agent_override, cr.upload_id
+     FROM commission_records cr
+     LEFT JOIN uploads u ON u.id = cr.upload_id
+     WHERE (UPPER(COALESCE(cr.source, '')) IN ('BSI', 'BSI_PAYEE') OR u.category = 'bsi_statement')
+       AND COALESCE(cr.commission, 0) <> 0
+       AND COALESCE(cr.thei_share, 0) = 0
+       AND COALESCE(cr.bsi_share, 0) = 0
+       ${periodClause}`,
+    params
+  );
+  const rows = r.rows.filter((row) => isUnsplitBsiLine(row));
+  if (!rows.length) return null;
+  const total = Math.round(rows.reduce((s, x) => s + (parseFloat(x.commission) || 0), 0) * 100) / 100;
+  return {
+    count: rows.length,
+    total,
+    uploadIds: [...new Set(rows.map((x) => x.upload_id).filter(Boolean))],
+    message: `${rows.length} BSI line(s) have dollars but no THEI/BSI share (other agents or chargebacks) — not on these statements`,
+  };
+}
+
 async function fetchOverrideRows(pool, period, type) {
   const params = [];
   // THEI/BSI: Agency Override rows PLUS Alba rate-peeled agent-production shares.
@@ -159,8 +204,9 @@ async function fetchOverrideRows(pool, period, type) {
          )
        )
        OR ${INTEGRITY_CHARGEBACK_SQL}
+       OR ${BSI_HOUSE_SPLIT_SQL}
        )`
-    : `WHERE (cr.classification ILIKE '%override%' OR ${INTEGRITY_CHARGEBACK_SQL})`;
+    : `WHERE (cr.classification ILIKE '%override%' OR ${INTEGRITY_CHARGEBACK_SQL} OR ${BSI_HOUSE_SPLIT_SQL})`;
   if (period && period !== 'all') {
     params.push(period);
     where += ` AND cr.payment_period = $${params.length}`;
@@ -356,6 +402,15 @@ router.get('/preview', requireAuth, async (req, res) => {
       }
     }
 
+    let unsplitBsiWarning = null;
+    if (type === STATEMENT_TYPES.THEI_BSI || type === STATEMENT_TYPES.BSI_OVERRIDE || type === STATEMENT_TYPES.MARCO) {
+      try {
+        unsplitBsiWarning = await findUnsplitBsiRows(pool, period);
+      } catch (e) {
+        console.warn('[override-statements] unsplit BSI guard', e.message);
+      }
+    }
+
     res.json({
       type: bundle.type,
       period: bundle.period,
@@ -365,6 +420,7 @@ router.get('/preview', requireAuth, async (req, res) => {
       exportFormat: 'xlsx',
       sourceUploads,
       nhpSourceBackfilled,
+      unsplitBsiWarning,
       statements: bundle.statements.map((s) => ({
         payee: s.payee,
         lineCount: s.lineCount,
@@ -585,3 +641,4 @@ router.get('/export-all-types', requireAuth, requireAdmin, async (req, res) => {
 });
 
 module.exports = router;
+module.exports.findUnsplitBsiRows = findUnsplitBsiRows;
