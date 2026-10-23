@@ -34,6 +34,11 @@ const {
   splitIntegrityNewBusiness,
   splitHouseOnly,
 } = require('./overrideSplitMath');
+const {
+  INTEGRITY_BSI_UHC_FIXED,
+  integrityBsiUhcFixedCut,
+  fixedCutCarrierKey,
+} = require('./nhpOverrideSplit');
 
 /** Canonical DB agent for Lina/Alba book (UI displays as Lina). */
 const ALBA_DB_AGENT = 'Alba Hernandez';
@@ -275,11 +280,92 @@ function peelAlbaProduction(record, commission) {
   };
 }
 
+function addNote(r, note) {
+  r.mga = [r.mga, note].filter(Boolean).join(' | ');
+}
+
+function isUhcCarrier(carrier) {
+  return fixedCutCarrierKey(carrier) === 'uhc';
+}
+
+/**
+ * Integrity new sale on a BSI UHC feed, using the plan-year rate table:
+ *  - full $150 line with a table entry (2026) → fixed $82.50; BSI keeps 25% of the
+ *    line and THEI absorbs the rest (pending confirmation)
+ *  - partial / prorated line → 50% of the line, flagged for review (no bump)
+ *  - no table entry for the plan year → 50% of the line
+ */
+function integrityBsiUhcNewSale(r, commission) {
+  const fixed = integrityBsiUhcFixedCut(r.agent, r.carrier, r.effectiveDate || (r.raw || {})['Original Effective Date']);
+  const base = splitFullOverridePot(commission, { agentName: r.agent });
+  if (fixed == null) return { split: base, note: null };
+  if (Math.abs(commission - INTEGRITY_BSI_UHC_FIXED.fullPot) < 0.005) {
+    const bsiShare = round2(commission * 0.25);
+    return {
+      split: {
+        ...base,
+        producerPayable: fixed,
+        bsiShare,
+        theiShare: round2(commission - fixed - bsiShare),
+      },
+      note: `Integrity UHC fixed $${fixed.toFixed(2)} (THEI absorbs the amount over 50% — pending confirmation)`,
+    };
+  }
+  return {
+    split: base,
+    note: 'Integrity UHC partial/prorated line: paid 50% of the line, not the fixed rate — review against UHC',
+  };
+}
+
+/**
+ * Integrity chargeback on a BSI UHC feed: take back exactly what was paid on the policy
+ * (same proportion when the chargeback is only part of the original line). BSI gives
+ * back 25% of the line, THEI the rest. Original not found → 50% of the line, flagged.
+ */
+function integrityBsiUhcChargeback(r, commission, original) {
+  const abs = Math.abs(commission);
+  if (original && original.gross > 0 && original.producer > 0) {
+    const back = Math.min(original.producer, round2(original.producer * (abs / original.gross)));
+    const producerPayable = -round2(back);
+    const bsiShare = round2(commission * 0.25);
+    return {
+      split: {
+        grossCommission: commission,
+        producerPayable,
+        bsiShare,
+        theiShare: round2(commission - producerPayable - bsiShare),
+        subAgentOverride: 0,
+        splitApplies: false,
+      },
+      note: null,
+    };
+  }
+  return {
+    split: splitIntegrityChargeback(commission, r.agent, 'chargeback'),
+    note: 'Integrity chargeback: original sale not found — took back 50% of the line, please verify',
+  };
+}
+
+function applySplit(r, split) {
+  r.grossCommission = split.grossCommission;
+  r.producerPayable = split.producerPayable;
+  r.theiShare = split.theiShare;
+  r.bsiShare = split.bsiShare;
+  r.subAgentOverride = 0;
+  r.splitApplies = !!split.splitApplies;
+}
+
 /**
  * Apply Alba attribution + rate peel to parsed BSI statement records (in place).
+ * opts.integrityOriginalSales: Map policy (lower-case) → { gross, producer } of Integrity
+ * UHC new sales already stored, so chargebacks take back exactly what was paid.
  */
-function applyBsiBookAgentProduction(records) {
+function applyBsiBookAgentProduction(records, opts = {}) {
   if (!Array.isArray(records)) return records;
+  const integrityOriginalSales = new Map(
+    opts.integrityOriginalSales instanceof Map ? opts.integrityOriginalSales : []
+  );
+  const deferredIntegrityChargebacks = [];
 
   let remapped = 0;
   let peeled = 0;
@@ -355,14 +441,26 @@ function applyBsiBookAgentProduction(records) {
         : splitIntegrityChargeback(commission, r.agent, classification) ||
           splitIntegrityRenewal(commission, r.agent, classification) ||
           splitIntegrityNewBusiness(commission, r.agent, classification);
-      if (integritySplit && r.producerPayable == null && r.theiShare == null && r.bsiShare == null) {
-        r.grossCommission = integritySplit.grossCommission;
-        r.producerPayable = integritySplit.producerPayable;
-        r.theiShare = integritySplit.theiShare;
-        r.bsiShare = integritySplit.bsiShare;
-        r.subAgentOverride = 0;
-        r.splitApplies = integritySplit.splitApplies;
+      const unsplit = r.producerPayable == null && r.theiShare == null && r.bsiShare == null;
+      if (integritySplit && unsplit && isUhcCarrier(r.carrier)) {
+        const cls = String(classification).toLowerCase().trim();
+        if (cls === 'new business') {
+          const { split, note } = integrityBsiUhcNewSale(r, commission);
+          applySplit(r, split);
+          if (note) addNote(r, note);
+          const pk = String(r.policyNumber || r.policy_number || '').trim().toLowerCase();
+          if (pk && split.producerPayable > 0 && commission > 0) {
+            integrityOriginalSales.set(pk, { gross: commission, producer: split.producerPayable });
+          }
+          continue;
+        }
+        if (cls === 'chargeback' && !chargebackOfRenewal) {
+          // After the loop, so a sale later in the same file is found too.
+          deferredIntegrityChargebacks.push(r);
+          continue;
+        }
       }
+      if (integritySplit && unsplit) applySplit(r, integritySplit);
       continue;
     }
 
@@ -402,6 +500,14 @@ function applyBsiBookAgentProduction(records) {
           .join(' | ');
       }
     }
+  }
+
+  for (const r of deferredIntegrityChargebacks) {
+    const commission = parseFloat(r.commission) || 0;
+    const pk = String(r.policyNumber || r.policy_number || '').trim().toLowerCase();
+    const { split, note } = integrityBsiUhcChargeback(r, commission, pk ? integrityOriginalSales.get(pk) : null);
+    applySplit(r, split);
+    if (note) addNote(r, note);
   }
 
   console.log(

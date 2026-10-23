@@ -23,6 +23,24 @@ const INTEGRITY_FIXED_CUTS = Object.freeze({
   healthsun: { byPlanYear: {}, fallback: 52.5, includesCam: false },
 });
 
+/**
+ * BSI UHC feed: fixed Integrity new-sale amount per plan year (full $150 pot only).
+ * No entry for a plan year → 50% of the line (never extrapolate).
+ */
+const INTEGRITY_BSI_UHC_FIXED = Object.freeze({
+  fullPot: 150,
+  byPlanYear: Object.freeze({ 2026: 82.5 }),
+});
+
+/** Fixed amount for an Integrity full-pot UHC line on a BSI feed, or null (→ 50%). */
+function integrityBsiUhcFixedCut(agentName, carrier, effectiveDate) {
+  if (!isIntegrityAgent(agentName)) return null;
+  if (fixedCutCarrierKey(carrier) !== 'uhc') return null;
+  const y = planYearOf(effectiveDate);
+  const amt = y ? INTEGRITY_BSI_UHC_FIXED.byPlanYear[y] : undefined;
+  return amt != null ? amt : null;
+}
+
 function fixedCutCarrierKey(carrier) {
   const c = String(carrier || '').toLowerCase();
   if (c.includes('unitedhealthcare') || c.includes('united healthcare')) return 'uhc';
@@ -253,5 +271,9 @@ module.exports = {
   isChrisOrHoracioFixedCarrier,
   agentHasFixedCut,
   INTEGRITY_FIXED_CUTS,
+  INTEGRITY_BSI_UHC_FIXED,
+  integrityBsiUhcFixedCut,
+  fixedCutCarrierKey,
+  planYearOf,
   splitNhpMedicareOverride,
 };
