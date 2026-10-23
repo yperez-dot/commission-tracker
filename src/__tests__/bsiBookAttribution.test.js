@@ -203,9 +203,9 @@ describe('bsiBookAttribution', () => {
 describe('chargeback override proration (UHC, Alba book)', () => {
   const { chargebackUnearnedFactor } = require('../bsiBookAttribution');
 
-  // Tejada, Brijido — Sept 2026 UHC chargeback of -105.50 on a 01/01/2026 policy termed 09/30/2026.
+  // Example member (fictional) — Sept 2026 UHC chargeback of -105.50 on a 01/01/2026 policy termed 09/30/2026.
   // BSI's statement charges Lina -86.75; the $18.75 difference is the $75 renewal override × 3/12.
-  const tejada = (extraRaw = {}, commission = -105.5) => ({
+  const sampleChargeback = (extraRaw = {}, commission = -105.5) => ({
     agent: 'Broker Society Insurance',
     classification: 'Chargeback',
     commission,
@@ -225,7 +225,7 @@ describe('chargeback override proration (UHC, Alba book)', () => {
   });
 
   it('prorates the override by unearned months: Lina -86.75, override -18.75 split THEI/BSI', () => {
-    const records = [tejada()];
+    const records = [sampleChargeback()];
     applyBsiBookAgentProduction(records);
     const r = records[0];
     expect(r.agent).toBe(ALBA_DB_AGENT);
@@ -236,14 +236,14 @@ describe('chargeback override proration (UHC, Alba book)', () => {
   });
 
   it('without a Term Date keeps the previous full-override behavior', () => {
-    const records = [tejada({ 'Term Date': '' })];
+    const records = [sampleChargeback({ 'Term Date': '' })];
     applyBsiBookAgentProduction(records);
     expect(records[0].producerPayable).toBe(-30.5);
     expect(records[0].theiShare + records[0].bsiShare).toBeCloseTo(-75, 2);
   });
 
   it('leaves positive commissions untouched', () => {
-    const records = [tejada({}, 323.5)];
+    const records = [sampleChargeback({}, 323.5)];
     records[0].classification = 'New Business';
     records[0].raw['Commission Action'] = 'New';
     records[0].raw['Comp Type'] = 'N';
@@ -253,7 +253,7 @@ describe('chargeback override proration (UHC, Alba book)', () => {
   });
 
   it('computes earned/unearned months from effective and term dates', () => {
-    expect(chargebackUnearnedFactor(tejada())).toEqual({ earnedMonths: 9, unearnedMonths: 3, factor: 0.25 });
+    expect(chargebackUnearnedFactor(sampleChargeback())).toEqual({ earnedMonths: 9, unearnedMonths: 3, factor: 0.25 });
     // Feb eff, Aug term → 7 earned, 5 unearned (matches the -62.50 chargeback on a $150 override)
     const f = chargebackUnearnedFactor({ raw: { 'Original Effective Date': '02/01/2026', 'Term Date': '08/31/2026' } });
     expect(f.unearnedMonths).toBe(5);
