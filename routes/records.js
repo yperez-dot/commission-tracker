@@ -1054,6 +1054,77 @@ router.get('/agency-summary', requireAuth, requireAdmin, async (req, res) => {
   }
 });
 
+// ─── POST /backfill-bsi-house-splits — fill missing BSI house splits (dry run by default) ──
+// Scoped: ?uploadId=123 (comma list ok) and/or ?period=YYYYMM — never all months.
+// Fills only rows with dollars and NO split for other agents / THEI-written lines
+// (50/50, Marco $10 for Swan agents), and moves $10 to Marco on Swan rows the old name
+// matching missed (stored plain 50/50, no $10 taken on the policy yet). ?apply=true writes.
+router.post('/backfill-bsi-house-splits', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const pool = getPool();
+    const { runBsiHouseSplitBackfill } = require('../src/bsiHouseSplitBackfill');
+    const uploadIds = String(req.query.uploadId || (req.body && req.body.uploadId) || '')
+      .split(',').map((x) => parseInt(x, 10)).filter((n) => n > 0);
+    const period = String(req.query.period || (req.body && req.body.period) || '').trim() || null;
+    const apply = String(req.query.apply || (req.body && req.body.apply) || '') === 'true';
+    const result = await runBsiHouseSplitBackfill(pool, { uploadIds, period, apply });
+    if (apply && result.applied) {
+      await logChange(pool, req, {
+        type: 'record.bsi_house_split_backfill', entityType: 'commission_record', period,
+        summary: `BSI house split backfill: ${result.applied} row(s) updated ` +
+          `(THEI ${result.summary.theiDelta.toFixed(2)}, BSI ${result.summary.bsiDelta.toFixed(2)}, Marco ${result.summary.marcoDelta.toFixed(2)})`,
+        details: { uploadIds, period, summary: result.summary, ids: result.updates.map((u) => u.id) },
+      });
+    }
+    res.json(result);
+  } catch (err) {
+    console.error('[backfill-bsi-house-splits]', err);
+    res.status(err.message && err.message.includes('required') ? 400 : 500).json({ error: err.message });
+  }
+});
+
+// ─── GET /chargeback-paid-check — chargebacks over what was paid (read-only) ───
+// ?period=YYYYMM lists that month's chargebacks (totals always use every BSI upload).
+// ?format=xlsx downloads the list for disputing with the carrier.
+router.get('/chargeback-paid-check', requireAuth, async (req, res) => {
+  try {
+    const pool = getPool();
+    const {
+      checkStoredChargebacks, summarizeFlags, chargebackFlagRow,
+    } = require('../src/chargebackPaidCheck');
+    const period = /^\d{6}$/.test(String(req.query.period || '')) ? String(req.query.period) : null;
+    const r = await pool.query(`
+      SELECT cr.id, cr.agent_name, cr.carrier, cr.policy_number, cr.client_full_name, cr.effective_date,
+             cr.classification, cr.commission, cr.payment_period, cr.upload_id
+      FROM commission_records cr
+      LEFT JOIN uploads u ON u.id = cr.upload_id
+      WHERE (UPPER(COALESCE(cr.source, '')) IN ('BSI', 'BSI_PAYEE') OR u.category = 'bsi_statement')
+        AND COALESCE(cr.commission, 0) <> 0`);
+    const flags = checkStoredChargebacks(r.rows, { period });
+    const rows = flags.map(chargebackFlagRow);
+    if (String(req.query.format || '') === 'xlsx') {
+      const XLSX = require('xlsx');
+      const ws = XLSX.utils.json_to_sheet(rows.map((x) => ({
+        Status: x.status === 'no_payment' ? 'No payment found' : 'Exceeds paid',
+        Carrier: x.carrier, Agent: x.agent, Client: x.client, Policy: x.policy,
+        'Effective Date': x.effectiveDate, 'Payment Period': x.period, Classification: x.classification,
+        'Chargeback Line': x.amount, 'Total Paid': x.paid, 'Total Charged Back': x.chargedBack,
+        'Charged Back Over Paid': x.excess, 'Matched By': x.matchedBy || '', 'Upload ID': x.uploadId,
+      })));
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Chargebacks over paid');
+      const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+      res.setHeader('Content-Disposition', `attachment; filename="chargebacks_over_paid_${period || 'all'}.xlsx"`);
+      return res.send(buf);
+    }
+    res.json({ period, summary: summarizeFlags(flags), rows });
+  } catch (err) {
+    console.error('[chargeback-paid-check]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, res) => {
   try {
     const {
@@ -1116,14 +1187,10 @@ router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, r
     `);
     const overrideSet = new Set(overrideRows.rows.map(r => `${r.agent}|${r.carrier}`));
 
-    // Integrity Partners agents: 50% producer / 25% THEI / 25% BSI on all Agency Override rows
-    const INTEGRITY_AGENTS_LIST = ['christian munoz', 'horacio mendieta', 'cam insurance solutions corp'];
-
-    // Marco's agents: $10 deduction per policy first occurrence, then 50/50 THEI/BSI split
-    // Jendy Vanheyningen excluded from Marco's deduction for payment_period >= 202606
-    const MARCO_AGENTS_LIST = ['jena brewer','kelly carpenter','adrian cruz','long khuu',
-      'nicholas mccalla','tyler payton','anthony portorreal','michael rivera',
-      'cristy witcher','michael mateo','miriam jimenez','jendy vanheyningen'];
+    // Integrity Partners agents (50% producer / 25% THEI / 25% BSI on Agency Override rows) and
+    // Marco's agents ($10 per policy first occurrence, then 50/50; Jendy excluded from 202606)
+    // come from the shared schedule lists; matching tolerates middle initials / punctuation / case.
+    const { isIntegrityAgent: isIntegrityAgentB, isMarcoAgent: isMarcoAgentB } = require('../src/payeeSchedules');
 
     // Policies already deducted in DB — prevents re-deducting on re-run or force backfill
     // ORDER BY payment_period ASC (added above) ensures earliest period processed first within batch
@@ -1165,10 +1232,8 @@ router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, r
       let splitApplies, theiShare, bsiShare, producerPayable, grossCommission;
       let subAgentOverride = 0;
 
-      const agentLcB = String(agent || '').toLowerCase();
-      const isIntegrityPartners = INTEGRITY_AGENTS_LIST.some(n => agentLcB.includes(n));
-      const isJendyPostCutoff = agentLcB.includes('jendy vanheyningen') && (row.payment_period || '') >= '202606';
-      const isMarcoAgent = MARCO_AGENTS_LIST.some(n => agentLcB.includes(n)) && !isJendyPostCutoff;
+      const isIntegrityPartners = isIntegrityAgentB(agent);
+      const isMarcoAgent = isMarcoAgentB(agent, row.payment_period || '');
       const isBsiFullPot = payeeLc === 'bsi';
 
       // Integrity (Munoz / CAM / Mendieta): new sales 50/25/25, chargebacks take the same

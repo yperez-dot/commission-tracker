@@ -1454,6 +1454,33 @@ async function loadIntegrityBsiUhcOriginalSales(pool) {
   return map;
 }
 
+const {
+  checkUploadChargebacks,
+  summarizeFlags,
+  flagNote,
+  lookupKeys: chargebackLookupKeys,
+  chargebackFlagRow,
+} = require('../src/chargebackPaidCheck');
+const { clientNameKeySql } = require('../src/clientNameKey');
+
+/** Chargeback-vs-paid check for a BSI upload against stored BSI rows (read-only). */
+async function checkBsiUploadChargebacks(pool, records) {
+  const { policies, names } = chargebackLookupKeys(records);
+  if (!policies.length && !names.length) return [];
+  const stored = await pool.query(
+    `SELECT cr.carrier, cr.policy_number, cr.client_full_name, cr.effective_date,
+            cr.classification, cr.commission
+     FROM commission_records cr
+     LEFT JOIN uploads u ON u.id = cr.upload_id
+     WHERE (UPPER(COALESCE(cr.source, '')) IN ('BSI', 'BSI_PAYEE') OR u.category = 'bsi_statement')
+       AND COALESCE(cr.commission, 0) <> 0
+       AND (LOWER(TRIM(COALESCE(cr.policy_number, ''))) = ANY($1::text[])
+            OR ($2::text[] <> '{}' AND ${clientNameKeySql('cr', 'client_full_name')} = ANY($2::text[])))`,
+    [policies, names]
+  );
+  return checkUploadChargebacks(records, stored.rows);
+}
+
 /**
  * Marco (Swan) $10 already stored, for the BSI other-agent house split:
  *  - deductedPolicies: policy numbers that already gave Marco $10 (no second $10)
@@ -4233,13 +4260,10 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
       `);
       const overrideSetUpload = new Set(overrideRowsUpload.rows.map(r => `${r.agent}|${r.carrier}`));
 
-      // Integrity Partners agents: 50% producer / 25% THEI / 25% BSI
-      const INTEGRITY_AGENTS_UPLOAD = ['christian munoz', 'horacio mendieta', 'cam insurance solutions corp'];
-
-      // Marco agents: $10 deduction per policy first occurrence, then 50/50 THEI/BSI
-      const MARCO_AGENTS_UPLOAD = ['jena brewer','kelly carpenter','adrian cruz','long khuu',
-        'nicholas mccalla','tyler payton','anthony portorreal','michael rivera',
-        'cristy witcher','michael mateo','miriam jimenez','jendy vanheyningen'];
+      // Integrity Partners agents (50% producer / 25% THEI / 25% BSI) and Marco agents
+      // ($10 per policy first occurrence, then 50/50) come from the shared schedule lists;
+      // matching tolerates middle initials / punctuation / case (src/agentNameMatch.js).
+      const { isIntegrityAgent: isIntegrityAgentU, isMarcoAgent: isMarcoAgentU } = require('../src/payeeSchedules');
 
       // Pre-existing deducted policies — prevents re-deducting on re-upload of same statement
       const alreadyDeductedUpload = await pool.query(`
@@ -4275,9 +4299,9 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
         // Agent-direct rows: NB/Renewal/Chargeback for agents with a known Agency Override relationship
         const isAgentDirectRow = classification === 'new business' || classification === 'renewal' || classification === 'chargeback';
         const hasMatchingOverride = overrideSetUpload.has(`${agentLc}|${carrierLc}`);
-        const isIntegrityPartnersUpload = INTEGRITY_AGENTS_UPLOAD.some(n => agentLc.includes(n));
-        const isJendyPostCutoffUpload = agentLc.includes('jendy vanheyningen') && (r.period || '') >= '202606';
-        const isMarcoAgentUpload = MARCO_AGENTS_UPLOAD.some(n => agentLc.includes(n)) && !isJendyPostCutoffUpload;
+        const isIntegrityPartnersUpload = isIntegrityAgentU(r.agent);
+        // Jendy leaves the Marco schedule from 202606 (handled inside isMarcoAgent).
+        const isMarcoAgentUpload = isMarcoAgentU(r.agent, r.period || '');
 
         let splitApplies, theiShare, bsiShare, producerPayable, grossCommission;
         let subAgentOverride = 0;
@@ -5432,6 +5456,21 @@ router.post('/upload-bsi-statement', requireAuth, requireAdmin, upload.single('f
       }
       : null;
     if (unsplitWarning) console.warn('[BSI-UPLOAD] UNSPLIT:', unsplitWarning.message);
+    // Chargeback-vs-paid check (read-only; never changes a split): chargebacks that exceed
+    // what was paid on the policy across all BSI uploads, or with no payment found.
+    let chargebackWarning = null;
+    let chargebackFlags = [];
+    try {
+      const flags = await checkBsiUploadChargebacks(pool, records);
+      for (const { record, flag } of flags) {
+        record.mga = [record.mga, flagNote(flag)].filter(Boolean).join(' | ');
+      }
+      chargebackWarning = summarizeFlags(flags);
+      chargebackFlags = flags.slice(0, 500).map(chargebackFlagRow);
+      if (chargebackWarning) console.warn('[BSI-UPLOAD] CHARGEBACK CHECK:', chargebackWarning.message);
+    } catch (e) {
+      console.warn('[BSI-UPLOAD] Chargeback-vs-paid check failed:', e.message);
+    }
     const carrierWarning = carrierMismatchWarning({ expected, layout: detectedLayout, importedCarriers: carriers });
     if (carrierWarning) console.warn('[BSI-UPLOAD] CARRIER MISMATCH:', carrierWarning);
 
@@ -5574,6 +5613,8 @@ router.post('/upload-bsi-statement', requireAuth, requireAdmin, upload.single('f
       detectedLayout,
       carrierWarning,
       unsplitWarning,
+      chargebackWarning,
+      chargebackFlags,
     });
 
   } catch (err) {

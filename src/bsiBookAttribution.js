@@ -14,8 +14,8 @@
  *  3. Agency Override / Held rows stay under the house label (not Lina pay)
  *  4. Integrity (Munoz / CAM / Mendieta): new sales 50/25/25 (UHC 2026 fixed rate),
  *     renewals not paid (producer 0, THEI/BSI 50/50), chargebacks take back what was paid.
- *  5. Other agents (paid their own commission by the carrier): the BSI line is the agency
- *     override → house, THEI/BSI 50/50 (Swan/Marco: $10 first). Chargebacks reverse the
+ *  5. Other agents (paid their own commission by the carrier) and THEI-written lines: the BSI
+ *     line is the agency override → house, THEI/BSI 50/50 (Swan/Marco: $10 first; never for THEI). Chargebacks reverse the
  *     same shares. Lines left with no split are flagged (anomaly).
  */
 
@@ -25,6 +25,7 @@ const {
   isAgencyOverride,
   isIntegrityAgent,
   isMarcoAgent,
+  isTheiWritingAgent,
   firstYearRenewalIsRenewal,
   normName,
 } = require('./payeeSchedules');
@@ -441,12 +442,22 @@ function policyKey(r) {
  */
 function isOtherBsiAgent(agent) {
   if (isBsiHouseAgent(agent) || isAlbaHernandez(agent) || isIntegrityAgent(agent)) return false;
-  return !/health experts/.test(normName(agent));
+  return !isTheiWritingAgent(agent);
+}
+
+/**
+ * Writing agents whose BSI lines get the house split (producer 0, THEI/BSI 50/50):
+ * other agents (Marco $10 first for Swan agents) and THEI itself as the writing agent
+ * ("The Health Experts Insurance" and variants — never Marco).
+ */
+function isHouseSplitBsiAgent(agent) {
+  if (isOtherBsiAgent(agent)) return true;
+  return isTheiWritingAgent(agent) && !isAlbaHernandez(agent) && !isIntegrityAgent(agent);
 }
 
 /**
  * Guard: a BSI line with dollars whose split is missing.
- * - Other agents' lines and every chargeback (negative line) need a THEI/BSI share.
+ * - Other agents' and THEI-written lines, and every chargeback (negative line) need a THEI/BSI share.
  * - Lina / Integrity positive lines need at least one stored share (agent, THEI or BSI).
  * HRA and fee rows are never split, so they're never flagged.
  */
@@ -462,12 +473,13 @@ function isUnsplitBsiLine(r) {
     bsiShare: r.bsiShare != null ? r.bsiShare : r.bsi_share,
     subAgentOverride: r.subAgentOverride != null ? r.subAgentOverride : r.sub_agent_override,
   };
-  if (amount < 0 || isOtherBsiAgent(agent)) return zero(row.theiShare) && zero(row.bsiShare);
+  if (amount < 0 || isHouseSplitBsiAgent(agent)) return zero(row.theiShare) && zero(row.bsiShare);
   return hasNoSplit(row);
 }
 
 /**
- * House split for other agents' lines (see isOtherBsiAgent): producer 0, THEI/BSI 50/50.
+ * House split for other agents' and THEI-written lines (see isHouseSplitBsiAgent): producer 0,
+ * THEI/BSI 50/50.
  * Swan/Marco agents use the existing Marco rule (splitFullOverridePot, the same call the
  * Humana/Devoted Agency Override path uses): $10 off the top on the first line seen per
  * policy, then 50/50. Chargebacks are handled after the main loop (reverseHouseSplit).
@@ -475,7 +487,7 @@ function isUnsplitBsiLine(r) {
  */
 function fillHouseSplit(r, commission, deductedPolicies) {
   if (!hasNoSplit(r) || Math.abs(commission) < 0.005) return null;
-  if (!isOtherBsiAgent(r.agent) || isHraOrFee(r.classification)) return null;
+  if (!isHouseSplitBsiAgent(r.agent) || isHraOrFee(r.classification)) return null;
   if (commission < 0) return 'deferred';
   const policy = r.policyNumber || r.policy_number;
   const already = deductedPolicies.has(policy) || deductedPolicies.has(policyKey(r));
@@ -667,8 +679,8 @@ function applyBsiBookAgentProduction(records, opts = {}) {
         }
       }
       if (integritySplit && unsplit) applySplit(r, integritySplit);
-      // Other agents (not Lina, not Integrity): override goes to the house, 50/50
-      // (Marco $10 first for Swan agents).
+      // Other agents (not Lina, not Integrity) and THEI-written lines: override goes to the
+      // house, 50/50 (Marco $10 first for Swan agents).
       tryHouseSplit(r, commission);
       continue;
     }
@@ -762,6 +774,12 @@ module.exports = {
   applyBsiBookAgentProduction,
   isUnsplitBsiLine,
   isOtherBsiAgent,
+  isHouseSplitBsiAgent,
+  fillHouseSplit,
+  reverseHouseSplit,
+  hasNoSplit,
+  isHraOrFee,
+  policyKey,
   extractWritingNpn,
   normalizeRateCarrier,
   extractMemberState,

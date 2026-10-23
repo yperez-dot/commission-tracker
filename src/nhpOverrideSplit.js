@@ -8,6 +8,7 @@
  */
 
 const { isIntegrityAgent, isMarcoAgent } = require('./payeeSchedules');
+const { agentNameMatches } = require('./agentNameMatch');
 const { splitFullOverridePot, round2, num } = require('./overrideSplitMath');
 
 /**
@@ -71,9 +72,8 @@ function agentHasFixedCut(agentName, carrier) {
   if (!isIntegrityAgent(agentName)) return false;
   const key = fixedCutCarrierKey(carrier);
   if (!key) return false;
-  const n = String(agentName || '').toLowerCase();
-  if (n.includes('christian munoz') || n.includes('horacio mendieta')) return true;
-  return n.includes('cam insurance solutions corp') && INTEGRITY_FIXED_CUTS[key].includesCam;
+  if (agentNameMatches(agentName, 'christian munoz') || agentNameMatches(agentName, 'horacio mendieta')) return true;
+  return agentNameMatches(agentName, 'cam insurance solutions corp') && INTEGRITY_FIXED_CUTS[key].includesCam;
 }
 
 function isNhpIntegrityFixedNb(agentName, carrier, classification) {

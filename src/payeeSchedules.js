@@ -1,5 +1,7 @@
 'use strict';
 
+const { agentNameMatches, agentNameInList } = require('./agentNameMatch');
+
 /**
  * Shared payee / override schedule definitions.
  * Keep upload-time splits (files.js / records.js) aligned with statement builders.
@@ -50,9 +52,9 @@ function normName(name) {
   return String(name || '').toLowerCase().trim();
 }
 
+/** Integrity agent (middle initials / punctuation / case tolerant — see agentNameMatch). */
 function isIntegrityAgent(agentName) {
-  const n = normName(agentName);
-  return INTEGRITY_AGENTS.some((a) => n.includes(a));
+  return agentNameInList(agentName, INTEGRITY_AGENTS);
 }
 
 /**
@@ -93,13 +95,21 @@ function firstYearRenewalIsRenewal(raw) {
   return v.includes('renew') || v === 'rn' || v === 'r';
 }
 
+/** Swan/Marco agent (middle initials / punctuation / case tolerant — see agentNameMatch). */
 function isMarcoAgent(agentName, paymentPeriod) {
-  const n = normName(agentName);
-  if (!MARCO_AGENTS.some((a) => n.includes(a))) return false;
-  if (n.includes('jendy vanheyningen') && String(paymentPeriod || '') >= MARCO_JENDY_CUTOFF) {
+  if (!agentNameInList(agentName, MARCO_AGENTS)) return false;
+  if (agentNameMatches(agentName, 'jendy vanheyningen') && String(paymentPeriod || '') >= MARCO_JENDY_CUTOFF) {
     return false;
   }
   return true;
+}
+
+/**
+ * THEI itself as the writing agent on a carrier feed ("The Health Experts Insurance",
+ * "... LLC", "Health Experts", etc.).
+ */
+function isTheiWritingAgent(agentName) {
+  return /\bhealth experts\b/.test(normName(agentName).replace(/[^a-z0-9]+/g, ' '));
 }
 
 /** Canonical payroll / statement display name for Alba / Lina Hernandez. */
@@ -189,7 +199,7 @@ function isBsiRemitSource(source, row = null) {
 
 /**
  * BSI other-agent house line: a BSI-feed row (not classified as an override) for an agent who
- * is not Lina/Alba, not Integrity and not THEI, with a stored THEI/BSI/Marco share. Upload
+ * is not Lina/Alba and not Integrity (THEI-written lines included), with a stored THEI/BSI/Marco share. Upload
  * stores the 50/50 house split (Marco $10 first) on these rows, chargebacks included, so
  * House Statements list them as stored (never re-split at read time).
  */
@@ -204,7 +214,8 @@ function isBsiHouseSplitLine(row = {}) {
   const agent = row.agent_name != null ? row.agent_name : row.agent;
   if (isAlbaHernandez(agent) || isIntegrityAgent(agent)) return false;
   const n = normName(agent);
-  if (!n || n.includes('broker society') || n.includes('health experts')) return false;
+  // THEI-written lines (agent = THEI itself) are split 50/50 like other agents' lines.
+  if (!n || n.includes('broker society')) return false;
   const v = (x) => Math.abs(parseFloat(x) || 0) >= 0.005;
   return v(row.thei_share) || v(row.bsi_share) || v(row.sub_agent_override);
 }
@@ -230,6 +241,7 @@ module.exports = {
   isIntegrityNewBusiness,
   firstYearRenewalIsRenewal,
   isMarcoAgent,
+  isTheiWritingAgent,
   isAlbaHernandez,
   isAlbaAgentCommission,
   isAlbaHra,
