@@ -8,8 +8,8 @@
  *   (Agency, Company, Policy #, Client Name, Effective Date, Commission),
  *   Balance = sum of detail lines.
  *
- * Amounts = producer_payable agent production only (NB / Renewal / Chargeback).
- * No Agency Override.
+ * Amounts = producer_payable agent production + HRA payments (NB / Renewal / Chargeback / HRA).
+ * No Agency Override; BSI licensing/appointment fees are never included.
  */
 
 const ExcelJS = require('exceljs');
@@ -17,6 +17,7 @@ const {
   ALBA_DISPLAY_NAME,
   isAlbaHernandez,
   isAlbaAgentCommission,
+  isAlbaHra,
 } = require('./payeeSchedules');
 
 const ISSUING_AGENCY = 'The Health Experts Insurance';
@@ -69,7 +70,7 @@ function normalizeCarrier(carrier) {
 function selectLinaAgentRows(rows, period) {
   return (rows || []).filter((r) => {
     if (!isAlbaHernandez(r.agent_name)) return false;
-    if (!isAlbaAgentCommission(r.classification)) return false;
+    if (!isAlbaAgentCommission(r.classification) && !isAlbaHra(r.classification)) return false;
     const amt = num(r.producer_payable);
     if (amt === 0) return false;
     if (period && period !== 'all' && String(r.payment_period) !== String(period)) return false;
@@ -128,7 +129,7 @@ function buildLinaCompensationStatement(rows, opts = {}) {
     balance,
     lines,
     note:
-      'Agent production only (New Business / Renewal / Chargeback). Agency Override is not paid to Lina.',
+      'Agent production and HRA payments (New Business / Renewal / Chargeback / HRA). Agency Override and BSI licensing/appointment fees are not part of Lina\'s statement.',
   };
 }
 

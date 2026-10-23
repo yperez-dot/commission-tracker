@@ -87,6 +87,12 @@ function isAlbaAgentCommission(classification) {
   );
 }
 
+/** HRA payments (UHC "HA payment" / Humana HRA bonus) are paid through to Lina. */
+function isAlbaHra(classification) {
+  const c = String(classification || '').toLowerCase();
+  return c.includes('hra');
+}
+
 function isAgencyOverride(classification) {
   return String(classification || '').toLowerCase().includes('override');
 }
@@ -161,6 +167,7 @@ module.exports = {
   isMarcoAgent,
   isAlbaHernandez,
   isAlbaAgentCommission,
+  isAlbaHra,
   isAgencyOverride,
   isAcaNhpHouseRow,
   isNhpSource,
