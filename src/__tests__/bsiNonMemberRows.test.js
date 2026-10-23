@@ -82,5 +82,9 @@ describe('bsiNonMemberRows', () => {
     expect(bad.ok).toBe(false);
     expect(bad.variance).toBe(380);
     expect(reconcileToSummary([{ commission: 1 }], null).checked).toBe(false);
+    // excluded (not stored) BSI fees still tie to the carrier summary
+    const withFees = reconcileToSummary([{ commission: 1255.28 }], 775.28, -480);
+    expect(withFees.ok).toBe(true);
+    expect(withFees.excludedFees).toBe(-480);
   });
 });

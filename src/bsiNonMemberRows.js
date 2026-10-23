@@ -124,13 +124,22 @@ function sumSummaryActivity(summaryRows) {
  * Compare what was imported against the carrier's own Commission Summary.
  * Held rows (commission $0) are ignored by the sum automatically.
  */
-function reconcileToSummary(records, summaryTotal) {
+function reconcileToSummary(records, summaryTotal, excludedFees = 0) {
   const importedTotal = round2((records || []).reduce((s, r) => s + (parseFloat(r.commission) || 0), 0));
+  const excluded = round2(excludedFees);
   if (summaryTotal == null) {
-    return { checked: false, importedTotal, summaryTotal: null, variance: null, ok: null };
+    return { checked: false, importedTotal, excludedFees: excluded, summaryTotal: null, variance: null, ok: null };
   }
-  const variance = round2(importedTotal - summaryTotal);
-  return { checked: true, importedTotal, summaryTotal, variance, ok: Math.abs(variance) < 0.01 };
+  // Excluded BSI fees are on the carrier summary but deliberately not stored.
+  const variance = round2(importedTotal + excluded - summaryTotal);
+  return {
+    checked: true,
+    importedTotal,
+    excludedFees: excluded,
+    summaryTotal,
+    variance,
+    ok: Math.abs(variance) < 0.01,
+  };
 }
 
 module.exports = {

@@ -5047,6 +5047,7 @@ function parseBSICarrierStatementRows(wb, filename) {
   const sheetName = wb.SheetNames.find(s => s.toLowerCase().includes('commission trans')) || wb.SheetNames[0];
   const ws = wb.Sheets[sheetName];
   const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
+  let excludedFeesTotal = 0;
   console.log(`[BSI-CARRIER] Sheet "${sheetName}": ${rows.length} rows`);
 
   // Summary row keywords to skip
@@ -5064,7 +5065,13 @@ function parseBSICarrierStatementRows(wb, filename) {
       const nonMember = classifyBsiNonMemberRow(row, {
         period: statementPeriod || String(row['Payment Period'] || '').trim(),
       });
-      if (nonMember) records.push(nonMember);
+      if (nonMember && nonMember.classification === 'BSI Fee') {
+        // BSI licensing/appointment fees are NOT imported (not overrides, not Lina, not THEI).
+        // Their total is kept only so the upload still ties to the carrier summary.
+        excludedFeesTotal += nonMember.commission;
+      } else if (nonMember) {
+        records.push(nonMember);
+      }
       continue;
     }
     if (!isValidClientName(client)) continue;
@@ -5161,7 +5168,7 @@ function parseBSICarrierStatementRows(wb, filename) {
     const summaryRows = summarySheet
       ? XLSX.utils.sheet_to_json(wb.Sheets[summarySheet], { defval: '', raw: true })
       : [];
-    const rec = reconcileToSummary(records, sumSummaryActivity(summaryRows));
+    const rec = reconcileToSummary(records, sumSummaryActivity(summaryRows), excludedFeesTotal);
     records.reconciliation = rec;
     if (rec.checked && !rec.ok) {
       console.warn(
