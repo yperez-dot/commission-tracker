@@ -26,6 +26,7 @@ const {
   normName,
 } = require('./payeeSchedules');
 const { calculateAlbaOverrideSplit } = require('./overrideRateEngine');
+const { getCMSCap2026 } = require('./cmsFmvCaps2026');
 const {
   rowNeedsBsiOverrideShareFill,
   splitFullOverridePot,
@@ -201,6 +202,36 @@ function chargebackUnearnedFactor(record) {
 }
 
 /**
+ * Aetna pays renewals monthly, but the rate table holds the ANNUAL renewal override.
+ * Take off only the line's share of it:
+ *   annual renewal amount = CMS renewal FMV for the member's state + annual override
+ *   override taken        = annual override × line / annual renewal amount
+ * (e.g. a 1/12 monthly line gives back 1/12 of the override). If the annual amount
+ * can't be determined (no member state), use 1/12 of the override and flag the line.
+ * Never more than the line, so Lina can't go negative on a positive renewal line.
+ * Returns null when it doesn't apply (not Aetna, not a positive Renewal).
+ */
+function aetnaRenewalProration(record, commission, split) {
+  if (!(commission > 0)) return null;
+  if (split.yearType !== 'Renewal' || split.carrier !== 'Aetna') return null;
+  const annualOverride = Number(split.totalOverride) || 0;
+  if (!(annualOverride > 0)) return null;
+  const state = record.memberState || extractMemberState(record);
+  let factor;
+  let fellBack = false;
+  let annualRenewal = null;
+  if (state) {
+    annualRenewal = round2(getCMSCap2026(state, 'renewal') + annualOverride);
+    factor = Math.min(1, commission / annualRenewal);
+  } else {
+    factor = 1 / 12;
+    fellBack = true;
+  }
+  const overrideTaken = Math.min(commission, round2(annualOverride * factor));
+  return { overrideTaken, annualOverride, annualRenewal, factor, fellBack };
+}
+
+/**
  * Peel Alba house production with the carrier×state override rate table.
  * Chargebacks use the absolute rate then re-apply the commission sign.
  */
@@ -242,6 +273,17 @@ function peelAlbaProduction(record, commission) {
   let bsiShare = round2(sign * (split.bsiShare || 0));
   let producerPayable = round2(sign * (split.albaComp || 0));
 
+  // Aetna monthly renewals: take off the line's share of the annual override only.
+  const renewalProration = aetnaRenewalProration(record, commission, split);
+  if (renewalProration) {
+    const o = renewalProration.overrideTaken;
+    const thei = round2(o / 2);
+    totalOverride = o;
+    theiShare = thei;
+    bsiShare = round2(o - thei);
+    producerPayable = round2(commission - o);
+  }
+
   // Chargebacks: only the unearned share of the (annual) override comes back, so
   // prorate it; Lina keeps the rest of the chargeback. Skipped when the engine did
   // not peel an override (shorted/underpaid rows) or there is no Term Date.
@@ -277,6 +319,7 @@ function peelAlbaProduction(record, commission) {
     yearType: split.yearType,
     carrier: split.carrier || input.carrier,
     chargebackProration,
+    renewalProration,
   };
 }
 
@@ -430,6 +473,10 @@ function applyBsiBookAgentProduction(records, opts = {}) {
       String(classification).toLowerCase() === 'agent commission';
     if (!agentProd) {
       if (!r.source) r.source = 'BSI';
+      // Aetna CMS Trueup lines stay unsplit until Yahoska decides who they belong to.
+      if (String(classification).toLowerCase().trim() === 'cms trueup') {
+        addNote(r, 'CMS Trueup: not split yet (pending decision on who it belongs to)');
+      }
       continue;
     }
 
@@ -494,6 +541,13 @@ function applyBsiBookAgentProduction(records, opts = {}) {
     r.splitApplies = false;
     r.payee = r.payee || 'BSI';
     r.source = r.source || 'BSI';
+
+    if (peel.renewalProration) {
+      const rp = peel.renewalProration;
+      addNote(r, rp.fellBack
+        ? `Renewal override prorated 1/12 — annual renewal amount unknown, please review ($${rp.annualOverride} → $${rp.overrideTaken.toFixed(2)})`
+        : `Renewal override prorated to this line ($${rp.annualOverride} annual → $${rp.overrideTaken.toFixed(2)})`);
+    }
 
     if (peel.chargebackProration) {
       const cp = peel.chargebackProration;

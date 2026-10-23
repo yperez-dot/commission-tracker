@@ -548,23 +548,8 @@ function isOscarIFPFile(wb) {
 }
 
 // ─── 2026 CMS Maximum FMV Caps ──────────────────────────────────────────────
-// Source: Yahoska Perez 2026-07-01
 // Used for agency override anomaly flagging (non-Alba rows only)
-const CMS_FMV_CAPS_2026 = {
-  CA: { initial: 864, renewal: 432 },
-  NJ: { initial: 864, renewal: 432 },
-  CT: { initial: 781, renewal: 391 },
-  PA: { initial: 781, renewal: 391 },
-  DC: { initial: 781, renewal: 391 },
-  PR: { initial: 474, renewal: 237 },
-  VI: { initial: 474, renewal: 237 },
-};
-const CMS_FMV_DEFAULT_2026 = { initial: 694, renewal: 347 };
-
-function getCMSCap2026(state, eventType) {
-  const caps = CMS_FMV_CAPS_2026[(state || '').toUpperCase()] || CMS_FMV_DEFAULT_2026;
-  return caps[eventType] || caps.initial;
-}
+const { getCMSCap2026 } = require('../src/cmsFmvCaps2026');
 
 // ─── AETNA BSI CSV ────────────────────────────────────────────────────────────
 // Format: Aetna-to-BSI consolidated statement CSV

@@ -119,7 +119,8 @@ describe('bsiBookAttribution', () => {
   });
 
   it('peels Alba-named Aetna renewals with state rate', () => {
-    // Aetna National Renewal override = $45 → albaComp = 90 − 45 = 45
+    // Aetna National Renewal override = $45 a year. A $90 line is 90 / (347 + 45) of the
+    // annual renewal, so only that share of the override comes off: 45 × 90/392 = 10.33.
     const records = [
       {
         agent: 'Alba Hernandez',
@@ -132,9 +133,9 @@ describe('bsiBookAttribution', () => {
     ];
     applyBsiBookAgentProduction(records);
     expect(records[0].agent).toBe(ALBA_DB_AGENT);
-    expect(records[0].producerPayable).toBe(45);
-    expect(records[0].theiShare).toBe(22.5);
-    expect(records[0].bsiShare).toBe(22.5);
+    expect(records[0].producerPayable).toBe(79.67);
+    expect(records[0].theiShare).toBe(5.17);
+    expect(records[0].bsiShare).toBe(5.16);
   });
 
   it('signs chargeback peels', () => {
@@ -499,5 +500,80 @@ describe('Integrity BSI UHC rate table (plan year 2026 = $82.50 on a full $150 l
       expect(r.producerPayable).toBeUndefined();
       expect(r.theiShare).toBeUndefined();
     }
+  });
+});
+
+describe('Lina Aetna monthly renewals: override prorated to the line', () => {
+  // Made-up lines. Annual renewal amount = CMS renewal FMV for the state + annual override.
+  const base = {
+    agent: 'Alba Hernandez',
+    carrier: 'Aetna',
+    classification: 'Renewal',
+    policyNumber: 'TEST-R1',
+    period: '202609',
+    payee: 'BSI',
+  };
+
+  it('a 1/12 monthly line gives back 1/12 of the annual override (National: 347 + 45)', () => {
+    const line = 32.67; // (347 + 45) / 12
+    const records = [{ ...base, commission: line, memberState: 'GA', raw: { 'Sales Event': 'Renewal', 'Member State': 'GA' } }];
+    applyBsiBookAgentProduction(records);
+    const r = records[0];
+    expect(r.theiShare + r.bsiShare).toBeCloseTo(3.75, 2);
+    expect(r.producerPayable).toBe(28.92);
+    expect(r.producerPayable + r.theiShare + r.bsiShare).toBeCloseTo(line, 2);
+    expect(r.mga).toMatch(/prorated to this line/);
+  });
+
+  it('uses the state FMV (CA: 432 + 50) and the plan group (FL D-SNP: 347 + 240)', () => {
+    const records = [
+      { ...base, commission: 40.17, memberState: 'CA', raw: { 'Sales Event': 'Renewal' } },
+      { ...base, commission: 48.92, memberState: 'FL', planId: 'H1609-043', raw: { 'Sales Event': 'Renewal', 'Plan ID': 'H1609-043' } },
+    ];
+    applyBsiBookAgentProduction(records);
+    expect(records[0].theiShare + records[0].bsiShare).toBeCloseTo(4.17, 2);
+    expect(records[0].producerPayable).toBe(36);
+    expect(records[1].theiShare + records[1].bsiShare).toBeCloseTo(20, 2);
+    expect(records[1].producerPayable).toBe(28.92);
+  });
+
+  it('a full annual renewal line still gives back the full annual override', () => {
+    const records = [{ ...base, commission: 392, memberState: 'GA', raw: { 'Sales Event': 'Renewal' } }];
+    applyBsiBookAgentProduction(records);
+    expect(records[0].theiShare + records[0].bsiShare).toBeCloseTo(45, 2);
+    expect(records[0].producerPayable).toBe(347);
+  });
+
+  it('no member state → 1/12 of the override, flagged; never negative for Lina', () => {
+    const records = [
+      { ...base, commission: 30, raw: { 'Sales Event': 'Renewal' } },
+      { ...base, policyNumber: 'TEST-R2', commission: 2, raw: { 'Sales Event': 'Renewal' } },
+    ];
+    applyBsiBookAgentProduction(records);
+    expect(records[0].theiShare + records[0].bsiShare).toBeCloseTo(3.75, 2);
+    expect(records[0].producerPayable).toBe(26.25);
+    expect(records[0].mga).toMatch(/1\/12/);
+    // 1/12 of 45 = 3.75 > the $2 line → capped at the line, Lina 0
+    expect(records[1].theiShare + records[1].bsiShare).toBeCloseTo(2, 2);
+    expect(records[1].producerPayable).toBe(0);
+  });
+
+  it('Aetna new business, UHC renewals and chargebacks keep their existing peel', () => {
+    const records = [
+      { ...base, classification: 'New Business', commission: 694 + 125, memberState: 'GA', raw: { 'Sales Event': 'New Business' } },
+      { ...base, carrier: 'UnitedHealthcare', commission: 211, raw: { 'Comp Type': 'R', 'Commission Action': 'Renewal', 'Member State': 'FL' } },
+    ];
+    applyBsiBookAgentProduction(records);
+    expect(records[0].theiShare + records[0].bsiShare).toBeCloseTo(125, 2);
+    expect(records[0].producerPayable).toBe(694);
+    expect(records[1].producerPayable).toBe(136);
+  });
+
+  it('CMS Trueup lines stay unsplit and flagged', () => {
+    const records = [{ ...base, classification: 'CMS Trueup', commission: 20, raw: {} }];
+    applyBsiBookAgentProduction(records);
+    expect(records[0].producerPayable).toBeUndefined();
+    expect(records[0].theiShare).toBeUndefined();
+    expect(records[0].mga).toMatch(/CMS Trueup: not split yet/);
   });
 });
