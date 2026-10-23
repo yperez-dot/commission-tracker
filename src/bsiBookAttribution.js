@@ -273,6 +273,17 @@ function peelAlbaProduction(record, commission) {
   let bsiShare = round2(sign * (split.bsiShare || 0));
   let producerPayable = round2(sign * (split.albaComp || 0));
 
+  // Aetna CMS Trueup = the new-sale override paid after Medicare confirms: the override
+  // taken is never more than the line, so Lina can't go negative on it.
+  const salesEventUpper = String((record.raw || {})['Sales Event'] || '').trim().toUpperCase();
+  if (sign > 0 && salesEventUpper === 'CMS TRUEUP' && split.totalOverride > abs) {
+    const thei = round2(abs / 2);
+    totalOverride = round2(abs);
+    theiShare = thei;
+    bsiShare = round2(abs - thei);
+    producerPayable = 0;
+  }
+
   // Aetna monthly renewals: take off the line's share of the annual override only.
   const renewalProration = aetnaRenewalProration(record, commission, split);
   if (renewalProration) {
@@ -473,10 +484,6 @@ function applyBsiBookAgentProduction(records, opts = {}) {
       String(classification).toLowerCase() === 'agent commission';
     if (!agentProd) {
       if (!r.source) r.source = 'BSI';
-      // Aetna CMS Trueup lines stay unsplit until Yahoska decides who they belong to.
-      if (String(classification).toLowerCase().trim() === 'cms trueup') {
-        addNote(r, 'CMS Trueup: not split yet (pending decision on who it belongs to)');
-      }
       continue;
     }
 

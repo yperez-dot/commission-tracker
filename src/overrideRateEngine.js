@@ -266,7 +266,9 @@ function resolveYearType(row) {
   if (row.salesEvent) {
     // PRONEW = Aetna code for pro-rated New Business = Initial (confirmed 2026-08-04)
     const se = row.salesEvent.toUpperCase();
-    return (se === 'NEW BUSINESS' || se === 'PRONEW') ? 'Initial' : 'Renewal';
+    // CMS TRUEUP = full new-sale override once Medicare confirms (Yahoska 2026-10-23).
+    // CMS TRUEUP REVERSAL keeps the existing (Renewal) treatment.
+    return (se === 'NEW BUSINESS' || se === 'PRONEW' || se === 'CMS TRUEUP') ? 'Initial' : 'Renewal';
   }
 
   // 4. Fallback — Commission Action (UHC when Comp Type is blank)

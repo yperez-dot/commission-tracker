@@ -569,11 +569,21 @@ describe('Lina Aetna monthly renewals: override prorated to the line', () => {
     expect(records[1].producerPayable).toBe(136);
   });
 
-  it('CMS Trueup lines stay unsplit and flagged', () => {
-    const records = [{ ...base, classification: 'CMS Trueup', commission: 20, raw: {} }];
+  it('Lina CMS Trueup splits like a new sale; the override never exceeds the line', () => {
+    const records = [
+      // full National initial override paid on its own → all override, Lina 0
+      { ...base, policyNumber: 'TEST-T1', classification: 'New Business', commission: 125, memberState: 'GA', raw: { 'Sales Event': 'CMS Trueup' } },
+      // smaller trueup → capped at the line, Lina never negative
+      { ...base, policyNumber: 'TEST-T2', classification: 'New Business', commission: 41.66, memberState: 'GA', raw: { 'Sales Event': 'CMS Trueup' } },
+      // trueup that includes Lina's own commission → normal new-sale peel
+      { ...base, policyNumber: 'TEST-T3', classification: 'New Business', commission: 819, memberState: 'GA', raw: { 'Sales Event': 'CMS Trueup' } },
+    ];
     applyBsiBookAgentProduction(records);
-    expect(records[0].producerPayable).toBeUndefined();
-    expect(records[0].theiShare).toBeUndefined();
-    expect(records[0].mga).toMatch(/CMS Trueup: not split yet/);
+    expect(records[0].producerPayable).toBe(0);
+    expect(records[0].theiShare + records[0].bsiShare).toBeCloseTo(125, 2);
+    expect(records[1].producerPayable).toBe(0);
+    expect(records[1].theiShare + records[1].bsiShare).toBeCloseTo(41.66, 2);
+    expect(records[2].producerPayable).toBe(694);
+    expect(records[2].theiShare + records[2].bsiShare).toBeCloseTo(125, 2);
   });
 });

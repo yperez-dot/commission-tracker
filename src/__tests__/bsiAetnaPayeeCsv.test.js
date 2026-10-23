@@ -46,9 +46,10 @@ const CSV = [
   line({ 'Member ID': 'M-7', 'Sales Event': 'New Business', 'Payee Amount': '100', 'Writing Agent Name': 'Munoz, Christian' }),
   line({ 'Member ID': 'M-8', 'Sales Event': 'Renewal', 'Payee Amount': '12', 'Writing Agent Name': 'Mendieta, Horacio' }),
   line({ 'Member ID': 'M-9', 'Sales Event': 'CMS Trueup reversal', 'Payee Amount': '-50', 'Writing Agent Name': 'Munoz, Christian' }),
+  line({ 'Member ID': 'M-10', 'Sales Event': 'CMS Trueup', 'Payee Amount': '125', 'Writing Agent Name': 'Mendieta, Horacio' }),
   HEADERS.map(() => '').join(','),
   HEADERS.map(() => '').join(','),
-  ['Total Payee Amount: $133.09', ...HEADERS.slice(1).map(() => '')].join(','),
+  ['Total Payee Amount: $258.09', ...HEADERS.slice(1).map(() => '')].join(','),
 ].join('\n');
 
 function workbook() {
@@ -69,10 +70,10 @@ describe('BSI Aetna payee CSV', () => {
 
   it('imports every member row as Aetna, totals to the footer, skips blank/footer rows', () => {
     const { records, footerTotal } = parse();
-    expect(records).toHaveLength(9);
-    expect(footerTotal).toBe(133.09);
+    expect(records).toHaveLength(10);
+    expect(footerTotal).toBe(258.09);
     const total = Math.round(records.reduce((s, r) => s + r.commission, 0) * 100) / 100;
-    expect(total).toBe(133.09);
+    expect(total).toBe(258.09);
     expect(reconcileToSummary(records, footerTotal, 0).ok).toBe(true);
     expect(new Set(records.map((r) => r.carrier))).toEqual(new Set(['Aetna']));
     expect(records.every((r) => !/united/i.test(r.planType))).toBe(true);
@@ -91,11 +92,15 @@ describe('BSI Aetna payee CSV', () => {
   it('classifies by Sales Event', () => {
     const { records } = parse();
     expect(records.map((r) => r.classification)).toEqual([
-      'New Business', 'New Business', 'Renewal', 'CMS Trueup', 'Chargeback', 'Chargeback',
-      'New Business', 'Renewal', 'Chargeback',
+      'New Business', 'New Business', 'Renewal', 'New Business', 'Chargeback', 'Chargeback',
+      'New Business', 'Renewal', 'Chargeback', 'New Business',
     ]);
     expect(classifyAetnaSalesEvent('Involuntarily Rapid Disenroll', 0)).toBe('Chargeback');
-    expect(classifyAetnaSalesEvent('CMS Trueup', 10)).toBe('CMS Trueup');
+    // CMS Trueup = the new-sale override after Medicare confirms → same as New Business
+    expect(classifyAetnaSalesEvent('CMS Trueup', 10)).toBe('New Business');
+    expect(classifyAetnaSalesEvent('CMS Trueup reversal', -10)).toBe('Chargeback');
+    expect(records[3].mga).toMatch(/CMS Trueup/);
+    expect(records[3].mga).not.toMatch(/pending|not split/);
   });
 
   it('applies the Integrity rules (50/25/25 new sales and chargebacks, no renewals)', () => {
@@ -112,6 +117,11 @@ describe('BSI Aetna payee CSV', () => {
     expect(cb.producerPayable).toBe(-25);
     expect(cb.theiShare).toBe(-12.5);
     expect(cb.bsiShare).toBe(-12.5);
+    // Integrity CMS Trueup splits like an Aetna new sale: 50/25/25
+    const trueup = records[9];
+    expect(trueup.producerPayable).toBe(62.5);
+    expect(trueup.theiShare).toBe(31.25);
+    expect(trueup.bsiShare).toBe(31.25);
     // other agents untouched
     expect(records[0].producerPayable).toBeUndefined();
   });

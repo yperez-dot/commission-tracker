@@ -12,7 +12,8 @@
  * Amount = Payee Amount. Carrier is always Aetna. Classification from Sales Event:
  *   New Business / PRONEW              → New Business
  *   Renewal (and residual)             → Renewal
- *   CMS Trueup (positive)              → CMS Trueup (positive adjustment)
+ *   CMS Trueup (positive)              → New Business (the full new-sale override,
+ *                                        paid once Medicare confirms the enrollment)
  *   CMS Trueup reversal / Involuntarily Rapid Disenroll / any negative → Chargeback
  */
 
@@ -68,8 +69,15 @@ function classifyAetnaSalesEvent(salesEvent, amount) {
   if (amount < 0) return 'Chargeback';
   if (s === 'new business' || s === 'pronew') return 'New Business';
   if (s === 'renewal' || s.includes('residual')) return 'Renewal';
-  if (s.includes('trueup') || s.includes('true up') || s.includes('true-up')) return 'CMS Trueup';
+  // CMS Trueup = the full new-sale override once Medicare confirms the enrollment
+  // (Yahoska 2026-10-23) → split exactly like New Business.
+  if (s.includes('trueup') || s.includes('true up') || s.includes('true-up')) return 'New Business';
   return 'Agent Commission';
+}
+
+function isCmsTrueup(salesEvent) {
+  const s = String(salesEvent || '').trim().toLowerCase();
+  return /true\s*-?\s*up/.test(s) && !s.includes('reversal');
 }
 
 function capEventType(classification) {
@@ -152,7 +160,9 @@ function parseAetnaBsiPayeeRows(rawRows, opts = {}) {
       period,
       policyNumber: String(row['Member ID'] || '').trim(),
       payee: 'BSI',
-      mga: salesEvent && classification !== 'New Business' && classification !== 'Renewal' ? `Aetna: ${salesEvent}` : '',
+      mga: isCmsTrueup(salesEvent) && classification === 'New Business'
+        ? 'Aetna: CMS Trueup (new-sale override after Medicare confirmation)'
+        : salesEvent && classification !== 'New Business' && classification !== 'Renewal' ? `Aetna: ${salesEvent}` : '',
       anomaly,
       memberState,
       writingNpn: String(row['Writing Agent NPN'] || '').trim(),
@@ -165,6 +175,7 @@ function parseAetnaBsiPayeeRows(rawRows, opts = {}) {
 module.exports = {
   parseAetnaBsiPayeeRows,
   classifyAetnaSalesEvent,
+  isCmsTrueup,
   periodFromFilename,
   footerTotal,
   normalizeDate,
