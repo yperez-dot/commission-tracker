@@ -152,3 +152,14 @@ describe('BSI carrier detection and mismatch warning', () => {
       .toBeNull();
   });
 });
+
+describe('statement month from MM.YYYY file names', () => {
+  const { periodFromFilename } = require('../aetnaBsiPayeeCsv');
+  it('reads 09.2026 / 09-2026 / 2026-09 / 202609', () => {
+    expect(periodFromFilename('BSI-Humana-09.2026.xlsx')).toBe('202609');
+    expect(periodFromFilename('BSI Devoted 09-2026.xlsx')).toBe('202609');
+    expect(periodFromFilename('devoted_2026-09.xlsx')).toBe('202609');
+    expect(periodFromFilename('AETNA_BSI_STATEMENT_202609.csv')).toBe('202609');
+    expect(periodFromFilename('statement.xlsx')).toBe('');
+  });
+});

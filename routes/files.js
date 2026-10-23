@@ -572,7 +572,10 @@ function getCMSCap2026(state, eventType) {
 // Alba Hernandez (NPN 21209073) is BSI's principal licensed agent;
 // her rows are individual agent commissions — skip CMS cap validation.
 
-const { parseAetnaBsiPayeeRows } = require('../src/aetnaBsiPayeeCsv');
+const {
+  parseAetnaBsiPayeeRows,
+  periodFromFilename: aetnaPeriodFromFilename,
+} = require('../src/aetnaBsiPayeeCsv');
 const {
   BSI_LAYOUTS,
   detectBsiWorkbookLayout,
@@ -5034,7 +5037,8 @@ function parseHumanaDevotedBSIRows(wb, filename) {
 
   // Period from YYYY-MM-DD in filename
   const dateMatch = filename.match(/(20\d{2})-(0[1-9]|1[0-2])-\d{2}/);
-  const statementPeriod = dateMatch ? dateMatch[1] + dateMatch[2] : 'Unknown';
+  // Fallback: "BSI-Humana-09.2026.xlsx" style names (MM.YYYY / YYYYMM)
+  const statementPeriod = dateMatch ? dateMatch[1] + dateMatch[2] : (aetnaPeriodFromFilename(filename) || 'Unknown');
 
   const ws = wb.Sheets[wb.SheetNames[0]];
   const rawRows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
