@@ -7,6 +7,13 @@ const recorded = [];
 jest.mock('../../db/database', () => ({
   getPool: () => ({
     query: jest.fn(async (sql, params = []) => {
+      // Session lookup + self-applying auth schema (routes/auth requireAuth) — not part of this route's SQL.
+      if (/FROM users WHERE id = \$1/.test(sql)) {
+        return { rows: [{ id: 1, name: 'Katy', email: 'katy@test.com', role: 'admin', agency: 'thei', session_version: 0, totp_enabled_at: new Date() }] };
+      }
+      if (/^\s*(ALTER TABLE users|CREATE (TABLE|INDEX) IF NOT EXISTS (user_backup_codes|auth_events|idx_user_backup_codes_user|idx_auth_events))/.test(sql)) {
+        return { rows: [] };
+      }
       recorded.push({ sql: String(sql), params });
       if (/WITH held AS MATERIALIZED/.test(sql)) {
         return { rows: [{ rows: [
@@ -36,15 +43,13 @@ jest.mock('../../db/database', () => ({
   }),
 }));
 
-const jwt = require('jsonwebtoken');
+const { signAccessToken } = require('../authTokens');
 const { clearOverrideReconCorpusCache } = require('../overrideReconPeriod');
 const router = require('../../routes/agencyproduction');
 
 function authHeader() {
-  return `Bearer ${jwt.sign(
-    { id: 1, name: 'Katy', email: 'katy@test.com', role: 'admin', agency: 'thei' },
-    process.env.JWT_SECRET,
-    { expiresIn: '1h' }
+  return `Bearer ${signAccessToken(
+    { id: 1, name: 'Katy', email: 'katy@test.com', role: 'admin', agency: 'thei', session_version: 0 }
   )}`;
 }
 
