@@ -473,3 +473,72 @@ describe('overrideSplitMath', () => {
     expect(isBsiBookPayee('Direct', 'Statement-health experts (4).pdf')).toBe(true);
   });
 });
+
+describe('Integrity chargebacks take back exactly what was paid (50 / 25 / 25)', () => {
+  const { splitIntegrityChargeback, splitFullOverridePot } = require('../overrideSplitMath');
+  const { isIntegrityChargeback } = require('../payeeSchedules');
+
+  it('a -50 Integrity chargeback → producer -25, THEI -12.50, BSI -12.50', () => {
+    for (const agent of ['Christian Munoz', 'Horacio Mendieta', 'Cam Insurance Solutions Corp']) {
+      const s = splitIntegrityChargeback(-50, agent, 'Chargeback');
+      expect(s.producerPayable).toBe(-25);
+      expect(s.theiShare).toBe(-12.5);
+      expect(s.bsiShare).toBe(-12.5);
+      expect(s.grossCommission).toBe(-50);
+      expect(s.producerPayable + s.theiShare + s.bsiShare).toBeCloseTo(-50, 2);
+    }
+  });
+
+  it('mirrors the positive override it reverses', () => {
+    const paid = splitFullOverridePot(50, { agentName: 'Christian Munoz' });
+    const back = splitIntegrityChargeback(-50, 'Christian Munoz', 'chargeback');
+    expect(back.producerPayable).toBe(-paid.producerPayable);
+    expect(back.theiShare).toBe(-paid.theiShare);
+    expect(back.bsiShare).toBe(-paid.bsiShare);
+  });
+
+  it('leaves non-Integrity chargebacks and Integrity positives alone', () => {
+    expect(splitIntegrityChargeback(-50, 'Test Agent Example', 'Chargeback')).toBeNull();
+    expect(splitIntegrityChargeback(-50, 'Alba Hernandez', 'Chargeback')).toBeNull();
+    expect(splitIntegrityChargeback(50, 'Christian Munoz', 'Renewal')).toBeNull();
+    expect(splitIntegrityChargeback(50, 'Christian Munoz', 'Agency Override')).toBeNull();
+    expect(isIntegrityChargeback('Horacio Mendieta', 'ACA Agent Chargeback')).toBe(false);
+  });
+
+  const cbRow = {
+    id: 901,
+    agent_name: 'Horacio Mendieta',
+    client_full_name: 'SAMPLE, MEMBER',
+    policy_number: 'TEST-CB-1',
+    carrier: 'UnitedHealthcare',
+    payment_period: '202609',
+    classification: 'Chargeback',
+    source: 'BSI',
+    commission: -50,
+    gross_commission: -50,
+    producer_payable: -25,
+    thei_share: -12.5,
+    bsi_share: -12.5,
+  };
+
+  it('House Statements list the chargeback at 50 / 25 / 25', () => {
+    expect(classifyOverrideLine(cbRow, STATEMENT_TYPES.INTEGRITY).amount).toBe(-25);
+    expect(classifyOverrideLine(cbRow, STATEMENT_TYPES.THEI_BSI).amount).toBe(-12.5);
+    expect(classifyOverrideLine(cbRow, STATEMENT_TYPES.BSI_OVERRIDE).amount).toBe(-12.5);
+    expect(classifyOverrideLine(cbRow, STATEMENT_TYPES.MARCO)).toBeNull();
+  });
+
+  it('skips an Integrity chargeback whose split was never stored (no $0 lines)', () => {
+    const unsplit = { ...cbRow, producer_payable: null, thei_share: null, bsi_share: null };
+    expect(classifyOverrideLine(unsplit, STATEMENT_TYPES.INTEGRITY)).toBeNull();
+    expect(classifyOverrideLine(unsplit, STATEMENT_TYPES.THEI_BSI)).toBeNull();
+    expect(classifyOverrideLine(unsplit, STATEMENT_TYPES.BSI_OVERRIDE)).toBeNull();
+  });
+
+  it('non-Integrity chargebacks stay off House Statements', () => {
+    const other = { ...cbRow, agent_name: 'Test Agent Example' };
+    expect(classifyOverrideLine(other, STATEMENT_TYPES.INTEGRITY)).toBeNull();
+    expect(classifyOverrideLine(other, STATEMENT_TYPES.THEI_BSI)).toBeNull();
+    expect(classifyOverrideLine(other, STATEMENT_TYPES.BSI_OVERRIDE)).toBeNull();
+  });
+});

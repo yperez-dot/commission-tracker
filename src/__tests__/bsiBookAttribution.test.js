@@ -267,3 +267,56 @@ describe('chargeback override proration (UHC, Alba book)', () => {
     expect(chargebackUnearnedFactor({ raw: {} })).toBeNull();
   });
 });
+
+describe('Integrity chargebacks on BSI feeds', () => {
+  const base = {
+    carrier: 'UnitedHealthcare',
+    client: 'SAMPLE, MEMBER',
+    policyNumber: 'TEST-CB-1',
+    period: '202609',
+    payee: 'BSI',
+    raw: {},
+  };
+
+  it('splits a -50 Integrity chargeback 50/25/25 (producer -25, THEI -12.50, BSI -12.50)', () => {
+    const records = [
+      { ...base, agent: 'Christian Munoz', classification: 'Chargeback', commission: -50 },
+      { ...base, agent: 'Cam Insurance Solutions Corp', classification: 'Chargeback', commission: -50 },
+      { ...base, agent: 'Horacio Mendieta', classification: 'Chargeback', commission: -50 },
+    ];
+    applyBsiBookAgentProduction(records);
+    for (const r of records) {
+      expect(r.producerPayable).toBe(-25);
+      expect(r.theiShare).toBe(-12.5);
+      expect(r.bsiShare).toBe(-12.5);
+      expect(r.grossCommission).toBe(-50);
+      expect(r.source).toBe('BSI');
+      expect(r.agent).not.toBe(ALBA_DB_AGENT);
+    }
+  });
+
+  it('leaves Integrity positives and non-Integrity chargebacks unchanged', () => {
+    const records = [
+      { ...base, agent: 'Christian Munoz', classification: 'Renewal', commission: 6 },
+      { ...base, agent: 'Test Agent Example', classification: 'Chargeback', commission: -50 },
+    ];
+    applyBsiBookAgentProduction(records);
+    for (const r of records) {
+      expect(r.producerPayable).toBeUndefined();
+      expect(r.theiShare).toBeUndefined();
+      expect(r.bsiShare).toBeUndefined();
+    }
+  });
+
+  it('does not overwrite a split a parser already set', () => {
+    const records = [
+      {
+        ...base, agent: 'Horacio Mendieta', classification: 'Chargeback', commission: -50,
+        producerPayable: 0, theiShare: -25, bsiShare: -25,
+      },
+    ];
+    applyBsiBookAgentProduction(records);
+    expect(records[0].producerPayable).toBe(0);
+    expect(records[0].theiShare).toBe(-25);
+  });
+});

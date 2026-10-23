@@ -12,7 +12,8 @@
  *       producer_payable = albaComp   → Lina agent statement / payroll
  *       thei_share / bsi_share        → Override Statements for THEI & BSI (50/50)
  *  3. Agency Override / Held rows stay under the house label (not Lina pay)
- *  4. Other agents on the feed are left untouched
+ *  4. Other agents on the feed are left untouched, except Integrity chargebacks,
+ *     which get the 50/25/25 split of the override they reverse
  */
 
 const {
@@ -22,7 +23,11 @@ const {
   normName,
 } = require('./payeeSchedules');
 const { calculateAlbaOverrideSplit } = require('./overrideRateEngine');
-const { rowNeedsBsiOverrideShareFill, splitFullOverridePot } = require('./overrideSplitMath');
+const {
+  rowNeedsBsiOverrideShareFill,
+  splitFullOverridePot,
+  splitIntegrityChargeback,
+} = require('./overrideSplitMath');
 
 /** Canonical DB agent for Lina/Alba book (UI displays as Lina). */
 const ALBA_DB_AGENT = 'Alba Hernandez';
@@ -322,6 +327,17 @@ function applyBsiBookAgentProduction(records) {
 
     if (!(house || isAlbaNpn || albaNamed)) {
       if (!r.source) r.source = 'BSI';
+      // Integrity (Munoz / CAM / Mendieta) chargebacks: 50% producer, 25% THEI, 25% BSI —
+      // the same split as the override they reverse. Only fills rows a parser left unsplit.
+      const integrityCb = splitIntegrityChargeback(commission, r.agent, classification);
+      if (integrityCb && r.producerPayable == null && r.theiShare == null && r.bsiShare == null) {
+        r.grossCommission = integrityCb.grossCommission;
+        r.producerPayable = integrityCb.producerPayable;
+        r.theiShare = integrityCb.theiShare;
+        r.bsiShare = integrityCb.bsiShare;
+        r.subAgentOverride = 0;
+        r.splitApplies = integrityCb.splitApplies;
+      }
       continue;
     }
 

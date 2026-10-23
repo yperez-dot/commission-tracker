@@ -55,6 +55,16 @@ function isIntegrityAgent(agentName) {
   return INTEGRITY_AGENTS.some((a) => n.includes(a));
 }
 
+/**
+ * Integrity chargeback: a 'Chargeback' line for Munoz / CAM / Mendieta.
+ * They are paid 50% of the override, so a chargeback takes back the same 50%
+ * (and THEI / BSI give back their 25% each) — never 100% of the line.
+ */
+function isIntegrityChargeback(agentName, classification) {
+  return isIntegrityAgent(agentName) &&
+    String(classification || '').toLowerCase().trim() === 'chargeback';
+}
+
 function isMarcoAgent(agentName, paymentPeriod) {
   const n = normName(agentName);
   if (!MARCO_AGENTS.some((a) => n.includes(a))) return false;
@@ -164,6 +174,7 @@ module.exports = {
   STATEMENT_TYPES,
   ALBA_DISPLAY_NAME,
   isIntegrityAgent,
+  isIntegrityChargeback,
   isMarcoAgent,
   isAlbaHernandez,
   isAlbaAgentCommission,

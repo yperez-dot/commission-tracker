@@ -4257,6 +4257,7 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
       // Sort by period ASC so Marco's $10 deduction always hits earliest occurrence per policy
       records.sort((a, b) => (a.period || '').localeCompare(b.period || ''));
 
+      const { splitIntegrityChargeback } = require('../src/overrideSplitMath');
       records = records.map(r => {
         if (r.source) return r;
 
@@ -4283,7 +4284,11 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
         let splitApplies, theiShare, bsiShare, producerPayable, grossCommission;
         let subAgentOverride = 0;
 
-        if (isCommissionRow || isAgentDirectRow) {
+        const integrityCb = splitIntegrityChargeback(netCommission, r.agent, classification);
+        if (integrityCb) {
+          // Integrity chargeback: take back the producer's 50%, THEI/BSI 25% each (mirrors the override).
+          ({ splitApplies, theiShare, bsiShare, producerPayable, grossCommission } = integrityCb);
+        } else if (isCommissionRow || isAgentDirectRow) {
           // Agent production is paid to agents — never Agency THEI Share.
           // Must run BEFORE the direct_carrier 100% THEI branch (Solis/HealthSun/etc.).
           splitApplies = false;

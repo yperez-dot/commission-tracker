@@ -10,7 +10,7 @@
  *   BSI and set gross = 2× commission.
  */
 
-const { isIntegrityAgent, isMarcoAgent } = require('./payeeSchedules');
+const { isIntegrityAgent, isIntegrityChargeback, isMarcoAgent } = require('./payeeSchedules');
 
 function num(v) {
   const n = parseFloat(v);
@@ -81,6 +81,25 @@ function splitFullOverridePot(pot, opts = {}) {
     subAgentOverride: 0,
     splitApplies: true,
     schedule: 'standard_50_50',
+  };
+}
+
+/**
+ * Integrity (Munoz / CAM / Mendieta) chargeback → same 50 / 25 / 25 split as the
+ * override it reverses, so the producer gives back exactly what they were paid.
+ * Returns null for any other agent or classification (caller keeps its logic).
+ */
+function splitIntegrityChargeback(amount, agentName, classification) {
+  if (!isIntegrityChargeback(agentName, classification)) return null;
+  const gross = num(amount);
+  return {
+    grossCommission: gross,
+    theiShare: round2(gross * 0.25),
+    bsiShare: round2(gross * 0.25),
+    producerPayable: round2(gross * 0.5),
+    subAgentOverride: 0,
+    splitApplies: false,
+    schedule: 'integrity_chargeback_50_25_25',
   };
 }
 
@@ -185,6 +204,7 @@ module.exports = {
   num,
   round2,
   splitFullOverridePot,
+  splitIntegrityChargeback,
   splitTheRemittanceHalf,
   normalizeFilename,
   isBsiBookPayee,
