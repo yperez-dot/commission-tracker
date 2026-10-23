@@ -300,11 +300,13 @@ function StoredStatements({ period, isAdmin }) {
   );
 }
 
-function PayoutRow({ p, isPaid, paidDate, paidAmount, onTogglePaid, onExport, exportLabel, exportDisabled }) {
+function PayoutRow({ p, isPaid, paidDate, paidAmount, carry, onTogglePaid, onExport, exportLabel, exportDisabled }) {
   const [expanded, setExpanded] = useState(false);
   const posCount = p.records.filter((r) => recordAmount(r) > 0).length;
   const negCount = p.records.filter((r) => recordAmount(r) < 0).length;
   const negSum = p.records.filter((r) => recordAmount(r) < 0).reduce((s, r) => s + recordAmount(r), 0);
+  const owedNow = carry ? carry.payable : p.total;
+  const hasCarry = !!carry && (carry.carryIn !== 0 || carry.net < 0);
   const isLina = p.agent === 'Lina Hernandez';
   const splitClients = isLina
     ? countSplitDepositClients(p.records, (r) => parseFloat(r.producer_payable || 0))
@@ -354,18 +356,24 @@ function PayoutRow({ p, isPaid, paidDate, paidAmount, onTogglePaid, onExport, ex
                 · {splitClients} client{splitClients !== 1 ? 's' : ''} with split deposits
               </span>
             )}
+            {hasCarry && (
+              <span style={{ marginLeft: 8, color: 'var(--red)', fontWeight: 500 }}>
+                · {fmt(carry.periodTotal)} this month{carry.carryIn !== 0 ? ` ${fmt(carry.carryIn)} carried in` : ''}
+                {carry.carryOut < 0 ? ` · ${fmt(carry.carryOut)} carries to next month` : ''}
+              </span>
+            )}
             {isPaid && paidDate && (
               <span style={{ color: 'var(--green)', marginLeft: 8, fontWeight: 500 }}>· Paid {paidDate}</span>
             )}
-            {isPaid && paidAmount != null && Math.abs(Number(paidAmount) - Number(p.total)) >= 0.01 && (
+            {isPaid && paidAmount != null && Math.abs(Number(paidAmount) - owedNow) >= 0.01 && (
               <span style={{ marginLeft: 8, color: '#B45309', fontWeight: 600 }}>
-                · ⚠ Paid {fmt(paidAmount)} but now owed {fmt(p.total)} ({fmt(p.total - Number(paidAmount))} difference)
+                · ⚠ Paid {fmt(paidAmount)} but now owed {fmt(owedNow)} ({fmt(owedNow - Number(paidAmount))} difference)
               </span>
             )}
           </div>
         </div>
         <div style={{ fontWeight: 600, fontSize: 16, color: isPaid ? 'var(--green)' : 'var(--accent-dark)', whiteSpace: 'nowrap' }}>
-          {fmt(p.total)}
+          {fmt(owedNow)}
         </div>
         <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
           <button
@@ -817,6 +825,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
   const [paidStatus, setPaidStatus] = useState({});
   const [paidDates, setPaidDates] = useState({});
   const [paidAmounts, setPaidAmounts] = useState({});
+  const [carryMap, setCarryMap] = useState({});
   const [history, setHistory] = useState([]);
   const [historySearch, setHistorySearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('unpaid'); // unpaid | paid | all
@@ -1015,6 +1024,14 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
           .sort((a, b) => b.total - a.total)
       );
       await loadPaidStatus(period);
+      // Negative balances (chargebacks > earnings) carried in from prior months
+      if (!isBSI && /^\d{6}$/.test(String(period))) {
+        try {
+          setCarryMap(await apiFetch(`/payee-statements/carry?period=${encodeURIComponent(period)}`));
+        } catch (e) { setCarryMap({}); }
+      } else {
+        setCarryMap({});
+      }
     } catch (e) {
       console.error(e);
       setLoadError(e.message || 'Failed to load payouts');
@@ -1051,7 +1068,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
           period: selectedPeriod,
           agent,
           paid: makingPaid,
-          amount: payout?.total ?? null,
+          amount: payout ? (carryMap[payout.agent] ? carryMap[payout.agent].payable : payout.total) : null,
           paidDate: makingPaid ? paidDate : null,
           agency: user.agency || 'thei',
         }),
@@ -1349,6 +1366,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
                         isPaid={!!paidStatus[p.agent]}
                         paidDate={paidDates[p.agent]}
                         paidAmount={paidAmounts[p.agent]}
+                        carry={carryMap[p.agent]}
                         onTogglePaid={togglePaid}
                         exportLabel="Statement"
                         exportDisabled={!!STATEMENT_PAYEE_KEYS[p.agent] && linaBusy}

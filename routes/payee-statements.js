@@ -28,6 +28,7 @@ const {
   filenameForIntegrityStatement,
 } = require('../src/integrityStatement');
 const { compareStatementTotals } = require('../src/payeeStatementCompare');
+const { computeCarry, totalsByPeriodFromLines } = require('../src/payeeCarryForward');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
 
@@ -100,10 +101,23 @@ async function fetchRows(pool, payeeKey, period) {
   return r.rows;
 }
 
+/** Per-period balances for a payee (all periods), used for carry-forward. */
+async function periodTotals(pool, payeeKey) {
+  const rows = await fetchRows(pool, payeeKey, 'all');
+  const st = payeeKey === 'lina'
+    ? buildLinaCompensationStatement(rows, { period: 'all' })
+    : buildIntegrityStatement(rows, payeeKey, { period: 'all' });
+  return totalsByPeriodFromLines(st.lines);
+}
+
 async function buildFor(pool, payeeKey, period) {
   const rows = await fetchRows(pool, payeeKey, period);
+  const carry = /^\d{6}$/.test(period)
+    ? computeCarry(await periodTotals(pool, payeeKey), period)
+    : null;
   if (payeeKey === 'lina') {
     const statement = buildLinaCompensationStatement(rows, { period });
+    statement.carry = carry;
     const wb = await buildLinaCompensationWorkbook(statement);
     return {
       statement, total: statement.balance, lines: statement.lines,
@@ -112,6 +126,7 @@ async function buildFor(pool, payeeKey, period) {
     };
   }
   const statement = buildIntegrityStatement(rows, payeeKey, { period });
+  statement.carry = carry;
   const wb = await buildIntegrityWorkbook(statement);
   return {
     statement, total: statement.balance, lines: statement.lines,
@@ -119,6 +134,24 @@ async function buildFor(pool, payeeKey, period) {
     filename: filenameForIntegrityStatement(statement),
   };
 }
+
+/** GET /carry?period=YYYYMM — carry-forward and amount payable for every payee */
+router.get('/carry', requireAuth, async (req, res) => {
+  try {
+    const period = String(req.query.period || '');
+    if (!/^\d{6}$/.test(period)) return res.status(400).json({ error: 'period must be YYYYMM' });
+    const pool = getPool();
+    const out = {};
+    for (const key of Object.keys(PAYEES)) {
+      out[PAYEES[key].name === 'Alba Hernandez (Lina)' ? 'Lina Hernandez' : PAYEES[key].name] =
+        computeCarry(await periodTotals(pool, key), period);
+    }
+    res.json(out);
+  } catch (err) {
+    console.error('[payee-statements] carry', err);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 /** GET /preview?payee=&period= — live (unstored) statement, any signed-in user */
 router.get('/preview', requireAuth, async (req, res) => {
