@@ -12,8 +12,9 @@
  *       producer_payable = albaComp   → Lina agent statement / payroll
  *       thei_share / bsi_share        → Override Statements for THEI & BSI (50/50)
  *  3. Agency Override / Held rows stay under the house label (not Lina pay)
- *  4. Other agents on the feed are left untouched, except Integrity chargebacks,
- *     which get the 50/25/25 split of the override they reverse
+ *  4. Other agents on the feed are left untouched, except Integrity chargebacks
+ *     (50/25/25 split of the override they reverse) and Integrity renewals
+ *     (not paid to the producer: producer 0, THEI/BSI 50/50)
  */
 
 const {
@@ -27,6 +28,7 @@ const {
   rowNeedsBsiOverrideShareFill,
   splitFullOverridePot,
   splitIntegrityChargeback,
+  splitIntegrityRenewal,
 } = require('./overrideSplitMath');
 
 /** Canonical DB agent for Lina/Alba book (UI displays as Lina). */
@@ -329,14 +331,17 @@ function applyBsiBookAgentProduction(records) {
       if (!r.source) r.source = 'BSI';
       // Integrity (Munoz / CAM / Mendieta) chargebacks: 50% producer, 25% THEI, 25% BSI —
       // the same split as the override they reverse. Only fills rows a parser left unsplit.
-      const integrityCb = splitIntegrityChargeback(commission, r.agent, classification);
-      if (integrityCb && r.producerPayable == null && r.theiShare == null && r.bsiShare == null) {
-        r.grossCommission = integrityCb.grossCommission;
-        r.producerPayable = integrityCb.producerPayable;
-        r.theiShare = integrityCb.theiShare;
-        r.bsiShare = integrityCb.bsiShare;
+      // Integrity renewals are not paid to the producer: producer 0, THEI/BSI 50/50.
+      const integritySplit =
+        splitIntegrityChargeback(commission, r.agent, classification) ||
+        splitIntegrityRenewal(commission, r.agent, classification);
+      if (integritySplit && r.producerPayable == null && r.theiShare == null && r.bsiShare == null) {
+        r.grossCommission = integritySplit.grossCommission;
+        r.producerPayable = integritySplit.producerPayable;
+        r.theiShare = integritySplit.theiShare;
+        r.bsiShare = integritySplit.bsiShare;
         r.subAgentOverride = 0;
-        r.splitApplies = integrityCb.splitApplies;
+        r.splitApplies = integritySplit.splitApplies;
       }
       continue;
     }

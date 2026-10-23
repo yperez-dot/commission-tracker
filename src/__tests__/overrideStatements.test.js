@@ -542,3 +542,26 @@ describe('Integrity chargebacks take back exactly what was paid (50 / 25 / 25)',
     expect(classifyOverrideLine(other, STATEMENT_TYPES.BSI_OVERRIDE)).toBeNull();
   });
 });
+
+describe('Integrity renewals are not paid to the producer', () => {
+  const { splitIntegrityRenewal } = require('../overrideSplitMath');
+  const { selectIntegrityRows } = require('../integrityStatement');
+
+  it('splits the renewal 50/50 THEI/BSI with producer 0', () => {
+    const s = splitIntegrityRenewal(6, 'Horacio Mendieta', 'Renewal');
+    expect(s.producerPayable).toBe(0);
+    expect(s.theiShare).toBe(3);
+    expect(s.bsiShare).toBe(3);
+    expect(splitIntegrityRenewal(6, 'Test Agent Example', 'Renewal')).toBeNull();
+    expect(splitIntegrityRenewal(75, 'Christian Munoz', 'New Business')).toBeNull();
+  });
+
+  it('a split renewal stays off the Integrity statements', () => {
+    const renewal = {
+      id: 911, agent_name: 'Christian Munoz', classification: 'Renewal', payment_period: '202609',
+      commission: 6, producer_payable: 0, thei_share: 3, bsi_share: 3, policy_number: 'TEST-RN-1',
+    };
+    expect(classifyOverrideLine(renewal, STATEMENT_TYPES.INTEGRITY)).toBeNull();
+    expect(selectIntegrityRows([renewal], 'christian-munoz', '202609')).toHaveLength(0);
+  });
+});

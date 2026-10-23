@@ -10,7 +10,7 @@
  *   BSI and set gross = 2× commission.
  */
 
-const { isIntegrityAgent, isIntegrityChargeback, isMarcoAgent } = require('./payeeSchedules');
+const { isIntegrityAgent, isIntegrityChargeback, isIntegrityRenewal, isMarcoAgent } = require('./payeeSchedules');
 
 function num(v) {
   const n = parseFloat(v);
@@ -100,6 +100,26 @@ function splitIntegrityChargeback(amount, agentName, classification) {
     subAgentOverride: 0,
     splitApplies: false,
     schedule: 'integrity_chargeback_50_25_25',
+  };
+}
+
+/**
+ * Integrity (Munoz / CAM / Mendieta) renewal on a BSI feed → not paid to the
+ * producer; the line is house pot split THEI 50% / BSI 50%.
+ * Returns null for any other agent or classification.
+ */
+function splitIntegrityRenewal(amount, agentName, classification) {
+  if (!isIntegrityRenewal(agentName, classification)) return null;
+  const gross = num(amount);
+  const theiShare = round2(gross / 2);
+  return {
+    grossCommission: gross,
+    theiShare,
+    bsiShare: round2(gross - theiShare),
+    producerPayable: 0,
+    subAgentOverride: 0,
+    splitApplies: true,
+    schedule: 'integrity_renewal_house_50_50',
   };
 }
 
@@ -205,6 +225,7 @@ module.exports = {
   round2,
   splitFullOverridePot,
   splitIntegrityChargeback,
+  splitIntegrityRenewal,
   splitTheRemittanceHalf,
   normalizeFilename,
   isBsiBookPayee,

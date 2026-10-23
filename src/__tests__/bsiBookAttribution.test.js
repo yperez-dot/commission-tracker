@@ -295,9 +295,29 @@ describe('Integrity chargebacks on BSI feeds', () => {
     }
   });
 
-  it('leaves Integrity positives and non-Integrity chargebacks unchanged', () => {
+  it('Integrity renewals: producer 0, amount split 50/50 THEI/BSI', () => {
     const records = [
       { ...base, agent: 'Christian Munoz', classification: 'Renewal', commission: 6 },
+      { ...base, agent: 'Cam Insurance Solutions Corp', classification: 'Renewal', commission: 6 },
+      { ...base, agent: 'Horacio Mendieta', classification: 'Renewal', commission: 6.25 },
+    ];
+    applyBsiBookAgentProduction(records);
+    expect(records[0].producerPayable).toBe(0);
+    expect(records[0].theiShare).toBe(3);
+    expect(records[0].bsiShare).toBe(3);
+    expect(records[1].producerPayable).toBe(0);
+    expect(records[2].producerPayable).toBe(0);
+    expect(records[2].theiShare + records[2].bsiShare).toBeCloseTo(6.25, 2);
+    for (const r of records) {
+      expect(r.grossCommission).toBe(r.commission);
+      expect(r.agent).not.toBe(ALBA_DB_AGENT);
+    }
+  });
+
+  it('leaves Integrity New Business, non-Integrity renewals and non-Integrity chargebacks unchanged', () => {
+    const records = [
+      { ...base, agent: 'Christian Munoz', classification: 'New Business', commission: 75 },
+      { ...base, agent: 'Test Agent Example', classification: 'Renewal', commission: 6 },
       { ...base, agent: 'Test Agent Example', classification: 'Chargeback', commission: -50 },
     ];
     applyBsiBookAgentProduction(records);

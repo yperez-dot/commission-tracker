@@ -65,6 +65,15 @@ function isIntegrityChargeback(agentName, classification) {
     String(classification || '').toLowerCase().trim() === 'chargeback';
 }
 
+/**
+ * Integrity renewal: a 'Renewal' line for Munoz / CAM / Mendieta. They are not
+ * paid renewals — the whole line is house pot (THEI / BSI 50/50), producer 0.
+ */
+function isIntegrityRenewal(agentName, classification) {
+  return isIntegrityAgent(agentName) &&
+    String(classification || '').toLowerCase().trim() === 'renewal';
+}
+
 function isMarcoAgent(agentName, paymentPeriod) {
   const n = normName(agentName);
   if (!MARCO_AGENTS.some((a) => n.includes(a))) return false;
@@ -175,6 +184,7 @@ module.exports = {
   ALBA_DISPLAY_NAME,
   isIntegrityAgent,
   isIntegrityChargeback,
+  isIntegrityRenewal,
   isMarcoAgent,
   isAlbaHernandez,
   isAlbaAgentCommission,
