@@ -248,6 +248,27 @@ async function buildLinaCompensationWorkbook(statement) {
   ws.getCell(`F${rowIdx}`).numFmt = moneyFmt;
   ws.getCell(`F${rowIdx}`).font = { bold: true, size: 12 };
 
+  if (statement.carry && (statement.carry.carryIn !== 0 || statement.carry.net < 0)) {
+    rowIdx += 1;
+    ws.getCell(`A${rowIdx}`).value = 'Negative balance carried in from prior months';
+    ws.getCell(`F${rowIdx}`).value = statement.carry.carryIn;
+    ws.getCell(`F${rowIdx}`).numFmt = moneyFmt;
+    ws.getCell(`F${rowIdx}`).font = { color: { argb: 'FFB91C1C' } };
+    rowIdx += 1;
+    ws.getCell(`A${rowIdx}`).value = 'Amount payable this period';
+    ws.getCell(`A${rowIdx}`).font = { bold: true };
+    ws.getCell(`F${rowIdx}`).value = statement.carry.payable;
+    ws.getCell(`F${rowIdx}`).numFmt = moneyFmt;
+    ws.getCell(`F${rowIdx}`).font = { bold: true };
+    if (statement.carry.carryOut < 0) {
+      rowIdx += 1;
+      ws.getCell(`A${rowIdx}`).value = 'Negative balance carried to next period';
+      ws.getCell(`F${rowIdx}`).value = statement.carry.carryOut;
+      ws.getCell(`F${rowIdx}`).numFmt = moneyFmt;
+      ws.getCell(`F${rowIdx}`).font = { color: { argb: 'FFB91C1C' } };
+    }
+  }
+
   rowIdx += 2;
   ws.mergeCells(`A${rowIdx}:G${rowIdx}`);
   ws.getCell(`A${rowIdx}`).value =

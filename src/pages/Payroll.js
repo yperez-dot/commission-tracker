@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { apiFetch, apiDownload } from '../api';
+import { apiFetch, apiDownload, apiUpload } from '../api';
 import LOAStatements from '../components/LOAStatements';
 import { UploadListSearch } from '../components/UploadPageLayout';
 import { formatDate } from '../utils/dateFormat';
@@ -17,6 +17,19 @@ function isYourTeam(name) {
   return YOUR_TEAM.some((t) => String(name || '').toLowerCase().includes(t));
 }
 
+function integrityPayeeName(name) {
+  const n = String(name || '').toLowerCase();
+  if (n.includes('christian munoz') || n.includes('cam insurance solutions corp')) return 'Christian Munoz';
+  if (n.includes('horacio mendieta')) return 'Horacio Mendieta';
+  return null;
+}
+
+const STATEMENT_PAYEE_KEYS = {
+  'Lina Hernandez': 'lina',
+  'Christian Munoz': 'christian-munoz',
+  'Horacio Mendieta': 'horacio-mendieta',
+};
+
 function isAlbaName(name) {
   const n = String(name || '').toLowerCase();
   if (!n.includes('hernandez')) return false;
@@ -24,7 +37,7 @@ function isAlbaName(name) {
 }
 
 function albaPayrollDisplayName(name) {
-  return isAlbaName(name) ? 'Lina Hernandez' : name;
+  return isAlbaName(name) ? 'Lina Hernandez' : (integrityPayeeName(name) || name);
 }
 
 function formatPeriodLabel(p) {
@@ -152,11 +165,148 @@ function generateStatement(agent, records, periodLabel, isBSI) {
   downloadTextFile(filename, csv);
 }
 
-function PayoutRow({ p, isPaid, paidDate, onTogglePaid, onExport, exportLabel, exportDisabled }) {
+const STATEMENT_PAYEE_OPTIONS = [
+  { key: 'lina', label: 'Lina Hernandez' },
+  { key: 'christian-munoz', label: 'Christian Munoz' },
+  { key: 'horacio-mendieta', label: 'Horacio Mendieta' },
+];
+
+/** Issued statements (OliComm) + BSI-received copies for the selected period, with comparison. */
+function StoredStatements({ period, isAdmin }) {
+  const [stored, setStored] = useState([]);
+  const [compare, setCompare] = useState({});
+  const [busy, setBusy] = useState('');
+  const [msg, setMsg] = useState('');
+  const [recv, setRecv] = useState({ payee: 'lina', total: '', file: null });
+
+  async function refresh() {
+    try {
+      const list = await apiFetch(`/payee-statements?period=${encodeURIComponent(period)}`);
+      setStored(list || []);
+      const cmp = {};
+      for (const o of STATEMENT_PAYEE_OPTIONS) {
+        try {
+          cmp[o.key] = await apiFetch(`/payee-statements/compare?payee=${o.key}&period=${encodeURIComponent(period)}`);
+        } catch (e) { cmp[o.key] = null; }
+      }
+      setCompare(cmp);
+    } catch (e) {
+      setMsg(e.message || 'Failed to load stored statements');
+    }
+  }
+  useEffect(() => { refresh(); }, [period]);
+
+  async function issue(payee) {
+    setBusy(payee); setMsg('');
+    try {
+      await apiFetch('/payee-statements/issue', { method: 'POST', body: JSON.stringify({ payee, period }) });
+      await refresh();
+    } catch (e) { setMsg(e.message || 'Issue failed'); }
+    setBusy('');
+  }
+
+  async function logReceived() {
+    if (!recv.file || recv.total === '') { setMsg('Pick the BSI file and type its balance.'); return; }
+    setBusy('recv'); setMsg('');
+    try {
+      const fd = new FormData();
+      fd.append('file', recv.file);
+      fd.append('payee', recv.payee);
+      fd.append('period', period);
+      fd.append('total', recv.total);
+      await apiUpload('/payee-statements/received', fd);
+      setRecv({ payee: recv.payee, total: '', file: null });
+      await refresh();
+    } catch (e) { setMsg(e.message || 'Upload failed'); }
+    setBusy('');
+  }
+
+  async function voidOne(id) {
+    try {
+      await apiFetch(`/payee-statements/${id}/void`, { method: 'POST' });
+      await refresh();
+    } catch (e) { setMsg(e.message || 'Void failed'); }
+  }
+
+  return (
+    <div className="card" style={{ marginTop: 14 }}>
+      <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>Statements — {formatPeriodLabel(period) || period}</div>
+      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 10 }}>
+        Issue a statement to freeze what you paid; log BSI&apos;s copy to compare balances.
+      </div>
+      {msg && <div style={{ color: 'var(--red)', fontSize: 12, marginBottom: 8 }}>{msg}</div>}
+      {STATEMENT_PAYEE_OPTIONS.map((o) => {
+        const c = compare[o.key];
+        const issued = stored.find((s) => s.payee_key === o.key && s.source === 'olicomm' && s.status === 'issued');
+        return (
+          <div key={o.key} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderTop: '0.5px solid var(--border)', flexWrap: 'wrap' }}>
+            <div style={{ width: 140, fontWeight: 500, fontSize: 13 }}>{o.label}</div>
+            <div style={{ fontSize: 12, flex: 1, minWidth: 220 }}>
+              {c ? (
+                <>
+                  OliComm now {fmt(c.liveTotal)}
+                  {c.issuedTotal != null && <> · issued v{issued ? issued.version : '?'} {fmt(c.issuedTotal)}</>}
+                  {c.issuedStale && <span style={{ color: '#B45309', fontWeight: 600 }}> · ⚠ data changed since issued ({fmt(c.staleBy)})</span>}
+                  {c.receivedTotal != null && (
+                    <span style={{ color: c.matchesBsi ? 'var(--green)' : 'var(--red)', fontWeight: 600 }}>
+                      {' '}· BSI {fmt(c.receivedTotal)} {c.matchesBsi ? '✓ matches' : `✗ off by ${fmt(c.varianceVsBsi)}`}
+                    </span>
+                  )}
+                </>
+              ) : '—'}
+            </div>
+            {issued && (
+              <>
+                <button className="btn" style={{ fontSize: 11, padding: '4px 10px' }}
+                  onClick={() => apiDownload(`/payee-statements/${issued.id}/download`, issued.file_name || 'statement.xlsx')}>
+                  Download issued
+                </button>
+                {isAdmin && (
+                  <button className="btn btn-danger" style={{ fontSize: 11, padding: '4px 10px' }} onClick={() => voidOne(issued.id)}>Void</button>
+                )}
+              </>
+            )}
+            {isAdmin && (
+              <button className="btn btn-primary" style={{ fontSize: 11, padding: '4px 12px' }} disabled={busy === o.key} onClick={() => issue(o.key)}>
+                {busy === o.key ? 'Issuing…' : issued ? 'Re-issue' : 'Issue statement'}
+              </button>
+            )}
+          </div>
+        );
+      })}
+      {isAdmin && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 12, paddingTop: 12, borderTop: '0.5px solid var(--border)', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: 12, fontWeight: 500 }}>Log BSI&apos;s copy:</span>
+          <select value={recv.payee} onChange={(e) => setRecv({ ...recv, payee: e.target.value })}>
+            {STATEMENT_PAYEE_OPTIONS.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+          </select>
+          <input type="number" step="0.01" placeholder="BSI balance" value={recv.total} onChange={(e) => setRecv({ ...recv, total: e.target.value })} style={{ width: 120 }} />
+          <input type="file" onChange={(e) => setRecv({ ...recv, file: e.target.files[0] || null })} />
+          <button className="btn" disabled={busy === 'recv'} onClick={logReceived}>{busy === 'recv' ? 'Saving…' : 'Save BSI copy'}</button>
+        </div>
+      )}
+      {stored.filter((s) => s.source === 'bsi_received' && s.status !== 'void').length > 0 && (
+        <div style={{ marginTop: 10, fontSize: 11, color: 'var(--text-muted)' }}>
+          BSI copies:{' '}
+          {stored.filter((s) => s.source === 'bsi_received' && s.status !== 'void').map((s) => (
+            <button key={s.id} className="btn" style={{ fontSize: 11, padding: '2px 8px', marginRight: 6 }}
+              onClick={() => apiDownload(`/payee-statements/${s.id}/download`, s.file_name || 'bsi-statement')}>
+              {s.payee_name.split(' ')[0]} {fmt(s.total)}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PayoutRow({ p, isPaid, paidDate, paidAmount, carry, onTogglePaid, onExport, exportLabel, exportDisabled }) {
   const [expanded, setExpanded] = useState(false);
   const posCount = p.records.filter((r) => recordAmount(r) > 0).length;
   const negCount = p.records.filter((r) => recordAmount(r) < 0).length;
   const negSum = p.records.filter((r) => recordAmount(r) < 0).reduce((s, r) => s + recordAmount(r), 0);
+  const owedNow = carry ? carry.payable : p.total;
+  const hasCarry = !!carry && (carry.carryIn !== 0 || carry.net < 0);
   const isLina = p.agent === 'Lina Hernandez';
   const splitClients = isLina
     ? countSplitDepositClients(p.records, (r) => parseFloat(r.producer_payable || 0))
@@ -206,13 +356,24 @@ function PayoutRow({ p, isPaid, paidDate, onTogglePaid, onExport, exportLabel, e
                 · {splitClients} client{splitClients !== 1 ? 's' : ''} with split deposits
               </span>
             )}
+            {hasCarry && (
+              <span style={{ marginLeft: 8, color: 'var(--red)', fontWeight: 500 }}>
+                · {fmt(carry.periodTotal)} this month{carry.carryIn !== 0 ? ` ${fmt(carry.carryIn)} carried in` : ''}
+                {carry.carryOut < 0 ? ` · ${fmt(carry.carryOut)} carries to next month` : ''}
+              </span>
+            )}
             {isPaid && paidDate && (
               <span style={{ color: 'var(--green)', marginLeft: 8, fontWeight: 500 }}>· Paid {paidDate}</span>
+            )}
+            {isPaid && paidAmount != null && Math.abs(Number(paidAmount) - owedNow) >= 0.01 && (
+              <span style={{ marginLeft: 8, color: '#B45309', fontWeight: 600 }}>
+                · ⚠ Paid {fmt(paidAmount)} but now owed {fmt(owedNow)} ({fmt(owedNow - Number(paidAmount))} difference)
+              </span>
             )}
           </div>
         </div>
         <div style={{ fontWeight: 600, fontSize: 16, color: isPaid ? 'var(--green)' : 'var(--accent-dark)', whiteSpace: 'nowrap' }}>
-          {fmt(p.total)}
+          {fmt(owedNow)}
         </div>
         <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
           <button
@@ -663,6 +824,8 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
   const [loadError, setLoadError] = useState('');
   const [paidStatus, setPaidStatus] = useState({});
   const [paidDates, setPaidDates] = useState({});
+  const [paidAmounts, setPaidAmounts] = useState({});
+  const [carryMap, setCarryMap] = useState({});
   const [history, setHistory] = useState([]);
   const [historySearch, setHistorySearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('unpaid'); // unpaid | paid | all
@@ -687,6 +850,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
     if (!period || period === 'all') {
       setPaidStatus({});
       setPaidDates({});
+      setPaidAmounts({});
       return;
     }
     try {
@@ -695,10 +859,28 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
       );
       setPaidStatus(data.paid || {});
       setPaidDates(data.dates || {});
+      setPaidAmounts(data.amounts || {});
     } catch (e) {
       console.error(e);
       setPaidStatus({});
       setPaidDates({});
+      setPaidAmounts({});
+    }
+  }
+
+  async function downloadPayeeStatement(payee, period) {
+    if (!period) return;
+    setLinaBusy(true);
+    setLinaError('');
+    try {
+      await apiDownload(
+        `/payee-statements/preview-download?payee=${encodeURIComponent(payee)}&period=${encodeURIComponent(period)}`,
+        `${payee}-statement-${period}.xlsx`
+      );
+    } catch (e) {
+      setLinaError(e.message || 'Failed to download statement');
+    } finally {
+      setLinaBusy(false);
     }
   }
 
@@ -784,6 +966,11 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
           const producerPayable = parseFloat(r.producer_payable || 0);
           const isAlba = isAlbaName(r.agent_name);
 
+          // Integrity agents (Munoz incl. CAM, Mendieta): 50% producer share of the override pot
+          if (integrityPayeeName(r.agent_name)) {
+            return producerPayable !== 0 && (classification.includes('override') || classification.includes('chargeback'));
+          }
+
           if (isAlba) {
             return (
               producerPayable !== 0 &&
@@ -810,7 +997,11 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
       for (const r of allRecs) {
         const agent = albaPayrollDisplayName(r.agent_name || 'Unknown');
         const commission = recordAmount(r);
-        const key = `${agent}|${r.client_full_name}|${r.statement_month || r.carrier}|${r.payment_period}|${r.policy_number}|${r.classification}`;
+        // Prefer the row id: the old composite key collapsed legitimately distinct lines
+        // (e.g. a payment and its same-month chargeback with the same classification text).
+        const key = r.id != null
+          ? `id:${r.id}`
+          : `${agent}|${r.client_full_name}|${r.statement_month || r.carrier}|${r.payment_period}|${r.policy_number}|${r.classification}|${recordAmount(r)}`;
         if (seen.has(key)) continue;
         seen.add(key);
         if (!grouped[agent]) grouped[agent] = { agent, records: [], total: 0, hasPositivePayable: false };
@@ -823,7 +1014,8 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
           isAlbaName(r.agent_name) &&
           parseFloat(r.producer_payable || 0) !== 0 &&
           !classification.includes('override');
-        if (isACAPayableCheck || isAlbaRow) grouped[agent].hasPositivePayable = true;
+        const isIntegrityRow = !!integrityPayeeName(r.agent_name);
+        if (isACAPayableCheck || isAlbaRow || isIntegrityRow) grouped[agent].hasPositivePayable = true;
       }
 
       setPayouts(
@@ -832,6 +1024,14 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
           .sort((a, b) => b.total - a.total)
       );
       await loadPaidStatus(period);
+      // Negative balances (chargebacks > earnings) carried in from prior months
+      if (!isBSI && /^\d{6}$/.test(String(period))) {
+        try {
+          setCarryMap(await apiFetch(`/payee-statements/carry?period=${encodeURIComponent(period)}`));
+        } catch (e) { setCarryMap({}); }
+      } else {
+        setCarryMap({});
+      }
     } catch (e) {
       console.error(e);
       setLoadError(e.message || 'Failed to load payouts');
@@ -868,12 +1068,13 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
           period: selectedPeriod,
           agent,
           paid: makingPaid,
-          amount: payout?.total ?? null,
+          amount: payout ? (carryMap[payout.agent] ? carryMap[payout.agent].payable : payout.total) : null,
           paidDate: makingPaid ? paidDate : null,
           agency: user.agency || 'thei',
         }),
       });
       await loadPayoutHistory();
+      await loadPaidStatus(selectedPeriod);
     } catch (e) {
       console.error(e);
       setPaidStatus(prevPaid);
@@ -964,7 +1165,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
   const pageMeta = {
     payroll: {
       title: 'Agent Payouts',
-      sub: 'Pay producers (ACA + Lina). Upload Tailored/Jill and other ACA pay statements under Uploads → Agent Payout Uploads. Marco / Integrity peels stay under House Statements.',
+      sub: 'Pay producers (ACA, Lina, Munoz, Mendieta). Upload Tailored/Jill and other ACA pay statements under Uploads → Agent Payout Uploads. Marco\'s $10 peel stays under House Statements.',
     },
     overrides: {
       title: 'House Statements',
@@ -995,8 +1196,9 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
             <div className="card" style={{ marginBottom: 14 }}>
               <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12, lineHeight: 1.45 }}>
                 Agent production only — ACA producer pay (100% pass-through) and{' '}
-                <strong>Lina Hernandez</strong> (NB / Renewal / Chargeback). Marco (Swan) and Integrity /
-                CAM are under <strong>House Statements</strong>.
+                <strong>Lina Hernandez</strong> (NB / Renewal / Chargeback / HRA), plus Integrity agents{' '}
+                <strong>Christian Munoz</strong> (incl. CAM) and <strong>Horacio Mendieta</strong> (50% producer share).
+                Marco (Swan) is under <strong>House Statements</strong>.
               </div>
               <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
                 <div>
@@ -1163,12 +1365,14 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
                         p={p}
                         isPaid={!!paidStatus[p.agent]}
                         paidDate={paidDates[p.agent]}
+                        paidAmount={paidAmounts[p.agent]}
+                        carry={carryMap[p.agent]}
                         onTogglePaid={togglePaid}
                         exportLabel="Statement"
-                        exportDisabled={p.agent === 'Lina Hernandez' && linaBusy}
+                        exportDisabled={!!STATEMENT_PAYEE_KEYS[p.agent] && linaBusy}
                         onExport={() => {
-                          if (p.agent === 'Lina Hernandez' && selectedPeriod && selectedPeriod !== 'all') {
-                            downloadLinaExcel(selectedPeriod);
+                          if (STATEMENT_PAYEE_KEYS[p.agent] && selectedPeriod && selectedPeriod !== 'all') {
+                            downloadPayeeStatement(STATEMENT_PAYEE_KEYS[p.agent], selectedPeriod);
                           } else {
                             generateStatement(p.agent, p.records, periodLabel, isBSI);
                           }
@@ -1177,6 +1381,9 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
                     ))
                   )}
                 </div>
+                {!isBSI && selectedPeriod && selectedPeriod !== 'all' && (
+                  <StoredStatements period={selectedPeriod} isAdmin={user.role === 'admin'} />
+                )}
               </div>
             )}
           </div>

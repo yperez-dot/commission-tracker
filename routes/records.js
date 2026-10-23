@@ -152,6 +152,9 @@ function buildRecordListFilters(req) {
         OR cr.classification ILIKE '%chargeback%'
         OR cr.classification ILIKE '%commission%'
         OR cr.classification ILIKE '%hra%'
+        OR cr.agent_name ILIKE '%christian munoz%'
+        OR cr.agent_name ILIKE '%horacio mendieta%'
+        OR cr.agent_name ILIKE '%cam insurance solutions corp%'
       )
     )`);
   }
