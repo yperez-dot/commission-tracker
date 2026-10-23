@@ -87,4 +87,59 @@ describe('bsiNonMemberRows', () => {
     expect(withFees.ok).toBe(true);
     expect(withFees.excludedFees).toBe(-480);
   });
+
+  describe('business rule: every HRA row on a BSI statement is paid 100% to Lina', () => {
+    const variants = [
+      // different writing-agent ID and a member with no prior statement history
+      'HA payment for agent ID 1234567 for member MARIA ROJAS MBI *****9XY12 policy number 900000001',
+      'HA payment for agent ID 6661553 for member SALVADOR TREVINO MBI *****1GH03 policy number 951906631',
+    ];
+    it.each(variants)('routes "%s" to Lina by rule, not by member/agent match', (desc) => {
+      for (const amt of [50, -50]) {
+        const r = classifyBsiNonMemberRow({ 'Commission Action': desc, Commission: amt }, { period: '202609' });
+        expect(r.agent).toBe(ALBA_DB_AGENT);
+        expect(r.classification).toBe('HRA/Bonus');
+        expect(r.producerPayable).toBe(amt);
+        expect(r.theiShare).toBe(0);
+        expect(r.bsiShare).toBe(0);
+        expect(r.splitApplies).toBe(false);
+      }
+    });
+
+    it('HRA reversal (-$50) nets against the payment on Lina\'s statement', () => {
+      const rows = [
+        { id: 1, agent_name: 'Alba Hernandez', classification: 'HRA/Bonus', producer_payable: 50, payment_period: '202609', carrier: 'UnitedHealthcare' },
+        { id: 2, agent_name: 'Alba Hernandez', classification: 'HRA/Bonus', producer_payable: -50, payment_period: '202609', carrier: 'UnitedHealthcare' },
+      ];
+      const st = buildLinaCompensationStatement(rows, { period: '202609' });
+      expect(st.lineCount).toBe(2);
+      expect(st.balance).toBe(0);
+    });
+
+    it('override builder Lina (ALBA) statement includes HRA, excludes BSI Fee', () => {
+      const { classifyOverrideLine } = require('../overrideStatementBuilder');
+      const { STATEMENT_TYPES } = require('../payeeSchedules');
+      const hra = classifyOverrideLine(
+        { agent_name: 'Alba Hernandez', classification: 'HRA/Bonus', producer_payable: 50, commission: 50 },
+        STATEMENT_TYPES.ALBA
+      );
+      expect(hra && hra.amount).toBe(50);
+      const fee = classifyOverrideLine(
+        { agent_name: 'Alba Hernandez', classification: 'BSI Fee', producer_payable: 0, commission: -100 },
+        STATEMENT_TYPES.ALBA
+      );
+      expect(fee).toBeNull();
+      // THEI / BSI override statements never pick up HRA or fee rows
+      for (const t of [STATEMENT_TYPES.THEI_OVERRIDE, STATEMENT_TYPES.BSI_OVERRIDE]) {
+        expect(classifyOverrideLine({ agent_name: 'Alba Hernandez', classification: 'HRA/Bonus', producer_payable: 50, commission: 50, thei_share: 0, bsi_share: 0, source: 'BSI' }, t)).toBeNull();
+        expect(classifyOverrideLine({ agent_name: 'Broker Society Insurance', classification: 'BSI Fee', producer_payable: 0, commission: -100, thei_share: 0, bsi_share: 0, source: 'BSI' }, t)).toBeNull();
+      }
+    });
+  });
+
+  it('fee/HRA detection does not match ordinary commission wording', () => {
+    for (const desc of ['New', 'Renewal', 'Chargeback', 'Commission adjustment', 'Health assessment bonus', 'Appointment']) {
+      expect(classifyBsiNonMemberRow({ 'Commission Action': desc, Commission: 25 })).toBeNull();
+    }
+  });
 });

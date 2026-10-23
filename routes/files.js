@@ -5284,6 +5284,18 @@ router.post('/upload-bsi-statement', requireAuth, requireAdmin, upload.single('f
     const commissionSum = records.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0);
     const carriers = [...new Set(records.map(r => r.carrier).filter(Boolean))];
 
+    // Re-check against the carrier summary on the FINAL record set (after dedupe),
+    // so rows collapsed above also show up as a variance.
+    const reconciliation = carrierReconciliation && carrierReconciliation.checked
+      ? reconcileToSummary(records, carrierReconciliation.summaryTotal, carrierReconciliation.excludedFees || 0)
+      : carrierReconciliation;
+    if (reconciliation && reconciliation.checked && !reconciliation.ok) {
+      console.warn(
+        `[BSI-UPLOAD] RECONCILIATION VARIANCE after dedupe: imported $${reconciliation.importedTotal} ` +
+        `vs carrier summary $${reconciliation.summaryTotal} (variance $${reconciliation.variance})`
+      );
+    }
+
     // Insert upload metadata
     const uploadResult = await pool.query(
       `INSERT INTO uploads (filename, original_name, carrier, row_count, commission_sum, uploaded_by, category)
@@ -5387,7 +5399,7 @@ router.post('/upload-bsi-statement', requireAuth, requireAdmin, upload.single('f
       resolvedRenewals,
       resolvedRenewalsCount: resolvedRenewals.length,
       internalDuplicatesRemoved: internalDuplicatesRemoved || 0,
-      reconciliation: carrierReconciliation,
+      reconciliation,
     });
 
   } catch (err) {

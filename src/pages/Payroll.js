@@ -792,7 +792,9 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
                 classification.includes('renewal') ||
                 classification.includes('chargeback') ||
                 classification.includes('agent commission') ||
-                classification === 'commission')
+                classification === 'commission' ||
+                // HRA payments on BSI statements are paid 100% to Lina (no splits)
+                classification.includes('hra'))
             );
           }
 

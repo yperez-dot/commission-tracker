@@ -151,6 +151,7 @@ function buildRecordListFilters(req) {
         OR cr.classification ILIKE '%renewal%'
         OR cr.classification ILIKE '%chargeback%'
         OR cr.classification ILIKE '%commission%'
+        OR cr.classification ILIKE '%hra%'
       )
     )`);
   }
