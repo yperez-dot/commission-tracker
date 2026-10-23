@@ -12,7 +12,12 @@
  *    policy (when no $10 was taken on that policy yet) moves $10 from THEI/BSI (5 + 5) to
  *    Marco; a stored chargeback on such a policy reverses Marco's share in proportion.
  *
- * Never touches a row that already has a different split, Lina, Integrity, HRA or fees.
+ * 3. Lina chargebacks (kind 'lina_cb_prorate'): re-split in proportion to the original
+ *    payment(s) on the carrier + policy (Lina's cumulative producer payable / cumulative gross,
+ *    the rest THEI/BSI in the original THEI/BSI proportion) when the stored split differs.
+ *    No original found → left as is.
+ *
+ * Steps 1–2 never touch a row that already has a different split, Lina, Integrity, HRA or fees.
  */
 
 const {
@@ -32,6 +37,13 @@ const {
   policyKey,
 } = require('./bsiBookAttribution');
 const { isTheiWritingAgent } = require('./payeeSchedules');
+const {
+  isLinaChargeback,
+  linaPolicyKey,
+  linaProportionalChargeback,
+  proportionalNote,
+  loadLinaOriginalSales,
+} = require('./linaChargebackProrate');
 
 const GUARD_NOTE = 'No THEI/BSI split stored for this line — review';
 const num = (v) => (v == null || v === '' ? 0 : Number(v) || 0);
@@ -171,12 +183,38 @@ function planBsiHouseSplitBackfill(rows, history = {}) {
     push(r, 'marco_fix', before);
   }
 
-  const summary = { rows: updates.length, byKind: {}, theiDelta: 0, bsiDelta: 0, marcoDelta: 0 };
+  // 3. Lina chargebacks → proportional to the original payment(s) on the policy.
+  const linaOriginals = history.linaOriginals instanceof Map ? history.linaOriginals : new Map();
+  const LINA_STALE_NOTES = [/^Chargeback override prorated/, /^Alba rate review/, /^Lina chargeback taken back in proportion/];
+  for (const r of recs.filter((x) => isLinaChargeback(x))) {
+    const orig = linaOriginals.get(linaPolicyKey(r));
+    const split = linaProportionalChargeback(r.commission, orig);
+    if (!split) continue;
+    const before = snapshot(r);
+    const same = Math.abs(before.producerPayable - split.producerPayable) < 0.005 &&
+      Math.abs(before.theiShare - split.theiShare) < 0.005 &&
+      Math.abs(before.bsiShare - split.bsiShare) < 0.005;
+    if (same) continue;
+    r.producerPayable = split.producerPayable;
+    r.theiShare = split.theiShare;
+    r.bsiShare = split.bsiShare;
+    r.subAgentOverride = before.subAgentOverride;
+    r.grossCommission = r.commission;
+    r.splitApplies = false;
+    r.mga = [...String(r.mga || '').split(' | ').filter((p) => p && !LINA_STALE_NOTES.some((re) => re.test(p))),
+      proportionalNote(orig)].join(' | ');
+    push(r, 'lina_cb_prorate', before);
+  }
+
+  const summary = { rows: updates.length, byKind: {}, theiDelta: 0, bsiDelta: 0, marcoDelta: 0, linaDelta: 0 };
   for (const u of updates) {
     summary.byKind[u.kind] = (summary.byKind[u.kind] || 0) + 1;
     summary.theiDelta = round2(summary.theiDelta + u.after.theiShare - u.before.theiShare);
     summary.bsiDelta = round2(summary.bsiDelta + u.after.bsiShare - u.before.bsiShare);
     summary.marcoDelta = round2(summary.marcoDelta + u.after.subAgentOverride - u.before.subAgentOverride);
+    if (u.kind === 'lina_cb_prorate') {
+      summary.linaDelta = round2(summary.linaDelta + u.after.producerPayable - u.before.producerPayable);
+    }
   }
   return { updates, summary };
 }
@@ -227,6 +265,10 @@ async function runBsiHouseSplitBackfill(pool, opts = {}) {
     params
   );
   const history = await loadMarcoHistory(pool);
+  history.linaOriginals = await loadLinaOriginalSales(
+    pool,
+    sel.rows.filter((r) => isLinaChargeback(r)).map((r) => r.policy_number)
+  );
   const plan = planBsiHouseSplitBackfill(sel.rows, history);
   if (!opts.apply) return { dryRun: true, ...plan };
 

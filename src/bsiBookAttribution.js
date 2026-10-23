@@ -32,6 +32,13 @@ const {
 const { calculateAlbaOverrideSplit } = require('./overrideRateEngine');
 const { getCMSCap2026 } = require('./cmsFmvCaps2026');
 const {
+  linaPolicyKey,
+  isLinaChargeback,
+  addLinaOriginal,
+  linaProportionalChargeback,
+  proportionalNote,
+} = require('./linaChargebackProrate');
+const {
   rowNeedsBsiOverrideShareFill,
   splitFullOverridePot,
   splitIntegrityChargeback,
@@ -564,6 +571,14 @@ function applyBsiBookAgentProduction(records, opts = {}) {
   );
   const deferredIntegrityChargebacks = [];
   let houseFilled = 0;
+  // opts.linaOriginalSales: Map carrier|policy → { gross, producer, thei, bsi } of Lina's
+  // stored positive lines (see linaChargebackProrate). Copied; the caller's map is untouched.
+  const linaOriginalSales = new Map();
+  if (opts.linaOriginalSales instanceof Map) {
+    for (const [k, v] of opts.linaOriginalSales) linaOriginalSales.set(k, { ...v });
+  }
+  const deferredLinaChargebacks = [];
+  let linaProrated = 0;
 
   let remapped = 0;
   let peeled = 0;
@@ -693,6 +708,12 @@ function applyBsiBookAgentProduction(records, opts = {}) {
       if (st) r.memberState = st;
     }
 
+    // Lina chargebacks: remember the row as it was, so the proportional re-split after the
+    // loop (original payment found) replaces the rate-peel result and its notes.
+    if (commission < 0 && isLinaChargeback(r)) {
+      deferredLinaChargebacks.push({ r, mga: r.mga, anomaly: r.anomaly });
+    }
+
     const peel = peelAlbaProduction(r, commission);
     r.producerPayable = peel.producerPayable;
     r.theiShare = peel.theiShare;
@@ -730,6 +751,23 @@ function applyBsiBookAgentProduction(records, opts = {}) {
     }
   }
 
+  // Lina chargebacks in proportion to the original payment(s) on the policy (earlier uploads
+  // and this file). No original found → the rate-peel result above stays.
+  for (const r of records) addLinaOriginal(linaOriginalSales, r);
+  for (const { r, mga, anomaly } of deferredLinaChargebacks) {
+    const orig = linaOriginalSales.get(linaPolicyKey(r));
+    const split = linaProportionalChargeback(parseFloat(r.commission) || 0, orig);
+    if (!split) continue;
+    r.producerPayable = split.producerPayable;
+    r.theiShare = split.theiShare;
+    r.bsiShare = split.bsiShare;
+    r.grossCommission = parseFloat(r.commission) || 0;
+    r.mga = mga;
+    r.anomaly = anomaly;
+    addNote(r, proportionalNote(orig));
+    linaProrated += 1;
+  }
+
   for (const r of deferredIntegrityChargebacks) {
     const commission = parseFloat(r.commission) || 0;
     const pk = String(r.policyNumber || r.policy_number || '').trim().toLowerCase();
@@ -762,7 +800,7 @@ function applyBsiBookAgentProduction(records, opts = {}) {
 
   console.log(
     `[BSI-ATTR] Alba peeled=${peeled}, needsReview=${review}, BSI-house→Alba remapped=${remapped}, ` +
-    `house 50/50 filled=${houseFilled}, unsplit flagged=${unsplit}`
+    `house 50/50 filled=${houseFilled}, Lina chargebacks prorated=${linaProrated}, unsplit flagged=${unsplit}`
   );
   return records;
 }
