@@ -18,7 +18,7 @@ import {
 } from '../components/UploadPageLayout';
 import { commissionUploadExportPath, exportUploadFile } from '../utils/exportUpload';
 import { statementSearchText } from '../utils/statementDisplayName';
-import StatementFileName from '../components/StatementFileName';
+import { bsiUploadTitle } from '../bsiStatementTitle';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -32,6 +32,7 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
   const [dragOver, setDragOver] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
   const [exportingId, setExportingId] = useState(null);
+  const [renamingId, setRenamingId] = useState(null);
   const [routeConfirm, setRouteConfirm] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterCarrier, setFilterCarrier] = useState('');
@@ -149,6 +150,30 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
     }
   }
 
+  async function renameUpload(u) {
+    const current = bsiUploadTitle(u);
+    const next = window.prompt(
+      'Statement title (standard: BSI · Carrier · YYYY-MM).\nLeave blank to reset to the automatic title.',
+      current
+    );
+    if (next === null) return;
+    setRenamingId(u.id);
+    setError('');
+    try {
+      const r = await apiFetch(`/files/uploads/${u.id}/title`, {
+        method: 'PATCH',
+        body: JSON.stringify({ title: next }),
+      });
+      setUploads((prev) => prev.map((x) => (x.id === u.id
+        ? { ...x, display_title: r.display_title, display_title_source: r.display_title_source }
+        : x)));
+    } catch (e) {
+      setError(e.message || 'Rename failed');
+    } finally {
+      setRenamingId(null);
+    }
+  }
+
   async function exportUpload(u) {
     if (!u?.id) return;
     setExportingId(u.id);
@@ -156,7 +181,7 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
     try {
       await exportUploadFile({
         path: commissionUploadExportPath(u.id, 'xlsx'),
-        fallbackName: `${String(u.original_name || 'bsi_statement').replace(/\.[^.]+$/, '')}_export.xlsx`,
+        fallbackName: `${String(bsiUploadTitle(u) || u.original_name || 'bsi_statement').replace(/\.[^.]+$/, '').replace(/\s*·\s*/g, '_').replace(/\s+/g, '_')}_export.xlsx`,
       });
     } catch (e) {
       setError(e.message || 'Export failed');
@@ -173,6 +198,7 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
     .filter((u) => {
       if (q) {
         const hay = [
+          bsiUploadTitle(u),
           statementSearchText(u.original_name, { category: 'bsi_statement' }),
           u.uploaded_by_name,
           u.carrier,
@@ -192,6 +218,8 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
           return new Date(a.uploaded_at) - new Date(b.uploaded_at);
         case 'carrier':
           return (a.carrier || '').localeCompare(b.carrier || '');
+        case 'title':
+          return bsiUploadTitle(a).localeCompare(bsiUploadTitle(b));
         case 'date_desc':
         default:
           return new Date(b.uploaded_at) - new Date(a.uploaded_at);
@@ -244,6 +272,7 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
 
         {uploadResult && (
           <UploadAlert kind="success" title="Upload complete">
+            {uploadResult.title && <div style={{ fontWeight: 600 }}>{uploadResult.title}</div>}
             File: {uploadResult.filename}
             {(uploadResult.rowCount != null || uploadResult.recordsImported != null) && (
               <div style={{ marginTop: 4 }}>
@@ -292,6 +321,7 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
               { value: 'date_desc', label: '↓ Newest first' },
               { value: 'date_asc', label: '↑ Oldest first' },
               { value: 'carrier', label: 'Sort by carrier' },
+              { value: 'title', label: 'Sort by title (carrier, month)' },
             ]}
             showClear={!!(searchQuery || filterCarrier)}
             onClear={() => { setSearchQuery(''); setFilterCarrier(''); }}
@@ -328,12 +358,22 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
               background: 'none', border: 'none', padding: 0, cursor: 'pointer',
               fontWeight: 600, fontSize: 13, color: 'var(--text)', textAlign: 'left',
             }}>
-              <StatementFileName filename={u.original_name} category="bsi_statement" />
+              <BsiTitle upload={u} />
             </button>
           )}
           renderMeta={(u) => `${u.row_count || 0} records · ${fmt(u.commission_sum)} · ${u.carrier || '—'} · ${formatDateTime(u.uploaded_at)} · by ${u.uploaded_by_name || `User ${u.uploaded_by}`}`}
           renderActions={(u) => (
             <>
+              {user.role === 'admin' && (
+                <button
+                  onClick={() => renameUpload(u)}
+                  disabled={renamingId === u.id}
+                  title="Edit title"
+                  style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 10px', fontSize: 11, cursor: 'pointer', color: 'var(--text)' }}
+                >
+                  {renamingId === u.id ? '...' : 'Rename'}
+                </button>
+              )}
               <button
                 onClick={() => exportUpload(u)}
                 disabled={exportingId === u.id}
@@ -356,7 +396,7 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
       <UploadRecordPreviewModal
         open={!!viewUpload}
         onClose={() => setViewUpload(null)}
-        title={viewUpload ? <StatementFileName filename={viewUpload.original_name} category="bsi_statement" /> : ''}
+        title={viewUpload ? <BsiTitle upload={viewUpload} /> : ''}
         subtitle={viewUpload ? `${viewUpload.row_count || 0} records · ${fmt(viewUpload.commission_sum)} · ${viewUpload.carrier || '—'} · ${formatDateTime(viewUpload.uploaded_at)}` : ''}
         loading={viewLoading}
         rows={viewRecords}
@@ -389,6 +429,22 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
           </>
         )}
       />
+    </div>
+  );
+}
+
+/** Standardized title on top, original filename underneath. */
+function BsiTitle({ upload }) {
+  const title = bsiUploadTitle(upload);
+  const name = String(upload?.original_name || '');
+  return (
+    <div>
+      <div style={{ fontWeight: 600 }}>{title || name || '—'}</div>
+      {name && name !== title && (
+        <div style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 400, marginTop: 2, wordBreak: 'break-word' }}>
+          {name}
+        </div>
+      )}
     </div>
   );
 }
