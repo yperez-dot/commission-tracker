@@ -20,6 +20,7 @@ const {
   isMarcoAgent,
   isAlbaHernandez,
   isAlbaAgentCommission,
+  isAlbaHra,
   isAgencyOverride,
   isAcaNhpHouseRow,
   isNhpSource,
@@ -204,7 +205,8 @@ function classifyOverrideLine(row, statementType) {
     case STATEMENT_TYPES.ALBA: {
       // Lina (Alba) is paid AGENT commissions only — not Agency Override remittance.
       if (!isAlbaHernandez(row.agent_name)) return null;
-      if (!isAlbaAgentCommission(row.classification)) return null;
+      // HRA payments are also paid 100% to Lina; BSI Fee rows never are.
+      if (!isAlbaAgentCommission(row.classification) && !isAlbaHra(row.classification)) return null;
       const amount = num(row.producer_payable);
       if (amount === 0) return null;
       return {

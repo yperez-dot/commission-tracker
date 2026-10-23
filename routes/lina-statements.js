@@ -30,6 +30,7 @@ async function fetchLinaRows(pool, period) {
       OR LOWER(COALESCE(classification,'')) LIKE '%chargeback%'
       OR LOWER(COALESCE(classification,'')) LIKE '%agent commission%'
       OR LOWER(TRIM(COALESCE(classification,''))) = 'commission'
+      OR LOWER(COALESCE(classification,'')) LIKE '%hra%'
     )`;
   if (period && period !== 'all') {
     params.push(period);

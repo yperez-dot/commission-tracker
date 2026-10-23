@@ -255,6 +255,14 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
                 Statement commission: ${Number(uploadResult.commissionSum).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
               </div>
             )}
+            {uploadResult.reconciliation && uploadResult.reconciliation.checked && (
+              <div style={{ marginTop: 4, fontWeight: uploadResult.reconciliation.ok ? 400 : 600, color: uploadResult.reconciliation.ok ? undefined : '#b91c1c' }}>
+                {uploadResult.reconciliation.ok
+                  ? `Ties to carrier Commission Summary ($${Number(uploadResult.reconciliation.summaryTotal).toFixed(2)})` +
+                    (Number(uploadResult.reconciliation.excludedFees) ? ` — BSI licensing fees of $${Number(uploadResult.reconciliation.excludedFees).toFixed(2)} not imported` : '')
+                  : `Does NOT tie to carrier Commission Summary: imported $${Number(uploadResult.reconciliation.importedTotal).toFixed(2)} vs summary $${Number(uploadResult.reconciliation.summaryTotal).toFixed(2)} (variance $${Number(uploadResult.reconciliation.variance).toFixed(2)}). Some rows were dropped or misread — check before using this upload.`}
+              </div>
+            )}
             {uploadResult.internalDuplicatesRemoved > 0 && (
               <div style={{ marginTop: 4 }}>
                 Skipped {uploadResult.internalDuplicatesRemoved} exact duplicate line

@@ -1494,6 +1494,11 @@ const {
 
 const { applyBsiBookAgentProduction } = require('../src/bsiBookAttribution');
 const {
+  classifyBsiNonMemberRow,
+  sumSummaryActivity,
+  reconcileToSummary,
+} = require('../src/bsiNonMemberRows');
+const {
   resolveNhpPaymentPeriod,
 } = require('../src/nhpPeriod');
 const { parseNhpWorkbook } = require('../src/nhpStatementParse');
@@ -5031,12 +5036,18 @@ function parseBSICarrierStatementRows(wb, filename) {
       }
     }
   }
+  // Numeric month fallback: "BSI UHC 09.2026.xlsx" / "BSI_UHC_09-2026.xlsx" → 202609
+  if (!statementPeriod) {
+    const mm = filename.match(/(?:^|[^\d])(0[1-9]|1[0-2])[._\- ](20\d{2})(?!\d)/);
+    if (mm) statementPeriod = mm[2] + mm[1];
+  }
   console.log(`[BSI-CARRIER] Period: ${statementPeriod || 'unknown'} from "${filename}"`);
 
   // Use "Commission Transactions" sheet; fall back to first sheet
   const sheetName = wb.SheetNames.find(s => s.toLowerCase().includes('commission trans')) || wb.SheetNames[0];
   const ws = wb.Sheets[sheetName];
   const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
+  let excludedFeesTotal = 0;
   console.log(`[BSI-CARRIER] Sheet "${sheetName}": ${rows.length} rows`);
 
   // Summary row keywords to skip
@@ -5048,7 +5059,22 @@ function parseBSICarrierStatementRows(wb, filename) {
     const writingAgentRaw = String(row['Writing Agent Name'] || '').trim();
     const client = String(row['Member Name'] || '').trim();
 
-    if (!client || !isValidClientName(client)) continue;
+    // Blank Member Name: HA (HRA) payments → Lina; appointment/licensing fees → BSI Fee
+    // (never counted in splits or agent statements). Previously these were silently dropped.
+    if (!client) {
+      const nonMember = classifyBsiNonMemberRow(row, {
+        period: statementPeriod || String(row['Payment Period'] || '').trim(),
+      });
+      if (nonMember && nonMember.classification === 'BSI Fee') {
+        // BSI licensing/appointment fees are NOT imported (not overrides, not Lina, not THEI).
+        // Their total is kept only so the upload still ties to the carrier summary.
+        excludedFeesTotal += nonMember.commission;
+      } else if (nonMember) {
+        records.push(nonMember);
+      }
+      continue;
+    }
+    if (!isValidClientName(client)) continue;
     if (SKIP_KEYWORDS.some(kw => client.toLowerCase().includes(kw))) continue;
 
     const commissionRaw = row['Commission'];
@@ -5136,6 +5162,26 @@ function parseBSICarrierStatementRows(wb, filename) {
     console.log(`[BSI-CARRIER] Held Transactions: ${heldCount} records ingested (flagged as "Held")`);
   }
 
+  // Tie the import to the carrier's own Commission Summary (Commission Activity column)
+  try {
+    const summarySheet = wb.SheetNames.find(s => s.toLowerCase().includes('commission summary'));
+    const summaryRows = summarySheet
+      ? XLSX.utils.sheet_to_json(wb.Sheets[summarySheet], { defval: '', raw: true })
+      : [];
+    const rec = reconcileToSummary(records, sumSummaryActivity(summaryRows), excludedFeesTotal);
+    records.reconciliation = rec;
+    if (rec.checked && !rec.ok) {
+      console.warn(
+        `[BSI-CARRIER] RECONCILIATION VARIANCE: imported $${rec.importedTotal} vs carrier summary ` +
+        `$${rec.summaryTotal} (variance $${rec.variance}) — rows were dropped or misparsed`
+      );
+    } else if (rec.checked) {
+      console.log(`[BSI-CARRIER] Reconciled to carrier summary: $${rec.summaryTotal}`);
+    }
+  } catch (e) {
+    console.warn('[BSI-CARRIER] Summary reconciliation skipped:', e.message);
+  }
+
   console.log(`[BSI-CARRIER] Total: ${records.length} records`);
   return records;
 }
@@ -5216,6 +5262,7 @@ router.post('/upload-bsi-statement', requireAuth, requireAdmin, upload.single('f
     // Alba/Lina only: remap house/NPN/name agent-production → Alba, then peel
     // carrier×state override rates into producer_payable (Lina pay) + THEI/BSI shares.
     // Agency Override / Held stay under Broker Society; other agents unchanged.
+    const carrierReconciliation = records.reconciliation || null;
     applyBsiBookAgentProduction(records);
 
     const beforeInternal = records.length;
@@ -5236,6 +5283,18 @@ router.post('/upload-bsi-statement', requireAuth, requireAdmin, upload.single('f
 
     const commissionSum = records.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0);
     const carriers = [...new Set(records.map(r => r.carrier).filter(Boolean))];
+
+    // Re-check against the carrier summary on the FINAL record set (after dedupe),
+    // so rows collapsed above also show up as a variance.
+    const reconciliation = carrierReconciliation && carrierReconciliation.checked
+      ? reconcileToSummary(records, carrierReconciliation.summaryTotal, carrierReconciliation.excludedFees || 0)
+      : carrierReconciliation;
+    if (reconciliation && reconciliation.checked && !reconciliation.ok) {
+      console.warn(
+        `[BSI-UPLOAD] RECONCILIATION VARIANCE after dedupe: imported $${reconciliation.importedTotal} ` +
+        `vs carrier summary $${reconciliation.summaryTotal} (variance $${reconciliation.variance})`
+      );
+    }
 
     // Insert upload metadata
     const uploadResult = await pool.query(
@@ -5340,6 +5399,7 @@ router.post('/upload-bsi-statement', requireAuth, requireAdmin, upload.single('f
       resolvedRenewals,
       resolvedRenewalsCount: resolvedRenewals.length,
       internalDuplicatesRemoved: internalDuplicatesRemoved || 0,
+      reconciliation,
     });
 
   } catch (err) {
