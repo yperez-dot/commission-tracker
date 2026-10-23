@@ -454,15 +454,39 @@ describe('Integrity BSI UHC rate table (plan year 2026 = $82.50 on a full $150 l
     }
   });
 
-  it('chargeback with no original found → 50% of the line, flagged', () => {
+  it('chargeback with no original, plan year 2026 → fixed $82.50 share of the line, flagged', () => {
     const records = [
-      { ...uhc, agent: 'Horacio Mendieta', policyNumber: 'TEST-N1', classification: 'Chargeback', commission: -150 },
+      { ...uhc, agent: 'Horacio Mendieta', policyNumber: 'TEST-Y1', classification: 'Chargeback', commission: -150, effectiveDate: '04/01/2026' },
+      { ...uhc, agent: 'Cam Insurance Solutions Corp', policyNumber: 'TEST-Y2', classification: 'Chargeback', commission: -75, effectiveDate: '04/01/2026' },
+      { ...uhc, agent: 'Christian Munoz', policyNumber: 'TEST-Y3', classification: 'Chargeback', commission: -62.5, effectiveDate: '04/01/2026' },
     ];
     applyBsiBookAgentProduction(records);
-    expect(records[0].producerPayable).toBe(-75);
-    expect(records[0].theiShare).toBe(-37.5);
+    expect(records[0].producerPayable).toBe(-82.5);
     expect(records[0].bsiShare).toBe(-37.5);
-    expect(records[0].mga).toMatch(/not found/);
+    expect(records[0].theiShare).toBe(-30);
+    expect(records[1].producerPayable).toBe(-41.25);
+    expect(records[1].bsiShare).toBe(-18.75);
+    expect(records[1].theiShare).toBe(-15);
+    expect(records[2].producerPayable).toBe(-34.38);
+    for (const r of records) {
+      expect(r.producerPayable + r.theiShare + r.bsiShare).toBeCloseTo(r.commission, 2);
+      expect(Math.abs(r.producerPayable)).toBeLessThanOrEqual(Math.abs(r.commission));
+      expect(r.mga).toMatch(/not found/);
+    }
+  });
+
+  it('chargeback with no original and no plan-year entry → 50% of the line, flagged', () => {
+    const records = [
+      { ...uhc, agent: 'Horacio Mendieta', policyNumber: 'TEST-N1', classification: 'Chargeback', commission: -150 },
+      { ...uhc, agent: 'Horacio Mendieta', policyNumber: 'TEST-N2', classification: 'Chargeback', commission: -150, effectiveDate: '12/01/2025' },
+    ];
+    applyBsiBookAgentProduction(records);
+    for (const r of records) {
+      expect(r.producerPayable).toBe(-75);
+      expect(r.theiShare).toBe(-37.5);
+      expect(r.bsiShare).toBe(-37.5);
+      expect(r.mga).toMatch(/not found/);
+    }
   });
 
   it('other writing agents never get the Integrity rate', () => {

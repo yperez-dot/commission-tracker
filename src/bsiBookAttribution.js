@@ -320,24 +320,38 @@ function integrityBsiUhcNewSale(r, commission) {
 /**
  * Integrity chargeback on a BSI UHC feed: take back exactly what was paid on the policy
  * (same proportion when the chargeback is only part of the original line). BSI gives
- * back 25% of the line, THEI the rest. Original not found → 50% of the line, flagged.
+ * back 25% of the line, THEI the rest. Original not found:
+ *  - plan year with a table entry (2026) → the fixed rate's share of the line
+ *    (line / 150 × 82.50, capped at the line), flagged — Joselyn's June 2026 true-ups
+ *    brought full 2026 UHC sales to $82.50
+ *  - no table entry → 50% of the line, flagged
  */
 function integrityBsiUhcChargeback(r, commission, original) {
   const abs = Math.abs(commission);
-  if (original && original.gross > 0 && original.producer > 0) {
-    const back = Math.min(original.producer, round2(original.producer * (abs / original.gross)));
-    const producerPayable = -round2(back);
+  const chargebackSplit = (backAbs) => {
+    const producerPayable = -round2(backAbs);
     const bsiShare = round2(commission * 0.25);
     return {
-      split: {
-        grossCommission: commission,
-        producerPayable,
-        bsiShare,
-        theiShare: round2(commission - producerPayable - bsiShare),
-        subAgentOverride: 0,
-        splitApplies: false,
-      },
-      note: null,
+      grossCommission: commission,
+      producerPayable,
+      bsiShare,
+      theiShare: round2(commission - producerPayable - bsiShare),
+      subAgentOverride: 0,
+      splitApplies: false,
+    };
+  };
+  if (original && original.gross > 0 && original.producer > 0) {
+    const back = Math.min(original.producer, round2(original.producer * (abs / original.gross)));
+    return { split: chargebackSplit(back), note: null };
+  }
+  const fixed = integrityBsiUhcFixedCut(
+    r.agent, r.carrier, r.effectiveDate || (r.raw || {})['Original Effective Date']
+  );
+  if (fixed != null) {
+    const back = Math.min(abs, round2((abs / INTEGRITY_BSI_UHC_FIXED.fullPot) * fixed));
+    return {
+      split: chargebackSplit(back),
+      note: `Integrity chargeback: original sale not found — took back the fixed-rate share ($${back.toFixed(2)} of $${fixed.toFixed(2)}), please verify`,
     };
   }
   return {
