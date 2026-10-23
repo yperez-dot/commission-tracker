@@ -61,9 +61,7 @@ cd src && npm start
 
 ## Users + access
 
-Currently seeded:
-- **Yahoska** (admin) — `yahoska@healthexps.com`
-- **Katy** (admin) — `katy@healthexps.com`
+Currently seeded: **Yahoska** (admin) and **Katy** (admin).
 
 Other users (agents, ACA pass-through producers, partner agency principals) can be added via the **User Accounts** page once they're invited.
 
@@ -82,7 +80,13 @@ Set the same value on:
 1. OliComm Railway → `OLICOMM_API_KEY` (optional if the hash is stored in `api_keys`)
 2. Igor V2 Railway → `OLICOMM_API_KEY`
 
-The key is treated as an **admin** principal (`igor@healthexps.com`) so `/api/bob`, `/api/records`, and `/api/auth/me` work. Never commit the live key.
+The key is treated as an **admin** service principal so `/api/bob`, `/api/records`, and `/api/auth/me` work. Never commit the live key.
+
+### Two-factor sign-in (required)
+
+Every person signs in with email + password **and** a 6-digit code from an authenticator app.
+API keys (`OLICOMM_API_KEY`, `api_keys` rows) are not affected. Setup, env vars and recovery:
+see [`docs/SECURITY_2FA.md`](docs/SECURITY_2FA.md).
 
 ## License
 

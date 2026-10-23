@@ -2,29 +2,27 @@
 'use strict';
 
 /**
- * Mint a JWT for local/ops use.
- * Requires JWT_SECRET in the environment — never hardcode secrets.
+ * Mint a session JWT for local/ops use (bypasses the sign-in screen).
+ * Requires JWT_SECRET, USER_ID and EMAIL in the environment — never hardcode secrets or real emails.
+ * The token is only accepted for a user who has two-factor turned on and whose
+ * session_version matches (SESSION_VERSION, default 0). Prefer OLICOMM_API_KEY for automations.
  *
- *   JWT_SECRET=... node generate_token.js
- *   JWT_SECRET=... EMAIL=yperez@healthexps.com ROLE=admin node generate_token.js
+ *   JWT_SECRET=... USER_ID=1 EMAIL=admin@example.com ROLE=admin node generate_token.js
  */
-const jwt = require('jsonwebtoken');
+const { signAccessToken } = require('./src/authTokens');
 
-const JWT_SECRET = process.env.JWT_SECRET;
-if (!JWT_SECRET) {
-  console.error('ERROR: JWT_SECRET env var is required');
+if (!process.env.JWT_SECRET || !process.env.USER_ID || !process.env.EMAIL) {
+  console.error('ERROR: JWT_SECRET, USER_ID and EMAIL env vars are required');
   process.exit(1);
 }
 
-const email = process.env.EMAIL || 'yperez@healthexps.com';
-const role = process.env.ROLE || 'admin';
-const name = process.env.NAME || 'Yahoska Perez';
-const id = parseInt(process.env.USER_ID || '1', 10);
-
-const token = jwt.sign(
-  { id, email, role, name, agency: process.env.AGENCY || '' },
-  JWT_SECRET,
-  { expiresIn: process.env.EXPIRES || '24h' }
-);
+const token = signAccessToken({
+  id: parseInt(process.env.USER_ID, 10),
+  email: process.env.EMAIL,
+  role: process.env.ROLE || 'admin',
+  name: process.env.NAME || '',
+  agency: process.env.AGENCY || '',
+  session_version: parseInt(process.env.SESSION_VERSION || '0', 10),
+});
 
 console.log('Bearer ' + token);

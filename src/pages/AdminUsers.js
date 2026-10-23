@@ -12,6 +12,8 @@ export default function AdminUsers({ user }) {
   const [status, setStatus] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(null);
+  const [events, setEvents] = useState(null);
+  const [showEvents, setShowEvents] = useState(false);
 
   useEffect(() => { loadUsers(); }, []);
 
@@ -64,6 +66,28 @@ export default function AdminUsers({ user }) {
       });
       alert('Password updated.');
     } catch(e) { alert('Error: ' + e.message); }
+  }
+
+  async function resetMfa(u) {
+    if (!window.confirm(`Reset two-factor for ${u.name}? They will be signed out and must set up their authenticator again at next sign-in.`)) return;
+    try {
+      await apiFetch(`/auth/users/${u.id}/mfa/reset`, { method: 'POST', body: JSON.stringify({}) });
+      setStatus(`✓ Two-factor reset for ${u.name}. They'll set it up again at next sign-in.`);
+      loadUsers();
+      if (showEvents) loadEvents();
+    } catch(e) { setStatus('Error: ' + e.message); }
+  }
+
+  async function loadEvents() {
+    try {
+      setEvents(await apiFetch('/auth/events?limit=200'));
+    } catch(e) { setStatus('Error: ' + e.message); }
+  }
+
+  function toggleEvents() {
+    const next = !showEvents;
+    setShowEvents(next);
+    if (next) loadEvents();
   }
 
   if (user.role !== 'admin') {
@@ -131,7 +155,7 @@ export default function AdminUsers({ user }) {
                 </div>
                 <div>
                   <div className="form-label">Password</div>
-                  <input className="form-input" type="password" placeholder="Temporary password"
+                  <input className="form-input" type="password" placeholder="Temporary password (12+ characters)"
                     value={form.password} onChange={e=>setForm(f=>({...f,password:e.target.value}))} />
                 </div>
                 <div>
@@ -177,6 +201,7 @@ export default function AdminUsers({ user }) {
                     <th>Email</th>
                     <th>Agency</th>
                     <th>Role</th>
+                    <th>2FA</th>
                     <th>Created</th>
                     <th></th>
                   </tr>
@@ -195,6 +220,11 @@ export default function AdminUsers({ user }) {
                           borderRadius:4, padding:'2px 8px', fontSize:11, fontWeight:500
                         }}>{u.role}</span>
                       </td>
+                      <td style={{fontSize:11}}>
+                        {u.mfa_enabled
+                          ? <span style={{color:'var(--success, #2e7d32)'}} title={u.mfa_enabled_at ? `Since ${formatDateTime(u.mfa_enabled_at)}` : ''}>✓ On</span>
+                          : <span style={{color:'var(--text-muted)'}}>Not set up</span>}
+                      </td>
                       <td style={{fontSize:11,color:'var(--text-muted)'}}>
                         {formatDateTime(u.created_at)}
                       </td>
@@ -204,6 +234,12 @@ export default function AdminUsers({ user }) {
                             style={{background:'none',border:'0.5px solid var(--border)',borderRadius:6,padding:'3px 10px',fontSize:11,cursor:'pointer',color:'var(--text)'}}>
                             Reset pw
                           </button>
+                          {u.id !== user.id && u.mfa_enabled && (
+                            <button onClick={()=>resetMfa(u)}
+                              style={{background:'none',border:'0.5px solid var(--border)',borderRadius:6,padding:'3px 10px',fontSize:11,cursor:'pointer',color:'var(--text)'}}>
+                              Reset 2FA
+                            </button>
+                          )}
                           {u.id !== user.id && (
                             <button onClick={()=>setConfirmDelete(u)} className="btn btn-danger" style={{fontSize:11,padding:'3px 10px'}}>
                               Delete
@@ -215,6 +251,36 @@ export default function AdminUsers({ user }) {
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+        </div>
+
+        <div style={{marginTop:20}}>
+          <button className="btn" onClick={toggleEvents}>{showEvents ? 'Hide security log' : 'Show security log'}</button>
+          {showEvents && (
+            <div className="card" style={{padding:0,marginTop:10}}>
+              {!events ? (
+                <div className="empty-state"><div className="empty-title" style={{color:'var(--text-muted)'}}>Loading...</div></div>
+              ) : events.length === 0 ? (
+                <div className="empty-state"><div className="empty-title">No sign-in events yet</div></div>
+              ) : (
+                <div className="table-wrap">
+                  <table>
+                    <thead><tr><th>When</th><th>Event</th><th>User</th><th>By</th><th>IP</th></tr></thead>
+                    <tbody>
+                      {events.map(ev => (
+                        <tr key={ev.id}>
+                          <td style={{fontSize:11,color:'var(--text-muted)'}}>{formatDateTime(ev.created_at)}</td>
+                          <td style={{fontSize:12,color:/failed|locked|reset/.test(ev.event_type) ? 'var(--danger, #c62828)' : 'var(--text)'}}>{ev.event_type.replace(/_/g,' ')}</td>
+                          <td style={{fontSize:12}}>{ev.user_name || ev.email || '—'}</td>
+                          <td style={{fontSize:12,color:'var(--text-muted)'}}>{ev.actor_name || '—'}</td>
+                          <td style={{fontSize:11,color:'var(--text-muted)'}}>{ev.ip || '—'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           )}
         </div>
