@@ -65,6 +65,8 @@ app.use('/api/loa-statements', require('./routes/loa-statements'));
 app.use('/api/override-statements', require('./routes/override-statements'));
 app.use('/api/lina-statements', require('./routes/lina-statements'));
 app.use('/api/payee-statements', require('./routes/payee-statements'));
+app.use('/api/payroll-close', require('./routes/payroll-close'));
+app.use('/api/change-log', require('./routes/change-log'));
 app.use('/api/manual-payments', require('./routes/manual-payments'));
 app.use('/api/admin-fixes', require('./routes/admin-fixes'));
 app.use('/api', require('./routes/edit-commission')); // Manual edit with audit trail

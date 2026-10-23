@@ -166,6 +166,8 @@ export default function App() {
         { id: 'payroll-overrides', label: 'House Statements' },
         { id: 'payroll-loa', label: 'LOA' },
         { id: 'payroll-history', label: 'Payment History' },
+        { id: 'payroll-close', label: 'Month Close' },
+        { id: 'payroll-changelog', label: 'Change Log' },
         ...(user.role === 'admin' ? [{ id: 'payroll-adp', label: 'ADP / 1099' }] : []),
       ]
     },
@@ -199,6 +201,8 @@ export default function App() {
     'payroll-overrides': <Payroll key={`${agencyView}-overrides`} user={effectiveUser} initialTab="overrides" onNavigate={navigate} />,
     'payroll-loa': <Payroll key={`${agencyView}-loa`} user={effectiveUser} initialTab="loa" onNavigate={navigate} />,
     'payroll-history': <Payroll key={`${agencyView}-history`} user={effectiveUser} initialTab="history" onNavigate={navigate} />,
+    'payroll-close': <Payroll key={`${agencyView}-close`} user={effectiveUser} initialTab="close" onNavigate={navigate} />,
+    'payroll-changelog': <Payroll key={`${agencyView}-changelog`} user={effectiveUser} initialTab="changelog" onNavigate={navigate} />,
     'payroll-adp': <AdpExport key={`${agencyView}-adp`} user={effectiveUser} />,
     users: <AdminUsers key={agencyView} user={effectiveUser} />
   };

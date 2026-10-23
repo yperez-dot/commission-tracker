@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { getPool } = require('../db/database');
 const { requireAuth, requireAdmin } = require('./auth');
+const { logChange } = require('./change-log');
 
 /**
  * Manual Edit Commission Record with Audit Trail
@@ -145,6 +146,14 @@ router.put('/commission/:id/edit', requireAuth, requireAdmin, async (req, res) =
     }
 
     await client.query('COMMIT');
+
+    await logChange(pool, req, {
+      type: 'record.edited', entityType: 'commission_record', entityId: id,
+      period: record.payment_period || null, payee: record.agent_name || null,
+      summary: `Edited record #${id} (${record.carrier || ''} ${record.payment_period || ''}): ` +
+        auditEntries.map((e) => `${e.field} ${e.oldValue} → ${e.newValue}`).join('; '),
+      details: { uploadId: record.upload_id, changes: auditEntries, notes: notes || null, editedBy },
+    });
 
     res.json({
       success: true,
@@ -298,6 +307,13 @@ router.post('/commission/:id/revert', requireAuth, requireAdmin, async (req, res
     }
 
     await client.query('COMMIT');
+
+    await logChange(pool, req, {
+      type: 'record.reverted', entityType: 'commission_record', entityId: id,
+      period: record.payment_period || null, payee: record.agent_name || null,
+      summary: `Reverted record #${id} to its original parsed values`,
+      details: { uploadId: record.upload_id, changes: auditEntries, notes: notes || null, editedBy },
+    });
 
     res.json({
       success: true,

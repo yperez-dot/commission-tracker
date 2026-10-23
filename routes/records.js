@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { getPool } = require('../db/database');
 const { requireAuth } = require('./auth');
+const { logChange } = require('./change-log');
 const { normalizeAllRecords, normalizeAgentName } = require('./normalize');
 const { normalizeCarrierKey } = require('../src/matchingNormalize.cjs');
 const { clientNameKey, clientNameKeySql } = require('../src/clientNameKey');
@@ -475,7 +476,15 @@ router.get('/client-history', requireAuth, async (req, res) => {
 router.delete('/:id', requireAuth, requireAdmin, async (req, res) => {
   try {
     const pool = getPool();
-    await pool.query('DELETE FROM commission_records WHERE id = $1', [req.params.id]);
+    const gone = await pool.query('DELETE FROM commission_records WHERE id = $1 RETURNING id, upload_id, agent_name, carrier, payment_period, classification, commission, producer_payable', [req.params.id]);
+    if (gone.rows.length) {
+      const r = gone.rows[0];
+      await logChange(pool, req, {
+        type: 'record.deleted', entityType: 'commission_record', entityId: r.id, period: r.payment_period, payee: r.agent_name,
+        summary: `Deleted record #${r.id} (${r.carrier || ''} ${r.payment_period || ''} ${r.classification || ''}, commission ${Number(r.commission || 0).toFixed(2)})`,
+        details: r,
+      });
+    }
     res.json({ success: true });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
@@ -490,11 +499,18 @@ router.post('/bulk-delete', requireAuth, requireAdmin, async (req, res) => {
       }
       await pool.query('DELETE FROM commission_records');
       await pool.query('DELETE FROM uploads');
+      await logChange(pool, req, { type: 'record.bulk_deleted', entityType: 'commission_record', summary: 'Deleted ALL commission records and uploads', details: { deleteAll: true } });
       res.json({ success: true, deleted: 'all', message: 'All records deleted' });
       return;
     }
     if (ids && ids.length > 0) {
-      await pool.query('DELETE FROM commission_records WHERE id = ANY($1)', [ids]);
+      const gone = await pool.query('DELETE FROM commission_records WHERE id = ANY($1) RETURNING id, payment_period, commission', [ids]);
+      const periods = [...new Set(gone.rows.map((r) => r.payment_period).filter(Boolean))];
+      await logChange(pool, req, {
+        type: 'record.bulk_deleted', entityType: 'commission_record', period: periods.length === 1 ? periods[0] : null,
+        summary: `Bulk-deleted ${gone.rowCount} record(s) by id (commission ${gone.rows.reduce((s, r) => s + Number(r.commission || 0), 0).toFixed(2)})`,
+        details: { ids: gone.rows.map((r) => r.id), periods },
+      });
       res.json({ success: true, deleted: ids.length });
       return;
     }
@@ -505,6 +521,11 @@ router.post('/bulk-delete', requireAuth, requireAdmin, async (req, res) => {
     if (classification) { where.push(`classification = $${idx++}`); params.push(classification); }
     if (!where.length) return res.status(400).json({ error: 'No filters specified' });
     const result = await pool.query(`DELETE FROM commission_records WHERE ${where.join(' AND ')}`, params);
+    await logChange(pool, req, {
+      type: 'record.bulk_deleted', entityType: 'commission_record', period: period || null, payee: agent || null,
+      summary: `Bulk-deleted ${result.rowCount} record(s) where ${[agent && 'agent=' + agent, carrier && 'carrier=' + carrier, period && 'period=' + period, classification && 'class=' + classification].filter(Boolean).join(', ')}`,
+      details: { agent: agent || null, carrier: carrier || null, period: period || null, classification: classification || null, deleted: result.rowCount },
+    });
     res.json({ success: true, deleted: result.rowCount });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
