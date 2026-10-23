@@ -5426,7 +5426,18 @@ router.post('/upload-bsi-statement', requireAuth, requireAdmin, upload.single('f
     const carrierReconciliation = records.reconciliation || null;
     const integrityOriginalSales = await loadIntegrityBsiUhcOriginalSales(pool);
     const { deductedPolicies, marcoOriginals } = await loadMarcoHouseHistory(pool);
-    applyBsiBookAgentProduction(records, { integrityOriginalSales, deductedPolicies, marcoOriginals });
+    // Lina's stored original payments for this file's chargeback policies (proportional take-back).
+    let linaOriginalSales = new Map();
+    try {
+      const { loadLinaOriginalSales } = require('../src/linaChargebackProrate');
+      linaOriginalSales = await loadLinaOriginalSales(
+        pool,
+        records.filter((r) => (parseFloat(r.commission) || 0) < 0).map((r) => r.policyNumber)
+      );
+    } catch (e) {
+      console.warn('[BSI-UPLOAD] Could not load Lina original payments:', e.message);
+    }
+    applyBsiBookAgentProduction(records, { integrityOriginalSales, deductedPolicies, marcoOriginals, linaOriginalSales });
 
     const beforeInternal = records.length;
     const collapsed = collapseInternalDuplicates(records);

@@ -1058,7 +1058,9 @@ router.get('/agency-summary', requireAuth, requireAdmin, async (req, res) => {
 // Scoped: ?uploadId=123 (comma list ok) and/or ?period=YYYYMM — never all months.
 // Fills only rows with dollars and NO split for other agents / THEI-written lines
 // (50/50, Marco $10 for Swan agents), and moves $10 to Marco on Swan rows the old name
-// matching missed (stored plain 50/50, no $10 taken on the policy yet). ?apply=true writes.
+// matching missed (stored plain 50/50, no $10 taken on the policy yet), and re-splits Lina
+// chargebacks in proportion to the original payment(s) on the policy ('lina_cb_prorate').
+// ?apply=true writes.
 router.post('/backfill-bsi-house-splits', requireAuth, requireAdmin, async (req, res) => {
   try {
     const pool = getPool();
@@ -1072,7 +1074,7 @@ router.post('/backfill-bsi-house-splits', requireAuth, requireAdmin, async (req,
       await logChange(pool, req, {
         type: 'record.bsi_house_split_backfill', entityType: 'commission_record', period,
         summary: `BSI house split backfill: ${result.applied} row(s) updated ` +
-          `(THEI ${result.summary.theiDelta.toFixed(2)}, BSI ${result.summary.bsiDelta.toFixed(2)}, Marco ${result.summary.marcoDelta.toFixed(2)})`,
+          `(THEI ${result.summary.theiDelta.toFixed(2)}, BSI ${result.summary.bsiDelta.toFixed(2)}, Marco ${result.summary.marcoDelta.toFixed(2)}, Lina ${result.summary.linaDelta.toFixed(2)})`,
         details: { uploadIds, period, summary: result.summary, ids: result.updates.map((u) => u.id) },
       });
     }
@@ -1157,10 +1159,14 @@ router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, r
     // BSI upload rows carry their split from upload time (Lina peel, Integrity rules, other
     // agents' 50/50 house split with Marco $10, chargebacks). Never recompute them here, even
     // with force=true, so a re-run can't double or wipe a stored split.
+    // Unsplit BSI agent-production lines (New Business / Renewal / Chargeback / Agent Commission)
+    // are filled by POST /backfill-bsi-house-splits (house 50/50, Marco $10), never here — the
+    // generic rules below would pay them 100% to the producer.
     const keepBsiSplit = `NOT (
         UPPER(COALESCE(cr.source, '')) IN ('BSI', 'BSI_PAYEE')
         AND (COALESCE(cr.thei_share, 0) <> 0 OR COALESCE(cr.bsi_share, 0) <> 0
-          OR COALESCE(cr.producer_payable, 0) <> 0 OR COALESCE(cr.sub_agent_override, 0) <> 0)
+          OR COALESCE(cr.producer_payable, 0) <> 0 OR COALESCE(cr.sub_agent_override, 0) <> 0
+          OR LOWER(TRIM(COALESCE(cr.classification, ''))) IN ('new business', 'renewal', 'chargeback', 'agent commission'))
       )`;
     const whereClause = force ? `WHERE ${keepBsiSplit}` : `WHERE cr.source IS NULL AND ${keepBsiSplit}`;
 
