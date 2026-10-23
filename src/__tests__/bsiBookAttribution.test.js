@@ -199,3 +199,71 @@ describe('bsiBookAttribution', () => {
     expect(peel.theiShare).toBe(0);
   });
 });
+
+describe('chargeback override proration (UHC, Alba book)', () => {
+  const { chargebackUnearnedFactor } = require('../bsiBookAttribution');
+
+  // Tejada, Brijido — Sept 2026 UHC chargeback of -105.50 on a 01/01/2026 policy termed 09/30/2026.
+  // BSI's statement charges Lina -86.75; the $18.75 difference is the $75 renewal override × 3/12.
+  const tejada = (extraRaw = {}, commission = -105.5) => ({
+    agent: 'Broker Society Insurance',
+    classification: 'Chargeback',
+    commission,
+    carrier: 'UnitedHealthcare',
+    memberState: 'FL',
+    effectiveDate: '01/01/2026',
+    raw: {
+      'Comp Type': 'R',
+      'Commission Action': 'New Chargeback',
+      'Member State': 'FL',
+      Contract: 'H1045',
+      PBP: '001',
+      'Original Effective Date': '01/01/2026',
+      'Term Date': '09/30/2026',
+      ...extraRaw,
+    },
+  });
+
+  it('prorates the override by unearned months: Lina -86.75, override -18.75 split THEI/BSI', () => {
+    const records = [tejada()];
+    applyBsiBookAgentProduction(records);
+    const r = records[0];
+    expect(r.agent).toBe(ALBA_DB_AGENT);
+    expect(r.producerPayable).toBe(-86.75);
+    expect(r.theiShare + r.bsiShare).toBeCloseTo(-18.75, 2);
+    expect(r.producerPayable + r.theiShare + r.bsiShare).toBeCloseTo(-105.5, 2);
+    expect(r.mga).toMatch(/prorated 3\/12/);
+  });
+
+  it('without a Term Date keeps the previous full-override behavior', () => {
+    const records = [tejada({ 'Term Date': '' })];
+    applyBsiBookAgentProduction(records);
+    expect(records[0].producerPayable).toBe(-30.5);
+    expect(records[0].theiShare + records[0].bsiShare).toBeCloseTo(-75, 2);
+  });
+
+  it('leaves positive commissions untouched', () => {
+    const records = [tejada({}, 323.5)];
+    records[0].classification = 'New Business';
+    records[0].raw['Commission Action'] = 'New';
+    records[0].raw['Comp Type'] = 'N';
+    applyBsiBookAgentProduction(records);
+    expect(records[0].producerPayable).toBe(173.5);
+    expect(records[0].theiShare).toBe(75);
+  });
+
+  it('computes earned/unearned months from effective and term dates', () => {
+    expect(chargebackUnearnedFactor(tejada())).toEqual({ earnedMonths: 9, unearnedMonths: 3, factor: 0.25 });
+    // Feb eff, Aug term → 7 earned, 5 unearned (matches the -62.50 chargeback on a $150 override)
+    const f = chargebackUnearnedFactor({ raw: { 'Original Effective Date': '02/01/2026', 'Term Date': '08/31/2026' } });
+    expect(f.unearnedMonths).toBe(5);
+    // Excel serial dates work too (46023 = 01/01/2026, 46295 = 09/30/2026)
+    expect(
+      chargebackUnearnedFactor({ raw: { 'Original Effective Date': 46023, 'Term Date': 46295 } }).unearnedMonths
+    ).toBe(3);
+    // older than a policy year or never effective → no proration
+    expect(chargebackUnearnedFactor({ raw: { 'Original Effective Date': '10/01/2024', 'Term Date': '09/30/2026' } })).toBeNull();
+    expect(chargebackUnearnedFactor({ raw: { 'Original Effective Date': '10/01/2026', 'Term Date': '09/30/2026' } })).toBeNull();
+    expect(chargebackUnearnedFactor({ raw: {} })).toBeNull();
+  });
+});

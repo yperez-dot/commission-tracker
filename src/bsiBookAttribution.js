@@ -149,6 +149,41 @@ function round2(n) {
   return Math.round(Number(n) * 100) / 100;
 }
 
+
+/** Parse MM/DD/YYYY, YYYY-MM-DD, Date, or Excel serial → {y, m} (month 1-12) or null. */
+function parseYearMonth(v) {
+  if (v == null || v === '') return null;
+  if (v instanceof Date && !isNaN(v)) return { y: v.getUTCFullYear(), m: v.getUTCMonth() + 1 };
+  if (typeof v === 'number' && v > 20000 && v < 80000) {
+    const d = new Date(Math.round((v - 25569) * 86400 * 1000)); // Excel serial → UTC date
+    return { y: d.getUTCFullYear(), m: d.getUTCMonth() + 1 };
+  }
+  const t = String(v).trim();
+  let m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m) return { y: parseInt(m[3], 10), m: parseInt(m[1], 10) };
+  m = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return { y: parseInt(m[1], 10), m: parseInt(m[2], 10) };
+  return null;
+}
+
+/**
+ * UHC chargebacks give back only the UNEARNED part of the override:
+ *   override_chargeback = annual_override × unearned_months / 12
+ * earned months = effective month through term month, inclusive
+ * (eff 01/2026, term 09/30/2026 → 9 earned, 3 unearned → 25%).
+ * Returns null when there is no Term Date or the policy year can't be determined
+ * (e.g. earned > 12) — the caller then keeps the full-override behavior.
+ */
+function chargebackUnearnedFactor(record) {
+  const raw = record.raw || {};
+  const term = parseYearMonth(raw['Term Date']);
+  const eff = parseYearMonth(raw['Original Effective Date'] != null ? raw['Original Effective Date'] : record.effectiveDate);
+  if (!term || !eff) return null;
+  const earned = (term.y - eff.y) * 12 + (term.m - eff.m) + 1;
+  if (earned < 1 || earned > 12) return null;
+  return { earnedMonths: earned, unearnedMonths: 12 - earned, factor: (12 - earned) / 12 };
+}
+
 /**
  * Peel Alba house production with the carrier×state override rate table.
  * Chargebacks use the absolute rate then re-apply the commission sign.
@@ -186,10 +221,33 @@ function peelAlbaProduction(record, commission) {
     };
   }
 
-  const totalOverride = round2(sign * (split.totalOverride || 0));
-  const theiShare = round2(sign * (split.theiShare || 0));
-  const bsiShare = round2(sign * (split.bsiShare || 0));
-  const producerPayable = round2(sign * (split.albaComp || 0));
+  let totalOverride = round2(sign * (split.totalOverride || 0));
+  let theiShare = round2(sign * (split.theiShare || 0));
+  let bsiShare = round2(sign * (split.bsiShare || 0));
+  let producerPayable = round2(sign * (split.albaComp || 0));
+
+  // Chargebacks: only the unearned share of the (annual) override comes back, so
+  // prorate it; Lina keeps the rest of the chargeback. Skipped when the engine did
+  // not peel an override (shorted/underpaid rows) or there is no Term Date.
+  let chargebackProration = null;
+  if (sign < 0 && split.totalOverride > 0) {
+    const pr = chargebackUnearnedFactor(record);
+    const peelsCleanly = Math.abs((split.albaComp || 0) + split.totalOverride - abs) < 0.01;
+    if (pr && peelsCleanly) {
+      const scaledAbs = round2(split.totalOverride * pr.factor);
+      const theiAbs = round2(scaledAbs / 2);
+      totalOverride = -scaledAbs;
+      theiShare = -theiAbs;
+      bsiShare = round2(-scaledAbs + theiAbs);
+      producerPayable = round2(-(abs - scaledAbs));
+      chargebackProration = {
+        earnedMonths: pr.earnedMonths,
+        unearnedMonths: pr.unearnedMonths,
+        fullOverride: split.totalOverride,
+        proratedOverride: scaledAbs,
+      };
+    }
+  }
 
   return {
     ok: true,
@@ -202,6 +260,7 @@ function peelAlbaProduction(record, commission) {
     stateGroup: split.stateGroup,
     yearType: split.yearType,
     carrier: split.carrier || input.carrier,
+    chargebackProration,
   };
 }
 
@@ -283,6 +342,13 @@ function applyBsiBookAgentProduction(records) {
     r.payee = r.payee || 'BSI';
     r.source = r.source || 'BSI';
 
+    if (peel.chargebackProration) {
+      const cp = peel.chargebackProration;
+      r.mga = [r.mga, `Chargeback override prorated ${cp.unearnedMonths}/12 ($${cp.fullOverride} → $${cp.proratedOverride})`]
+        .filter(Boolean)
+        .join(' | ');
+    }
+
     if (!peel.ok) {
       review += 1;
       r.anomaly = true;
@@ -314,4 +380,5 @@ module.exports = {
   extractPlanId,
   buildAlbaRateInput,
   peelAlbaProduction,
+  chargebackUnearnedFactor,
 };
