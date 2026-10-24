@@ -50,12 +50,17 @@ function noteFor(type) {
   return 'THEI 50% of Agency Override pot + Alba rate-peeled production shares. Not agent commissions.';
 }
 
-function amountHeaderFor(type) {
-  if (type === STATEMENT_TYPES.BSI_OVERRIDE) return 'Payable (BSI share)';
-  if (type === STATEMENT_TYPES.MARCO) return 'Payable (Marco $10)';
-  if (type === STATEMENT_TYPES.INTEGRITY) return 'Payable (producer 50%)';
-  return 'Payable (THEI share)';
-}
+/** Line-table headers — same layout on every house statement (THEI, BSI, Marco, Integrity). */
+const LINE_HEADERS = [
+  'Policy #',
+  'Client',
+  'Carrier',
+  'Writing Agent',
+  'Effective',
+  'Type',
+  'Total Override',
+  'Payable',
+];
 
 function footerFor(type) {
   if (type === STATEMENT_TYPES.MARCO) {
@@ -86,10 +91,8 @@ async function buildOverrideExcelWorkbook(bundle, payeeStatement, opts = {}) {
     { key: 'agent', width: 28 },
     { key: 'effective', width: 14 },
     { key: 'type', width: 16 },
-    { key: 'pot', width: 12 },
-    { key: 'share', width: 10 },
+    { key: 'pot', width: 14 },
     { key: 'amount', width: 14 },
-    { key: 'schedule', width: 22 },
   ];
 
   const titleStyle = { font: { bold: true, size: 14, color: { argb: 'FF1A1A1A' } } };
@@ -102,11 +105,11 @@ async function buildOverrideExcelWorkbook(bundle, payeeStatement, opts = {}) {
   const moneyFmt = '$#,##0.00;($#,##0.00)';
   const reportDate = opts.reportDate || formatReportDate(opts.now || new Date());
 
-  ws.mergeCells('A1:J1');
+  ws.mergeCells('A1:H1');
   ws.getCell('A1').value = titleFor(bundle.type);
   ws.getCell('A1').style = titleStyle;
 
-  ws.mergeCells('A2:J2');
+  ws.mergeCells('A2:H2');
   ws.getCell('A2').value = `${bundle.periodLabel} Statement`;
   ws.getCell('A2').style = { font: { bold: true, size: 12 } };
 
@@ -126,23 +129,9 @@ async function buildOverrideExcelWorkbook(bundle, payeeStatement, opts = {}) {
   ws.getCell('A7').style = mutedStyle;
   ws.getCell('B7').value = bundle.periodLabel;
 
-  ws.mergeCells('A9:J9');
-  ws.getCell('A9').value = noteFor(bundle.type);
-  ws.getCell('A9').style = mutedStyle;
-
-  const headerRow = ws.getRow(11);
-  [
-    'Policy #',
-    'Client',
-    'Carrier',
-    'Writing Agent',
-    'Effective',
-    'Type',
-    'Override Pot',
-    'Share %',
-    amountHeaderFor(bundle.type),
-    'Schedule',
-  ].forEach((h, i) => {
+  // No explanatory subtitle line: the title + header block says which statement this is.
+  const headerRow = ws.getRow(9);
+  LINE_HEADERS.forEach((h, i) => {
     const cell = headerRow.getCell(i + 1);
     cell.value = h;
     cell.style = headerStyle;
@@ -154,7 +143,7 @@ async function buildOverrideExcelWorkbook(bundle, payeeStatement, opts = {}) {
     return String(a.policy_number || '').localeCompare(String(b.policy_number || ''));
   });
 
-  let rowIdx = 12;
+  let rowIdx = 10;
   for (const l of sorted) {
     const row = ws.getRow(rowIdx);
     row.getCell(1).value = l.policy_number || '';
@@ -165,13 +154,11 @@ async function buildOverrideExcelWorkbook(bundle, payeeStatement, opts = {}) {
     row.getCell(6).value = l.classification || '';
     row.getCell(7).value = round2(l.override_pot);
     row.getCell(7).numFmt = moneyFmt;
-    row.getCell(8).value = l.share_label || '';
-    row.getCell(9).value = round2(l.amount);
-    row.getCell(9).numFmt = moneyFmt;
+    row.getCell(8).value = round2(l.amount);
+    row.getCell(8).numFmt = moneyFmt;
     if (l.amount < 0) {
-      row.getCell(9).font = { color: { argb: 'FFB91C1C' } };
+      row.getCell(8).font = { color: { argb: 'FFB91C1C' } };
     }
-    row.getCell(10).value = l.schedule || '';
     rowIdx += 1;
   }
 
@@ -182,24 +169,24 @@ async function buildOverrideExcelWorkbook(bundle, payeeStatement, opts = {}) {
 
   ws.getCell(`A${rowIdx}`).value = 'Gross';
   ws.getCell(`A${rowIdx}`).font = { bold: true };
-  ws.getCell(`I${rowIdx}`).value = gross;
-  ws.getCell(`I${rowIdx}`).numFmt = moneyFmt;
+  ws.getCell(`H${rowIdx}`).value = gross;
+  ws.getCell(`H${rowIdx}`).numFmt = moneyFmt;
   rowIdx += 1;
 
   ws.getCell(`A${rowIdx}`).value = 'Chargebacks / negatives';
   ws.getCell(`A${rowIdx}`).font = { bold: true };
-  ws.getCell(`I${rowIdx}`).value = chargebacks;
-  ws.getCell(`I${rowIdx}`).numFmt = moneyFmt;
+  ws.getCell(`H${rowIdx}`).value = chargebacks;
+  ws.getCell(`H${rowIdx}`).numFmt = moneyFmt;
   rowIdx += 1;
 
   ws.getCell(`A${rowIdx}`).value = 'Balance due payee';
   ws.getCell(`A${rowIdx}`).font = { bold: true, size: 12 };
-  ws.getCell(`I${rowIdx}`).value = balance;
-  ws.getCell(`I${rowIdx}`).numFmt = moneyFmt;
-  ws.getCell(`I${rowIdx}`).font = { bold: true, size: 12 };
+  ws.getCell(`H${rowIdx}`).value = balance;
+  ws.getCell(`H${rowIdx}`).numFmt = moneyFmt;
+  ws.getCell(`H${rowIdx}`).font = { bold: true, size: 12 };
 
   rowIdx += 2;
-  ws.mergeCells(`A${rowIdx}:J${rowIdx}`);
+  ws.mergeCells(`A${rowIdx}:H${rowIdx}`);
   ws.getCell(`A${rowIdx}`).value = footerFor(bundle.type);
   ws.getCell(`A${rowIdx}`).style = mutedStyle;
 
@@ -251,4 +238,5 @@ module.exports = {
   formatReportDate,
   titleFor,
   noteFor,
+  LINE_HEADERS,
 };
