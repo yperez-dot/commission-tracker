@@ -1,4 +1,5 @@
 'use strict';
+const { periodToMmYyyy } = require('./periodFormat');
 
 /**
  * Override statement builder — assemble payee statements from commission_records.
@@ -46,11 +47,7 @@ function formatPeriodLabel(p) {
   const cycle = formatNhpCyclePeriodLabel(p);
   if (cycle && cycle !== String(p).trim()) return cycle;
   const s = String(p).trim();
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  if (/^\d{6}$/.test(s)) {
-    const m = parseInt(s.slice(4, 6), 10);
-    if (m >= 1 && m <= 12) return `${months[m - 1]} ${s.slice(0, 4)}`;
-  }
+  if (/^\d{6}$/.test(s)) return periodToMmYyyy(s) || s;
   return s;
 }
 
@@ -443,7 +440,7 @@ function statementToCsv(bundle, payeeStatement) {
         l.carrier,
         l.writing_agent,
         formatEffectiveDate(l.effective_date),
-        l.payment_period,
+        periodToMmYyyy(l.payment_period) || l.payment_period,
         l.classification,
         fmtMoney(l.override_pot),
         l.share_label,
@@ -463,7 +460,7 @@ function statementToCsv(bundle, payeeStatement) {
           l.carrier,
           l.writing_agent,
           formatEffectiveDate(l.effective_date),
-          l.payment_period,
+          periodToMmYyyy(l.payment_period) || l.payment_period,
           l.classification,
           fmtMoney(l.override_pot),
           l.share_label,
@@ -520,7 +517,7 @@ function breakdownToCsv(bundle) {
         l.carrier,
         l.agent_name,
         formatEffectiveDate(l.effective_date),
-        l.payment_period,
+        periodToMmYyyy(l.payment_period) || l.payment_period,
         fmtMoney(l.override_pot),
         fmtMoney(l.thei_share),
         l.thei_pct,

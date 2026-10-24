@@ -8,12 +8,13 @@
 /**
  * Standard titles for Carrier→BSI statement uploads (BSI Statements page).
  *
- *   BSI · Humana · 09-2026
- *   BSI · Humana · 11-2025 to 12-2025   (statement spans more than one month)
+ *   BSI · Humana · 09.2026
+ *   BSI · Humana · 11.2025 to 12.2025   (statement spans more than one month)
  *
- * Titles show month first (MM-YYYY). Internally (start/end, sorting, notes
- * math) months stay "YYYY-MM". Older auto titles stored as "YYYY-MM" are
- * still read and get flipped to MM-YYYY on display (normalizeAutoTitle).
+ * Titles show month first (MM.YYYY, the app-wide month format). Internally
+ * (start/end, sorting, notes math) months stay "YYYY-MM". Older auto titles
+ * stored as "YYYY-MM" or "MM-YYYY" are still read and shown as MM.YYYY
+ * (normalizeAutoTitle); convertTitleDates() rewrites MM-YYYY inside any title.
  *
  * Month source, most reliable first:
  *   1. statement period in the parsed rows (commission_records.payment_period)
@@ -140,8 +141,8 @@ function monthsFromText(text) {
     const b = ym(yearFrom2(m[4]), m[3]);
     if (a && b) return monthIndex(a) <= monthIndex(b) ? { start: a, end: b } : { start: b, end: a };
   }
-  // MM-YYYY to MM-YYYY (current title range format)
-  m = s.match(/(?:^|[^0-9])(0[1-9]|1[0-2])-(20\d{2})\s*(?:to|–|—|_to_)\s*(0[1-9]|1[0-2])-(20\d{2})(?![0-9])/);
+  // MM.YYYY to MM.YYYY (current title range format) / MM-YYYY to MM-YYYY (older)
+  m = s.match(/(?:^|[^0-9])(0[1-9]|1[0-2])[-.](20\d{2})\s*(?:to|–|—|_to_)\s*(0[1-9]|1[0-2])[-.](20\d{2})(?![0-9])/);
   if (m) {
     const a = ym(m[2], m[1]);
     const b = ym(m[4], m[3]);
@@ -242,10 +243,10 @@ function monthsFromPeriods(periods) {
   };
 }
 
-/** "2026-09" → "09-2026" (month first, as shown in titles). */
+/** "2026-09" → "09.2026" (month first, MM.YYYY as shown everywhere). */
 function formatMonth(ymStr) {
   const m = String(ymStr || '').match(/^(20\d{2})-(0[1-9]|1[0-2])$/);
-  return m ? `${m[2]}-${m[1]}` : String(ymStr || '');
+  return m ? `${m[2]}.${m[1]}` : String(ymStr || '');
 }
 
 function formatRange(start, end) {
@@ -254,19 +255,38 @@ function formatRange(start, end) {
 }
 
 const OLD_AUTO_TITLE_RE = /^(BSI · .+ · )(20\d{2})-(0[1-9]|1[0-2])(?: to (20\d{2})-(0[1-9]|1[0-2]))?$/;
+const MMYYYY_AUTO_TITLE_RE = /^(BSI · .+ · )(0[1-9]|1[0-2])-(20\d{2})(?: to (0[1-9]|1[0-2])-(20\d{2}))?$/;
 
 /**
- * Flip an older auto title ("BSI · UHC · 2026-09", "… · 2025-11 to 2025-12")
- * to the month-first form ("BSI · UHC · 09-2026"). Anything else is returned
- * unchanged. Callers must not apply this to manual (user-renamed) titles.
+ * Show an older auto title in the current form: "BSI · UHC · 2026-09" and
+ * "BSI · UHC · 09-2026" (and "… to …" ranges) → "BSI · UHC · 09.2026".
+ * Anything else is returned unchanged. Callers must not apply this to manual
+ * (user-renamed) titles — use convertTitleDates for those.
  */
 function normalizeAutoTitle(title) {
   const s = String(title == null ? '' : title);
-  const m = s.match(OLD_AUTO_TITLE_RE);
-  if (!m) return s;
-  const start = `${m[2]}-${m[3]}`;
-  const end = m[4] ? `${m[4]}-${m[5]}` : start;
-  return `${m[1]}${formatRange(start, end)}`;
+  let m = s.match(OLD_AUTO_TITLE_RE);
+  if (m) {
+    const start = `${m[2]}-${m[3]}`;
+    const end = m[4] ? `${m[4]}-${m[5]}` : start;
+    return `${m[1]}${formatRange(start, end)}`;
+  }
+  m = s.match(MMYYYY_AUTO_TITLE_RE);
+  if (m) {
+    const start = `${m[3]}-${m[2]}`;
+    const end = m[4] ? `${m[5]}-${m[4]}` : start;
+    return `${m[1]}${formatRange(start, end)}`;
+  }
+  return s;
+}
+
+/**
+ * Rewrite only the month tokens of any title (manual ones too): "MM-YYYY" → "MM.YYYY".
+ * Full dates (MM-DD-YYYY, YYYY-MM-DD), other numbers and every other character are left alone.
+ */
+function convertTitleDates(title) {
+  const s = String(title == null ? '' : title);
+  return s.replace(/(^|[^0-9.\-\/])(0[1-9]|1[0-2])-(20\d{2})(?![0-9]|-\d)/g, (all, pre, mm, yyyy) => `${pre}${mm}.${yyyy}`);
 }
 
 function rangesEqual(a, b) {
@@ -374,13 +394,13 @@ function buildBsiStatementTitle(input = {}) {
 
 /**
  * Title to show in the list: stored title wins, else computed from
- * filename/carrier. Stored auto titles in the old YYYY-MM form are shown
- * month first; manual titles are shown exactly as typed.
+ * filename/carrier. Stored auto titles in older forms are shown as MM.YYYY;
+ * manual titles are shown as typed except MM-YYYY month tokens (→ MM.YYYY).
  */
 function bsiUploadTitle(upload) {
   if (!upload) return '';
   const stored = String(upload.display_title || '').trim();
-  if (stored) return upload.display_title_source === 'manual' ? stored : normalizeAutoTitle(stored);
+  if (stored) return upload.display_title_source === 'manual' ? convertTitleDates(stored) : normalizeAutoTitle(stored);
   return buildBsiStatementTitle({
     filename: upload.original_name,
     carrier: upload.carrier,
@@ -389,7 +409,7 @@ function bsiUploadTitle(upload) {
   }).title;
 }
 
-/** Carrier part of a title ("BSI · UHC · 09-2026" → "uhc"). */
+/** Carrier part of a title ("BSI · UHC · 09.2026" → "uhc"). */
 function titleCarrierKey(title) {
   const parts = String(title || '').split(' · ');
   return (parts.length >= 3 ? parts.slice(1, -1).join(' · ') : String(title || '')).toLowerCase();
@@ -398,7 +418,7 @@ function titleCarrierKey(title) {
 /**
  * Sort two uploads by title the way people read them: carrier A→Z, then
  * statement month oldest→newest (not alphabetical text, which would put
- * 01-2026 before 09-2025). Ties fall back to upload date.
+ * 01.2026 before 09.2025). Ties fall back to upload date.
  */
 function compareBsiUploadsByTitle(a, b) {
   const ta = bsiUploadTitle(a);
@@ -427,6 +447,7 @@ module.exports = {
   buildBsiStatementTitle,
   bsiUploadTitle,
   normalizeAutoTitle,
+  convertTitleDates,
   formatMonth,
   compareBsiUploadsByTitle,
   carrierDisplayName,

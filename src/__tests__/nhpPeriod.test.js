@@ -52,8 +52,8 @@ describe('nhpPeriod', () => {
   });
 
   test('formats cycle labels for house picker', () => {
-    expect(formatNhpCyclePeriodLabel('202606')).toBe('Jun 2026');
-    expect(formatNhpCyclePeriodLabel('20260615')).toBe('Jun 15, 2026 cycle');
-    expect(formatNhpCyclePeriodLabel('20260530')).toBe('May 30, 2026 cycle');
+    expect(formatNhpCyclePeriodLabel('202606')).toBe('06.2026');
+    expect(formatNhpCyclePeriodLabel('20260615')).toBe('06.2026 · cycle 15');
+    expect(formatNhpCyclePeriodLabel('20260530')).toBe('05.2026 · cycle 30');
   });
 });

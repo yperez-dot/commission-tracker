@@ -1,3 +1,4 @@
+const { periodToMmYyyy } = require('../src/periodFormat');
 const express = require('express');
 const router = express.Router();
 const { getPool } = require('../db/database');
@@ -206,11 +207,7 @@ router.delete('/payout-status/:id', requireAuth, requireAdmin, async (req, res) 
 function formatPeriodLabel(p) {
   if (!p) return p;
   const s = String(p).trim();
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  if (/^\d{6}$/.test(s)) {
-    const m = parseInt(s.slice(4, 6), 10);
-    if (m >= 1 && m <= 12) return `${months[m - 1]} ${s.slice(0, 4)}`;
-  }
+  if (/^\d{6}$/.test(s)) return periodToMmYyyy(s) || s;
   return s;
 }
 

@@ -1,5 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../api';
+import { periodToMmYyyy, normalizePeriodInput, formatPeriodsInText } from '../periodFormat';
+
+/** Period shown to people: MM.YYYY (internal values stay YYYYMM). */
+export function pl(p) {
+  return periodToMmYyyy(p) || p;
+}
 
 /*
  * Payroll close UI: mark-paid form (payment record + lock), unlock, manual
@@ -155,7 +161,7 @@ export function AdjustmentsPanel({ period, agents, state, meta, onChanged }) {
   async function add(body) {
     setBusy(true); setMsg('');
     try {
-      await apiFetch('/payroll-close/adjustments', { method: 'POST', body: JSON.stringify({ ...body, period }) });
+      await apiFetch('/payroll-close/adjustments', { method: 'POST', body: JSON.stringify({ ...body, ...(body.correctsPeriod ? { correctsPeriod: normalizePeriodInput(body.correctsPeriod) } : {}), period }) });
       setForm({ agent: body.agent, ...blankForm });
       await onChanged();
     } catch (e) { setMsg(e.message || 'Could not save adjustment'); }
@@ -176,7 +182,7 @@ export function AdjustmentsPanel({ period, agents, state, meta, onChanged }) {
 
   return (
     <div className="card" style={{ marginTop: 14 }}>
-      <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>Adjustments — {period}</div>
+      <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>Adjustments — {pl(period)}</div>
       <div style={{ ...small, marginBottom: 10 }}>
         Manual lines (clawback not yet on file, correction, advance…). They count in the payout total and carry-forward,
         and print on Lina&apos;s and the Integrity statements. Paid / closed months can&apos;t take new lines.
@@ -189,16 +195,16 @@ export function AdjustmentsPanel({ period, agents, state, meta, onChanged }) {
           {corrections.map((c) => (
             <div key={`${c.agent}-${c.lockedPeriod}`} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, padding: '3px 0', flexWrap: 'wrap' }}>
               <span style={{ flex: 1, minWidth: 220 }}>
-                <strong>{c.agent}</strong> {c.lockedPeriod}: locked {fmt(c.lockedDataTotal)}, data now {fmt(c.liveDataTotal)}
+                <strong>{c.agent}</strong> {pl(c.lockedPeriod)}: locked {fmt(c.lockedDataTotal)}, data now {fmt(c.liveDataTotal)}
                 {c.alreadyPosted ? ` (already corrected ${fmt(c.alreadyPosted)})` : ''} → suggested <strong style={c.suggested < 0 ? red : null}>{fmt(c.suggested)}</strong>
               </span>
               {meta.isStaff && !closed && !lockedAgents.has(c.agent) && (
                 <button className="btn" style={{ fontSize: 11, padding: '3px 10px' }} disabled={busy}
                   onClick={() => add({
                     agent: c.agent, amount: c.suggested, category: 'prior_period_correction', correctsPeriod: c.lockedPeriod,
-                    correctsLockId: c.lockId, reason: `Prior-period correction for ${c.lockedPeriod}: data changed after it was locked`,
+                    correctsLockId: c.lockId, reason: `Prior-period correction for ${pl(c.lockedPeriod)}: data changed after it was locked`,
                   })}>
-                  Post to {period}
+                  Post to {pl(period)}
                 </button>
               )}
             </div>
@@ -219,7 +225,7 @@ export function AdjustmentsPanel({ period, agents, state, meta, onChanged }) {
             {adjustments.map((a) => (
               <tr key={a.id} style={{ borderBottom: '0.5px solid var(--border)', opacity: a.status === 'void' ? 0.5 : 1 }}>
                 <td style={{ padding: '5px 6px' }}>{a.agent_name}</td>
-                <td style={{ padding: '5px 6px' }}>{a.categoryLabel}{a.corrects_period ? ` (${a.corrects_period})` : ''}</td>
+                <td style={{ padding: '5px 6px' }}>{a.categoryLabel}{a.corrects_period ? ` (${pl(a.corrects_period)})` : ''}</td>
                 <td style={{ padding: '5px 6px' }}>
                   {a.reason}
                   {a.status === 'void' && <span style={small}> · void: {a.void_reason} ({a.voided_by})</span>}
@@ -258,8 +264,8 @@ export function AdjustmentsPanel({ period, agents, state, meta, onChanged }) {
           </div>
           {form.category === 'prior_period_correction' && (
             <div style={row}>
-              <span className="form-label">Corrects (YYYYMM)</span>
-              <input className="filter-select" style={{ width: 90 }} value={form.correctsPeriod}
+              <span className="form-label">Corrects (MM.YYYY)</span>
+              <input className="filter-select" style={{ width: 90 }} placeholder="MM.YYYY" value={form.correctsPeriod}
                 onChange={(e) => setForm({ ...form, correctsPeriod: e.target.value })} />
             </div>
           )}
@@ -299,10 +305,10 @@ export function AdjustmentsPanel({ period, agents, state, meta, onChanged }) {
               is saved in Payment records as money received.
             </div>
           )}
-          {targetLocked && <div style={{ ...warnStyle, fontSize: 11, width: '100%' }}>{form.agent} is locked for {period}. Post it in an open month.</div>}
+          {targetLocked && <div style={{ ...warnStyle, fontSize: 11, width: '100%' }}>{form.agent} is locked for {pl(period)}. Post it in an open month.</div>}
         </div>
       )}
-      {closed && <div style={{ ...small, marginTop: 6 }}>🔒 {period} is closed — no new adjustments.</div>}
+      {closed && <div style={{ ...small, marginTop: 6 }}>🔒 {pl(period)} is closed — no new adjustments.</div>}
 
       {voiding && (
         <ReasonModal title={`Void ${fmt(voiding.amount)} for ${voiding.agent_name}`} confirmLabel="Void line" busy={busy} error={msg}
@@ -337,7 +343,7 @@ export function PaymentRecords() {
                 const payable = p.amount_payable != null ? Number(p.amount_payable) : null;
                 return (
                   <tr key={p.id} style={{ opacity: p.status === 'void' ? 0.5 : 1 }}>
-                    <td style={{ fontSize: 12 }}>{p.payment_period || '—'}</td>
+                    <td style={{ fontSize: 12 }}>{p.payment_period ? pl(p.payment_period) : '—'}</td>
                     <td style={{ fontWeight: 500 }}>{p.agent_name}</td>
                     <td style={{ fontWeight: 500, color: p.kind === 'repayment' ? 'var(--red)' : 'var(--green)' }}>
                       {p.kind === 'repayment' ? `${fmt(-amt)} received from agent` : fmt(amt)}
@@ -411,7 +417,7 @@ export function MonthClosePanel({ period, meta, payeesForClose }) {
       <div className="card" style={{ marginBottom: 14 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, flexWrap: 'wrap' }}>
           <div>
-            <div style={{ fontWeight: 600, fontSize: 14 }}>Close checklist — {period}</div>
+            <div style={{ fontWeight: 600, fontSize: 14 }}>Close checklist — {pl(period)}</div>
             <div style={small}>Every expected carrier needs a BSI statement upload, or a &quot;none this month&quot; mark with a reason.</div>
           </div>
           {close ? (
@@ -461,7 +467,7 @@ export function MonthClosePanel({ period, meta, payeesForClose }) {
             {data.warnings.length > 0 && (
               <div style={{ marginTop: 10, fontSize: 12 }}>
                 <div style={{ fontWeight: 600, marginBottom: 4 }}>Warnings (don&apos;t block closing)</div>
-                {data.warnings.map((w, i) => <div key={i} style={warnStyle}>⚠ {w.message}</div>)}
+                {data.warnings.map((w, i) => <div key={i} style={warnStyle}>⚠ {formatPeriodsInText(w.message)}</div>)}
               </div>
             )}
             {!close && meta.isStaff && (
@@ -488,7 +494,7 @@ export function MonthClosePanel({ period, meta, payeesForClose }) {
           confirmLabel="Mark none" busy={busy} onCancel={() => setNoneFor(null)} onSubmit={markNone} />
       )}
       {reopening && (
-        <ReasonModal title={`Reopen ${period}`} help="Payees locked by the close are unlocked. Months marked paid stay locked."
+        <ReasonModal title={`Reopen ${pl(period)}`} help="Payees locked by the close are unlocked. Months marked paid stay locked."
           confirmLabel="Reopen" busy={busy} onCancel={() => setReopening(false)} onSubmit={reopen} />
       )}
     </div>
@@ -496,7 +502,7 @@ export function MonthClosePanel({ period, meta, payeesForClose }) {
 }
 
 function emptyDeposit(period, payers) {
-  return { id: null, depositDate: new Date().toISOString().slice(0, 10), payer: payers[0] || 'BSI', payerOther: '', amount: '', reference: '', memo: '', allocations: [{ period, amount: '' }] };
+  return { id: null, depositDate: new Date().toISOString().slice(0, 10), payer: payers[0] || 'BSI', payerOther: '', amount: '', reference: '', memo: '', allocations: [{ period: pl(period), amount: '' }] };
 }
 
 /** THEI bank deposits vs what the uploaded statements say THEI should receive. */
@@ -515,7 +521,7 @@ export function DepositsPanel({ period, meta, recon, onChanged }) {
 
   async function save() {
     setBusy(true); setErr('');
-    const allocations = form.allocations.filter((a) => a.period && Number(a.amount)).map((a) => ({ period: a.period, amount: Number(a.amount) }));
+    const allocations = form.allocations.filter((a) => a.period && Number(a.amount)).map((a) => ({ period: normalizePeriodInput(a.period), amount: Number(a.amount) }));
     const body = { depositDate: form.depositDate, payer: form.payer, payerOther: form.payerOther, amount: Number(form.amount), reference: form.reference, memo: form.memo, allocations };
     try {
       if (form.id) await apiFetch(`/payroll-close/deposits/${form.id}`, { method: 'PUT', body: JSON.stringify({ ...body, reason: editReason }) });
@@ -535,7 +541,7 @@ export function DepositsPanel({ period, meta, recon, onChanged }) {
     setForm({
       id: d.id, depositDate: d.deposit_date, payer: d.payer, payerOther: d.payer_other || '', amount: String(d.amount),
       reference: d.reference || '', memo: d.memo || '',
-      allocations: d.allocations.length ? d.allocations.map((a) => ({ period: a.payment_period, amount: String(a.amount) })) : [{ period, amount: '' }],
+      allocations: d.allocations.length ? d.allocations.map((a) => ({ period: pl(a.payment_period), amount: String(a.amount) })) : [{ period: pl(period), amount: '' }],
     });
   }
 
@@ -543,7 +549,7 @@ export function DepositsPanel({ period, meta, recon, onChanged }) {
     <div className="card" style={{ marginBottom: 14 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
         <div>
-          <div style={{ fontWeight: 600, fontSize: 14 }}>Deposit reconciliation — {period}</div>
+          <div style={{ fontWeight: 600, fontSize: 14 }}>Deposit reconciliation — {pl(period)}</div>
           <div style={small}>
             Expected: BSI = THEI&apos;s share only (the split stored on each BSI statement line — BSI pays the agents
             directly); direct carriers = their statement totals. Received = THEI bank deposits tagged to this month.
@@ -597,7 +603,7 @@ export function DepositsPanel({ period, meta, recon, onChanged }) {
                 <td style={{ padding: 6 }}>{d.deposit_date}</td>
                 <td style={{ padding: 6 }}>{d.payer === 'Other' ? d.payer_other : d.payer}</td>
                 <td style={{ padding: 6 }}>{fmt(d.amount)}</td>
-                <td style={{ padding: 6, ...small }}>{d.allocations.map((a) => `${a.payment_period}: ${fmt(a.amount)}`).join(' · ') || 'unassigned'}</td>
+                <td style={{ padding: 6, ...small }}>{d.allocations.map((a) => `${pl(a.payment_period)}: ${fmt(a.amount)}`).join(' · ') || 'unassigned'}</td>
                 <td style={{ padding: 6, ...small }}>{[d.reference, d.memo].filter(Boolean).join(' · ')}</td>
                 <td style={{ padding: 6, ...small }}>{d.entered_by}</td>
                 <td style={{ padding: 6, textAlign: 'right', whiteSpace: 'nowrap' }}>
@@ -633,7 +639,7 @@ export function DepositsPanel({ period, meta, recon, onChanged }) {
           <div style={{ fontSize: 12, fontWeight: 500, margin: '4px 0' }}>Months this deposit covers</div>
           {form.allocations.map((a, i) => (
             <div key={i} style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
-              <input className="filter-select" placeholder="YYYYMM" style={{ width: 100 }} value={a.period}
+              <input className="filter-select" placeholder="MM.YYYY" style={{ width: 100 }} value={a.period}
                 onChange={(e) => { const al = form.allocations.slice(); al[i] = { ...a, period: e.target.value }; setForm({ ...form, allocations: al }); }} />
               <input className="filter-select" type="number" step="0.01" placeholder="Amount" style={{ width: 110 }} value={a.amount}
                 onChange={(e) => { const al = form.allocations.slice(); al[i] = { ...a, amount: e.target.value }; setForm({ ...form, allocations: al }); }} />
@@ -646,7 +652,7 @@ export function DepositsPanel({ period, meta, recon, onChanged }) {
               Assigned {fmt(form.allocations.reduce((s, a) => s + (Number(a.amount) || 0), 0))} of {fmt(Number(form.amount) || 0)}
             </span>
             {form.allocations.length === 1 && !form.allocations[0].amount && Number(form.amount) > 0 && (
-              <button className="btn" style={{ fontSize: 11 }} onClick={() => setForm({ ...form, allocations: [{ period: form.allocations[0].period || period, amount: form.amount }] })}>Assign all to {form.allocations[0].period || period}</button>
+              <button className="btn" style={{ fontSize: 11 }} onClick={() => setForm({ ...form, allocations: [{ period: form.allocations[0].period || pl(period), amount: form.amount }] })}>Assign all to {form.allocations[0].period || pl(period)}</button>
             )}
           </div>
           {form.id && (
@@ -685,7 +691,8 @@ export function ChangeLogPanel({ defaultPeriod }) {
 
   async function load() {
     setErr('');
-    const qs = Object.keys(filters).filter((k) => filters[k]).map((k) => `${k}=${encodeURIComponent(filters[k])}`).join('&');
+    const qs = Object.keys(filters).filter((k) => filters[k])
+      .map((k) => `${k}=${encodeURIComponent(k === 'period' ? normalizePeriodInput(filters[k]) : filters[k])}`).join('&');
     try { setData(await apiFetch(`/change-log?limit=300${qs ? '&' + qs : ''}`)); }
     catch (e) { setErr(e.message || 'Failed to load change log'); }
   }
@@ -703,8 +710,8 @@ export function ChangeLogPanel({ defaultPeriod }) {
             <option value="">Everyone</option>
             {data.users.map((u) => <option key={u} value={u}>{u}</option>)}
           </select></div>
-        <div style={row}><span className="form-label">Period (YYYYMM)</span>
-          <input className="filter-select" style={{ width: 100 }} value={filters.period} onChange={(e) => setFilters({ ...filters, period: e.target.value.trim() })} /></div>
+        <div style={row}><span className="form-label">Period (MM.YYYY)</span>
+          <input className="filter-select" style={{ width: 100 }} placeholder="MM.YYYY" value={filters.period} onChange={(e) => setFilters({ ...filters, period: e.target.value.trim() })} /></div>
         <div style={{ ...row, flex: 1, minWidth: 160 }}><span className="form-label">Search</span>
           <input className="filter-select" value={filters.q} onChange={(e) => setFilters({ ...filters, q: e.target.value })} onKeyDown={(e) => { if (e.key === 'Enter') load(); }} /></div>
         <button className="btn" style={{ marginBottom: 10 }} onClick={load}>Refresh</button>
@@ -723,8 +730,8 @@ export function ChangeLogPanel({ defaultPeriod }) {
                     <td style={{ fontSize: 11, whiteSpace: 'nowrap' }}>{when(e.created_at)}</td>
                     <td style={{ fontSize: 12 }}>{e.actor || '—'}</td>
                     <td style={{ fontSize: 11 }}>{e.event_type}</td>
-                    <td style={{ fontSize: 11 }}>{e.payment_period || '—'}</td>
-                    <td style={{ fontSize: 12 }}>{e.summary}</td>
+                    <td style={{ fontSize: 11 }}>{e.payment_period ? pl(e.payment_period) : '—'}</td>
+                    <td style={{ fontSize: 12 }}>{formatPeriodsInText(e.summary)}</td>
                   </tr>
                   {open === e.id && e.details && (
                     <tr><td colSpan={5}><pre style={{ fontSize: 10, whiteSpace: 'pre-wrap', margin: 0 }}>{JSON.stringify(e.details, null, 2)}</pre></td></tr>

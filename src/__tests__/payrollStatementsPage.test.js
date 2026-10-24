@@ -14,7 +14,7 @@ function mockApi() {
     if (path.startsWith('/records')) return { records: [], total: 0 };
     if (path.startsWith('/override-statements/types')) return { types: [{ id: 'thei_bsi', label: 'THEI. BSI Statement' }, { id: 'bsi_override', label: 'BSI Medicare Overrides' }] };
     if (path.startsWith('/override-statements/periods')) return { periods: [{ period: '202609' }, { period: '202608' }] };
-    if (path.startsWith('/override-statements/preview')) return { periodLabel: 'Sep 2026', statementCount: 0, grandTotal: 0, statements: [] };
+    if (path.startsWith('/override-statements/preview')) return { periodLabel: '09.2026', statementCount: 0, grandTotal: 0, statements: [] };
     if (path.startsWith('/payee-statements/compare')) return { liveTotal: 0, issuedTotal: null };
     if (path.startsWith('/payee-statements')) return [];
     if (path.startsWith('/payroll/payout-history')) return { history: [] };

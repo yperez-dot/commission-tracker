@@ -20,14 +20,14 @@ describe('statementsMonth', () => {
 describe('houseCycleOptions', () => {
   test('month only when there are no pay cycles', () => {
     expect(houseCycleOptions('202609', [{ period: '202609' }, { period: '202608' }]))
-      .toEqual([{ value: '202609', label: 'Sep 2026 (month)' }]);
+      .toEqual([{ value: '202609', label: '09.2026 (month)' }]);
   });
   test('adds the NHP pay cycles inside that month, oldest first, no duplicates', () => {
     const opts = houseCycleOptions('202606', [
       { period: '20260615' }, { period: '20260530' }, { period: '20260601' }, '20260615', { period: '202606' },
     ]);
     expect(opts.map((o) => o.value)).toEqual(['202606', '20260601', '20260615']);
-    expect(opts[2].label).toBe('Jun 15, 2026 cycle');
+    expect(opts[2].label).toBe('06.2026 · cycle 15');
   });
   test('not a month gives no options', () => {
     expect(houseCycleOptions('all', [{ period: '20260615' }])).toEqual([]);

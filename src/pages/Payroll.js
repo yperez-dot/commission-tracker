@@ -9,6 +9,7 @@ import { bottomLine } from '../payrollLock';
 import TruncationBanner from '../components/TruncationBanner';
 import { statementsMonth, houseCycleOptions } from '../utils/statementsPeriods';
 import { houseStatementFilename } from '../houseStatementNames';
+import { periodToMmYyyy, formatPeriodsInText } from '../periodFormat';
 import {
   usePayrollMeta, PayModal, ReasonModal, AdjustmentsPanel, PaymentRecords, MonthClosePanel, ChangeLogPanel,
 } from '../components/PayrollClose';
@@ -46,22 +47,10 @@ function albaPayrollDisplayName(name) {
   return isAlbaName(name) ? 'Lina Hernandez' : (integrityPayeeName(name) || name);
 }
 
+/** Period → "MM.YYYY" (NHP cycles "MM.YYYY · cycle DD"); null when not a period. */
 function formatPeriodLabel(p) {
   if (!p) return p;
-  const s = String(p).trim();
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  // NHP payment-cycle days: 20260615 → "Jun 15, 2026 cycle"
-  if (s.match(/^\d{8}$/)) {
-    const m = parseInt(s.slice(4, 6), 10);
-    const d = parseInt(s.slice(6, 8), 10);
-    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
-      return `${months[m - 1]} ${d}, ${s.slice(0, 4)} cycle`;
-    }
-  }
-  if (s.match(/^\d{6}$/)) return months[parseInt(s.slice(4, 6), 10) - 1] + ' ' + s.slice(0, 4);
-  if (s.match(/^\d{2}\/\d{4}$/)) return months[parseInt(s.slice(0, 2), 10) - 1] + ' ' + s.slice(3);
-  if (s.match(/^\d{2}\/\d{2}\/\d{4}$/)) return months[parseInt(s.slice(0, 2), 10) - 1] + ' ' + s.slice(6);
-  return null;
+  return periodToMmYyyy(p);
 }
 
 function recordAmount(r) {
@@ -451,7 +440,7 @@ function PayoutRow({ p, isPaid, paidDate, paidAmount, carry, lock, adjTotal, amo
                     <td style={{ padding: '6px 8px', fontSize: 11, color: 'var(--text-muted)' }}>{g.policy || '—'}</td>
                     <td style={{ padding: '6px 8px', fontSize: 11 }}>
                       {g.deposits.map((d, j) => (
-                        <div key={j}>{d.period}: {fmt(d.amount)}</div>
+                        <div key={j}>{formatPeriodLabel(d.period) || d.period}: {fmt(d.amount)}</div>
                       ))}
                     </td>
                     <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: 600 }}>{fmt(g.total)}</td>
@@ -499,7 +488,7 @@ function PayoutRow({ p, isPaid, paidDate, paidAmount, carry, lock, adjTotal, amo
                       {formatDate(r.effective_date)}
                     </td>
                     <td style={{ padding: '6px 8px', color: 'var(--text-muted)', fontSize: 11 }}>
-                      {r.payment_period || '—'}
+                      {r.payment_period ? (formatPeriodLabel(r.payment_period) || r.payment_period) : '—'}
                     </td>
                     <td style={{ padding: '6px 8px', color: 'var(--text-muted)', fontSize: 11 }}>
                       {r.classification || '—'}
@@ -835,7 +824,7 @@ function HouseOverridesPanel({ month } = {}) {
           </div>
           {preview.unsplitBsiWarning && (
             <div style={{ padding: '8px 14px', borderBottom: '0.5px solid var(--border)', fontSize: 12, fontWeight: 600, color: '#b45309' }}>
-              ⚠ {preview.unsplitBsiWarning.message}
+              ⚠ {formatPeriodsInText(preview.unsplitBsiWarning.message)}
             </div>
           )}
           {(preview.sourceUploads || []).length > 0 && (

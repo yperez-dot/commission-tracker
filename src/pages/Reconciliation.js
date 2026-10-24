@@ -1,3 +1,4 @@
+import { periodToMmYyyy } from '../periodFormat';
 import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../api';
 import { formatDate as formatDateUtil } from '../utils/dateFormat';
@@ -273,7 +274,7 @@ function DepositTimeline({ deposits }) {
     <div style={{ fontSize: 11, lineHeight: 1.5 }}>
       {deposits.map((d, i) => (
         <div key={i} style={{ color: d.amount < 0 ? 'var(--red)' : 'var(--text-muted)' }}>
-          {d.period}: {fmt(d.amount)}
+          {periodToMmYyyy(d.period) || d.period}: {fmt(d.amount)}
         </div>
       ))}
     </div>
@@ -650,7 +651,7 @@ export default function Reconciliation({ user }) {
       const actual = (m.actualCommission || 0).toFixed(2);
       const remaining = Math.max(0, (m.expectedCommission || 0) - (m.actualCommission || 0)).toFixed(2);
       const depositCount = m.deposits?.length || 0;
-      const deposits = (m.deposits || []).map(d => `${d.period}:${d.amount.toFixed(2)}`).join(' | ');
+      const deposits = (m.deposits || []).map(d => `${periodToMmYyyy(d.period) || d.period}:${d.amount.toFixed(2)}`).join(' | ');
 
       return [
         agentName, clientName, carrier, policyType, effectiveDate, bobStatus,

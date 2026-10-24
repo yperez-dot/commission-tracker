@@ -1,4 +1,5 @@
 'use strict';
+const { periodToMmYyyy } = require('./periodFormat');
 
 /**
  * NHP period helpers.
@@ -185,22 +186,11 @@ function resolveNhpPaymentPeriod(statementMonthOrOpts, uploadPeriod) {
 
 /**
  * Label for house period picker — supports YYYYMM and YYYYMMDD cycles.
- * e.g. 202606 → "Jun 2026", 20260615 → "Jun 15, 2026 cycle"
+ * e.g. 202606 → "06.2026", 20260615 → "06.2026 · cycle 15"
  */
 function formatNhpCyclePeriodLabel(period) {
   const s = String(period || '').trim();
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  if (/^\d{8}$/.test(s)) {
-    const m = parseInt(s.slice(4, 6), 10);
-    const d = parseInt(s.slice(6, 8), 10);
-    if (m >= 1 && m <= 12 && d >= 1 && d <= 31) {
-      return `${months[m - 1]} ${d}, ${s.slice(0, 4)} cycle`;
-    }
-  }
-  if (/^\d{6}$/.test(s)) {
-    const m = parseInt(s.slice(4, 6), 10);
-    if (m >= 1 && m <= 12) return `${months[m - 1]} ${s.slice(0, 4)}`;
-  }
+  if (/^\d{6}(\d{2})?$/.test(s)) return periodToMmYyyy(s) || s;
   return s;
 }
 

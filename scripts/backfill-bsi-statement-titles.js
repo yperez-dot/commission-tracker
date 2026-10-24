@@ -3,7 +3,8 @@
 
 /**
  * Standardize titles of existing BSI statement uploads:
- *   "BSI · Carrier · MM-YYYY"  (or "… · MM-YYYY to MM-YYYY" for multi-month files)
+ *   "BSI · Carrier · MM.YYYY"  (or "… · MM.YYYY to MM.YYYY" for multi-month files)
+ * Manual titles keep their text; only MM-YYYY month tokens become MM.YYYY.
  *
  * DRY RUN by default — prints old → new and writes nothing (session is READ ONLY).
  *
@@ -12,7 +13,7 @@
  *   DATABASE_URL=… node scripts/backfill-bsi-statement-titles.js --apply    # write
  *
  * Options:
- *   --apply           write uploads.display_title / display_title_source='auto'
+ *   --apply           write uploads.display_title (auto rows → source 'auto'; manual rows stay 'manual')
  *   --include-manual  also overwrite titles an admin set by hand (default: keep)
  *   --json            machine-readable output
  *
@@ -23,7 +24,7 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 const { Pool } = require('pg');
-const { ensureTitleColumns, planBsiTitles } = require('../src/bsiStatementTitleDb');
+const { applyBsiTitlePlan, planBsiTitles } = require('../src/bsiStatementTitleDb');
 
 const args = new Set(process.argv.slice(2));
 const APPLY = args.has('--apply');
@@ -84,27 +85,7 @@ async function main() {
       return;
     }
 
-    await ensureTitleColumns(pool);
-    const client = await pool.connect();
-    let updated = 0;
-    try {
-      await client.query('BEGIN');
-      for (const p of plan) {
-        if (!p.changed) continue;
-        await client.query(
-          `UPDATE uploads SET display_title = $1, display_title_source = 'auto'
-            WHERE id = $2 AND category = 'bsi_statement'`,
-          [p.new_title, p.id]
-        );
-        updated += 1;
-      }
-      await client.query('COMMIT');
-    } catch (e) {
-      await client.query('ROLLBACK');
-      throw e;
-    } finally {
-      client.release();
-    }
+    const updated = await applyBsiTitlePlan(pool, plan);
     console.log(`Updated ${updated} upload title(s).`);
   } finally {
     await pool.end();

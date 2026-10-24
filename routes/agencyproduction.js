@@ -1,3 +1,4 @@
+const { periodToMmYyyy } = require('../src/periodFormat');
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
@@ -1673,9 +1674,9 @@ router.get('/export-bsi-recon', requireAuth, async (req, res) => {
           state:           r.state || r.l3_member_state || '',
           production_status: mapAppStatus(r.production_status),
           l3_commission:   r.l3_commission != null ? parseFloat(r.l3_commission) : '',
-          l3_period:       r.l3_period || '',
+          l3_period:       (periodToMmYyyy(r.l3_period) || r.l3_period || ''),
           l2_commission:   r.l2_commission != null ? parseFloat(r.l2_commission) : '',
-          l2_period:       r.l2_period || '',
+          l2_period:       (periodToMmYyyy(r.l2_period) || r.l2_period || ''),
           manual_override_status: r.manual_override_status || '',
           policy_number:   r.policy_number || '',
         };
@@ -1820,9 +1821,9 @@ router.get('/export-bsi-recon', requireAuth, async (req, res) => {
           state:           r.state || r.l3_member_state || '',
           production_status: mapAppStatus(r.production_status),
           l3_commission: r.l3_commission != null ? parseFloat(r.l3_commission) : '',
-          l3_period: r.l3_period || '',
+          l3_period: (periodToMmYyyy(r.l3_period) || r.l3_period || ''),
           l2_commission: r.l2_commission != null ? parseFloat(r.l2_commission) : '',
-          l2_period: r.l2_period || '',
+          l2_period: (periodToMmYyyy(r.l2_period) || r.l2_period || ''),
           manual_override_status: r.manual_override_status || '',
           policy_number: r.policy_number || '',
         };

@@ -37,8 +37,9 @@ const {
   resolveNhpUploadOriginalName,
 } = require('../src/nhpUploadName');
 const { classifyTHECarrierTransaction, classifyHumanaDevotedBSITransaction } = require('../src/theCarrierStatementClassify');
-const { buildBsiStatementTitle, cleanManualTitle, normalizeAutoTitle } = require('../src/bsiStatementTitle');
+const { buildBsiStatementTitle, cleanManualTitle, normalizeAutoTitle, convertTitleDates } = require('../src/bsiStatementTitle');
 const {
+  applyBsiTitlePlan,
   ensureTitleColumns,
   periodCountsFromRecords,
   loadPeriodCounts,
@@ -4611,9 +4612,10 @@ router.get('/uploads', requireAuth, async (req, res) => {
     
     if (category === 'bsi_statement') {
       // BSI Statements only — every row gets a standardized display_title
-      // ("BSI · Humana · 09-2026"). Stored title wins; otherwise computed from
+      // ("BSI · Humana · 09.2026"). Stored title wins; otherwise computed from
       // the rows' statement period, then the filename. Older auto titles stored
-      // as "YYYY-MM" are flipped to month-first here; manual titles are untouched.
+      // as "YYYY-MM" / "MM-YYYY" show as MM.YYYY; manual titles keep their text
+      // and only their MM-YYYY month tokens are shown as MM.YYYY.
       try { await ensureTitleColumns(pool); } catch (e) { console.warn('[uploads] display_title columns', e.message); }
       const bsi = await pool.query(
         `SELECT u.*, usr.name as uploaded_by_name FROM uploads u LEFT JOIN users usr ON u.uploaded_by = usr.id WHERE u.category = 'bsi_statement' ORDER BY u.uploaded_at DESC`
@@ -4623,7 +4625,7 @@ router.get('/uploads', requireAuth, async (req, res) => {
       return res.json(bsi.rows.map((u) => {
         if (u.display_title) {
           const src = u.display_title_source || 'auto';
-          return { ...u, display_title: src === 'manual' ? u.display_title : normalizeAutoTitle(u.display_title), display_title_source: src };
+          return { ...u, display_title: src === 'manual' ? convertTitleDates(u.display_title) : normalizeAutoTitle(u.display_title), display_title_source: src };
         }
         const built = buildBsiStatementTitle({
           filename: u.original_name,
@@ -4663,6 +4665,30 @@ router.get('/bsi-statement-titles/preview', requireAuth, requireAdmin, async (re
   try {
     const plan = await planBsiTitles(getPool());
     res.json({ count: plan.length, changed: plan.filter((p) => p.changed).length, plan });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+/**
+ * POST /api/files/bsi-statement-titles/apply — admin. DRY RUN unless ?apply=true.
+ * Same plan as /preview (auto titles rebuilt as MM.YYYY; manual titles keep their
+ * text, only MM-YYYY month tokens become MM.YYYY). Applying logs one change-log entry.
+ */
+router.post('/bsi-statement-titles/apply', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const pool = getPool();
+    const apply = String(req.query.apply || '').toLowerCase() === 'true';
+    const plan = await planBsiTitles(pool);
+    const changes = plan.filter((p) => p.changed);
+    if (!apply) {
+      return res.json({ dryRun: true, count: plan.length, changed: changes.length, plan: changes });
+    }
+    const updated = await applyBsiTitlePlan(pool, plan);
+    await logChange(pool, req, {
+      type: 'upload.titles_standardized', entityType: 'upload',
+      summary: `Standardized ${updated} BSI statement title(s) to MM.YYYY`,
+      details: { updated, changes: changes.map((p) => ({ id: p.id, from: p.old_title, to: p.new_title, source: p.new_source })) },
+    });
+    res.json({ dryRun: false, count: plan.length, updated, plan: changes });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

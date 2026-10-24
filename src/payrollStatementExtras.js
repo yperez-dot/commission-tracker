@@ -1,4 +1,5 @@
 'use strict';
+const { periodToMmYyyy } = require('./periodFormat');
 
 /*
  * Extra statement sections shared by Lina's and the Integrity statements.
@@ -69,7 +70,7 @@ function writeAdjustmentsSection(ws, startRow, statement, amountCol) {
   r += 1;
   adj.forEach(function (a) {
     ws.getCell('A' + r).value = a.date;
-    ws.getCell('B' + r).value = a.categoryLabel + (a.correctsPeriod ? ' (' + a.correctsPeriod + ')' : '');
+    ws.getCell('B' + r).value = a.categoryLabel + (a.correctsPeriod ? ' (' + (periodToMmYyyy(a.correctsPeriod) || a.correctsPeriod) + ')' : '');
     ws.getCell('C' + r).value = a.reason;
     ws.getCell(col + r).value = a.amount;
     ws.getCell(col + r).numFmt = MONEY;
