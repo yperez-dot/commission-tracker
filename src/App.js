@@ -163,7 +163,7 @@ export default function App() {
       label: 'Payroll',
       children: [
         { id: 'payroll-payouts', label: 'Agent Payouts' },
-        { id: 'payroll-overrides', label: 'House Statements' },
+        { id: 'payroll-overrides', label: 'Statements' },
         { id: 'payroll-loa', label: 'LOA' },
         { id: 'payroll-history', label: 'Payment History' },
         { id: 'payroll-close', label: 'Month Close' },
@@ -198,7 +198,7 @@ export default function App() {
     'pass-through-chargebacks': <PassThroughChargebacks key={agencyView} user={effectiveUser} />,
     payroll: <Payroll key={agencyView} user={effectiveUser} initialTab="payroll" onNavigate={navigate} />,
     'payroll-payouts': <Payroll key={`${agencyView}-payouts`} user={effectiveUser} initialTab="payroll" onNavigate={navigate} />,
-    'payroll-overrides': <Payroll key={`${agencyView}-overrides`} user={effectiveUser} initialTab="overrides" onNavigate={navigate} />,
+    'payroll-overrides': <Payroll key={`${agencyView}-overrides-${pageParams.period || ''}`} user={effectiveUser} initialTab="overrides" initialPeriod={pageParams.period} onNavigate={navigate} />,
     'payroll-loa': <Payroll key={`${agencyView}-loa`} user={effectiveUser} initialTab="loa" onNavigate={navigate} />,
     'payroll-history': <Payroll key={`${agencyView}-history`} user={effectiveUser} initialTab="history" onNavigate={navigate} />,
     'payroll-close': <Payroll key={`${agencyView}-close`} user={effectiveUser} initialTab="close" onNavigate={navigate} />,

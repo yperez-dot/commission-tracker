@@ -6,6 +6,8 @@ const {
   buildOverrideExcelWorkbook,
   filenameForOverrideExcel,
   titleFor,
+  noteFor,
+  LINE_HEADERS,
 } = require('../overrideExcelStatement');
 
 const rows = [
@@ -74,8 +76,8 @@ describe('overrideExcelStatement', () => {
       'THEI_Override_Statement_202601.xlsx'
     );
     const ws = wb.getWorksheet('Override Statement');
-    expect(ws.getRow(11).getCell(5).value).toBe('Effective');
-    expect(ws.getRow(12).getCell(5).value).toBe('01-01-2026');
+    expect(ws.getRow(9).getCell(5).value).toBe('Effective');
+    expect(ws.getRow(10).getCell(5).value).toBe('01-01-2026');
   });
 
   it('names NHP vs BSI remittance THEI workbooks separately', () => {
@@ -110,7 +112,7 @@ describe('overrideExcelStatement', () => {
     expect(filenameForOverrideExcel(marcoBundle, marcoStmt.payee)).toBe(
       'Marco_Override_Statement_202607.xlsx'
     );
-    expect(marcoWb.getWorksheet('Override Statement').getRow(12).getCell(5).value).toBe(
+    expect(marcoWb.getWorksheet('Override Statement').getRow(10).getCell(5).value).toBe(
       '07-01-2026'
     );
 
@@ -125,8 +127,58 @@ describe('overrideExcelStatement', () => {
     expect(filenameForOverrideExcel(intBundle, intStmt.payee)).toBe(
       'Christian_Munoz_Override_Statement_202601.xlsx'
     );
-    expect(intWb.getWorksheet('Override Statement').getRow(12).getCell(5).value).toBe(
+    expect(intWb.getWorksheet('Override Statement').getRow(10).getCell(5).value).toBe(
       '01-15-2026'
     );
+  });
+
+  it('every house statement uses Total Override + Payable, no subtitle, no Share % or Schedule', async () => {
+    const types = [
+      [STATEMENT_TYPES.BSI_OVERRIDE, '202601', rows.map((r) => ({ ...r, source: 'BSI' }))],
+      [STATEMENT_TYPES.THEI_BSI, '202601', rows.map((r) => ({ ...r, source: 'BSI' }))],
+      [STATEMENT_TYPES.MARCO, '202607', rows],
+      [STATEMENT_TYPES.INTEGRITY, '202601', rows],
+    ];
+    for (const [type, period, data] of types) {
+      const bundle = buildOverrideStatements(data, type, { period });
+      expect(bundle.statements.length).toBeGreaterThan(0);
+      const stmt = bundle.statements[0];
+      // eslint-disable-next-line no-await-in-loop
+      const wb = await buildOverrideExcelWorkbook(bundle, stmt, { reportDate: '08/14/2026' });
+      const ws = wb.getWorksheet('Override Statement');
+      const headers = [];
+      for (let c = 1; c <= 12; c += 1) {
+        const v = ws.getRow(9).getCell(c).value;
+        if (v != null && v !== '') headers.push(v);
+      }
+      expect(headers).toEqual(LINE_HEADERS);
+      expect(headers.slice(-2)).toEqual(['Total Override', 'Payable']);
+      // nothing anywhere on the sheet: subtitle, Share %, Schedule, old payable labels
+      const all = [];
+      ws.eachRow((row) => row.eachCell((cell) => all.push(String(cell.value))));
+      expect(all).not.toContain(noteFor(type));
+      expect(all.some((v) => /Share %|Schedule|Override Pot|Payable \(/.test(v))).toBe(false);
+      expect(all.some((v) => /standard_|alba_rate_peel|marco_10/.test(v))).toBe(false);
+      // payable column = line amounts; totals in the same column, math unchanged
+      const amounts = [];
+      for (let r = 10; r < 10 + stmt.lines.length; r += 1) {
+        amounts.push(ws.getRow(r).getCell(8).value);
+        expect(ws.getRow(r).getCell(8).numFmt).toBe('$#,##0.00;($#,##0.00)');
+      }
+      expect(amounts.reduce((a, b) => a + b, 0)).toBeCloseTo(stmt.total, 2);
+      let balanceRow = null;
+      ws.eachRow((row, n) => { if (row.getCell(1).value === 'Balance due payee') balanceRow = n; });
+      expect(ws.getRow(balanceRow).getCell(8).value).toBeCloseTo(stmt.total, 2);
+    }
+  });
+
+  it('negative lines stay red in the Payable column', async () => {
+    const neg = [{ ...rows[0], commission: -150, thei_share: -75, bsi_share: -75, source: 'BSI' }];
+    const bundle = buildOverrideStatements(neg, STATEMENT_TYPES.BSI_OVERRIDE, { period: '202601' });
+    const stmt = bundle.statements[0];
+    const wb = await buildOverrideExcelWorkbook(bundle, stmt, { reportDate: '08/14/2026' });
+    const cell = wb.getWorksheet('Override Statement').getRow(10).getCell(8);
+    expect(cell.value).toBeLessThan(0);
+    expect(cell.font.color.argb).toBe('FFB91C1C');
   });
 });

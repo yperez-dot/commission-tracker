@@ -7,6 +7,7 @@ import { countSplitDepositClients, groupClientDeposits } from '../utils/salesRec
 import { fetchAllPages } from '../fetchAllPages';
 import { bottomLine } from '../payrollLock';
 import TruncationBanner from '../components/TruncationBanner';
+import { statementsMonth, houseCycleOptions } from '../utils/statementsPeriods';
 import {
   usePayrollMeta, PayModal, ReasonModal, AdjustmentsPanel, PaymentRecords, MonthClosePanel, ChangeLogPanel,
 } from '../components/PayrollClose';
@@ -177,7 +178,7 @@ const STATEMENT_PAYEE_OPTIONS = [
 ];
 
 /** Issued statements (OliComm) + BSI-received copies for the selected period, with comparison. */
-function StoredStatements({ period, isAdmin }) {
+function StoredStatements({ period, isAdmin, onDownloadCurrent, onDownloadLinaExcel, downloadBusy, downloadError }) {
   const [stored, setStored] = useState([]);
   const [compare, setCompare] = useState({});
   const [busy, setBusy] = useState('');
@@ -235,11 +236,13 @@ function StoredStatements({ period, isAdmin }) {
 
   return (
     <div className="card" style={{ marginTop: 14 }}>
-      <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>Statements — {formatPeriodLabel(period) || period}</div>
+      <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>Agent statements — {formatPeriodLabel(period) || period}</div>
       <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 10 }}>
         Issue a statement to freeze what you paid; log BSI&apos;s copy to compare balances.
+        {onDownloadCurrent && <> &ldquo;Current statement&rdquo; downloads the Excel as it stands now (a locked month gives the frozen copy). When the agent owes money back it shows &ldquo;Balance due from agent&rdquo;.</>}
       </div>
       {msg && <div style={{ color: 'var(--red)', fontSize: 12, marginBottom: 8 }}>{msg}</div>}
+      {downloadError && <div style={{ color: 'var(--red)', fontSize: 12, marginBottom: 8 }}>{downloadError}</div>}
       {STATEMENT_PAYEE_OPTIONS.map((o) => {
         const c = compare[o.key];
         const issued = stored.find((s) => s.payee_key === o.key && s.source === 'olicomm' && s.status === 'issued');
@@ -260,6 +263,18 @@ function StoredStatements({ period, isAdmin }) {
                 </>
               ) : '—'}
             </div>
+            {onDownloadCurrent && (
+              <button className="btn" style={{ fontSize: 11, padding: '4px 10px' }} disabled={!!downloadBusy}
+                onClick={() => onDownloadCurrent(o.key)}>
+                Current statement
+              </button>
+            )}
+            {o.key === 'lina' && onDownloadLinaExcel && (
+              <button className="btn" style={{ fontSize: 11, padding: '4px 10px' }} disabled={!!downloadBusy}
+                onClick={() => onDownloadLinaExcel()}>
+                Lina compensation Excel
+              </button>
+            )}
             {issued && (
               <>
                 <button className="btn" style={{ fontSize: 11, padding: '4px 10px' }}
@@ -596,7 +611,7 @@ function OverridePayeeRow({ s, onExport, exportLabel = 'Statement' }) {
   );
 }
 
-function HouseOverridesPanel() {
+function HouseOverridesPanel({ month } = {}) {
   const [ovTypes, setOvTypes] = useState([]);
   const [ovPeriods, setOvPeriods] = useState([]);
   const [ovType, setOvType] = useState('thei_nhp');
@@ -616,10 +631,22 @@ function HouseOverridesPanel() {
         setOvTypes(typesData.types || []);
         const periods = periodsData.periods || [];
         setOvPeriods(periods);
-        if (periods[0]?.period) setOvPeriod(periods[0].period);
+        // On the Statements page the page-level month drives the period.
+        if (!month && periods[0]?.period) setOvPeriod(periods[0].period);
       })
       .catch((e) => setOvError(e.message || 'Failed to load override filters'));
-  }, []);
+  }, []); // load filters once
+
+  // Follow the page-level month picker (Statements page).
+  useEffect(() => {
+    if (!month) return;
+    setOvPeriod(month);
+    setPreview(null);
+    setShowSourceUploads(false);
+    setAutoLoaded(false);
+  }, [month]);
+
+  const cycleOptions = month ? houseCycleOptions(month, ovPeriods) : [];
 
   useEffect(() => {
     if (ovPeriod && ovType && !autoLoaded) {
@@ -705,10 +732,10 @@ function HouseOverridesPanel() {
   return (
     <div>
       <div className="card" style={{ marginBottom: 14 }}>
-        <div className="card-title" style={{ fontSize: 15, marginBottom: 6 }}>House statements</div>
+        <div className="card-title" style={{ fontSize: 15, marginBottom: 6 }}>{month ? `House statements — ${formatPeriodLabel(month) || month}` : 'House statements'}</div>
         <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14, lineHeight: 1.45 }}>
           THEI NHP sales (includes Oscar + all ACA) and THEI BSI remittance (Medicare only) are separate reports. Marco (Swan) $10 agency peel, and Integrity / CAM / Chris producer shares.
-          Lina’s agent production is under <strong>Agent Payouts</strong> — not here.
+          {month ? <> Lina, Christian and Horacio&apos;s own statements are under <strong>Agent statements</strong> above.</> : <> Lina’s agent production is under <strong>Agent Payouts</strong> — not here.</>}
           {' '}NHP periods are <strong>payment cycles</strong> (deposit/statement batch), not coverage month — e.g. May 30 vs Jun 15 are separate. Rename files with the cycle date when possible (`…_2026-06-15.xlsx`).
         </div>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
@@ -732,6 +759,28 @@ function HouseOverridesPanel() {
               ))}
             </select>
           </div>
+          {month && cycleOptions.length > 1 && (
+            <div>
+              <div className="form-label">Pay cycle</div>
+              <select
+                className="filter-select"
+                aria-label="House pay cycle"
+                value={ovPeriod}
+                onChange={(e) => {
+                  setOvPeriod(e.target.value);
+                  setPreview(null);
+                  setShowSourceUploads(false);
+                  setAutoLoaded(false);
+                }}
+                style={{ minWidth: 160 }}
+              >
+                {cycleOptions.map((c) => (
+                  <option key={c.value} value={c.value}>{c.label}</option>
+                ))}
+              </select>
+            </div>
+          )}
+          {!month && (
           <div>
             <div className="form-label">Period</div>
             <select
@@ -757,6 +806,7 @@ function HouseOverridesPanel() {
               })}
             </select>
           </div>
+          )}
           <button className="btn btn-primary" onClick={loadPreview} disabled={!ovType || !ovPeriod || ovLoading}>
             {ovLoading ? 'Loading…' : 'Refresh'}
           </button>
@@ -845,7 +895,7 @@ function HouseOverridesPanel() {
   );
 }
 
-export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
+export default function Payroll({ user, initialTab = 'payroll', onNavigate, initialPeriod }) {
   const tab =
     initialTab === 'overrides' || initialTab === 'loa' || initialTab === 'history' ||
     initialTab === 'close' || initialTab === 'changelog'
@@ -970,7 +1020,9 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
         // Newest first for the dropdown
         list.sort((a, b) => String(b).localeCompare(String(a)));
         setPeriods(list);
-        if (list[0]) setSelectedPeriod(list[0]);
+        // Statements page needs a single month (YYYYMM); other tabs keep the newest period.
+        const first = tab === 'overrides' ? statementsMonth(list, initialPeriod) : (list[0] || '');
+        if (first) setSelectedPeriod(first);
       })
       .catch((e) => setLoadError(e.message || 'Failed to load periods'));
     loadPayoutHistory();
@@ -1285,11 +1337,11 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
   const pageMeta = {
     payroll: {
       title: 'Agent Payouts',
-      sub: 'Pay producers (ACA, Lina, Munoz, Mendieta). Upload Tailored/Jill and other ACA pay statements under Uploads → Agent Payout Uploads. Marco\'s $10 peel stays under House Statements.',
+      sub: 'Pay producers (ACA, Lina, Munoz, Mendieta). Upload Tailored/Jill and other ACA pay statements under Uploads → Agent Payout Uploads. Marco\'s $10 peel and all statements are under Statements.',
     },
     overrides: {
-      title: 'House Statements',
-      sub: 'THEI NHP vs BSI remittance, Marco (Swan) $10 agency peel, Integrity / CAM / Chris',
+      title: 'Statements',
+      sub: 'Every statement for one month: agent statements (Lina, Christian, Horacio) first, then house statements (THEI, BSI, Marco, Integrity)',
     },
     loa: {
       title: 'LOA Statements',
@@ -1316,7 +1368,59 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
         <div className="page-sub">{pageMeta.sub}</div>
       </div>
       <div className="page-body">
-        {tab === 'overrides' && <HouseOverridesPanel />}
+        {tab === 'overrides' && (
+          <div>
+            <div className="card" style={{ marginBottom: 14 }}>
+              <div className="form-label">Month</div>
+              <select
+                className="filter-select"
+                aria-label="Statements month"
+                value={/^\d{6}$/.test(String(selectedPeriod)) ? selectedPeriod : ''}
+                onChange={(e) => setSelectedPeriod(e.target.value)}
+                style={{ minWidth: 160 }}
+              >
+                <option value="">Select month...</option>
+                {monthlyPeriods.map((p) => <option key={p} value={p}>{formatPeriodLabel(p)}</option>)}
+              </select>
+            </div>
+
+            <div className="card-title" data-section="agent-statements" style={{ fontSize: 16, margin: '4px 0 0' }}>Agents</div>
+            {isBSI ? (
+              <div className="card" style={{ marginTop: 10, marginBottom: 18, fontSize: 12, color: 'var(--text-muted)' }}>
+                Agent statements are issued from the THEI view.
+              </div>
+            ) : /^\d{6}$/.test(String(selectedPeriod)) ? (
+              <div style={{ marginBottom: 18 }}>
+                <StoredStatements
+                  key={selectedPeriod}
+                  period={selectedPeriod}
+                  isAdmin={user.role === 'admin'}
+                  downloadBusy={linaBusy}
+                  downloadError={linaError}
+                  onDownloadCurrent={(payee) => downloadPayeeStatement(payee, selectedPeriod)}
+                  onDownloadLinaExcel={() => downloadLinaExcel(selectedPeriod)}
+                />
+              </div>
+            ) : (
+              <div className="card" style={{ marginTop: 10, marginBottom: 18 }}>
+                <div className="empty-state">
+                  <div className="empty-title">Select a month</div>
+                </div>
+              </div>
+            )}
+
+            <div className="card-title" data-section="house-statements" style={{ fontSize: 16, margin: '0 0 10px' }}>House</div>
+            {/^\d{6}$/.test(String(selectedPeriod)) ? (
+              <HouseOverridesPanel month={selectedPeriod} />
+            ) : (
+              <div className="card">
+                <div className="empty-state">
+                  <div className="empty-title">Select a month</div>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
         {tab === 'loa' && <LOAStatements />}
 
         {tab === 'payroll' && (
@@ -1326,7 +1430,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
                 Agent production only — ACA producer pay (100% pass-through) and{' '}
                 <strong>Lina Hernandez</strong> (NB / Renewal / Chargeback / HRA), plus Integrity agents{' '}
                 <strong>Christian Munoz</strong> (incl. CAM) and <strong>Horacio Mendieta</strong> (50% producer share).
-                Marco (Swan) is under <strong>House Statements</strong>.
+                Marco (Swan) is under <strong>Statements</strong>.
               </div>
               <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
                 <div>
@@ -1522,8 +1626,18 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
                     onChanged={async () => { await loadPeriodState(selectedPeriod); await loadPayouts(selectedPeriod); }}
                   />
                 )}
-                {!isBSI && selectedPeriod && selectedPeriod !== 'all' && (
-                  <StoredStatements period={selectedPeriod} isAdmin={user.role === 'admin'} />
+                {!isBSI && (
+                  <div data-testid="statements-moved-note" style={{ marginTop: 14, fontSize: 12, color: 'var(--text-muted)' }}>
+                    Issuing, re-issuing and downloading statements (agent and house) is now on the{' '}
+                    <button
+                      type="button"
+                      onClick={() => onNavigate && onNavigate('payroll-overrides', /^\d{6}$/.test(String(selectedPeriod)) ? { period: selectedPeriod } : {})}
+                      style={{ background: 'none', border: 'none', padding: 0, color: 'var(--accent)', textDecoration: 'underline', cursor: 'pointer', fontSize: 12 }}
+                    >
+                      Statements
+                    </button>{' '}
+                    tab.
+                  </div>
                 )}
               </div>
             )}
