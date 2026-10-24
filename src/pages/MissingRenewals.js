@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../api';
-import { normName, nameVariants, normCarrier } from '../matchingNormalize';
 
 function fmt(n) {
   const num = parseFloat(String(n || '0').replace(/[$,]/g, ''));
@@ -297,17 +296,14 @@ export default function MissingRenewals({ user }) {
     setClientLoading(true);
     setClientRecords([]);
     try {
-      // Pull a large window then filter — payment history spans many periods
-      const data = await apiFetch(`/records?search=${encodeURIComponent(row.client)}&limit=500`);
-      const recs = (data.records || []).filter(r => {
-        const normClient = normName(row.client);
-        const normRecord = normName(r.client_full_name);
-        if (normCarrier(r.carrier) !== normCarrier(row.carrier)) return false;
-        if (normClient === normRecord) return true;
-        return nameVariants(row.client).some(v => v === normRecord) ||
-               nameVariants(r.client_full_name).some(v => v === normClient);
+      // Same format-tolerant lookup as All Data Client File (LAST, FIRST ↔ FIRST LAST)
+      const params = new URLSearchParams({
+        client: row.client,
+        carrier: row.carrier,
       });
-      // Newest period first
+      const data = await apiFetch(`/records/client-history?${params}`);
+      const recs = [...(data.rows || [])];
+      // Newest period first (API returns oldest-first)
       recs.sort((a, b) => String(b.payment_period || '').localeCompare(String(a.payment_period || '')));
       setClientRecords(recs);
     } catch(e) { console.error(e); }
@@ -453,6 +449,9 @@ export default function MissingRenewals({ user }) {
   const filteredHeld    = filtered.filter(r => r.isHeld).length;
   const filteredPaid    = filtered.filter(r => !r.isMissing).length;
   const totalCommission = filtered.filter(r => !r.isMissing).reduce((s,r) => s + r.commission, 0);
+  const estimatedMissing = filtered
+    .filter(r => r.isMissing && !r.isHeld)
+    .reduce((s, r) => s + (parseFloat(r.lastKnownCommission) || 0), 0);
   const periodLabel = formatPeriodLabel(selectedPeriod) || selectedPeriod;
 
   return (
@@ -468,6 +467,11 @@ export default function MissingRenewals({ user }) {
                   {selectedClient.isHeld && <span style={{ marginLeft:8,background:'#E8E8E8',color:'#444',borderRadius:4,padding:'1px 6px',fontSize:11,fontWeight:500 }}>🔒 Held – Licensing</span>}
                   {selectedClient.isMissing && !selectedClient.isHeld && <span style={{ marginLeft:8,background:'#FFF4D6',color:'#856404',borderRadius:4,padding:'1px 6px',fontSize:11,fontWeight:500 }}>Missing</span>}
                 </div>
+                {selectedClient.isMissing && (
+                  <div style={{ fontSize:11,color:'var(--text-muted)',marginTop:4 }}>
+                    Missing for {periodLabel} — history below may include other months
+                  </div>
+                )}
               </div>
               <button onClick={() => setSelectedClient(null)} style={{ background:'none',border:'none',fontSize:20,cursor:'pointer',color:'var(--text-muted)' }}>✕</button>
             </div>
@@ -490,14 +494,21 @@ export default function MissingRenewals({ user }) {
                     </tr>
                   </thead>
                   <tbody>
-                    {clientRecords.map((r,i) => (
-                      <tr key={i} style={{ borderBottom:'1px solid var(--border)' }}>
-                        <td style={{ padding:'8px 14px' }}>{r.payment_period||'—'}</td>
+                    {clientRecords.map((r,i) => {
+                      const rowPeriod = normPeriod(r.payment_period);
+                      const isSelectedMonth = rowPeriod && selectedPeriod && rowPeriod === normPeriod(selectedPeriod);
+                      return (
+                      <tr key={i} style={{ borderBottom:'1px solid var(--border)', background: isSelectedMonth ? '#FFF8E6' : undefined }}>
+                        <td style={{ padding:'8px 14px' }}>
+                          {formatPeriodLabel(r.payment_period) || r.payment_period || '—'}
+                          {isSelectedMonth && <span style={{ marginLeft:6,fontSize:10,color:'#856404' }}>← checking</span>}
+                        </td>
                         <td style={{ padding:'8px 14px',color:'var(--text-muted)' }}>{r.carrier}</td>
                         <td style={{ padding:'8px 14px',fontWeight:500,color:parseFloat(r.commission)<0?'var(--red)':'var(--green)' }}>{fmt(r.commission)}</td>
                         <td style={{ padding:'8px 14px',color:'var(--text-muted)' }}>{r.classification}</td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               )}
@@ -661,7 +672,11 @@ export default function MissingRenewals({ user }) {
               <span style={{ color:'var(--text-muted)',margin:'0 4px' }}>|</span>
               <span style={{ color:'var(--green)',fontWeight:500 }}>Paid: {filteredPaid}</span>
               <span style={{ color:'var(--text-muted)',margin:'0 4px' }}>|</span>
-              <span>Commission: <strong style={{ color:'var(--green)' }}>{fmt(totalCommission)}</strong></span>
+              <span>Paid $: <strong style={{ color:'var(--green)' }}>{fmt(totalCommission)}</strong></span>
+              <span style={{ color:'var(--text-muted)',margin:'0 4px' }}>|</span>
+              <span title="Sum of last known commission for missing rows (one period)">
+                Est. missing: <strong style={{ color:'var(--red)' }}>{fmt(estimatedMissing)}</strong>
+              </span>
               <span style={{ fontSize:12,color:'var(--text-muted)',marginLeft:8 }}>— {periodLabel}</span>
             </div>
 
@@ -766,7 +781,7 @@ export default function MissingRenewals({ user }) {
                         </td>
                         <td style={{ fontSize:12,color:'var(--text-muted)' }}>
                           {!r.lastPaidPeriod
-                            ? <span className="badge badge-blue">New</span>
+                            ? <span className="badge badge-blue" title="No renewal payment found in BOB or uploaded statements">No last paid</span>
                             : <span style={{ color: r.monthsMissing > 0 ? 'var(--red)' : 'var(--text-muted)', fontWeight: r.monthsMissing > 0 ? 500 : 400 }}>
                                 {r.monthsMissing} mo
                               </span>
@@ -1006,8 +1021,15 @@ export default function MissingRenewals({ user }) {
                   </tbody>
                   <tfoot>
                     <tr style={{ background:'var(--bg-subtle)',fontWeight:500 }}>
-                      <td colSpan={7} style={{ padding:'8px 12px',fontSize:12 }}>Total ({filtered.filter(r=>!r.isMissing).length} paid)</td>
-                      <td style={{ padding:'8px 12px',fontSize:12,color:'var(--green)' }}>{fmt(totalCommission)}</td>
+                      <td colSpan={7} style={{ padding:'8px 12px',fontSize:12 }}>
+                        Paid ({filteredPaid}) · Est. missing ({filteredMissing})
+                      </td>
+                      <td style={{ padding:'8px 12px',fontSize:12 }}>
+                        <span style={{ color:'var(--green)' }}>{fmt(totalCommission)}</span>
+                        {filteredMissing > 0 && (
+                          <span style={{ color:'var(--red)', marginLeft:8 }}>/ {fmt(estimatedMissing)}</span>
+                        )}
+                      </td>
                       <td colSpan={4}></td>
                     </tr>
                   </tfoot>
