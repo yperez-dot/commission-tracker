@@ -1,4 +1,5 @@
 'use strict';
+const { periodToMmYyyy } = require('./periodFormat');
 
 /**
  * Period gating for Agency Override Recon.
@@ -47,8 +48,7 @@ function periodDateBounds(period) {
 function formatReconPeriodLabel(period) {
   const p = normalizeReconPeriod(period);
   if (!p) return '';
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  return `${months[parseInt(p.slice(4, 6), 10) - 1]} ${p.slice(0, 4)}`;
+  return periodToMmYyyy(p) || '';
 }
 
 function collectReconPeriods(rows) {

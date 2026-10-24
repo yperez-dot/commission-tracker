@@ -1,3 +1,4 @@
+import { periodToMmYyyy } from '../periodFormat';
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiFetch } from '../api';
 
@@ -7,8 +8,7 @@ function fmt(n) {
 
 function formatPeriod(p) {
   if (!p || !String(p).match(/^\d{6}$/)) return p || '—';
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  return `${months[parseInt(p.slice(4, 6), 10) - 1]} ${p.slice(0, 4)}`;
+  return periodToMmYyyy(p) || p;
 }
 
 const C = {

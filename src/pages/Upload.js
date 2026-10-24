@@ -1,3 +1,4 @@
+import { periodToMmYyyy } from '../periodFormat';
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiFetch, apiUpload } from '../api';
 import { formatDate, formatDateTime } from '../utils/dateFormat';
@@ -233,7 +234,7 @@ export default function Upload({ user, onNavigate }) {
               }}>{r.classification || '—'}</span>
             ),
           },
-          { key: 'payment_period', header: 'Period', render: (r) => <span style={{ color: 'var(--text-muted)' }}>{r.payment_period || '—'}</span> },
+          { key: 'payment_period', header: 'Period', render: (r) => <span style={{ color: 'var(--text-muted)' }}>{r.payment_period ? (periodToMmYyyy(r.payment_period) || r.payment_period) : '—'}</span> },
         ]}
         footer={(rows) => (
           <>
@@ -306,7 +307,7 @@ export default function Upload({ user, onNavigate }) {
                     {uploadResult.resolvedRenewals.slice(0, 8).map((r, i) => (
                       <li key={i}>
                         {r.client} · {r.carrier}
-                        {r.paymentPeriod ? ` · ${r.paymentPeriod}` : ''}
+                        {r.paymentPeriod ? ` · ${periodToMmYyyy(r.paymentPeriod) || r.paymentPeriod}` : ''}
                         {r.commission != null ? ` · ${fmt(r.commission)}` : ''}
                       </li>
                     ))}
@@ -421,7 +422,7 @@ export default function Upload({ user, onNavigate }) {
                         <div style={{ padding: '10px 20px 15px', background: 'var(--bg-muted)', fontSize: 12, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                           <div><strong>Agent:</strong> {dup.agent || 'N/A'}</div>
                           <div><strong>Commission:</strong> {fmt(dup.amount || 0)}</div>
-                          <div><strong>Period:</strong> {dup.period || 'N/A'}</div>
+                          <div><strong>Period:</strong> {dup.period ? (periodToMmYyyy(dup.period) || dup.period) : 'N/A'}</div>
                           <div><strong>Type:</strong> {dup.type || 'N/A'}</div>
                         </div>
                       )}

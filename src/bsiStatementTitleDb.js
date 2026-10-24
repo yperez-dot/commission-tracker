@@ -5,7 +5,7 @@
  * Shared by routes/files.js and scripts/backfill-bsi-statement-titles.js.
  */
 
-const { buildBsiStatementTitle } = require('./bsiStatementTitle');
+const { buildBsiStatementTitle, convertTitleDates } = require('./bsiStatementTitle');
 
 /** Idempotent schema: display_title + who set it ('auto' | 'manual'). */
 async function ensureTitleColumns(pool) {
@@ -53,7 +53,9 @@ async function loadPeriodCounts(pool, uploadIds) {
 
 /**
  * Compute old → new titles for every BSI statement upload. Read-only.
- * @returns {Promise<Array<{ id, original_name, old_title, new_title, source, confidence, notes, manual, changed }>>}
+ * Auto titles are rebuilt (MM.YYYY). Manual titles keep their text; only their
+ * MM-YYYY month tokens become MM.YYYY (unless includeManual rebuilds them).
+ * @returns {Promise<Array<{ id, original_name, old_title, new_title, new_source, source, confidence, notes, manual, changed }>>}
  */
 async function planBsiTitles(pool, { includeManual = false, oldTitleOf } = {}) {
   const withCols = await hasTitleColumns(pool);
@@ -74,7 +76,8 @@ async function planBsiTitles(pool, { includeManual = false, oldTitleOf } = {}) {
     });
     const oldTitle = (withCols && u.display_title) || (oldTitleOf ? oldTitleOf(u) : u.original_name);
     const skip = manual && !includeManual;
-    const newTitle = skip ? u.display_title : built.title;
+    const newTitle = skip ? convertTitleDates(u.display_title) : built.title;
+    const manualDateFix = skip && newTitle !== u.display_title;
     return {
       id: u.id,
       original_name: u.original_name,
@@ -83,11 +86,12 @@ async function planBsiTitles(pool, { includeManual = false, oldTitleOf } = {}) {
       uploaded_at: u.uploaded_at,
       old_title: oldTitle,
       new_title: newTitle,
+      new_source: skip ? 'manual' : 'auto',
       source: built.source,
       confidence: built.confidence,
-      notes: skip ? ['manual title kept'] : built.notes,
+      notes: skip ? [manualDateFix ? 'manual title kept; month changed to MM.YYYY' : 'manual title kept'] : built.notes,
       manual,
-      changed: !skip && (!withCols || u.display_title !== built.title || u.display_title_source !== 'auto'),
+      changed: skip ? manualDateFix : (!withCols || u.display_title !== built.title || u.display_title_source !== 'auto'),
     };
   });
   // Flag duplicate titles (two uploads that would read the same)
@@ -99,7 +103,37 @@ async function planBsiTitles(pool, { includeManual = false, oldTitleOf } = {}) {
   return plan;
 }
 
+/**
+ * Write a plan from planBsiTitles (only rows with changed=true). One transaction.
+ * @returns {Promise<number>} rows updated
+ */
+async function applyBsiTitlePlan(pool, plan) {
+  await ensureTitleColumns(pool);
+  const client = await pool.connect();
+  let updated = 0;
+  try {
+    await client.query('BEGIN');
+    for (const p of plan) {
+      if (!p.changed) continue;
+      await client.query(
+        `UPDATE uploads SET display_title = $1, display_title_source = $2
+          WHERE id = $3 AND category = 'bsi_statement'`,
+        [p.new_title, p.new_source || 'auto', p.id]
+      );
+      updated += 1;
+    }
+    await client.query('COMMIT');
+  } catch (e) {
+    await client.query('ROLLBACK');
+    throw e;
+  } finally {
+    client.release();
+  }
+  return updated;
+}
+
 module.exports = {
+  applyBsiTitlePlan,
   ensureTitleColumns,
   hasTitleColumns,
   periodCountsFromRecords,

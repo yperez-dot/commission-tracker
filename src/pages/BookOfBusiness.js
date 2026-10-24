@@ -1,3 +1,4 @@
+import { periodToMmYyyy } from '../periodFormat';
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiFetch, apiUpload } from '../api';
 import { fetchAllPages, truncationMessage } from '../fetchAllPages';
@@ -935,15 +936,8 @@ export default function BookOfBusiness({ user }) {
                       const s = String(p);
                       return s.match(/^\d{6}$/) || s.match(/^\d{1,2}\/\d{4}$/) || s.match(/^\d{1,2}\/\d{2}\/\d{4}$/);
                     }).map(p => {
-                      let label = p;
                       const s = String(p);
-                      if (s.match(/^\d{6}$/)) {
-                        const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-                        label = months[parseInt(s.slice(4,6))-1] + ' ' + s.slice(0,4);
-                      } else if (s.match(/^\d{2}\/\d{4}$/)) {
-                        const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-                        label = months[parseInt(s.slice(0,2))-1] + ' ' + s.slice(3);
-                      }
+                      const label = (s.match(/^\d{6}$/) || s.match(/^\d{2}\/\d{4}$/)) ? (periodToMmYyyy(s) || p) : p;
                       return <option key={p} value={p}>{label}</option>;
                     })}
                   </select>

@@ -77,8 +77,8 @@ describe('period picker + sale membership', () => {
   });
 
   test('formatReconPeriodLabel', () => {
-    expect(formatReconPeriodLabel('202603')).toBe('Mar 2026');
-    expect(formatReconPeriodLabel('2026-01')).toBe('Jan 2026');
+    expect(formatReconPeriodLabel('202603')).toBe('03.2026');
+    expect(formatReconPeriodLabel('2026-01')).toBe('01.2026');
   });
 
   test('isSelectedPeriodSale uses effective_date month or batch when date is missing', () => {

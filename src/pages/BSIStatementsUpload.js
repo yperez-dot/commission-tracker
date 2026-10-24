@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiFetch, apiUpload, apiDownload } from '../api';
 import { formatDateTime } from '../utils/dateFormat';
+import { periodToMmYyyy, normalizePeriodInput, formatPeriodsInText } from '../periodFormat';
 import UploadRouteConfirm from '../components/UploadRouteConfirm';
 import {
   detectUploadDestination,
@@ -47,7 +48,7 @@ function ChargebackFlagTable({ rows }) {
             <tr key={r.id || i}>
               <td style={td}>{r.status === 'no_payment' ? 'No payment found' : 'Exceeds paid'}</td>
               <td style={td}>{r.carrier}</td><td style={td}>{r.client}</td><td style={td}>{r.policy}</td>
-              <td style={td}>{r.effectiveDate}</td><td style={td}>{r.period}</td><td style={td}>{r.agent}</td>
+              <td style={td}>{r.effectiveDate}</td><td style={td}>{periodToMmYyyy(r.period) || r.period}</td><td style={td}>{r.agent}</td>
               <td style={{ ...td, textAlign: 'right' }}>{fmt(r.amount)}</td>
               <td style={{ ...td, textAlign: 'right' }}>{fmt(r.paid)}</td>
               <td style={{ ...td, textAlign: 'right' }}>{fmt(r.chargedBack)}</td>
@@ -65,7 +66,8 @@ function ChargebackCheckPanel() {
   const [data, setData] = useState(null);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState('');
-  const qs = /^\d{6}$/.test(period) ? `?period=${period}` : '';
+  const periodKey = normalizePeriodInput(period);
+  const qs = /^\d{6}$/.test(periodKey) ? `?period=${periodKey}` : '';
   const run = async () => {
     setBusy(true); setErr('');
     try { setData(await apiFetch(`/records/chargeback-paid-check${qs}`)); }
@@ -75,7 +77,7 @@ function ChargebackCheckPanel() {
   const exportXlsx = async () => {
     try {
       await apiDownload(`/records/chargeback-paid-check${qs ? qs + '&' : '?'}format=xlsx`,
-        `chargebacks_over_paid_${qs ? period : 'all'}.xlsx`);
+        `chargebacks_over_paid_${qs ? periodKey : 'all'}.xlsx`);
     } catch (e) { setErr(e.message || 'Export failed'); }
   };
   return (
@@ -87,7 +89,7 @@ function ChargebackCheckPanel() {
       <input
         value={period}
         onChange={(e) => setPeriod(e.target.value.trim())}
-        placeholder="Period YYYYMM (blank = all)"
+        placeholder="Month MM.YYYY (blank = all)"
         style={{ padding: '4px 8px', marginRight: 8, width: 190 }}
       />
       <button type="button" onClick={run} disabled={busy}>{busy ? 'Checking…' : 'Check'}</button>{' '}
@@ -96,7 +98,7 @@ function ChargebackCheckPanel() {
       {data && (
         <div style={{ marginTop: 8 }}>
           {data.summary
-            ? <div style={{ fontWeight: 600, color: '#b45309' }}>⚠ {data.summary.message}</div>
+            ? <div style={{ fontWeight: 600, color: '#b45309' }}>⚠ {formatPeriodsInText(data.summary.message)}</div>
             : <div>No chargebacks over what was paid.</div>}
           <ChargebackFlagTable rows={data.rows} />
         </div>
@@ -262,7 +264,7 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
     try {
       await exportUploadFile({
         path: commissionUploadExportPath(u.id, 'xlsx'),
-        fallbackName: `${String(bsiUploadTitle(u) || u.original_name || 'bsi_statement').replace(/\.[^.]+$/, '').replace(/\s*·\s*/g, '_').replace(/\s+/g, '_')}_export.xlsx`,
+        fallbackName: `${String(bsiUploadTitle(u) || u.original_name || 'bsi_statement').replace(/\.[^.]+$/, '').replace(/\s*·\s*/g, '_').replace(/(\d{2})\.(\d{4})/g, '$1-$2').replace(/\s+/g, '_')}_export.xlsx`,
       });
     } catch (e) {
       setError(e.message || 'Export failed');
@@ -380,12 +382,12 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
             )}
             {uploadResult.unsplitWarning && (
               <div style={{ marginTop: 4, fontWeight: 600, color: '#b45309' }}>
-                ⚠ {uploadResult.unsplitWarning.message}
+                ⚠ {formatPeriodsInText(uploadResult.unsplitWarning.message)}
               </div>
             )}
             {uploadResult.chargebackWarning && (
               <div style={{ marginTop: 4, fontWeight: 600, color: '#b45309' }}>
-                ⚠ {uploadResult.chargebackWarning.message}
+                ⚠ {formatPeriodsInText(uploadResult.chargebackWarning.message)}
                 <ChargebackFlagTable rows={uploadResult.chargebackFlags} />
               </div>
             )}

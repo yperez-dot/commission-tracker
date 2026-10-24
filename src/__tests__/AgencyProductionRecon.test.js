@@ -20,7 +20,7 @@ beforeEach(() => {
   document.body.appendChild(container);
   root = createRoot(container);
   apiFetch.mockImplementation(async (path) => path.endsWith('/periods')
-    ? { periods: [{ period: '202603', label: 'Mar 2026' }], defaultPeriod: '202603' }
+    ? { periods: [{ period: '202603', label: '03.2026' }], defaultPeriod: '202603' }
     : { rows: heldRows, total: 2, counts: { missing: 2 }, scanned: { production: 0, carrierBSI: 2 }, meta: { agents: [], carriers: ['Aetna'], effectiveDates: [] } });
 });
 afterEach(async () => {
@@ -41,8 +41,8 @@ test('picker switches to dedicated Held path, shows State and months, then retur
   expect([...container.querySelectorAll('th')].some((th) => th.textContent === 'State')).toBe(true);
   const stateIndex = [...container.querySelectorAll('thead th')].findIndex((th) => th.textContent === 'State');
   expect([...container.querySelectorAll('tbody tr')].map((tr) => tr.children[stateIndex].textContent)).toEqual(['AL', 'KS']);
-  expect(container.textContent).toContain('Jan 2026');
-  expect(container.textContent).toContain('Mar 2026');
+  expect(container.textContent).toContain('01.2026');
+  expect(container.textContent).toContain('03.2026');
   await act(async () => { select.value = '202603'; Simulate.change(select); });
   expect(apiFetch.mock.calls.at(-1)[0]).toMatch(/^\/agency-production\/override-recon\?period=202603&/);
 });

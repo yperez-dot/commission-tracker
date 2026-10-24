@@ -1,4 +1,5 @@
 'use strict';
+const { periodToMmYyyy } = require('./periodFormat');
 
 /**
  * Integrity agent statements (Christian Munoz, Horacio Mendieta) in BSI's layout:
@@ -67,12 +68,7 @@ const CARRIER_ORDER = ['UNITED HEALTH CARE', 'HUMANA/DEVOTED HEALTH', 'AETNA'];
 
 function formatPeriodLabel(p) {
   const s = String(p || '').trim();
-  const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
-    'August', 'September', 'October', 'November', 'December'];
-  if (/^\d{6}$/.test(s)) {
-    const m = parseInt(s.slice(4, 6), 10);
-    if (m >= 1 && m <= 12) return `${months[m - 1]} ${s.slice(0, 4)}`;
-  }
+  if (/^\d{6}$/.test(s) && periodToMmYyyy(s)) return periodToMmYyyy(s);
   return s || 'All Periods';
 }
 

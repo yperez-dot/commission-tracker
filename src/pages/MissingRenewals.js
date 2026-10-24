@@ -1,3 +1,4 @@
+import { periodToMmYyyy } from '../periodFormat';
 import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../api';
 import { normName, nameVariants, normCarrier } from '../matchingNormalize';
@@ -10,10 +11,7 @@ function fmt(n) {
 function formatPeriodLabel(p) {
   if (!p) return null;
   const s = String(p).trim();
-  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  if (s.match(/^\d{6}$/)) return months[parseInt(s.slice(4,6))-1] + ' ' + s.slice(0,4);
-  if (s.match(/^\d{2}\/\d{4}$/)) return months[parseInt(s.slice(0,2))-1] + ' ' + s.slice(3);
-  if (s.match(/^\d{2}\/\d{2}\/\d{4}$/)) return months[parseInt(s.slice(0,2))-1] + ' ' + s.slice(6);
+  if (s.match(/^\d{6}$/) || s.match(/^\d{2}\/\d{4}$/) || s.match(/^\d{2}\/\d{2}\/\d{4}$/)) return periodToMmYyyy(s);
   return null;
 }
 

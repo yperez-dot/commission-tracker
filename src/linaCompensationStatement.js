@@ -1,4 +1,5 @@
 'use strict';
+const { periodToMmYyyy } = require('./periodFormat');
 
 /**
  * Lina Hernandez (Alba) Detailed Compensation Statement — Excel export.
@@ -37,14 +38,7 @@ function num(v) {
 function formatPeriodLabel(p) {
   if (!p) return '';
   const s = String(p).trim();
-  const months = [
-    'January', 'February', 'March', 'April', 'May', 'June',
-    'July', 'August', 'September', 'October', 'November', 'December',
-  ];
-  if (/^\d{6}$/.test(s)) {
-    const m = parseInt(s.slice(4, 6), 10);
-    if (m >= 1 && m <= 12) return `${months[m - 1]} ${s.slice(0, 4)}`;
-  }
+  if (/^\d{6}$/.test(s)) return periodToMmYyyy(s) || s;
   return s;
 }
 

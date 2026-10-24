@@ -6,7 +6,7 @@
  * show up as an extra "Pay cycle" choice for the picked month.
  */
 
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const { periodToMmYyyy } = require('../periodFormat');
 
 function isMonth(p) {
   return /^\d{6}$/.test(String(p || ''));
@@ -25,7 +25,7 @@ function statementsMonth(periods, requested) {
 
 function monthLabel(m) {
   const s = String(m);
-  return `${MONTHS[parseInt(s.slice(4, 6), 10) - 1]} ${s.slice(0, 4)}`;
+  return periodToMmYyyy(s) || s;
 }
 
 /**
@@ -42,7 +42,7 @@ function houseCycleOptions(month, overridePeriods) {
     .sort();
   return [
     { value: m, label: `${monthLabel(m)} (month)` },
-    ...cycles.map((c) => ({ value: c, label: `${MONTHS[parseInt(c.slice(4, 6), 10) - 1]} ${parseInt(c.slice(6, 8), 10)}, ${c.slice(0, 4)} cycle` })),
+    ...cycles.map((c) => ({ value: c, label: periodToMmYyyy(c) })),
   ];
 }
 

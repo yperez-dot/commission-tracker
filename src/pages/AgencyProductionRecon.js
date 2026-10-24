@@ -1,3 +1,4 @@
+import { periodToMmYyyy } from '../periodFormat';
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { apiFetch } from '../api';
 import { formatCarrier } from '../utils/formatCarrier';
@@ -95,21 +96,13 @@ function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 }
 
-// Convert YYYYMM period to "Mon YYYY" display format
+// Convert YYYYMM period to "MM.YYYY" display format
 function formatPeriodLabel(period) {
   if (!period || period === 'Unknown') return '—';
   const periodStr = String(period).trim();
   
   // Handle YYYYMM format (202603 → Mar 2026)
-  if (periodStr.match(/^\d{6}$/)) {
-    const year = periodStr.slice(0, 4);
-    const month = periodStr.slice(4, 6);
-    const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    const monthIndex = parseInt(month) - 1;
-    if (monthIndex >= 0 && monthIndex < 12) {
-      return `${months[monthIndex]} ${year}`;
-    }
-  }
+  if (periodStr.match(/^\d{6}$/) && periodToMmYyyy(periodStr)) return periodToMmYyyy(periodStr);
   
   // Fallback: return as-is
   return periodStr;
@@ -632,7 +625,7 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
                 <div>{selectedOverride.override.effective_date ? formatDate(selectedOverride.override.effective_date) : '—'}</div>
                 
                 <div style={{ color: 'var(--text-muted)', fontWeight: 500 }}>Payment Period:</div>
-                <div>{selectedOverride.override.payment_period || '—'}</div>
+                <div>{selectedOverride.override.payment_period ? formatPeriodLabel(selectedOverride.override.payment_period) : '—'}</div>
                 
                 <div style={{ color: 'var(--text-muted)', fontWeight: 500 }}>Policy Number:</div>
                 <div style={{ fontFamily: 'monospace', fontSize: 12 }}>{selectedOverride.override.policy_number || '—'}</div>
@@ -882,7 +875,7 @@ export default function AgencyProductionRecon({ initialSearch = '' } = {}) {
                   <option value="all">All periods</option>
                   {periods.map((p) => (
                     <option key={p.period} value={p.period}>
-                      {p.label || formatPeriodLabel(p.period)}
+                      {formatPeriodLabel(p.period) !== String(p.period || '') ? formatPeriodLabel(p.period) : (p.label || p.period)}
                     </option>
                   ))}
                 </select>

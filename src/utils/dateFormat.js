@@ -1,10 +1,9 @@
+import { periodToMmYyyy } from '../periodFormat';
 /**
  * Format dates consistently across OliComm as MM-DD-YYYY.
  * Compact carrier values (Doctors Healthcare 20240101, statement period 202606)
  * are converted to the same display style used elsewhere in the app.
  */
-
-const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 function pad2(n) {
   return String(n).padStart(2, '0');
@@ -25,33 +24,15 @@ function mdY(year, month, day) {
   return `${pad2(month)}-${pad2(day)}-${year}`;
 }
 
-/** Statement period YYYYMM → "Jun 2026" (Dashboard / Payroll / All Data). */
+/** Statement period YYYYMM → "06.2026" (Dashboard / Payroll / All Data). */
 export function formatPeriod(periodStr) {
   if (periodStr == null || periodStr === '') return '—';
   const s = String(periodStr).trim();
   if (!s) return '—';
-
-  if (/^\d{6}$/.test(s)) {
-    const year = s.slice(0, 4);
-    const month = parseInt(s.slice(4, 6), 10);
-    if (month >= 1 && month <= 12 && parseInt(year, 10) >= 1900 && parseInt(year, 10) <= 2100) {
-      return `${MONTHS[month - 1]} ${year}`;
-    }
-    return s;
+  if (/^\d{6}$/.test(s) || /^\d{1,2}\/\d{4}$/.test(s) || /^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{4}$/.test(s)) {
+    const us = s.match(/^(\d{1,2})[\/\-]\d{1,2}[\/\-](\d{4})$/);
+    return periodToMmYyyy(us ? `${us[1]}/${us[2]}` : s) || s;
   }
-
-  if (/^\d{1,2}\/\d{4}$/.test(s)) {
-    const [month, year] = s.split('/');
-    const m = parseInt(month, 10);
-    if (m >= 1 && m <= 12) return `${MONTHS[m - 1]} ${year}`;
-  }
-
-  const us = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
-  if (us) {
-    const m = parseInt(us[1], 10);
-    if (m >= 1 && m <= 12) return `${MONTHS[m - 1]} ${us[3]}`;
-  }
-
   return s;
 }
 

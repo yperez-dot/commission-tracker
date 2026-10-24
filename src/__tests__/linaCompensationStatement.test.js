@@ -85,7 +85,7 @@ describe('linaCompensationStatement', () => {
     expect(stmt.payee).toBe(ALBA_DISPLAY_NAME);
     expect(stmt.payee).toBe('Lina Hernandez');
     expect(stmt.reportDate).toBe('08/13/2026');
-    expect(stmt.periodTitle).toBe('July 2026 Statement');
+    expect(stmt.periodTitle).toBe('07.2026 Statement');
     expect(stmt.lineCount).toBe(3);
     expect(stmt.gross).toBe(730);
     expect(stmt.chargebacks).toBe(-60);

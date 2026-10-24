@@ -1,3 +1,4 @@
+import { periodToMmYyyy } from '../periodFormat';
 import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../api';
 import './EditCommissionModal.css';
@@ -115,7 +116,7 @@ const EditCommissionModal = ({ record, onClose, onSave }) => {
             <div><strong>Client:</strong> {record.client_full_name}</div>
             <div><strong>Agent:</strong> {record.agent_name}</div>
             <div><strong>Carrier:</strong> {record.carrier}</div>
-            <div><strong>Period:</strong> {record.payment_period}</div>
+            <div><strong>Period:</strong> {periodToMmYyyy(record.payment_period) || record.payment_period}</div>
           </div>
 
           {record.is_manually_edited && (

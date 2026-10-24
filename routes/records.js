@@ -1,3 +1,4 @@
+const { periodToMmYyyy } = require('../src/periodFormat');
 const express = require('express');
 const router = express.Router();
 const { getPool } = require('../db/database');
@@ -1038,7 +1039,7 @@ router.get('/chargeback-paid-check', requireAuth, async (req, res) => {
       const ws = XLSX.utils.json_to_sheet(rows.map((x) => ({
         Status: x.status === 'no_payment' ? 'No payment found' : 'Exceeds paid',
         Carrier: x.carrier, Agent: x.agent, Client: x.client, Policy: x.policy,
-        'Effective Date': x.effectiveDate, 'Payment Period': x.period, Classification: x.classification,
+        'Effective Date': x.effectiveDate, 'Payment Period': periodToMmYyyy(x.period) || x.period, Classification: x.classification,
         'Chargeback Line': x.amount, 'Total Paid': x.paid, 'Total Charged Back': x.chargedBack,
         'Charged Back Over Paid': x.excess, 'Matched By': x.matchedBy || '', 'Upload ID': x.uploadId,
       })));

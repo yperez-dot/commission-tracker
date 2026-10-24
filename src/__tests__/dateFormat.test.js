@@ -14,9 +14,9 @@ describe('formatDate', () => {
   });
 
   test('formats statement periods like other olicomm pages', () => {
-    expect(formatDate('202606')).toBe('Jun 2026');
-    expect(formatPeriod('202606')).toBe('Jun 2026');
-    expect(formatPeriod('01/2026')).toBe('Jan 2026');
+    expect(formatDate('202606')).toBe('06.2026');
+    expect(formatPeriod('202606')).toBe('06.2026');
+    expect(formatPeriod('01/2026')).toBe('01.2026');
   });
 
   test('leaves unknown and empty values alone', () => {

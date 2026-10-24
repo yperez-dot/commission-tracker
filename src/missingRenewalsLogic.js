@@ -1,4 +1,5 @@
 'use strict';
+const { periodToMmYyyy } = require('./periodFormat');
 
 const { isTheiPrincipalAgent } = require('./theiPrincipalAgents');
 const {
@@ -17,8 +18,7 @@ const {
 function formatPeriodLabel(p) {
   if (!p) return null;
   const s = String(p).trim();
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  if (s.match(/^\d{6}$/)) return `${months[parseInt(s.slice(4, 6), 10) - 1]} ${s.slice(0, 4)}`;
+  if (s.match(/^\d{6}$/)) return periodToMmYyyy(s);
   return null;
 }
 

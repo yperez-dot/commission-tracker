@@ -1,3 +1,4 @@
+import { periodToMmYyyy } from '../periodFormat';
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiFetch } from '../api';
 import { formatCarrier } from '../utils/formatCarrier';
@@ -22,8 +23,7 @@ function fmt(n) {
 function formatPeriodLabel(p) {
   if (!p) return '—';
   const s = String(p).trim();
-  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  if (s.match(/^\d{6}$/)) return months[parseInt(s.slice(4, 6), 10) - 1] + ' ' + s.slice(0, 4);
+  if (s.match(/^\d{6}$/)) return periodToMmYyyy(s) || s;
   return s;
 }
 
@@ -1377,7 +1377,7 @@ export default function AllData({ user, initialFilters = {}, onNavigate }) {
                               <td style={{ fontSize: 12 }}>{s.agencyComm !== undefined ? fmt(s.agencyComm) : '—'}</td>
                             </>
                           );})()}
-                          <td style={{ fontSize: 12 }}>{r.payment_period || '—'}</td>
+                          <td style={{ fontSize: 12 }}>{r.payment_period ? formatPeriodLabel(r.payment_period) : '—'}</td>
                           <td style={{ whiteSpace: 'nowrap' }}>
                             <span className={`badge ${badgeClass(r.classification)}`}>
                               {r.classification === 'Agency Override' ? 'Override' : (r.classification || '—')}

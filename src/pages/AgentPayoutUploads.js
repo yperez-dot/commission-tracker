@@ -1,3 +1,4 @@
+import { periodToMmYyyy } from '../periodFormat';
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiFetch, apiUpload } from '../api';
 import { formatDate, formatDateTime } from '../utils/dateFormat';
@@ -429,7 +430,7 @@ export default function AgentPayoutUploads({ user, onNavigate }) {
             render: (r) => <span style={{ fontWeight: 600, color: parseFloat(r.commission) < 0 ? '#E24B4A' : '#1D9E75' }}>{fmt(r.commission)}</span>,
           },
           { key: 'classification', header: 'Type', render: (r) => r.classification || '—' },
-          { key: 'payment_period', header: 'Period', render: (r) => <span style={{ color: 'var(--text-muted)' }}>{r.payment_period || '—'}</span> },
+          { key: 'payment_period', header: 'Period', render: (r) => <span style={{ color: 'var(--text-muted)' }}>{r.payment_period ? (periodToMmYyyy(r.payment_period) || r.payment_period) : '—'}</span> },
         ]}
         footer={(rows) => (
           <>
