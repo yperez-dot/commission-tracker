@@ -10,6 +10,7 @@
 const ExcelJS = require('exceljs');
 const { STATEMENT_TYPES } = require('./payeeSchedules');
 const { formatEffectiveDate } = require('./effectiveDateFormat');
+const { houseStatementLabel, houseStatementFilename, safeSheetName } = require('./houseStatementNames');
 
 function round2(n) {
   return Math.round((Number(n) || 0) * 100) / 100;
@@ -23,9 +24,8 @@ function formatReportDate(d = new Date()) {
 }
 
 function titleFor(type) {
-  if (type === STATEMENT_TYPES.BSI_OVERRIDE) return 'BSI Override Statement';
-  if (type === STATEMENT_TYPES.THEI_NHP) return 'THEI House Statement — NHP Sales';
-  if (type === STATEMENT_TYPES.THEI_BSI) return 'THEI House Statement — BSI Remittance';
+  // THEI. NHP Statement / THEI. BSI Statement / BSI Medicare Overrides
+  if (houseStatementLabel(type)) return houseStatementLabel(type);
   if (type === STATEMENT_TYPES.MARCO) return 'Marco (Swan) Override Statement';
   if (type === STATEMENT_TYPES.INTEGRITY) return 'Integrity Partners Producer Statement';
   return 'THEI Override Statement';
@@ -80,7 +80,7 @@ async function buildOverrideExcelWorkbook(bundle, payeeStatement, opts = {}) {
   wb.creator = 'OliComm';
   wb.created = new Date();
 
-  const ws = wb.addWorksheet('Override Statement', {
+  const ws = wb.addWorksheet(sheetNameFor(bundle.type), {
     views: [{ showGridLines: false }],
   });
 
@@ -214,7 +214,14 @@ async function buildOverrideExcelWorkbook(bundle, payeeStatement, opts = {}) {
   return wb;
 }
 
+/** First sheet name: the statement name for the renamed house types, else 'Override Statement'. */
+function sheetNameFor(type) {
+  return houseStatementLabel(type) ? safeSheetName(houseStatementLabel(type)) : 'Override Statement';
+}
+
 function filenameForOverrideExcel(bundle, payee) {
+  const renamed = houseStatementFilename(bundle.type, bundle.period, 'xlsx');
+  if (renamed) return renamed;
   const periodPart =
     bundle.period && bundle.period !== 'all' ? bundle.period : 'ALL';
   const who =
@@ -237,6 +244,7 @@ module.exports = {
   filenameForOverrideExcel,
   formatReportDate,
   titleFor,
+  sheetNameFor,
   noteFor,
   LINE_HEADERS,
 };

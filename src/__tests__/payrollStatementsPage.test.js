@@ -12,7 +12,7 @@ function mockApi() {
   apiFetch.mockImplementation(async (path) => {
     if (path.startsWith('/records/filters')) return { periods: ['202607', '202608', '202609'] };
     if (path.startsWith('/records')) return { records: [], total: 0 };
-    if (path.startsWith('/override-statements/types')) return { types: [{ id: 'thei_bsi', label: 'THEI — BSI remittance' }, { id: 'bsi_override', label: 'BSI Overrides' }] };
+    if (path.startsWith('/override-statements/types')) return { types: [{ id: 'thei_bsi', label: 'THEI. BSI Statement' }, { id: 'bsi_override', label: 'BSI Medicare Overrides' }] };
     if (path.startsWith('/override-statements/periods')) return { periods: [{ period: '202609' }, { period: '202608' }] };
     if (path.startsWith('/override-statements/preview')) return { periodLabel: 'Sep 2026', statementCount: 0, grandTotal: 0, statements: [] };
     if (path.startsWith('/payee-statements/compare')) return { liveTotal: 0, issuedTotal: null };
@@ -66,6 +66,11 @@ test('Statements page: one month picker, agent statements first, house statement
   expect(text).toContain('Save BSI copy');
   expect(text).toContain('Lina compensation Excel');
   expect(text).toContain('Export all types');
+  // type picker shows the house statement names; no help paragraphs on the page
+  expect(text).toContain('THEI. BSI Statement');
+  expect(text).toContain('BSI Medicare Overrides');
+  expect(container.querySelector('.page-sub')).toBeNull();
+  expect(text).not.toMatch(/separate reports|payment cycles|freeze what you paid|Current statement.{0,5}downloads/);
 
   // house panel follows the page month
   expect(apiFetch.mock.calls.some(([u]) => u.startsWith('/override-statements/preview') && u.includes('period=202609'))).toBe(true);
