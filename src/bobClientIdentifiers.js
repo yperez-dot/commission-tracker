@@ -93,7 +93,9 @@ function detectBobExportColumns(headers) {
     agentCol: findColumn(headers, ['writingagentname', 'agentname', 'writingagent', 'producername', 'agent', 'producer']),
     memberIdCol: findColumn(headers, [
       'memberid', 'membernumber', 'member_id', 'carrier_member_id',
-      'mbi', 'hicnmbi', 'medicareidentifier', 'medicareid', 'medicarenumber',
+      'memberhic', 'mbi', 'hicnmbi', 'hicnumber', 'hicn', 'hic',
+      'cmsid', 'beneficiaryid', 'beneficiaryclaimnumber',
+      'medicareidentifier', 'medicareid', 'medicarenumber',
       'subscriberid', 'umid', 'hcid', 'memberrecordlocator',
     ], { excludeSubstrings: MEMBER_EXCLUDE }),
     policyCol: findColumn(headers, [
@@ -140,8 +142,9 @@ function mapBobExportRow(row, columns, { normalizeAgentName } = {}) {
 const MEMBER_ID_RAW_KEYS = [
   'memberid', 'member_id', 'membernumber', 'member #',
   'carrier_member_id', 'carriermemberid', 'umid', 'hcid',
-  'mbi', 'medicareidentifier', 'medicare_identifier', 'medicareid',
-  'medicarenumber', 'medicare_number', 'hicnmbi', 'hicn/mbi', 'hic#', 'hic',
+  'memberhic', 'member hic', 'mbi', 'medicareidentifier', 'medicare_identifier', 'medicareid',
+  'medicarenumber', 'medicare_number', 'hicnmbi', 'hicn/mbi', 'hicnumber', 'hic number',
+  'hicn', 'hic#', 'hic', 'cmsid', 'cms id', 'beneficiaryid', 'beneficiary id',
   'subscriberid', 'subscriber id', 'memberrecordlocator',
   'beneficiary_claim_number', 'beneficiaryclaimnumber',
 ];
