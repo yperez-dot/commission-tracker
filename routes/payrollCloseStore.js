@@ -102,6 +102,10 @@ async function ensureCloseTables(pool) {
     'voided_by TEXT',
     'voided_at TIMESTAMPTZ',
     'void_reason TEXT',
+    // 'payout' (we paid the agent) | 'repayment' (the agent paid back a balance due;
+    // payment_amount is negative = money in). A repayment links to its adjustment line.
+    `kind TEXT DEFAULT 'payout'`,
+    'adjustment_id INTEGER',
   ]) {
     await pool.query(`ALTER TABLE payroll_payments ADD COLUMN IF NOT EXISTS ${col}`);
   }

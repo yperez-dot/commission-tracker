@@ -30,7 +30,8 @@ const {
 const { compareStatementTotals } = require('../src/payeeStatementCompare');
 const { totalsByPeriodFromLines, DEFAULT_CARRY_START } = require('../src/payeeCarryForward');
 const { computeCarryWithLocks } = require('../src/payrollLock');
-const { attachAdjustments } = require('../src/payrollStatementExtras');
+const { attachAdjustments, statementNet } = require('../src/payrollStatementExtras');
+const { bottomLine } = require('../src/payrollLock');
 const store = require('./payrollCloseStore');
 const { logChange } = require('./change-log');
 
@@ -91,9 +92,11 @@ async function fetchRows(pool, payeeKey, period) {
   if (payeeKey === 'lina') {
     agentSql = `(agent_name ILIKE '%alba%hernandez%' OR agent_name ILIKE '%lina%hernandez%' OR agent_name ILIKE '%alba%ritela%')`;
   } else if (payeeKey === 'christian-munoz') {
-    agentSql = `(agent_name ILIKE '%christian munoz%' OR agent_name ILIKE '%cam insurance solutions corp%')`;
+    // Wide pre-filter (middle initial, "Last, First"); buildIntegrityStatement narrows it.
+    agentSql = `(agent_name ILIKE '%christian%munoz%' OR agent_name ILIKE '%munoz%christian%'
+      OR agent_name ILIKE '%cam insurance solutions corp%')`;
   } else {
-    agentSql = `agent_name ILIKE '%horacio mendieta%'`;
+    agentSql = `(agent_name ILIKE '%horacio%mendieta%' OR agent_name ILIKE '%mendieta%horacio%')`;
   }
   const r = await pool.query(
     `SELECT ${ROW_COLS} FROM commission_records
@@ -140,6 +143,7 @@ async function buildFor(pool, payeeKey, period, ak = 'thei') {
     const statement = buildLinaCompensationStatement(rows, { period });
     attachAdjustments(statement, adjustments);
     statement.carry = carry;
+    statement.bottomLine = bottomLine(statementNet(statement));
     const wb = await buildLinaCompensationWorkbook(statement);
     return {
       statement, total: statement.balanceAfterAdjustments, lines: statement.lines, carry,
@@ -150,6 +154,7 @@ async function buildFor(pool, payeeKey, period, ak = 'thei') {
   const statement = buildIntegrityStatement(rows, payeeKey, { period });
   attachAdjustments(statement, adjustments);
   statement.carry = carry;
+  statement.bottomLine = bottomLine(statementNet(statement));
   const wb = await buildIntegrityWorkbook(statement);
   return {
     statement, total: statement.balanceAfterAdjustments, lines: statement.lines, carry,
