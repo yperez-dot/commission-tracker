@@ -6,6 +6,7 @@ const {
   buildOverrideExcelWorkbook,
   filenameForOverrideExcel,
   titleFor,
+  sheetNameFor,
   noteFor,
   LINE_HEADERS,
 } = require('../overrideExcelStatement');
@@ -85,18 +86,18 @@ describe('overrideExcelStatement', () => {
     const nhpBundle = buildOverrideStatements(nhpRows, STATEMENT_TYPES.THEI_NHP, {
       period: '202601',
     });
-    expect(titleFor(nhpBundle.type)).toMatch(/NHP/i);
+    expect(titleFor(nhpBundle.type)).toBe('THEI. NHP Statement');
     expect(filenameForOverrideExcel(nhpBundle, 'The Health Experts Insurance')).toBe(
-      'THEI_NHP_Override_Statement_202601.xlsx'
+      'THEI_NHP_Statement_202601.xlsx'
     );
 
     const bsiRows = rows.map((r) => ({ ...r, source: 'BSI' }));
     const bsiBundle = buildOverrideStatements(bsiRows, STATEMENT_TYPES.THEI_BSI, {
       period: '202601',
     });
-    expect(titleFor(bsiBundle.type)).toMatch(/BSI Remittance/i);
+    expect(titleFor(bsiBundle.type)).toBe('THEI. BSI Statement');
     expect(filenameForOverrideExcel(bsiBundle, 'The Health Experts Insurance')).toBe(
-      'THEI_BSI_Remittance_Override_Statement_202601.xlsx'
+      'THEI_BSI_Statement_202601.xlsx'
     );
   });
 
@@ -145,7 +146,7 @@ describe('overrideExcelStatement', () => {
       const stmt = bundle.statements[0];
       // eslint-disable-next-line no-await-in-loop
       const wb = await buildOverrideExcelWorkbook(bundle, stmt, { reportDate: '08/14/2026' });
-      const ws = wb.getWorksheet('Override Statement');
+      const ws = wb.worksheets[0];
       const headers = [];
       for (let c = 1; c <= 12; c += 1) {
         const v = ws.getRow(9).getCell(c).value;
@@ -177,8 +178,35 @@ describe('overrideExcelStatement', () => {
     const bundle = buildOverrideStatements(neg, STATEMENT_TYPES.BSI_OVERRIDE, { period: '202601' });
     const stmt = bundle.statements[0];
     const wb = await buildOverrideExcelWorkbook(bundle, stmt, { reportDate: '08/14/2026' });
-    const cell = wb.getWorksheet('Override Statement').getRow(10).getCell(8);
+    const cell = wb.worksheets[0].getRow(10).getCell(8);
     expect(cell.value).toBeLessThan(0);
     expect(cell.font.color.argb).toBe('FFB91C1C');
+  });
+
+  it('renamed house statements: title row, sheet name, file name, summary', async () => {
+    const cases = [
+      [STATEMENT_TYPES.THEI_NHP, rows.map((r) => ({ ...r, source: 'NHP' })), 'THEI. NHP Statement', 'THEI_NHP_Statement_202601.xlsx'],
+      [STATEMENT_TYPES.THEI_BSI, rows.map((r) => ({ ...r, source: 'BSI' })), 'THEI. BSI Statement', 'THEI_BSI_Statement_202601.xlsx'],
+      [STATEMENT_TYPES.BSI_OVERRIDE, rows.map((r) => ({ ...r, source: 'BSI' })), 'BSI Medicare Overrides', 'BSI_Medicare_Overrides_202601.xlsx'],
+    ];
+    for (const [type, data, label, file] of cases) {
+      const bundle = buildOverrideStatements(data, type, { period: '202601' });
+      const stmt = bundle.statements[0];
+      // eslint-disable-next-line no-await-in-loop
+      const wb = await buildOverrideExcelWorkbook(bundle, stmt, { reportDate: '08/14/2026' });
+      expect(wb.worksheets.map((w) => w.name)).toEqual([label, 'Summary']);
+      expect(sheetNameFor(type)).toBe(label);
+      expect(label.length).toBeLessThanOrEqual(31);
+      expect(wb.worksheets[0].getCell('A1').value).toBe(label);
+      expect(wb.getWorksheet('Summary').getCell('B1').value).toBe(label);
+      expect(filenameForOverrideExcel(bundle, stmt.payee)).toBe(file);
+      expect(filenameForOverrideExcel({ ...bundle, period: 'all' }, stmt.payee)).toBe(file.replace('202601', 'ALL'));
+    }
+  });
+
+  it('Marco and Integrity keep their names', () => {
+    expect(titleFor(STATEMENT_TYPES.MARCO)).toBe('Marco (Swan) Override Statement');
+    expect(titleFor(STATEMENT_TYPES.INTEGRITY)).toBe('Integrity Partners Producer Statement');
+    expect(sheetNameFor(STATEMENT_TYPES.MARCO)).toBe('Override Statement');
   });
 });

@@ -8,6 +8,7 @@ import { fetchAllPages } from '../fetchAllPages';
 import { bottomLine } from '../payrollLock';
 import TruncationBanner from '../components/TruncationBanner';
 import { statementsMonth, houseCycleOptions } from '../utils/statementsPeriods';
+import { houseStatementFilename } from '../houseStatementNames';
 import {
   usePayrollMeta, PayModal, ReasonModal, AdjustmentsPanel, PaymentRecords, MonthClosePanel, ChangeLogPanel,
 } from '../components/PayrollClose';
@@ -97,9 +98,8 @@ function downloadBase64File(filename, base64, mime) {
 
 function filenameForHouseExcel(type, period, payee) {
   const periodPart = period && period !== 'all' ? period : 'ALL';
-  if (type === 'bsi_override') return `BSI_Override_Statement_${periodPart}.xlsx`;
-  if (type === 'thei_nhp') return `THEI_NHP_Statement_${periodPart}.xlsx`;
-  if (type === 'thei_bsi') return `THEI_BSI_Remittance_Statement_${periodPart}.xlsx`;
+  const renamed = houseStatementFilename(type, period, 'xlsx');
+  if (renamed) return renamed;
   if (type === 'thei_override') return `THEI_Override_Statement_${periodPart}.xlsx`;
   if (type === 'marco') return `Marco_Override_Statement_${periodPart}.xlsx`;
   const who = String(payee || 'Override').replace(/\s+/g, '_').replace(/[^A-Za-z0-9_\-]/g, '');
@@ -236,11 +236,7 @@ function StoredStatements({ period, isAdmin, onDownloadCurrent, onDownloadLinaEx
 
   return (
     <div className="card" style={{ marginTop: 14 }}>
-      <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>Agent statements — {formatPeriodLabel(period) || period}</div>
-      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 10 }}>
-        Issue a statement to freeze what you paid; log BSI&apos;s copy to compare balances.
-        {onDownloadCurrent && <> &ldquo;Current statement&rdquo; downloads the Excel as it stands now (a locked month gives the frozen copy). When the agent owes money back it shows &ldquo;Balance due from agent&rdquo;.</>}
-      </div>
+      <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 10 }}>Agent statements — {formatPeriodLabel(period) || period}</div>
       {msg && <div style={{ color: 'var(--red)', fontSize: 12, marginBottom: 8 }}>{msg}</div>}
       {downloadError && <div style={{ color: 'var(--red)', fontSize: 12, marginBottom: 8 }}>{downloadError}</div>}
       {STATEMENT_PAYEE_OPTIONS.map((o) => {
@@ -732,12 +728,7 @@ function HouseOverridesPanel({ month } = {}) {
   return (
     <div>
       <div className="card" style={{ marginBottom: 14 }}>
-        <div className="card-title" style={{ fontSize: 15, marginBottom: 6 }}>{month ? `House statements — ${formatPeriodLabel(month) || month}` : 'House statements'}</div>
-        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14, lineHeight: 1.45 }}>
-          THEI NHP sales (includes Oscar + all ACA) and THEI BSI remittance (Medicare only) are separate reports. Marco (Swan) $10 agency peel, and Integrity / CAM / Chris producer shares.
-          {month ? <> Lina, Christian and Horacio&apos;s own statements are under <strong>Agent statements</strong> above.</> : <> Lina’s agent production is under <strong>Agent Payouts</strong> — not here.</>}
-          {' '}NHP periods are <strong>payment cycles</strong> (deposit/statement batch), not coverage month — e.g. May 30 vs Jun 15 are separate. Rename files with the cycle date when possible (`…_2026-06-15.xlsx`).
-        </div>
+        <div className="card-title" style={{ fontSize: 15, marginBottom: 14 }}>{month ? `House statements — ${formatPeriodLabel(month) || month}` : 'House statements'}</div>
         <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
           <div>
             <div className="form-label">Type</div>
@@ -1341,7 +1332,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate, init
     },
     overrides: {
       title: 'Statements',
-      sub: 'Every statement for one month: agent statements (Lina, Christian, Horacio) first, then house statements (THEI, BSI, Marco, Integrity)',
+      sub: '',
     },
     loa: {
       title: 'LOA Statements',
@@ -1365,7 +1356,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate, init
     <div>
       <div className="page-header">
         <div className="page-title">{pageMeta.title}</div>
-        <div className="page-sub">{pageMeta.sub}</div>
+        {pageMeta.sub && <div className="page-sub">{pageMeta.sub}</div>}
       </div>
       <div className="page-body">
         {tab === 'overrides' && (

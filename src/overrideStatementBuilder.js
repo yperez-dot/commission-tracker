@@ -32,6 +32,7 @@ const {
   ALBA_DISPLAY_NAME,
 } = require('./payeeSchedules');
 const { formatEffectiveDate } = require('./effectiveDateFormat');
+const { HOUSE_STATEMENT_NAMES, houseStatementLabel } = require('./houseStatementNames');
 const { formatNhpCyclePeriodLabel } = require('./nhpPeriod');
 const { resolveBsiBookShare } = require('./overrideSplitMath');
 
@@ -399,12 +400,8 @@ function statementToCsv(bundle, payeeStatement) {
         ? 'Integrity Partners Producer Statement (50%)'
         : bundle.type === STATEMENT_TYPES.ALBA
           ? 'Lina Hernandez Agent Commission Statement'
-      : bundle.type === STATEMENT_TYPES.BSI_OVERRIDE
-          ? 'BSI Override Statement (50% of override pot)'
-          : bundle.type === STATEMENT_TYPES.THEI_NHP
-            ? 'THEI House Statement — NHP sales only'
-            : bundle.type === STATEMENT_TYPES.THEI_BSI
-              ? 'THEI House Statement — BSI remittance (what BSI pays us)'
+      : houseStatementLabel(bundle.type)
+          ? houseStatementLabel(bundle.type)
           : 'THEI Override Statement (50% of override pot)';
 
   const splitNote =
@@ -539,7 +536,7 @@ function breakdownToCsv(bundle) {
 
 function summaryToCsv(bundle) {
   const lines = [
-    csvEscape(`OliComm Override Summary — ${bundle.type}`),
+    csvEscape(`OliComm Override Summary — ${houseStatementLabel(bundle.type) || bundle.type}`),
     csvEscape(`Period: ${bundle.periodLabel}`),
     '',
     ['Payee', 'Lines', 'Net Total'].map(csvEscape).join(','),
@@ -552,6 +549,12 @@ function summaryToCsv(bundle) {
 }
 
 function filenameFor(bundle, payee) {
+  const n = HOUSE_STATEMENT_NAMES[bundle.type];
+  if (n) {
+    const p = bundle.period === 'all' ? 'ALL' : bundle.period;
+    const who = payee === 'SUMMARY' ? '_Summary' : '';
+    return `${n.slug}${who}_${p}.csv`;
+  }
   const safePayee = String(payee || 'ALL').replace(/\s+/g, '_').replace(/[^A-Za-z0-9_\-]/g, '');
   const period = bundle.period === 'all' ? 'ALL' : bundle.period;
   return `${bundle.type}_${safePayee}_${period}.csv`;

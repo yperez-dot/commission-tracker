@@ -12,6 +12,7 @@ const {
   filenameFor,
 } = require('../src/overrideStatementBuilder');
 const { isTheiHouseType } = require('../src/payeeSchedules');
+const { houseStatementLabel } = require('../src/houseStatementNames');
 const {
   buildOverrideExcelWorkbook,
   filenameForOverrideExcel,
@@ -243,21 +244,21 @@ router.get('/types', requireAuth, (_req, res) => {
     types: [
       {
         id: STATEMENT_TYPES.THEI_NHP,
-        label: 'THEI — NHP sales',
+        label: houseStatementLabel(STATEMENT_TYPES.THEI_NHP),
         amountField: 'thei_share',
         description: 'THEI share of NHP agency statement sales only (includes Oscar + all ACA)',
         exportFormat: 'xlsx',
       },
       {
         id: STATEMENT_TYPES.THEI_BSI,
-        label: 'THEI — BSI remittance',
+        label: houseStatementLabel(STATEMENT_TYPES.THEI_BSI),
         amountField: 'thei_share',
         description: 'THEI share of what BSI pays us (Medicare remittance — not Oscar/ACA)',
         exportFormat: 'xlsx',
       },
       {
         id: STATEMENT_TYPES.BSI_OVERRIDE,
-        label: 'BSI Overrides',
+        label: houseStatementLabel(STATEMENT_TYPES.BSI_OVERRIDE),
         amountField: 'bsi_share',
         description: 'BSI 50% of Agency Override + Alba rate-peeled production shares',
         exportFormat: 'xlsx',
@@ -625,7 +626,7 @@ router.get('/export-all-types', requireAuth, requireAdmin, async (req, res) => {
     ];
     for (const f of files) {
       summaryLines.push(
-        `"${f.type}","${String(f.payee).replace(/"/g, '""')}",${f.lineCount},"$${Number(f.total || 0).toFixed(2)}"`
+        `"${String(houseStatementLabel(f.type) || f.type).replace(/"/g, '""')}","${String(f.payee).replace(/"/g, '""')}",${f.lineCount},"$${Number(f.total || 0).toFixed(2)}"`
       );
     }
 
