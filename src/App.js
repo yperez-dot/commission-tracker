@@ -15,10 +15,9 @@ import AgencyProductionRecon from './pages/AgencyProductionRecon';
 import BSIStatementsUpload from './pages/BSIStatementsUpload';
 import AgentPayoutUploads from './pages/AgentPayoutUploads';
 import PassThroughChargebacks from './pages/PassThroughChargebacks';
-import AdpExport from './pages/AdpExport';
 import './App.css';
 
-const REMOVED_PAGES = new Set(['reports', 'agents', 'fix-aetna', 'fixaetna']);
+const REMOVED_PAGES = new Set(['reports', 'agents', 'fix-aetna', 'fixaetna', 'payroll-adp']);
 
 const THEI_ONLY_PAGES = new Set([
   'medicarepro-upload',
@@ -168,7 +167,6 @@ export default function App() {
         { id: 'payroll-history', label: 'Payment History' },
         { id: 'payroll-close', label: 'Month Close' },
         { id: 'payroll-changelog', label: 'Change Log' },
-        ...(user.role === 'admin' ? [{ id: 'payroll-adp', label: 'ADP / 1099' }] : []),
       ]
     },
     ...(user.role === 'admin' ? [
@@ -203,7 +201,6 @@ export default function App() {
     'payroll-history': <Payroll key={`${agencyView}-history`} user={effectiveUser} initialTab="history" onNavigate={navigate} />,
     'payroll-close': <Payroll key={`${agencyView}-close`} user={effectiveUser} initialTab="close" onNavigate={navigate} />,
     'payroll-changelog': <Payroll key={`${agencyView}-changelog`} user={effectiveUser} initialTab="changelog" onNavigate={navigate} />,
-    'payroll-adp': <AdpExport key={`${agencyView}-adp`} user={effectiveUser} />,
     users: <AdminUsers key={agencyView} user={effectiveUser} />
   };
 
