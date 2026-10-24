@@ -1059,8 +1059,11 @@ router.get('/agency-summary', requireAuth, requireAdmin, async (req, res) => {
 // Fills only rows with dollars and NO split for other agents / THEI-written lines
 // (50/50, Marco $10 for Swan agents), and moves $10 to Marco on Swan rows the old name
 // matching missed (stored plain 50/50, no $10 taken on the policy yet), and re-splits Lina
-// chargebacks in proportion to the original payment(s) on the policy ('lina_cb_prorate').
-// ?apply=true writes.
+// chargebacks in proportion to the original payment(s) on the policy ('lina_cb_prorate'),
+// resets over-allocated splits (THEI + BSI + producer + Marco > the line, e.g. THEI and BSI
+// each holding the whole amount) to the current rules ('double_share_fix'), and relabels
+// first-year positive Aetna "Chargeback" lines as New Business ('aetna_cb_reclass', label only).
+// ?kind=double_share_fix (comma list ok) limits the run to those kinds. ?apply=true writes.
 router.post('/backfill-bsi-house-splits', requireAuth, requireAdmin, async (req, res) => {
   try {
     const pool = getPool();
@@ -1069,13 +1072,18 @@ router.post('/backfill-bsi-house-splits', requireAuth, requireAdmin, async (req,
       .split(',').map((x) => parseInt(x, 10)).filter((n) => n > 0);
     const period = String(req.query.period || (req.body && req.body.period) || '').trim() || null;
     const apply = String(req.query.apply || (req.body && req.body.apply) || '') === 'true';
-    const result = await runBsiHouseSplitBackfill(pool, { uploadIds, period, apply });
+    const kinds = String(req.query.kind || (req.body && req.body.kind) || '')
+      .split(',').map((x) => x.trim()).filter(Boolean);
+    const result = await runBsiHouseSplitBackfill(pool, { uploadIds, period, apply, kinds });
     if (apply && result.applied) {
       await logChange(pool, req, {
         type: 'record.bsi_house_split_backfill', entityType: 'commission_record', period,
         summary: `BSI house split backfill: ${result.applied} row(s) updated ` +
-          `(THEI ${result.summary.theiDelta.toFixed(2)}, BSI ${result.summary.bsiDelta.toFixed(2)}, Marco ${result.summary.marcoDelta.toFixed(2)}, Lina ${result.summary.linaDelta.toFixed(2)})`,
-        details: { uploadIds, period, summary: result.summary, ids: result.updates.map((u) => u.id) },
+          `(THEI ${result.summary.theiDelta.toFixed(2)}, BSI ${result.summary.bsiDelta.toFixed(2)}, Marco ${result.summary.marcoDelta.toFixed(2)}, Lina ${result.summary.linaDelta.toFixed(2)}` +
+          `${result.summary.relabeled ? `, relabeled ${result.summary.relabeled}` : ''})`,
+        details: { uploadIds, period, kinds, summary: result.summary, ids: result.updates.map((u) => u.id),
+          changes: result.updates.map((u) => ({ id: u.id, kind: u.kind, before: u.before, after: u.after,
+            ...(u.newClassification ? { classification: [u.classification, u.newClassification] } : {}) })) },
       });
     }
     res.json(result);
@@ -1168,7 +1176,12 @@ router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, r
           OR COALESCE(cr.producer_payable, 0) <> 0 OR COALESCE(cr.sub_agent_override, 0) <> 0
           OR LOWER(TRIM(COALESCE(cr.classification, ''))) IN ('new business', 'renewal', 'chargeback', 'agent commission'))
       )`;
-    const whereClause = force ? `WHERE ${keepBsiSplit}` : `WHERE cr.source IS NULL AND ${keepBsiSplit}`;
+    // Rows from BSI statement uploads keep the split they got at upload time (or from the
+    // scoped POST /backfill-bsi-house-splits) — this generic pass never re-splits them.
+    const notBsiStatementUpload = `COALESCE(u.category, '') <> 'bsi_statement'`;
+    const whereClause = force
+      ? `WHERE ${keepBsiSplit} AND ${notBsiStatementUpload}`
+      : `WHERE cr.source IS NULL AND ${keepBsiSplit} AND ${notBsiStatementUpload}`;
 
     const sel = await pool.query(`
       SELECT cr.id, cr.agent_name, cr.carrier, cr.commission, cr.classification,
@@ -1197,6 +1210,7 @@ router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, r
     // Marco's agents ($10 per policy first occurrence, then 50/50; Jendy excluded from 202606)
     // come from the shared schedule lists; matching tolerates middle initials / punctuation / case.
     const { isIntegrityAgent: isIntegrityAgentB, isMarcoAgent: isMarcoAgentB } = require('../src/payeeSchedules');
+    const { houseFallbackSplit } = require('../src/houseFallbackSplit');
 
     // Policies already deducted in DB — prevents re-deducting on re-run or force backfill
     // ORDER BY payment_period ASC (added above) ensures earliest period processed first within batch
@@ -1212,7 +1226,7 @@ router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, r
 
     for (const row of sel.rows) {
       const fn = String(row.upload_name || '').toLowerCase().replace(/\s+/g, '_');
-      const payeeLc = String(row.payee || '').toLowerCase();
+      const payeeLc = String(row.payee || '').toLowerCase().trim();
       let source = 'manual';
       if (payeeLc === 'bsi' || /statement-the|statement_-the|broker_society|bsi|statement-health_experts|statement_health_experts/.test(fn)) source = 'BSI';
       else if (payeeLc === 'nhp' || /nhp|the_health_experts_insurance_statement/.test(fn)) source = 'NHP';
@@ -1310,12 +1324,10 @@ router.post('/backfill-business-rules', requireAuth, requireAdmin, async (req, r
         bsiShare = Math.round(netCommission * 0.5 * 100) / 100;
         producerPayable = 0;
       } else {
-        // THE remittance half-model: amount is already THEI's half → mirror to BSI
-        splitApplies = true;
-        grossCommission = Math.round(netCommission * 2 * 100) / 100;
-        theiShare = netCommission;
-        bsiShare = netCommission;
-        producerPayable = 0;
+        // THE remittance half-model (payee THE only): amount is already THEI's half → mirror
+        // to BSI. Any other BSI-book line is the full pot → 50/50 (never a double count).
+        ({ splitApplies, grossCommission, theiShare, bsiShare, producerPayable } =
+          houseFallbackSplit(netCommission, { source, payee: row.payee }));
       }
 
       const planType = String(row.plan_type || '').toLowerCase();

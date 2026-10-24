@@ -4264,6 +4264,7 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
       // ($10 per policy first occurrence, then 50/50) come from the shared schedule lists;
       // matching tolerates middle initials / punctuation / case (src/agentNameMatch.js).
       const { isIntegrityAgent: isIntegrityAgentU, isMarcoAgent: isMarcoAgentU } = require('../src/payeeSchedules');
+      const { houseFallbackSplit } = require('../src/houseFallbackSplit');
 
       // Pre-existing deducted policies — prevents re-deducting on re-upload of same statement
       const alreadyDeductedUpload = await pool.query(`
@@ -4369,12 +4370,11 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
           bsiShare = Math.round(netCommission * 0.5 * 100) / 100;
           producerPayable = 0;
         } else {
-          // THE remittance half-model: amount is already THEI's half → mirror to BSI
-          splitApplies = true;
-          grossCommission = Math.round(netCommission * 2 * 100) / 100;
-          theiShare = netCommission;
-          bsiShare = netCommission;
-          producerPayable = 0;
+          // THE remittance half-model (payee THE only): amount is already THEI's half → mirror
+          // to BSI. Any other BSI-book line (payee Direct/Humana/Devoted from a BSI-named file)
+          // is the full pot → 50/50, never a double count.
+          ({ splitApplies, grossCommission, theiShare, bsiShare, producerPayable } =
+            houseFallbackSplit(netCommission, { source: inferredSource, payee: recordPayeeLc }));
         }
 
         let lob = null;
