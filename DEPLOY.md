@@ -5,7 +5,8 @@
 
 ## What you have
 
-- **Frontend** (React app) → deploys to Netlify → tools.healthexps.com
+- **Frontend** (React app) → deploys to **Cloudflare Pages** → https://olicomm.healthexps.com
+  (Netlify is kept as a fallback host; same build, see Step 4b)
 - **Backend** (Node.js API) → deploys to Railway → auto-generated URL
 - **Database** (SQLite) → lives inside Railway, persists your data
 
@@ -64,7 +65,21 @@ FRONTEND_URL        = https://tools.healthexps.com
 
 ---
 
-## STEP 4 — Deploy the frontend to Netlify
+## STEP 4 — Deploy the frontend to Cloudflare Pages (primary)
+
+The frontend is served by Cloudflare Pages at **https://olicomm.healthexps.com**.
+No dashboard tweaks are needed — the repo carries everything:
+
+- Build command: `npm run build` (the script itself sets `DISABLE_ESLINT_PLUGIN=true CI=false`,
+  so Cloudflare's `CI=true` doesn't turn lint warnings into a failed build)
+- Output directory: `build`
+- Backend URL: `.env.production` sets `REACT_APP_API_URL` to the Railway API
+  (`https://commission-tracker-production-e4fc.up.railway.app`). A host env var with the
+  same name overrides it if you ever need a different backend.
+- SPA fallback: `public/_redirects` (`/* /index.html 200`). Pages are addressed with
+  URL hashes (`#/payroll-overrides?period=202609`), so refresh / Back / deep links work on any static host.
+
+## STEP 4b — Netlify (fallback host)
 
 1. Go to https://netlify.com and sign up with your GitHub account
 2. Click "Add new site" → "Import an existing project" → GitHub
@@ -144,7 +159,7 @@ REACT_APP_API_URL = https://your-railway-url-from-step-3
 
 **"Cannot connect to server"**
 - Check that your Railway backend is running (Railway dashboard → Deployments)
-- Verify `REACT_APP_API_URL` in Netlify matches your Railway URL exactly
+- Verify `REACT_APP_API_URL` (in `.env.production`, or the host's env var if set) matches your Railway URL exactly
 
 **"AI column mapping failed"**
 - Check that `ANTHROPIC_API_KEY` is set correctly in Railway
@@ -187,7 +202,9 @@ commission-tracker/
 │   │       ├── MissingRenewals.js
 │   │       └── Agents.js
 │   └── package.json
-├── netlify.toml           ← Netlify build config
+├── netlify.toml           ← Netlify build config (fallback host)
+├── public/_redirects      ← SPA fallback (Cloudflare Pages + Netlify)
+├── .env.production        ← public backend URL baked into the build
 └── DEPLOY.md              ← this file
 ```
 

@@ -16,6 +16,7 @@ import BSIStatementsUpload from './pages/BSIStatementsUpload';
 import AgentPayoutUploads from './pages/AgentPayoutUploads';
 import PassThroughChargebacks from './pages/PassThroughChargebacks';
 import './App.css';
+import { sectionForPage, toggleSection, isSectionOpen, pageToHash, parseHash, initialRoute } from './navState';
 
 const REMOVED_PAGES = new Set(['reports', 'agents', 'fix-aetna', 'fixaetna', 'payroll-adp']);
 
@@ -30,12 +31,67 @@ const THEI_ONLY_PAGES = new Set([
   'reconciliation',
 ]);
 
+/** Every page the shell can render (used to validate deep links / history entries). */
+const PAGE_IDS = new Set([
+  'dashboard', 'upload', 'medicarepro-upload', 'agency-production-upload', 'bsi-statements-upload',
+  'agent-payout-uploads', 'agency-production-recon', 'alldata', 'bob', 'renewals', 'reconciliation',
+  'direct-recon', 'pass-through-chargebacks', 'payroll', 'payroll-payouts', 'payroll-overrides',
+  'payroll-loa', 'payroll-history', 'payroll-close', 'payroll-changelog', 'users',
+]);
+
+/** Sidebar menu for the current agency view / role. */
+export function buildNavItems({ isBSI, isAdmin }) {
+  const uploadChildren = [
+    { id: 'upload', label: 'Commission Statements' },
+    ...(!isBSI ? [
+      { id: 'agent-payout-uploads', label: 'Agent Payout Uploads' },
+      { id: 'medicarepro-upload', label: 'MedicarePro Sales' },
+      { id: 'agency-production-upload', label: 'Agency Production' },
+    ] : []),
+    { id: 'bsi-statements-upload', label: 'BSI Statements' },
+  ];
+  return [
+    { id: 'dashboard', label: 'Dashboard' },
+    { id: 'uploads', label: 'Uploads', children: uploadChildren },
+    { id: 'alldata', label: 'All Data' },
+    { id: 'bob', label: 'Book of Business' },
+    ...(!isBSI ? [{
+      id: 'reconciliation',
+      label: 'Reconciliation',
+      children: [
+        { id: 'direct-recon', label: 'Sales Reconciliation' },
+        { id: 'agency-production-recon', label: 'Agency Override Recon' },
+        { id: 'renewals', label: 'Missing Renewals' },
+        { id: 'pass-through-chargebacks', label: 'Writer Chargebacks' },
+      ],
+    }] : []),
+    {
+      id: 'payroll',
+      label: 'Payroll',
+      children: [
+        { id: 'payroll-payouts', label: 'Agent Payouts' },
+        { id: 'payroll-overrides', label: 'Statements' },
+        { id: 'payroll-loa', label: 'LOA' },
+        { id: 'payroll-history', label: 'Payment History' },
+        { id: 'payroll-close', label: 'Month Close' },
+        { id: 'payroll-changelog', label: 'Change Log' },
+      ],
+    },
+    ...(isAdmin ? [{ id: 'users', label: 'User Accounts' }] : []),
+  ];
+}
+
+function currentHash() {
+  return typeof window !== 'undefined' ? window.location.hash : '';
+}
+
 export default function App() {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [page, setPage] = useState('dashboard');
   const [pageParams, setPageParams] = useState({});
-  const [expandedMenus, setExpandedMenus] = useState({ uploads: false, reconciliation: false, payroll: false });
+  // Accordion: id of the one open sidebar section (or null).
+  const [openSection, setOpenSection] = useState(null);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     localStorage.getItem('olicomm_sidebar_collapsed') === 'true'
   );
@@ -49,11 +105,31 @@ export default function App() {
     localStorage.setItem('olicomm_sidebar_collapsed', newState.toString());
   }
 
+  /**
+   * Show a route. push → new browser history entry (Back returns here);
+   * replace → rewrite the current entry; neither → history already moved (popstate).
+   */
+  const applyRoute = useCallback((route, { push = false, replace = false } = {}) => {
+    const wanted = route && route.page;
+    const ok = wanted && PAGE_IDS.has(wanted) && !REMOVED_PAGES.has(wanted);
+    const next = ok ? wanted : 'dashboard';
+    const params = ok ? ((route && route.params) || {}) : {};
+    setPage(next);
+    setPageParams(params);
+    localStorage.setItem('he_page', next);
+    const hash = pageToHash(next, params);
+    if ((push || replace) && currentHash() !== hash) {
+      const state = { page: next, params };
+      if (push) window.history.pushState(state, '', hash);
+      else window.history.replaceState(state, '', hash);
+    }
+  }, []);
+
   function handleAgencySwitch(val) {
     setAgencyView(val);
     localStorage.setItem('olicomm_agency_view', val);
     window.__olicomm_agency_override = val;
-    setPageParams({});
+    applyRoute({ page, params: {} }, { replace: true });
   }
 
   React.useEffect(() => {
@@ -65,38 +141,63 @@ export default function App() {
       const data = await apiFetch('/auth/me');
       if (data?.user) {
         setUser(data.user);
-        const saved = localStorage.getItem('he_page');
-        if (saved && !REMOVED_PAGES.has(saved)) setPage(saved);
-        else if (saved && REMOVED_PAGES.has(saved)) {
-          localStorage.setItem('he_page', 'dashboard');
-          setPage('dashboard');
-        }
+        // Deep link / refresh: the URL hash wins, then the last page, then the dashboard.
+        applyRoute(initialRoute({
+          hash: currentHash(),
+          savedPage: localStorage.getItem('he_page'),
+          isKnownPage: (p) => PAGE_IDS.has(p),
+          removedPages: REMOVED_PAGES,
+        }), { replace: true });
       }
     } catch {
       clearToken();
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [applyRoute]);
 
   useEffect(() => { checkAuth(); }, [checkAuth]);
+
+  // Back / Forward (and a hand-edited hash) move between OliComm pages.
+  useEffect(() => {
+    function onHistory() {
+      const route = parseHash(currentHash());
+      applyRoute(route || { page: 'dashboard', params: {} }, {});
+    }
+    window.addEventListener('popstate', onHistory);
+    window.addEventListener('hashchange', onHistory);
+    return () => {
+      window.removeEventListener('popstate', onHistory);
+      window.removeEventListener('hashchange', onHistory);
+    };
+  }, [applyRoute]);
 
   const isBSI = agencyView.toLowerCase().includes('broker society');
 
   useEffect(() => {
     if (!user) return;
     if (isBSI && THEI_ONLY_PAGES.has(page)) {
-      setPage('dashboard');
-      setPageParams({});
-      localStorage.setItem('he_page', 'dashboard');
+      applyRoute({ page: 'dashboard', params: {} }, { replace: true });
     }
-  }, [isBSI, page, user]);
+  }, [isBSI, page, user, applyRoute]);
+
+  // Only the section holding the current page is open; moving pages re-syncs it.
+  const isAdmin = !!user && user.role === 'admin';
+  useEffect(() => {
+    setOpenSection(sectionForPage(buildNavItems({ isBSI, isAdmin }), page));
+  }, [page, isBSI, isAdmin]);
 
   function handleLogin(token, userData) {
     setToken(token);
     localStorage.setItem('he_user', JSON.stringify(userData));
     setUser(userData);
-    setPage('dashboard');
+    // After sign-in: open the deep-linked page if the URL has one, else the dashboard.
+    applyRoute(initialRoute({
+      hash: currentHash(),
+      savedPage: null,
+      isKnownPage: (p) => PAGE_IDS.has(p),
+      removedPages: REMOVED_PAGES,
+    }), { replace: true });
   }
 
   function handleLogout() {
@@ -107,11 +208,9 @@ export default function App() {
     setPageParams({});
   }
 
+  /** Every page change (sidebar and onNavigate) pushes a browser history entry. */
   function navigate(p, params = {}) {
-    const next = REMOVED_PAGES.has(p) ? 'dashboard' : p;
-    setPage(next);
-    setPageParams(params);
-    localStorage.setItem('he_page', next);
+    applyRoute({ page: p, params }, { push: true });
   }
 
   if (loading) return (
@@ -128,51 +227,7 @@ export default function App() {
 
   if (!user) return <Login onLogin={handleLogin} />;
 
-  const uploadChildren = [
-    { id: 'upload', label: 'Commission Statements' },
-    ...(!isBSI ? [
-      { id: 'agent-payout-uploads', label: 'Agent Payout Uploads' },
-      { id: 'medicarepro-upload', label: 'MedicarePro Sales' },
-      { id: 'agency-production-upload', label: 'Agency Production' },
-    ] : []),
-    { id: 'bsi-statements-upload', label: 'BSI Statements' },
-  ];
-
-  const navItems = [
-    { id: 'dashboard', label: 'Dashboard' },
-    {
-      id: 'uploads',
-      label: 'Uploads',
-      children: uploadChildren,
-    },
-    { id: 'alldata', label: 'All Data' },
-    { id: 'bob', label: 'Book of Business' },
-    ...(!isBSI ? [{
-      id: 'reconciliation',
-      label: 'Reconciliation',
-      children: [
-        { id: 'direct-recon', label: 'Sales Reconciliation' },
-        { id: 'agency-production-recon', label: 'Agency Override Recon' },
-        { id: 'renewals', label: 'Missing Renewals' },
-        { id: 'pass-through-chargebacks', label: 'Writer Chargebacks' },
-      ]
-    }] : []),
-    {
-      id: 'payroll',
-      label: 'Payroll',
-      children: [
-        { id: 'payroll-payouts', label: 'Agent Payouts' },
-        { id: 'payroll-overrides', label: 'Statements' },
-        { id: 'payroll-loa', label: 'LOA' },
-        { id: 'payroll-history', label: 'Payment History' },
-        { id: 'payroll-close', label: 'Month Close' },
-        { id: 'payroll-changelog', label: 'Change Log' },
-      ]
-    },
-    ...(user.role === 'admin' ? [
-      { id: 'users', label: 'User Accounts' },
-    ] : [])
-  ];
+  const navItems = buildNavItems({ isBSI, isAdmin });
 
   const effectiveUser = agencyView
     ? { ...user, agency: agencyView }
@@ -236,24 +291,25 @@ export default function App() {
           {navItems.map(item => {
             if (item.children) {
               const hasActiveChild = item.children.some(child => page === child.id);
-              const isExpanded = expandedMenus[item.id] || hasActiveChild;
+              const isExpanded = isSectionOpen(openSection, item.id);
               return (
-                <div key={item.id}>
+                <div key={item.id} className={`nav-section${isExpanded ? ' open' : ''}`}>
                   <button
-                    className={`nav-item${hasActiveChild ? ' active' : ''}`}
-                    onClick={() => setExpandedMenus({...expandedMenus, [item.id]: !isExpanded})}
+                    className={`nav-item nav-section-header${hasActiveChild ? ' has-active' : ''}`}
+                    aria-expanded={isExpanded}
+                    data-section={item.id}
+                    onClick={() => setOpenSection(toggleSection(openSection, item.id))}
                   >
                     {item.label}
-                    <span style={{ marginLeft: 'auto', fontSize: 10, opacity: 0.6 }}>
-                      {isExpanded ? '▼' : '▶'}
-                    </span>
+                    <span className="nav-caret" aria-hidden="true">{isExpanded ? '▼' : '▶'}</span>
                   </button>
                   {isExpanded && (
-                    <div style={{ paddingLeft: 12 }}>
+                    <div className="nav-children">
                       {item.children.map(child => (
                         <button
                           key={child.id}
                           className={`nav-item nav-sub-item${page === child.id ? ' active' : ''}`}
+                          aria-current={page === child.id ? 'page' : undefined}
                           onClick={() => navigate(child.id)}
                         >
                           {child.label}
@@ -268,6 +324,7 @@ export default function App() {
               <button
                 key={item.id}
                 className={`nav-item${page === item.id ? ' active' : ''}`}
+                aria-current={page === item.id ? 'page' : undefined}
                 onClick={() => navigate(item.id)}
               >
                 {item.label}
