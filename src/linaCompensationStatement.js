@@ -13,7 +13,8 @@
  */
 
 const ExcelJS = require('exceljs');
-const { writeAdjustmentsSection } = require('./payrollStatementExtras');
+const { writeAdjustmentsSection, writeBottomLine, statementNet } = require('./payrollStatementExtras');
+const { bottomLine } = require('./payrollLock');
 const {
   ALBA_DISPLAY_NAME,
   isAlbaHernandez,
@@ -253,26 +254,8 @@ async function buildLinaCompensationWorkbook(statement) {
     rowIdx = writeAdjustmentsSection(ws, rowIdx + 2, statement, 'F') - 1;
   }
 
-  if (statement.carry && (statement.carry.carryIn !== 0 || statement.carry.net < 0)) {
-    rowIdx += 1;
-    ws.getCell(`A${rowIdx}`).value = 'Negative balance carried in from prior months';
-    ws.getCell(`F${rowIdx}`).value = statement.carry.carryIn;
-    ws.getCell(`F${rowIdx}`).numFmt = moneyFmt;
-    ws.getCell(`F${rowIdx}`).font = { color: { argb: 'FFB91C1C' } };
-    rowIdx += 1;
-    ws.getCell(`A${rowIdx}`).value = 'Amount payable this period';
-    ws.getCell(`A${rowIdx}`).font = { bold: true };
-    ws.getCell(`F${rowIdx}`).value = statement.carry.payable;
-    ws.getCell(`F${rowIdx}`).numFmt = moneyFmt;
-    ws.getCell(`F${rowIdx}`).font = { bold: true };
-    if (statement.carry.carryOut < 0) {
-      rowIdx += 1;
-      ws.getCell(`A${rowIdx}`).value = 'Negative balance carried to next period';
-      ws.getCell(`F${rowIdx}`).value = statement.carry.carryOut;
-      ws.getCell(`F${rowIdx}`).numFmt = moneyFmt;
-      ws.getCell(`F${rowIdx}`).font = { color: { argb: 'FFB91C1C' } };
-    }
-  }
+  // Bottom line, always: "Amount payable to agent" or "Balance due from agent".
+  rowIdx = writeBottomLine(ws, rowIdx + 2, statement, 'F') - 1;
 
   rowIdx += 2;
   ws.mergeCells(`A${rowIdx}:G${rowIdx}`);
@@ -296,6 +279,8 @@ async function buildLinaCompensationWorkbook(statement) {
     ['Chargebacks', statement.chargebacks],
     ['Balance', statement.balance],
   ];
+  const bl = statement.bottomLine || bottomLine(statementNet(statement));
+  summaryRows.push([bl.label, bl.amount]);
   summaryRows.forEach((pair, i) => {
     sum.getCell(`A${i + 1}`).value = pair[0];
     sum.getCell(`A${i + 1}`).font = { bold: true };

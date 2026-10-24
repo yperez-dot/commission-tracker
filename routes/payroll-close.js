@@ -217,6 +217,15 @@ router.post('/adjustments', requireAuth, requirePayrollStaff, wrap(async (req, r
   }, frozen);
   if (err) return res.status(frozen ? 409 : 400).json({ error: err });
   const amount = round2(b.amount);
+  // Repayment from the agent: optional payment details (check / ACH / Zelle) for the
+  // payment record. It is money IN, stored as a negative payment_amount, kind 'repayment'.
+  const isRepayment = b.category === 'agent_repayment';
+  const repayMethod = String(b.method || '').toLowerCase();
+  const repayDate = String(b.payDate || new Date().toISOString().slice(0, 10)).slice(0, 10);
+  if (isRepayment) {
+    if (repayMethod && !isMethod(repayMethod)) return res.status(400).json({ error: 'method must be check, ach, zelle or other' });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(repayDate)) return res.status(400).json({ error: 'payDate must be YYYY-MM-DD' });
+  }
   const ins = await pool.query(
     `INSERT INTO payroll_adjustments
        (agency_key, agent_name, payee_key, payment_period, amount, category, reason, corrects_period, corrects_lock_id, entered_by)
@@ -226,12 +235,28 @@ router.post('/adjustments', requireAuth, requirePayrollStaff, wrap(async (req, r
       b.correctsLockId ? Number(b.correctsLockId) : null, who(req)]
   );
   const a = ins.rows[0];
+  let repaymentRecord = null;
+  if (isRepayment) {
+    const pay = await pool.query(
+      `INSERT INTO payroll_payments
+         (payment_date, agent_name, payment_amount, payment_method, check_number, notes, created_by,
+          agency_key, payment_period, lock_id, amount_payable, status, kind, adjustment_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULL,NULL,'active','repayment',$10) RETURNING *`,
+      [repayDate, agent, -amount, repayMethod || null, b.reference ? String(b.reference).trim() : null,
+        `Repayment from agent: ${String(b.reason).trim()}`, who(req), ak, period, a.id]
+    );
+    repaymentRecord = pay.rows[0];
+  }
   await logChange(pool, req, {
     agencyKey: ak, type: 'payroll.adjustment_added', entityType: 'payroll_adjustment', entityId: a.id, period, payee: agent,
     summary: `${categoryLabel(a.category)} ${money(amount)} for ${agent} (${period}): ${a.reason}`,
-    details: { amount, category: a.category, reason: a.reason, correctsPeriod: a.corrects_period },
+    details: {
+      amount, category: a.category, reason: a.reason, correctsPeriod: a.corrects_period,
+      repaymentRecordId: repaymentRecord ? repaymentRecord.id : null,
+      method: isRepayment ? repayMethod || null : undefined, reference: isRepayment ? b.reference || null : undefined,
+    },
   });
-  res.json(a);
+  res.json(Object.assign({}, a, { repaymentRecord }));
 }));
 
 router.post('/adjustments/:id(\\d+)/void', requireAuth, requirePayrollAdmin, wrap(async (req, res) => {
@@ -250,6 +275,10 @@ router.post('/adjustments/:id(\\d+)/void', requireAuth, requirePayrollAdmin, wra
   const r = await pool.query(
     `UPDATE payroll_adjustments SET status='void', voided_by=$2, voided_at=NOW(), void_reason=$3 WHERE id=$1 RETURNING *`,
     [a.id, who(req), reason]);
+  // A voided repayment line voids its payment record too.
+  await pool.query(
+    `UPDATE payroll_payments SET status='void', voided_by=$2, voided_at=NOW(), void_reason=$3
+      WHERE adjustment_id=$1 AND COALESCE(status,'active')='active'`, [a.id, who(req), reason]);
   await logChange(pool, req, {
     agencyKey: ak, type: 'payroll.adjustment_voided', entityType: 'payroll_adjustment', entityId: a.id,
     period: a.payment_period, payee: a.agent_name,

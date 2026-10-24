@@ -5,6 +5,7 @@ import { UploadListSearch } from '../components/UploadPageLayout';
 import { formatDate } from '../utils/dateFormat';
 import { countSplitDepositClients, groupClientDeposits } from '../utils/salesReconPayment';
 import { fetchAllPages } from '../fetchAllPages';
+import { bottomLine } from '../payrollLock';
 import TruncationBanner from '../components/TruncationBanner';
 import {
   usePayrollMeta, PayModal, ReasonModal, AdjustmentsPanel, PaymentRecords, MonthClosePanel, ChangeLogPanel,
@@ -162,6 +163,7 @@ function generateStatement(agent, records, periodLabel, isBSI) {
     ['Gross Commission', '', '', '', '', fmtCsv(grossTotal), ''],
     ...(negatives.length ? [['Chargebacks', '', '', '', '', fmtCsv(chargebackTotal), '']] : []),
     ['NET TOTAL', '', '', '', '', fmtCsv(netTotal), ''],
+    [bottomLine(netTotal).label, '', '', '', '', fmtCsv(bottomLine(netTotal).amount), ''],
   ];
 
   const csv = rows.map((r) => r.map((v) => `"${String(v || '').replace(/"/g, '""')}"`).join(',')).join('\n');
@@ -303,7 +305,7 @@ function StoredStatements({ period, isAdmin }) {
   );
 }
 
-function PayoutRow({ p, isPaid, paidDate, paidAmount, carry, lock, adjTotal, amount, onTogglePaid, onExport, exportLabel, exportDisabled }) {
+function PayoutRow({ p, isPaid, paidDate, paidAmount, carry, lock, adjTotal, amount, net, onTogglePaid, onExport, exportLabel, exportDisabled }) {
   const [expanded, setExpanded] = useState(false);
   const posCount = p.records.filter((r) => recordAmount(r) > 0).length;
   const negCount = p.records.filter((r) => recordAmount(r) < 0).length;
@@ -314,6 +316,7 @@ function PayoutRow({ p, isPaid, paidDate, paidAmount, carry, lock, adjTotal, amo
     ? { periodTotal: Number(lock.period_total), carryIn: Number(lock.carry_in), carryOut: Number(lock.carry_out), net: Number(lock.net) }
     : carry;
   const hasCarry = !!shownCarry && (shownCarry.carryIn !== 0 || shownCarry.net < 0);
+  const bl = bottomLine(net != null ? net : (shownCarry ? shownCarry.net : owedNow));
   const lockDrift = lock ? Math.round((p.total - Number(lock.data_total)) * 100) / 100 : 0;
   const isLina = p.agent === 'Lina Hernandez';
   const splitClients = isLina
@@ -395,8 +398,11 @@ function PayoutRow({ p, isPaid, paidDate, paidAmount, carry, lock, adjTotal, amo
             )}
           </div>
         </div>
-        <div style={{ fontWeight: 600, fontSize: 16, color: isPaid ? 'var(--green)' : 'var(--accent-dark)', whiteSpace: 'nowrap' }}>
-          {fmt(owedNow)}
+        <div style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+          <div style={{ fontSize: 10, fontWeight: 600, color: bl.isBalanceDue ? 'var(--red)' : 'var(--text-muted)' }}>{bl.label}</div>
+          <div style={{ fontWeight: 600, fontSize: 16, color: bl.isBalanceDue ? 'var(--red)' : isPaid ? 'var(--green)' : 'var(--accent-dark)' }}>
+            {fmt(bl.isBalanceDue ? bl.amount : owedNow)}
+          </div>
         </div>
         <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
           <button
@@ -1202,6 +1208,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
       lines.push(`"Gross Commission","","","","${fmtCsv(gross)}",""`);
       if (negatives.length) lines.push(`"Chargebacks","","","","${fmtCsv(cb)}",""`);
       lines.push(`"NET TOTAL","","","","${fmtCsv(net)}",""`);
+      lines.push(`"${bottomLine(net).label}","","","","${fmtCsv(bottomLine(net).amount)}",""`);
       lines.push(``);
     }
     downloadTextFile(`${isBSI ? 'BSI' : 'THEI'}_Payouts_${selectedPeriod}.csv`, lines.join('\n'));
@@ -1232,7 +1239,11 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
       const amount = lock
         ? Number(lock.payable)
         : carry ? carry.payable : Math.round((p.total + adjTotal) * 100) / 100;
-      return { ...p, lock, adjTotal, amount };
+      // net < 0 = the agent owes it back ("Balance due from agent")
+      const net = lock && lock.net != null
+        ? Number(lock.net)
+        : carry ? carry.net : Math.round((p.total + adjTotal) * 100) / 100;
+      return { ...p, lock, adjTotal, amount, net };
     });
   }, [payouts, periodState, carryMap]);
 
@@ -1487,6 +1498,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
                         lock={p.lock}
                         adjTotal={p.adjTotal}
                         amount={p.amount}
+                        net={p.net}
                         onTogglePaid={togglePaid}
                         exportLabel="Statement"
                         exportDisabled={!!STATEMENT_PAYEE_KEYS[p.agent] && linaBusy}
@@ -1554,6 +1566,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate }) {
             agent={payFor.agent}
             period={periodLabel}
             payable={payFor.amount}
+            net={payFor.net}
             meta={meta}
             busy={payBusy}
             error={payError}

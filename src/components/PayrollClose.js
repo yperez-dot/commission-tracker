@@ -33,6 +33,7 @@ export const FALLBACK_META = {
     { key: 'correction', label: 'Correction' },
     { key: 'advance', label: 'Advance' },
     { key: 'prior_period_correction', label: 'Prior-period correction' },
+    { key: 'agent_repayment', label: 'Repayment from agent' },
     { key: 'other', label: 'Other' },
   ],
   paymentMethods: [
@@ -52,7 +53,8 @@ export function usePayrollMeta() {
 }
 
 /** Mark paid: method, reference #, pay date, amount (defaults to payable). */
-export function PayModal({ agent, period, payable, meta, onCancel, onSubmit, busy, error }) {
+export function PayModal({ agent, period, payable, net, meta, onCancel, onSubmit, busy, error }) {
+  const balanceDue = net != null && Number(net) < 0 ? Math.round(-Number(net) * 100) / 100 : 0;
   const [method, setMethod] = useState('check');
   const [reference, setReference] = useState('');
   const [payDate, setPayDate] = useState(new Date().toISOString().slice(0, 10));
@@ -66,6 +68,13 @@ export function PayModal({ agent, period, payable, meta, onCancel, onSubmit, bus
           {period} · payable {fmt(payable)}. Saving marks the month paid and locks it: later data changes show up as a
           suggested prior-period correction instead of changing this month.
         </div>
+        {balanceDue > 0 && (
+          <div style={{ ...red, fontSize: 12, marginBottom: 12 }}>
+            Balance due from agent {fmt(balanceDue)}. Locking records $0.00 paid and the balance carries to the next month,
+            where it is netted against what they earn. If the agent pays it back, add a &quot;Repayment from agent&quot; line
+            under Adjustments in an open month.
+          </div>
+        )}
         <div style={row}>
           <span className="form-label">Method</span>
           <select className="filter-select" value={method} onChange={(e) => setMethod(e.target.value)}>
@@ -98,7 +107,7 @@ export function PayModal({ agent, period, payable, meta, onCancel, onSubmit, bus
           <button className="btn" onClick={onCancel}>Cancel</button>
           <button className="btn btn-primary" disabled={busy}
             onClick={() => onSubmit({ method, reference, payDate, amount: Number(amount), notes })}>
-            {busy ? 'Saving…' : 'Mark paid & lock'}
+            {busy ? 'Saving…' : balanceDue > 0 ? 'Lock month ($0 paid)' : 'Mark paid & lock'}
           </button>
         </div>
       </div>
@@ -133,7 +142,8 @@ export function ReasonModal({ title, help, confirmLabel, onCancel, onSubmit, bus
 
 /** Manual adjustment lines + suggested prior-period corrections for one period. */
 export function AdjustmentsPanel({ period, agents, state, meta, onChanged }) {
-  const [form, setForm] = useState({ agent: '', amount: '', category: 'correction', reason: '', correctsPeriod: '' });
+  const blankForm = { amount: '', category: 'correction', reason: '', correctsPeriod: '', method: 'check', reference: '', payDate: '' };
+  const [form, setForm] = useState({ agent: '', ...blankForm });
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
   const [voiding, setVoiding] = useState(null);
@@ -146,7 +156,7 @@ export function AdjustmentsPanel({ period, agents, state, meta, onChanged }) {
     setBusy(true); setMsg('');
     try {
       await apiFetch('/payroll-close/adjustments', { method: 'POST', body: JSON.stringify({ ...body, period }) });
-      setForm({ agent: body.agent, amount: '', category: 'correction', reason: '', correctsPeriod: '' });
+      setForm({ agent: body.agent, ...blankForm });
       await onChanged();
     } catch (e) { setMsg(e.message || 'Could not save adjustment'); }
     setBusy(false);
@@ -253,15 +263,42 @@ export function AdjustmentsPanel({ period, agents, state, meta, onChanged }) {
                 onChange={(e) => setForm({ ...form, correctsPeriod: e.target.value })} />
             </div>
           )}
+          {form.category === 'agent_repayment' && (
+            <>
+              <div style={row}>
+                <span className="form-label">Received by</span>
+                <select className="filter-select" value={form.method} onChange={(e) => setForm({ ...form, method: e.target.value })}>
+                  {meta.paymentMethods.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
+                </select>
+              </div>
+              <div style={row}>
+                <span className="form-label">{form.method === 'check' ? 'Check #' : 'Reference #'}</span>
+                <input className="filter-select" style={{ width: 100 }} value={form.reference}
+                  onChange={(e) => setForm({ ...form, reference: e.target.value })} />
+              </div>
+              <div style={row}>
+                <span className="form-label">Received on</span>
+                <input className="filter-select" type="date" value={form.payDate}
+                  onChange={(e) => setForm({ ...form, payDate: e.target.value })} />
+              </div>
+            </>
+          )}
           <div style={{ ...row, flex: 1, minWidth: 180 }}>
             <span className="form-label">Reason (required)</span>
             <input className="filter-select" value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} />
           </div>
           <button className="btn btn-primary" style={{ marginBottom: 10 }}
-            disabled={busy || !form.agent.trim() || !form.reason.trim() || !Number(form.amount) || targetLocked}
-            onClick={() => add({ ...form, amount: Number(form.amount) })}>
+            disabled={busy || !form.agent.trim() || !form.reason.trim() || !Number(form.amount) || targetLocked
+              || (form.category === 'agent_repayment' && Number(form.amount) < 0)}
+            onClick={() => add({ ...form, amount: Number(form.amount), payDate: form.payDate || undefined })}>
             Add line
           </button>
+          {form.category === 'agent_repayment' && (
+            <div style={{ ...small, width: '100%' }}>
+              Repayment: enter the amount the agent paid back as a positive number. It reduces their balance due and
+              is saved in Payment records as money received.
+            </div>
+          )}
           {targetLocked && <div style={{ ...warnStyle, fontSize: 11, width: '100%' }}>{form.agent} is locked for {period}. Post it in an open month.</div>}
         </div>
       )}
@@ -302,7 +339,9 @@ export function PaymentRecords() {
                   <tr key={p.id} style={{ opacity: p.status === 'void' ? 0.5 : 1 }}>
                     <td style={{ fontSize: 12 }}>{p.payment_period || '—'}</td>
                     <td style={{ fontWeight: 500 }}>{p.agent_name}</td>
-                    <td style={{ fontWeight: 500, color: 'var(--green)' }}>{fmt(amt)}</td>
+                    <td style={{ fontWeight: 500, color: p.kind === 'repayment' ? 'var(--red)' : 'var(--green)' }}>
+                      {p.kind === 'repayment' ? `${fmt(-amt)} received from agent` : fmt(amt)}
+                    </td>
                     <td style={{ fontSize: 12, ...(payable != null && Math.abs(payable - amt) >= 0.01 ? warnStyle : {}) }}>{payable != null ? fmt(payable) : '—'}</td>
                     <td style={{ fontSize: 12, textTransform: 'uppercase' }}>{p.payment_method || '—'}</td>
                     <td style={{ fontSize: 12 }}>{p.check_number || '—'}</td>

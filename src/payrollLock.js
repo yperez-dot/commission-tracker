@@ -27,8 +27,14 @@ var ADJUSTMENT_CATEGORIES = [
   { key: 'correction', label: 'Correction' },
   { key: 'advance', label: 'Advance' },
   { key: 'prior_period_correction', label: 'Prior-period correction' },
+  // Agent paid back a balance due (chargebacks bigger than earnings). Positive: it cancels
+  // the negative balance in the month it is posted (or the negative carried into it).
+  { key: 'agent_repayment', label: 'Repayment from agent' },
   { key: 'other', label: 'Other' },
 ];
+
+var LABEL_PAYABLE = 'Amount payable to agent';
+var LABEL_BALANCE_DUE = 'Balance due from agent';
 
 var PAYMENT_METHODS = [
   { key: 'check', label: 'Check' },
@@ -84,8 +90,20 @@ function validateAdjustment(input, locked) {
   if (a.category === 'prior_period_correction' && !/^\d{6}$/.test(String(a.correctsPeriod || ''))) {
     return 'a prior-period correction needs the period it corrects';
   }
+  if (a.category === 'agent_repayment' && !(amt > 0)) return 'a repayment from the agent is a positive amount';
   if (locked) return 'this month is locked for that payee (paid or closed) — post it in an open month';
   return null;
+}
+
+/**
+ * Bottom line of an agent statement / payout row from the month's net (carry-forward
+ * included when known). net < 0 → the agent owes it back.
+ *   { net, isBalanceDue, label, amount }  amount is always >= 0
+ */
+function bottomLine(net) {
+  var n = round2(net);
+  if (n < 0) return { net: n, isBalanceDue: true, label: LABEL_BALANCE_DUE, amount: round2(-n) };
+  return { net: n, isBalanceDue: false, label: LABEL_PAYABLE, amount: n };
 }
 
 /**
@@ -202,4 +220,7 @@ module.exports = {
   computeCarryWithLocks: computeCarryWithLocks,
   suggestCorrection: suggestCorrection,
   lockSnapshot: lockSnapshot,
+  bottomLine: bottomLine,
+  LABEL_PAYABLE: LABEL_PAYABLE,
+  LABEL_BALANCE_DUE: LABEL_BALANCE_DUE,
 };
