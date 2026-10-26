@@ -35,7 +35,10 @@ function mergePayeeBuckets(statements, groups, statementType) {
     const hit = groupForName(groups, s.payee, statementType)
       || (s.lines || []).map((l) => groupForName(groups, l.writing_agent || l.agent_name, statementType)).find(Boolean);
     if (!hit) {
-      leftovers.push(s);
+      leftovers.push({
+        ...s,
+        lineCount: (s.lines || []).length,
+      });
       return;
     }
     if (!byKey.has(hit.groupKey)) {

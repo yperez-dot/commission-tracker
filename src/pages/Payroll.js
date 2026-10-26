@@ -1494,16 +1494,16 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate, init
 
             <div className="card-title" data-section="house-statements" style={{ fontSize: 16, margin: '0 0 10px' }}>House</div>
             {/^\d{6}$/.test(String(selectedPeriod)) ? (
-              <HouseOverridesPanel
-                month={selectedPeriod}
-                paidStatus={paidStatus}
-                paidDates={paidDates}
-                locks={((periodState && periodState.locks) || []).reduce((m, l) => { m[l.agent_name] = l; return m; }, {})}
-                meta={meta}
-                onMarkSent={setSendFor}
-                onUnlock={(agent) => setUnlockFor(agent)}
-              />
-              {/^\d{6}$/.test(String(selectedPeriod)) && (
+              <>
+                <HouseOverridesPanel
+                  month={selectedPeriod}
+                  paidStatus={paidStatus}
+                  paidDates={paidDates}
+                  locks={((periodState && periodState.locks) || []).reduce((m, l) => { m[l.agent_name] = l; return m; }, {})}
+                  meta={meta}
+                  onMarkSent={setSendFor}
+                  onUnlock={(agent) => setUnlockFor(agent)}
+                />
                 <AdjustmentsPanel
                   period={selectedPeriod}
                   agents={displayPayouts.map((p) => p.agent)}
@@ -1511,7 +1511,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate, init
                   meta={meta}
                   onChanged={async () => { await loadPeriodState(selectedPeriod); await loadPayouts(selectedPeriod); }}
                 />
-              )}
+              </>
             ) : (
               <div className="card">
                 <div className="empty-state">
