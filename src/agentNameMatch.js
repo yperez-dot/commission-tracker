@@ -14,6 +14,11 @@
  *    initials between them, or the first name and last name are separated only by
  *    single-letter initials.
  * A different first or last name never matches, and neither does a first initial alone.
+ *
+ * NOTE: no destructuring / spread in this file. Payroll.js imports
+ * statementPayeeGroups, which requires this module, so CRA webpack packs it.
+ * Spread or require-destructuring lets Babel inject ESM helpers; then
+ * module.exports throws at runtime ("ES Modules may not assign module.exports").
  */
 
 const SUFFIXES = new Set(['jr', 'sr', 'ii', 'iii', 'iv']);
@@ -40,7 +45,7 @@ function agentNameWords(name) {
     const after = words(parts[1]);
     // "Company, LLC" / "Smith, Jr" stay in order.
     const isSuffix = after.every((t) => SUFFIXES.has(t) || ['llc', 'inc', 'corp', 'co', 'pa', 'pllc'].includes(t));
-    w = isSuffix ? words(raw) : [...after, ...words(parts[0])];
+    w = isSuffix ? words(raw) : after.concat(words(parts[0]));
   } else {
     w = words(raw);
   }
@@ -70,7 +75,8 @@ function agentNameMatches(name, entry) {
   // matches "... Corporation".
   if (e.length >= 3) return n.join(' ').includes(e.join(' '));
   if (e.length !== 2) return false;
-  const [first, last] = e;
+  const first = e[0];
+  const last = e[1];
   // First word / last word, up to two middle names or initials in between.
   if (n.length >= 3 && n.length <= 4 && n[0] === first && n[n.length - 1] === last) return true;
   // First name, then only single-letter initials, then the last name (anywhere in the name).
