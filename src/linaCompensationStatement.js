@@ -15,6 +15,7 @@ const { periodToMmYyyy } = require('./periodFormat');
 
 const ExcelJS = require('exceljs');
 const { writeAdjustmentsSection, writeBottomLine, statementNet } = require('./payrollStatementExtras');
+const { MONEY_FMT, writeMoneyCell, writeLabeledMoney } = require('./statementExcelTotals');
 const { bottomLine } = require('./payrollLock');
 const {
   ALBA_DISPLAY_NAME,
@@ -158,8 +159,6 @@ async function buildLinaCompensationWorkbook(statement) {
       bottom: { style: 'thin', color: { argb: 'FFCBD5E1' } },
     },
   };
-  const moneyFmt = '$#,##0.00;($#,##0.00)';
-
   ws.mergeCells('A1:G1');
   ws.getCell('A1').value = statement.title;
   ws.getCell('A1').style = titleStyle;
@@ -184,6 +183,8 @@ async function buildLinaCompensationWorkbook(statement) {
   ws.getCell('A7').style = mutedStyle;
   ws.getCell('B7').value = statement.periodLabel;
 
+  writeLabeledMoney(ws, 8, 'Total Payable', statement.balance, { labelStyle: mutedStyle });
+
   const headerRow = ws.getRow(11);
   [
     'Agency',
@@ -207,36 +208,29 @@ async function buildLinaCompensationWorkbook(statement) {
     row.getCell(3).value = line.policyNumber;
     row.getCell(4).value = line.clientName;
     row.getCell(5).value = line.effectiveDate;
-    row.getCell(6).value = line.commission;
-    row.getCell(6).numFmt = moneyFmt;
-    if (line.commission < 0) {
-      row.getCell(6).font = { color: { argb: 'FFB91C1C' } };
-    }
+    writeMoneyCell(row.getCell(6), line.commission);
     row.getCell(7).value = line.classification;
     rowIdx += 1;
   }
 
-  rowIdx += 1;
+  ws.getCell(`A${rowIdx}`).value = 'TOTAL';
+  ws.getCell(`A${rowIdx}`).font = { bold: true };
+  writeMoneyCell(ws.getCell(`F${rowIdx}`), statement.balance, { bold: true });
+  rowIdx += 2;
+
   ws.getCell(`A${rowIdx}`).value = 'Gross Commission';
   ws.getCell(`A${rowIdx}`).font = { bold: true };
-  ws.getCell(`F${rowIdx}`).value = statement.gross;
-  ws.getCell(`F${rowIdx}`).numFmt = moneyFmt;
+  writeMoneyCell(ws.getCell(`F${rowIdx}`), statement.gross);
   rowIdx += 1;
 
   ws.getCell(`A${rowIdx}`).value = 'Chargebacks';
   ws.getCell(`A${rowIdx}`).font = { bold: true };
-  ws.getCell(`F${rowIdx}`).value = statement.chargebacks;
-  ws.getCell(`F${rowIdx}`).numFmt = moneyFmt;
-  if (statement.chargebacks < 0) {
-    ws.getCell(`F${rowIdx}`).font = { bold: true, color: { argb: 'FFB91C1C' } };
-  }
+  writeMoneyCell(ws.getCell(`F${rowIdx}`), statement.chargebacks, { bold: statement.chargebacks < 0 });
   rowIdx += 1;
 
   ws.getCell(`A${rowIdx}`).value = 'Balance';
   ws.getCell(`A${rowIdx}`).font = { bold: true, size: 12 };
-  ws.getCell(`F${rowIdx}`).value = statement.balance;
-  ws.getCell(`F${rowIdx}`).numFmt = moneyFmt;
-  ws.getCell(`F${rowIdx}`).font = { bold: true, size: 12 };
+  writeMoneyCell(ws.getCell(`F${rowIdx}`), statement.balance, { bold: true, size: 12 });
 
   if (statement.adjustments && statement.adjustments.length) {
     rowIdx = writeAdjustmentsSection(ws, rowIdx + 2, statement, 'F') - 1;
@@ -256,6 +250,7 @@ async function buildLinaCompensationWorkbook(statement) {
     ['Issued By', statement.issuedBy],
     ['Report Date', statement.reportDate],
     ['Period', statement.periodLabel],
+    ['Total Payable', statement.balance],
     ['Line Count', statement.lineCount],
     ['Gross Commission', statement.gross],
     ['Chargebacks', statement.chargebacks],
@@ -267,7 +262,7 @@ async function buildLinaCompensationWorkbook(statement) {
     sum.getCell(`A${i + 1}`).value = pair[0];
     sum.getCell(`A${i + 1}`).font = { bold: true };
     sum.getCell(`B${i + 1}`).value = pair[1];
-    if (i >= 5) sum.getCell(`B${i + 1}`).numFmt = moneyFmt;
+    if (i >= 4 && i !== 5) sum.getCell(`B${i + 1}`).numFmt = MONEY_FMT;
   });
 
   return wb;

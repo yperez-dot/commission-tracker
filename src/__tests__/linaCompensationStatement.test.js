@@ -146,5 +146,23 @@ describe('linaCompensationStatement', () => {
     expect(texts).toContain('Gross Commission');
     expect(texts).toContain('Balance');
     expect(texts).toContain('Amount payable to agent');
+    expect(texts).toContain('Total Payable');
+    expect(texts).toContain('TOTAL');
+  });
+
+  it('Excel header Total Payable and line-table TOTAL equal the statement balance', async () => {
+    const stmt = buildLinaCompensationStatement(rows, {
+      period: '202607',
+      reportDate: '08/13/2026',
+    });
+    const ws = (await buildLinaCompensationWorkbook(stmt)).getWorksheet('Compensation Statement');
+    expect(ws.getCell('A8').value).toBe('Total Payable');
+    expect(ws.getCell('B8').value).toBeCloseTo(stmt.balance, 2);
+    expect(ws.getCell('B8').numFmt).toBe('$#,##0.00;($#,##0.00)');
+    let totalRow = null;
+    ws.eachRow((row, n) => { if (row.getCell(1).value === 'TOTAL') totalRow = n; });
+    expect(totalRow).toBeTruthy();
+    expect(ws.getRow(totalRow).getCell(6).value).toBeCloseTo(stmt.balance, 2);
+    expect(ws.getRow(totalRow).getCell(6).font.bold).toBe(true);
   });
 });

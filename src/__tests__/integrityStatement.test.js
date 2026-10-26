@@ -76,6 +76,8 @@ describe('integrity statements', () => {
     expect(texts.some((t) => /Same agent pay schedule as BSI/.test(t))).toBe(false);
     expect(texts.some((t) => /Agency Override and BSI licensing/.test(t))).toBe(false);
     expect(texts.some((t) => /not part of .+ statement/.test(t))).toBe(false);
+    expect(texts).toContain('Total Payable');
+    expect(texts).toContain('TOTAL');
   });
 });
 

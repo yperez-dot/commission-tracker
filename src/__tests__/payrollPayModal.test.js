@@ -1,7 +1,7 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { act, Simulate } from 'react-dom/test-utils';
-import { PayModal, FALLBACK_META, PaymentRecords } from '../components/PayrollClose';
+import { PayModal, SentToCommissionsModal, FALLBACK_META, PaymentRecords } from '../components/PayrollClose';
 import Payroll from '../pages/Payroll';
 import { apiFetch } from '../api';
 
@@ -128,10 +128,38 @@ test('Agent Payouts and Payment History use Sent wording, not Paid / Paid out / 
   const history = container.textContent;
   expect(history).toContain('Shared record of statements sent to commissions');
   expect(history).toContain('No sent records yet');
-  expect(history).toContain('Mark agents as sent to commissions on Agent Payouts to track them here');
+  expect(history).toContain('Mark statements as sent to commissions on Statements to track them here');
   expect(history).not.toContain('No payments recorded yet');
   expect(history).not.toContain('Mark agents as paid');
   expect(history).not.toContain('Date paid');
+});
+
+test('SentToCommissionsModal is date + optional notes', async () => {
+  const onSubmit = jest.fn();
+  await act(async () => root.render(
+    <SentToCommissionsModal
+      label="Grouped Payee"
+      period="10.2026"
+      busy={false}
+      error=""
+      onCancel={() => {}}
+      onSubmit={onSubmit}
+    />
+  ));
+  const text = container.textContent;
+  expect(text).toContain('Sent to commissions — Grouped Payee');
+  expect(text).toContain('Date sent');
+  expect(text).toContain('Notes (optional)');
+  expect(text).toContain('Mark sent & lock month');
+  expect(text).not.toContain('Record payment');
+  expect(container.querySelector('input[aria-label="Amount"]')).toBeNull();
+  await act(async () => {
+    Simulate.click([...container.querySelectorAll('button')].find((b) => b.textContent === 'Mark sent & lock month'));
+  });
+  expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+    method: 'sent_to_commissions',
+    notes: '',
+  }));
 });
 
 test('Payment records empty copy uses sent-to-commissions wording', async () => {

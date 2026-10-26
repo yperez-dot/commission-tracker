@@ -62,6 +62,38 @@ export function usePayrollMeta() {
   return meta;
 }
 
+/** Statements page: Date sent + optional notes, then lock that statement's month. */
+export function SentToCommissionsModal({ label, period, onCancel, onSubmit, busy, error }) {
+  const [payDate, setPayDate] = useState(new Date().toISOString().slice(0, 10));
+  const [notes, setNotes] = useState('');
+  return (
+    <div style={box} onClick={onCancel} data-testid="sent-to-commissions-modal">
+      <div style={panel} onClick={(e) => e.stopPropagation()}>
+        <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>Sent to commissions — {label}</div>
+        <div style={{ ...small, marginBottom: 12 }}>
+          {period}. Saving records the send and locks this statement for the month.
+        </div>
+        <div style={row}>
+          <span className="form-label">Date sent</span>
+          <input className="filter-select" type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} aria-label="Date sent" />
+        </div>
+        <div style={row}>
+          <span className="form-label">Notes (optional)</span>
+          <input className="filter-select" value={notes} onChange={(e) => setNotes(e.target.value)} aria-label="Notes" />
+        </div>
+        {error && <div style={{ ...red, fontSize: 12, marginBottom: 8 }}>{error}</div>}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <button className="btn" onClick={onCancel}>Cancel</button>
+          <button className="btn btn-primary" disabled={busy}
+            onClick={() => onSubmit({ payDate, notes, method: 'sent_to_commissions' })}>
+            {busy ? 'Saving…' : 'Mark sent & lock month'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Mark sent to commissions: method, optional reference, date sent, amount (defaults to payable). */
 export function PayModal({ agent, period, payable, net, meta, onCancel, onSubmit, busy, error }) {
   const balanceDue = net != null && Number(net) < 0 ? Math.round(-Number(net) * 100) / 100 : 0;
@@ -343,7 +375,7 @@ export function PaymentRecords() {
       </div>
       {err && <div style={{ padding: 10, ...red, fontSize: 12 }}>{err}</div>}
       {rows.length === 0 ? (
-        <div style={{ padding: 16, ...small }}>No sent records yet. Marking an agent sent to commissions on Agent Payouts records one.</div>
+        <div style={{ padding: 16, ...small }}>No sent records yet. Marking a statement sent to commissions on Statements records one.</div>
       ) : (
         <div className="table-wrap">
           <table>

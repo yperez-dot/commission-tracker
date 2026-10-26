@@ -11,10 +11,11 @@ const ExcelJS = require('exceljs');
 const { STATEMENT_TYPES } = require('./payeeSchedules');
 const { formatEffectiveDate } = require('./effectiveDateFormat');
 const { houseStatementLabel, houseStatementFilename, safeSheetName } = require('./houseStatementNames');
+const { MONEY_FMT, writeMoneyCell, writeLabeledMoney, round2 } = require('./statementExcelTotals');
 
-function round2(n) {
-  return Math.round((Number(n) || 0) * 100) / 100;
-}
+/** Header block rows. Line table starts after Period + totals + a blank row. */
+const LINE_HEADER_ROW = 11;
+const FIRST_LINE_ROW = 12;
 
 function formatReportDate(d = new Date()) {
   const mm = String(d.getMonth() + 1).padStart(2, '0');
@@ -102,8 +103,15 @@ async function buildOverrideExcelWorkbook(bundle, payeeStatement, opts = {}) {
     fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } },
     border: { bottom: { style: 'thin', color: { argb: 'FFCBD5E1' } } },
   };
-  const moneyFmt = '$#,##0.00;($#,##0.00)';
   const reportDate = opts.reportDate || formatReportDate(opts.now || new Date());
+
+  const sorted = [...(payeeStatement.lines || [])].sort((a, b) => {
+    const ca = String(a.carrier || '').localeCompare(String(b.carrier || ''));
+    if (ca) return ca;
+    return String(a.policy_number || '').localeCompare(String(b.policy_number || ''));
+  });
+  const payableTotal = round2(payeeStatement.total);
+  const overrideTotal = round2(sorted.reduce((s, l) => s + (Number(l.override_pot) || 0), 0));
 
   ws.mergeCells('A1:H1');
   ws.getCell('A1').value = titleFor(bundle.type);
@@ -129,21 +137,17 @@ async function buildOverrideExcelWorkbook(bundle, payeeStatement, opts = {}) {
   ws.getCell('A7').style = mutedStyle;
   ws.getCell('B7').value = bundle.periodLabel;
 
-  // No explanatory subtitle line: the title + header block says which statement this is.
-  const headerRow = ws.getRow(9);
+  writeLabeledMoney(ws, 8, 'Total Payable', payableTotal, { labelStyle: mutedStyle });
+  writeLabeledMoney(ws, 9, 'Total Override', overrideTotal, { labelStyle: mutedStyle });
+
+  const headerRow = ws.getRow(LINE_HEADER_ROW);
   LINE_HEADERS.forEach((h, i) => {
     const cell = headerRow.getCell(i + 1);
     cell.value = h;
     cell.style = headerStyle;
   });
 
-  const sorted = [...(payeeStatement.lines || [])].sort((a, b) => {
-    const ca = String(a.carrier || '').localeCompare(String(b.carrier || ''));
-    if (ca) return ca;
-    return String(a.policy_number || '').localeCompare(String(b.policy_number || ''));
-  });
-
-  let rowIdx = 10;
+  let rowIdx = FIRST_LINE_ROW;
   for (const l of sorted) {
     const row = ws.getRow(rowIdx);
     row.getCell(1).value = l.policy_number || '';
@@ -152,38 +156,35 @@ async function buildOverrideExcelWorkbook(bundle, payeeStatement, opts = {}) {
     row.getCell(4).value = l.writing_agent || l.agent_name || '';
     row.getCell(5).value = formatEffectiveDate(l.effective_date);
     row.getCell(6).value = l.classification || '';
-    row.getCell(7).value = round2(l.override_pot);
-    row.getCell(7).numFmt = moneyFmt;
-    row.getCell(8).value = round2(l.amount);
-    row.getCell(8).numFmt = moneyFmt;
-    if (l.amount < 0) {
-      row.getCell(8).font = { color: { argb: 'FFB91C1C' } };
-    }
+    writeMoneyCell(row.getCell(7), l.override_pot);
+    writeMoneyCell(row.getCell(8), l.amount);
     rowIdx += 1;
   }
 
-  rowIdx += 1;
+  const totalRow = ws.getRow(rowIdx);
+  totalRow.getCell(1).value = 'TOTAL';
+  totalRow.getCell(1).font = { bold: true };
+  writeMoneyCell(totalRow.getCell(7), overrideTotal, { bold: true });
+  writeMoneyCell(totalRow.getCell(8), payableTotal, { bold: true });
+  rowIdx += 2;
+
   const gross = round2(sorted.filter((l) => l.amount > 0).reduce((s, l) => s + l.amount, 0));
   const chargebacks = round2(sorted.filter((l) => l.amount < 0).reduce((s, l) => s + l.amount, 0));
-  const balance = round2(payeeStatement.total);
+  const balance = payableTotal;
 
   ws.getCell(`A${rowIdx}`).value = 'Gross';
   ws.getCell(`A${rowIdx}`).font = { bold: true };
-  ws.getCell(`H${rowIdx}`).value = gross;
-  ws.getCell(`H${rowIdx}`).numFmt = moneyFmt;
+  writeMoneyCell(ws.getCell(`H${rowIdx}`), gross);
   rowIdx += 1;
 
   ws.getCell(`A${rowIdx}`).value = 'Chargebacks / negatives';
   ws.getCell(`A${rowIdx}`).font = { bold: true };
-  ws.getCell(`H${rowIdx}`).value = chargebacks;
-  ws.getCell(`H${rowIdx}`).numFmt = moneyFmt;
+  writeMoneyCell(ws.getCell(`H${rowIdx}`), chargebacks);
   rowIdx += 1;
 
   ws.getCell(`A${rowIdx}`).value = 'Balance due payee';
   ws.getCell(`A${rowIdx}`).font = { bold: true, size: 12 };
-  ws.getCell(`H${rowIdx}`).value = balance;
-  ws.getCell(`H${rowIdx}`).numFmt = moneyFmt;
-  ws.getCell(`H${rowIdx}`).font = { bold: true, size: 12 };
+  writeMoneyCell(ws.getCell(`H${rowIdx}`), balance, { bold: true, size: 12 });
 
   rowIdx += 2;
   ws.mergeCells(`A${rowIdx}:H${rowIdx}`);
@@ -200,6 +201,8 @@ async function buildOverrideExcelWorkbook(bundle, payeeStatement, opts = {}) {
     ['Payee', payeeStatement.payee],
     ['Report Date', reportDate],
     ['Period', bundle.periodLabel],
+    ['Total Payable', payableTotal],
+    ['Total Override', overrideTotal],
     ['Line Count', sorted.length],
     ['Gross', gross],
     ['Chargebacks / negatives', chargebacks],
@@ -208,7 +211,7 @@ async function buildOverrideExcelWorkbook(bundle, payeeStatement, opts = {}) {
     sum.getCell(`A${i + 1}`).value = pair[0];
     sum.getCell(`A${i + 1}`).font = { bold: true };
     sum.getCell(`B${i + 1}`).value = pair[1];
-    if (i >= 5) sum.getCell(`B${i + 1}`).numFmt = moneyFmt;
+    if (i >= 4 && i !== 6) sum.getCell(`B${i + 1}`).numFmt = MONEY_FMT;
   });
 
   return wb;
@@ -247,4 +250,6 @@ module.exports = {
   sheetNameFor,
   noteFor,
   LINE_HEADERS,
+  LINE_HEADER_ROW,
+  FIRST_LINE_ROW,
 };
