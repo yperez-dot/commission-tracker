@@ -337,7 +337,7 @@ function PayoutRow({ p, isPaid, paidDate, paidAmount, carry, lock, adjTotal, amo
       >
         <button
           onClick={() => onTogglePaid(p.agent)}
-          title={isPaid ? 'Mark unpaid' : 'Mark paid'}
+          title={isPaid ? 'Mark not sent' : 'Mark sent to commissions'}
           style={{
             width: 26,
             height: 26,
@@ -379,7 +379,7 @@ function PayoutRow({ p, isPaid, paidDate, paidAmount, carry, lock, adjTotal, amo
               </span>
             )}
             {lock && (
-              <span style={{ marginLeft: 8, fontWeight: 600 }} title={`Locked by ${lock.locked_by || '?'} (${lock.source === 'close' ? 'month closed' : 'marked paid'})`}>
+              <span style={{ marginLeft: 8, fontWeight: 600 }} title={`Locked by ${lock.locked_by || '?'} (${lock.source === 'close' ? 'month closed' : 'sent to commissions'})`}>
                 · 🔒 Locked
               </span>
             )}
@@ -389,11 +389,11 @@ function PayoutRow({ p, isPaid, paidDate, paidAmount, carry, lock, adjTotal, amo
               </span>
             )}
             {isPaid && paidDate && (
-              <span style={{ color: 'var(--green)', marginLeft: 8, fontWeight: 500 }}>· Paid {paidDate}</span>
+              <span style={{ color: 'var(--green)', marginLeft: 8, fontWeight: 500 }}>· Sent {paidDate}</span>
             )}
             {isPaid && paidAmount != null && Math.abs(Number(paidAmount) - owedNow) >= 0.01 && (
               <span style={{ marginLeft: 8, color: '#B45309', fontWeight: 600 }}>
-                · ⚠ Paid {fmt(paidAmount)} but now owed {fmt(owedNow)} ({fmt(owedNow - Number(paidAmount))} difference)
+                · ⚠ Sent {fmt(paidAmount)} but now owed {fmt(owedNow)} ({fmt(owedNow - Number(paidAmount))} difference)
               </span>
             )}
           </div>
@@ -1139,14 +1139,14 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate, init
     const row = displayPayouts.find((p) => p.agent === agent);
     if (paidStatus[agent]) {
       if (!meta.canUnlock) {
-        setLoadError(`${agent} is paid and locked for ${periodLabel}. Only an admin can unlock it.`);
+        setLoadError(`${agent} is sent to commissions and locked for ${periodLabel}. Only an admin can unlock it.`);
         return;
       }
       setUnlockFor(agent);
       return;
     }
     if (!meta.isStaff) {
-      setLoadError('Your account cannot record payments.');
+      setLoadError('Your account cannot mark statements as sent.');
       return;
     }
     setPayError('');
@@ -1218,7 +1218,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate, init
       const cb = negatives.reduce((s, r) => s + recordAmount(r), 0);
       const net = gross + cb;
       lines.push(`"*** AGENT: ${p.agent} ***"`);
-      lines.push(`"Status: ${paidStatus[p.agent] ? `Paid ${paidDates[p.agent]}` : 'Unpaid'}"`);
+      lines.push(`"Status: ${paidStatus[p.agent] ? `Sent ${paidDates[p.agent]}` : 'Not sent'}"`);
       lines.push(`"Policy #","Client","Statement","Lives","Effective","Commission","Type"`);
       for (const r of positives) {
         lines.push(
@@ -1317,7 +1317,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate, init
   const pageMeta = {
     payroll: {
       title: 'Agent Payouts',
-      sub: 'Pay producers (ACA, Lina, Munoz, Mendieta). Upload Tailored/Jill and other ACA pay statements under Uploads → Agent Payout Uploads. Marco\'s $10 peel and all statements are under Statements.',
+      sub: 'Send producer statements to commissions (ACA and statement payees). Upload Tailored/Jill and other ACA pay statements under Uploads → Agent Payout Uploads. Marco\'s $10 peel and all statements are under Statements.',
     },
     overrides: {
       title: 'Statements',
@@ -1329,7 +1329,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate, init
     },
     history: {
       title: 'Payment History',
-      sub: 'Shared record of agents marked paid',
+      sub: 'Shared record of statements sent to commissions',
     },
     close: {
       title: 'Month Close',
@@ -1337,7 +1337,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate, init
     },
     changelog: {
       title: 'Change Log',
-      sub: 'Who uploaded, deleted, renamed, edited, paid, adjusted, locked or closed what — and when',
+      sub: 'Who uploaded, deleted, renamed, edited, sent to commissions, adjusted, locked or closed what — and when',
     },
   }[tab] || { title: 'Payroll', sub: '' };
 
@@ -1457,10 +1457,10 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate, init
               {selectedPeriod && (
                 <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
                   <button style={chipStyle(statusFilter === 'unpaid')} onClick={() => setStatusFilter('unpaid')}>
-                    Unpaid ({unpaidCount})
+                    Not sent ({unpaidCount})
                   </button>
                   <button style={chipStyle(statusFilter === 'paid')} onClick={() => setStatusFilter('paid')}>
-                    Paid ({paidCount})
+                    Sent ({paidCount})
                   </button>
                   <button style={chipStyle(statusFilter === 'all')} onClick={() => setStatusFilter('all')}>
                     All ({displayPayouts.length})
@@ -1503,11 +1503,11 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate, init
                     <div className="kpi-value blue">{fmt(totalOwed)}</div>
                   </div>
                   <div className="kpi-card">
-                    <div className="kpi-label">Still unpaid</div>
+                    <div className="kpi-label">Not sent</div>
                     <div className={`kpi-value ${totalUnpaid > 0 ? 'amber' : 'green'}`}>{fmt(totalUnpaid)}</div>
                   </div>
                   <div className="kpi-card">
-                    <div className="kpi-label">Paid out</div>
+                    <div className="kpi-label">Sent</div>
                     <div className="kpi-value green">{fmt(totalPaid)}</div>
                   </div>
                   <div className="kpi-card">
@@ -1531,7 +1531,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate, init
                       fontWeight: 500,
                     }}
                   >
-                    All agents marked paid for {periodLabel}
+                    All agents marked sent to commissions for {periodLabel}
                   </div>
                 )}
 
@@ -1548,12 +1548,12 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate, init
                     }}
                   >
                     <span style={{ fontSize: 13, fontWeight: 500 }}>
-                      {statusFilter === 'unpaid' ? 'Unpaid agents' : statusFilter === 'paid' ? 'Paid agents' : 'All agents'}
+                      {statusFilter === 'unpaid' ? 'Not sent' : statusFilter === 'paid' ? 'Sent' : 'All agents'}
                       {' — '}
                       {filteredPayouts.length}
                     </span>
                     <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                      Check mark = paid
+                      Check mark = sent to commissions
                     </span>
                   </div>
                   {linaError && (
@@ -1671,7 +1671,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate, init
         {unlockFor && (
           <ReasonModal
             title={`Unlock ${unlockFor} — ${periodLabel}`}
-            help="Clears the paid mark and voids its payment record. The frozen amounts are kept in the change log. Admin only."
+            help="Clears the sent mark and voids its payment record. The frozen amounts are kept in the change log. Admin only."
             confirmLabel="Unlock"
             busy={statusBusy}
             onCancel={() => setUnlockFor(null)}
@@ -1690,8 +1690,8 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate, init
             </div>
             {history.length === 0 ? (
               <div className="empty-state">
-                <div className="empty-title">No payments recorded yet</div>
-                <div className="empty-sub">Mark agents as paid on Agent Payouts to track them here</div>
+                <div className="empty-title">No sent records yet</div>
+                <div className="empty-sub">Mark agents as sent to commissions on Agent Payouts to track them here</div>
               </div>
             ) : (
               <>
@@ -1714,7 +1714,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate, init
                       <th>Period</th>
                       <th>Agent</th>
                       <th>Amount</th>
-                      <th>Date paid</th>
+                      <th>Date sent</th>
                       <th></th>
                     </tr>
                   </thead>
@@ -1750,7 +1750,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate, init
                                   await loadPayoutHistory();
                                   if (selectedPeriod === r.period) await loadPaidStatus(r.period);
                                 } catch (e) {
-                                  setLoadError(e.message || 'Failed to delete paid mark');
+                                  setLoadError(e.message || 'Failed to delete sent mark');
                                 }
                               }}
                             >

@@ -106,7 +106,7 @@ router.put('/payout-status', requireAuth, requireAdmin, async (req, res) => {
     }
     const agencyKey = agencyKeyFromReq(req);
     if (!paid && (await lockedGuard(pool, agencyKey, period, agent))) {
-      return res.status(409).json({ error: 'This month is paid and locked. Unlock it (admin, with a reason) to clear the paid mark.' });
+      return res.status(409).json({ error: 'This month is sent to commissions and locked. Unlock it (admin, with a reason) to clear the sent mark.' });
     }
     const amount =
       req.body?.amount != null && req.body.amount !== ''
@@ -186,7 +186,7 @@ router.delete('/payout-status/:id', requireAuth, requireAdmin, async (req, res) 
       [req.params.id, agencyKey]
     );
     if (cur.rows.length && (await lockedGuard(pool, agencyKey, cur.rows[0].payment_period, cur.rows[0].agent_name))) {
-      return res.status(409).json({ error: 'This month is paid and locked. Unlock it (admin, with a reason) instead of deleting the paid mark.' });
+      return res.status(409).json({ error: 'This month is sent to commissions and locked. Unlock it (admin, with a reason) instead of deleting the sent mark.' });
     }
     const result = await pool.query(
       `DELETE FROM payroll_payout_status
