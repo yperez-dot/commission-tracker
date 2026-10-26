@@ -9,20 +9,16 @@
  *
  * Groups are loaded from the DB (house_statement_payee_groups) so they can be
  * edited later without a code change. Tests pass placeholder groups.
- *
- * NOTE: no destructuring / spread in this file. It is imported by the CRA
- * frontend build, and Babel would inject ESM helpers that break module.exports
- * (same constraint as payrollLock.js).
  */
 
-const agentNameMatch = require('./agentNameMatch');
+const { agentNameInList } = require('./agentNameMatch');
 
 function groupForName(groups, name, statementType) {
   const list = groups || [];
   for (let i = 0; i < list.length; i += 1) {
     const g = list[i];
     if (g.statementType && statementType && g.statementType !== statementType) continue;
-    if (agentNameMatch.agentNameInList(name, g.members || [])) return g;
+    if (agentNameInList(name, g.members || [])) return g;
   }
   return null;
 }
@@ -36,16 +32,13 @@ function mergePayeeBuckets(statements, groups, statementType) {
   const byKey = new Map();
   const leftovers = [];
   (statements || []).forEach((s) => {
-    let hit = groupForName(groups, s.payee, statementType);
+    const hit = groupForName(groups, s.payee, statementType)
+      || (s.lines || []).map((l) => groupForName(groups, l.writing_agent || l.agent_name, statementType)).find(Boolean);
     if (!hit) {
-      const lines = s.lines || [];
-      for (let i = 0; i < lines.length; i += 1) {
-        hit = groupForName(groups, lines[i].writing_agent || lines[i].agent_name, statementType);
-        if (hit) break;
-      }
-    }
-    if (!hit) {
-      leftovers.push(Object.assign({}, s, { lineCount: (s.lines || []).length }));
+      leftovers.push({
+        ...s,
+        lineCount: (s.lines || []).length,
+      });
       return;
     }
     if (!byKey.has(hit.groupKey)) {
@@ -60,13 +53,11 @@ function mergePayeeBuckets(statements, groups, statementType) {
     bucket.total += Number(s.total) || 0;
     bucket.lines = bucket.lines.concat(s.lines || []);
   });
-  const merged = [];
-  byKey.forEach((s) => {
-    merged.push(Object.assign({}, s, {
-      total: Math.round(s.total * 100) / 100,
-      lineCount: s.lines.length,
-    }));
-  });
+  const merged = [...byKey.values()].map((s) => ({
+    ...s,
+    total: Math.round(s.total * 100) / 100,
+    lineCount: s.lines.length,
+  }));
   return merged.concat(leftovers).sort((a, b) => b.total - a.total);
 }
 
