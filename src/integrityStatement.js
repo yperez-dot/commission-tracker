@@ -15,6 +15,7 @@ const ExcelJS = require('exceljs');
 const { isAgencyOverride } = require('./payeeSchedules');
 const { agentNameInList } = require('./agentNameMatch');
 const { writeAdjustmentsSection, writeBottomLine } = require('./payrollStatementExtras');
+const { writeMoneyCell, writeLabeledMoney } = require('./statementExcelTotals');
 
 // Chargebacks on Integrity books are stored as 'Chargeback' (not 'Agency Override');
 // new sales on BSI UHC / Aetna feeds are 'New Business'. Renewals are never paid.
@@ -159,14 +160,12 @@ async function buildIntegrityWorkbook(statement) {
   ws.columns = [
     { width: 30 }, { width: 26 }, { width: 22 }, { width: 32 }, { width: 14 }, { width: 14 },
   ];
-  const money = '$#,##0.00;($#,##0.00)';
   const muted = { font: { size: 11, color: { argb: 'FF64748B' } } };
   const head = {
     font: { bold: true, size: 11, color: { argb: 'FF334155' } },
     fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } },
     border: { bottom: { style: 'thin', color: { argb: 'FFCBD5E1' } } },
   };
-  const red = { color: { argb: 'FFB91C1C' } };
 
   ws.mergeCells('A1:F1');
   ws.getCell('A1').value = `${statement.title} — ${statement.payee}`;
@@ -175,24 +174,23 @@ async function buildIntegrityWorkbook(statement) {
   ws.getCell('A2').value = statement.periodTitle;
   ws.getCell('A2').font = { bold: true, size: 12 };
   ws.getCell('A3').value = 'Report Date'; ws.getCell('A3').style = muted; ws.getCell('B3').value = statement.reportDate;
-  ws.getCell('A4').value = 'Issued By'; ws.getCell('A4').style = muted; ws.getCell('B4').value = statement.issuedBy;
+  ws.getCell('A4').value = 'Payee'; ws.getCell('A4').style = muted; ws.getCell('B4').value = statement.payee;
+  ws.getCell('A5').value = 'Issued By'; ws.getCell('A5').style = muted; ws.getCell('B5').value = statement.issuedBy;
+  ws.getCell('A6').value = 'Period'; ws.getCell('A6').style = muted; ws.getCell('B6').value = statement.periodLabel;
+  writeLabeledMoney(ws, 7, 'Total Payable', statement.balance, { labelStyle: muted });
 
-  let r = 6;
+  let r = 9;
   ws.getCell(`A${r}`).value = 'CARRIER SUMMARY DETAILS';
   ws.getCell(`A${r}`).font = { bold: true };
   r += 1;
   for (const c of statement.carrierSummary) {
     ws.getCell(`A${r}`).value = c.carrier;
-    ws.getCell(`B${r}`).value = c.total;
-    ws.getCell(`B${r}`).numFmt = money;
-    if (c.total < 0) ws.getCell(`B${r}`).font = red;
+    writeMoneyCell(ws.getCell(`B${r}`), c.total);
     r += 1;
   }
   ws.getCell(`A${r}`).value = 'TOTAL';
   ws.getCell(`A${r}`).font = { bold: true };
-  ws.getCell(`B${r}`).value = statement.balance;
-  ws.getCell(`B${r}`).numFmt = money;
-  ws.getCell(`B${r}`).font = { bold: true };
+  writeMoneyCell(ws.getCell(`B${r}`), statement.balance, { bold: true });
   r += 2;
 
   for (const section of statement.sections) {
@@ -211,16 +209,12 @@ async function buildIntegrityWorkbook(statement) {
       row.getCell(3).value = l.policyNumber;
       row.getCell(4).value = l.clientName;
       row.getCell(5).value = l.effectiveDate;
-      row.getCell(6).value = l.commission;
-      row.getCell(6).numFmt = money;
-      if (l.commission < 0) row.getCell(6).font = red;
+      writeMoneyCell(row.getCell(6), l.commission);
       r += 1;
     }
-    ws.getCell(`A${r}`).value = 'Balance';
+    ws.getCell(`A${r}`).value = 'TOTAL';
     ws.getCell(`A${r}`).font = { bold: true };
-    ws.getCell(`F${r}`).value = section.balance;
-    ws.getCell(`F${r}`).numFmt = money;
-    ws.getCell(`F${r}`).font = { bold: true, color: section.balance < 0 ? red.color : undefined };
+    writeMoneyCell(ws.getCell(`F${r}`), section.balance, { bold: true });
     r += 2;
   }
 

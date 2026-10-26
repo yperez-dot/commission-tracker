@@ -8,7 +8,7 @@ export function pl(p) {
 }
 
 /*
- * Payroll close UI: mark-paid form (payment record + lock), unlock, manual
+ * Payroll close UI: mark-sent form (sent record + lock), unlock, manual
  * adjustments, prior-period corrections, monthly close checklist, deposit
  * reconciliation, change log. Backend: routes/payroll-close.js, routes/change-log.js.
  */
@@ -43,7 +43,11 @@ export const FALLBACK_META = {
     { key: 'other', label: 'Other' },
   ],
   paymentMethods: [
-    { key: 'check', label: 'Check' }, { key: 'ach', label: 'ACH' }, { key: 'zelle', label: 'Zelle' }, { key: 'other', label: 'Other' },
+    { key: 'sent_to_commissions', label: 'Sent to commissions' },
+    { key: 'check', label: 'Check' },
+    { key: 'ach', label: 'ACH' },
+    { key: 'zelle', label: 'Zelle' },
+    { key: 'other', label: 'Other' },
   ],
   payers: ['BSI', 'UnitedHealthcare', 'Humana', 'Devoted', 'Aetna', 'Freedom', 'Other'],
   isStaff: false,
@@ -58,51 +62,90 @@ export function usePayrollMeta() {
   return meta;
 }
 
-/** Mark paid: method, reference #, pay date, amount (defaults to payable). */
-export function PayModal({ agent, period, payable, net, meta, onCancel, onSubmit, busy, error }) {
-  const balanceDue = net != null && Number(net) < 0 ? Math.round(-Number(net) * 100) / 100 : 0;
-  const [method, setMethod] = useState('check');
-  const [reference, setReference] = useState('');
+/** Statements page: Date sent + optional notes, then lock that statement's month. */
+export function SentToCommissionsModal({ label, period, onCancel, onSubmit, busy, error }) {
   const [payDate, setPayDate] = useState(new Date().toISOString().slice(0, 10));
-  const [amount, setAmount] = useState(String(Number(payable || 0).toFixed(2)));
   const [notes, setNotes] = useState('');
   return (
-    <div style={box} onClick={onCancel}>
+    <div style={box} onClick={onCancel} data-testid="sent-to-commissions-modal">
       <div style={panel} onClick={(e) => e.stopPropagation()}>
-        <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>Record payment — {agent}</div>
+        <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>Sent to commissions — {label}</div>
         <div style={{ ...small, marginBottom: 12 }}>
-          {period} · payable {fmt(payable)}. Saving marks the month paid and locks it: later data changes show up as a
-          suggested prior-period correction instead of changing this month.
+          {period}. Saving records the send and locks this statement for the month.
+        </div>
+        <div style={row}>
+          <span className="form-label">Date sent</span>
+          <input className="filter-select" type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} aria-label="Date sent" />
+        </div>
+        <div style={row}>
+          <span className="form-label">Notes (optional)</span>
+          <input className="filter-select" value={notes} onChange={(e) => setNotes(e.target.value)} aria-label="Notes" />
+        </div>
+        {error && <div style={{ ...red, fontSize: 12, marginBottom: 8 }}>{error}</div>}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+          <button className="btn" onClick={onCancel}>Cancel</button>
+          <button className="btn btn-primary" disabled={busy}
+            onClick={() => onSubmit({ payDate, notes, method: 'sent_to_commissions' })}>
+            {busy ? 'Saving…' : 'Mark sent & lock month'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Mark sent to commissions: method, optional reference, date sent, amount (defaults to payable). */
+export function PayModal({ agent, period, payable, net, meta, onCancel, onSubmit, busy, error }) {
+  const balanceDue = net != null && Number(net) < 0 ? Math.round(-Number(net) * 100) / 100 : 0;
+  const payableAmount = Number(payable || 0);
+  const [method, setMethod] = useState('sent_to_commissions');
+  const [reference, setReference] = useState('');
+  const [payDate, setPayDate] = useState(new Date().toISOString().slice(0, 10));
+  const [amount, setAmount] = useState(Number.isFinite(payableAmount) ? payableAmount.toFixed(2) : '');
+  const [notes, setNotes] = useState('');
+  const needsReference = method === 'check' || method === 'ach' || method === 'zelle' || method === 'other';
+  const submittedAmount = amount === '' || !Number.isFinite(Number(amount))
+    ? payableAmount
+    : Number(amount);
+  return (
+    <div style={box} onClick={onCancel} data-testid="pay-modal">
+      <div style={panel} onClick={(e) => e.stopPropagation()}>
+        <div style={{ fontWeight: 600, fontSize: 15, marginBottom: 4 }}>Mark sent to commissions — {agent}</div>
+        <div style={{ ...small, marginBottom: 12 }}>
+          {period} · payable {fmt(payable)}. Saving marks the statement sent to commissions and locks the month: later
+          data changes show up as a suggested prior-period correction instead of changing this month.
         </div>
         {balanceDue > 0 && (
           <div style={{ ...red, fontSize: 12, marginBottom: 12 }}>
-            Balance due from agent {fmt(balanceDue)}. Locking records $0.00 paid and the balance carries to the next month,
+            Balance due from agent {fmt(balanceDue)}. Locking records $0.00 sent and the balance carries to the next month,
             where it is netted against what they earn. If the agent pays it back, add a &quot;Repayment from agent&quot; line
             under Adjustments in an open month.
           </div>
         )}
         <div style={row}>
           <span className="form-label">Method</span>
-          <select className="filter-select" value={method} onChange={(e) => setMethod(e.target.value)}>
+          <select className="filter-select" value={method} onChange={(e) => setMethod(e.target.value)} aria-label="Method">
             {meta.paymentMethods.map((m) => <option key={m.key} value={m.key}>{m.label}</option>)}
           </select>
         </div>
-        <div style={row}>
-          <span className="form-label">{method === 'check' ? 'Check #' : 'Reference #'}</span>
-          <input className="filter-select" value={reference} onChange={(e) => setReference(e.target.value)} />
-        </div>
+        {needsReference && (
+          <div style={row}>
+            <span className="form-label">{method === 'check' ? 'Check #' : 'Reference #'}</span>
+            <input className="filter-select" value={reference} onChange={(e) => setReference(e.target.value)} />
+          </div>
+        )}
         <div style={{ display: 'flex', gap: 10 }}>
           <div style={{ ...row, flex: 1 }}>
-            <span className="form-label">Pay date</span>
-            <input className="filter-select" type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} />
+            <span className="form-label">Date sent</span>
+            <input className="filter-select" type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} aria-label="Date sent" />
           </div>
           <div style={{ ...row, flex: 1 }}>
             <span className="form-label">Amount</span>
-            <input className="filter-select" type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
+            <input className="filter-select" type="number" step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} aria-label="Amount" />
           </div>
         </div>
-        {Math.abs(Number(amount) - Number(payable || 0)) >= 0.01 && (
-          <div style={{ ...warnStyle, fontSize: 12, marginBottom: 8 }}>⚠ Amount differs from payable by {fmt(Number(amount) - Number(payable || 0))}</div>
+        {amount !== '' && Number.isFinite(Number(amount)) && Math.abs(Number(amount) - payableAmount) >= 0.01 && (
+          <div style={{ ...warnStyle, fontSize: 12, marginBottom: 8 }}>⚠ Amount differs from payable by {fmt(Number(amount) - payableAmount)}</div>
         )}
         <div style={row}>
           <span className="form-label">Notes {method === 'other' ? '(required for Other)' : ''}</span>
@@ -112,8 +155,8 @@ export function PayModal({ agent, period, payable, net, meta, onCancel, onSubmit
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
           <button className="btn" onClick={onCancel}>Cancel</button>
           <button className="btn btn-primary" disabled={busy}
-            onClick={() => onSubmit({ method, reference, payDate, amount: Number(amount), notes })}>
-            {busy ? 'Saving…' : balanceDue > 0 ? 'Lock month ($0 paid)' : 'Mark paid & lock'}
+            onClick={() => onSubmit({ method, reference, payDate, amount: submittedAmount, notes })}>
+            {busy ? 'Saving…' : balanceDue > 0 ? 'Lock month ($0 sent)' : 'Mark sent & lock month'}
           </button>
         </div>
       </div>
@@ -185,13 +228,13 @@ export function AdjustmentsPanel({ period, agents, state, meta, onChanged }) {
       <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 4 }}>Adjustments — {pl(period)}</div>
       <div style={{ ...small, marginBottom: 10 }}>
         Manual lines (clawback not yet on file, correction, advance…). They count in the payout total and carry-forward,
-        and print on Lina&apos;s and the Integrity statements. Paid / closed months can&apos;t take new lines.
+        and print on Lina&apos;s and the Integrity statements. Sent / closed months can&apos;t take new lines.
       </div>
       {msg && <div style={{ ...red, fontSize: 12, marginBottom: 8 }}>{msg}</div>}
 
       {corrections.length > 0 && (
         <div style={{ background: '#FEF3C7', border: '1px solid #FCD34D', borderRadius: 8, padding: '8px 12px', marginBottom: 12 }}>
-          <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 6 }}>⚠ Data changed under months that are already paid / locked</div>
+          <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 6 }}>⚠ Data changed under months that are already sent / locked</div>
           {corrections.map((c) => (
             <div key={`${c.agent}-${c.lockedPeriod}`} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 12, padding: '3px 0', flexWrap: 'wrap' }}>
               <span style={{ flex: 1, minWidth: 220 }}>
@@ -328,15 +371,15 @@ export function PaymentRecords() {
   return (
     <div className="card" style={{ padding: 0, marginBottom: 14 }}>
       <div style={{ padding: '10px 14px', borderBottom: '0.5px solid var(--border)', fontSize: 13, fontWeight: 500 }}>
-        Payment records <span style={{ ...small, marginLeft: 8, fontWeight: 400 }}>How each payout was paid (check / ACH / Zelle)</span>
+        Sent records <span style={{ ...small, marginLeft: 8, fontWeight: 400 }}>How each statement was sent (commissions / check / ACH)</span>
       </div>
       {err && <div style={{ padding: 10, ...red, fontSize: 12 }}>{err}</div>}
       {rows.length === 0 ? (
-        <div style={{ padding: 16, ...small }}>No payment records yet. Marking an agent paid on Agent Payouts records one.</div>
+        <div style={{ padding: 16, ...small }}>No sent records yet. Marking a statement sent to commissions on Statements records one.</div>
       ) : (
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Period</th><th>Agent</th><th>Amount</th><th>Payable</th><th>Method</th><th>Ref #</th><th>Pay date</th><th>Entered by</th><th>Status</th></tr></thead>
+            <thead><tr><th>Period</th><th>Agent</th><th>Amount</th><th>Payable</th><th>Method</th><th>Ref #</th><th>Date sent</th><th>Entered by</th><th>Status</th></tr></thead>
             <tbody>
               {rows.map((p) => {
                 const amt = Number(p.payment_amount);
@@ -494,7 +537,7 @@ export function MonthClosePanel({ period, meta, payeesForClose }) {
           confirmLabel="Mark none" busy={busy} onCancel={() => setNoneFor(null)} onSubmit={markNone} />
       )}
       {reopening && (
-        <ReasonModal title={`Reopen ${pl(period)}`} help="Payees locked by the close are unlocked. Months marked paid stay locked."
+        <ReasonModal title={`Reopen ${pl(period)}`} help="Payees locked by the close are unlocked. Months marked sent stay locked."
           confirmLabel="Reopen" busy={busy} onCancel={() => setReopening(false)} onSubmit={reopen} />
       )}
     </div>
