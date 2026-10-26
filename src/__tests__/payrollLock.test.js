@@ -1,6 +1,5 @@
 const {
   computeCarryWithLocks, suggestCorrection, validateAdjustment, adjustmentTotalsByPeriod, lockSnapshot,
-  PAYMENT_METHODS, isMethod,
 } = require('../payrollLock');
 
 const lockFrom = (c) => Object.assign({ id: 1 }, lockSnapshot(c, { paidAmount: c.payable }));
@@ -80,23 +79,12 @@ describe('adjustment validation', () => {
     expect(validateAdjustment(Object.assign({}, ok, { category: 'prior_period_correction' }), false)).toMatch(/period it corrects/);
     expect(validateAdjustment(Object.assign({}, ok, { category: 'prior_period_correction', correctsPeriod: '202609' }), false)).toBeNull();
   });
-  test('locked month refuses new adjustments', () => expect(validateAdjustment(ok, true)).toMatch(/sent or closed/));
+  test('locked month refuses new adjustments', () => expect(validateAdjustment(ok, true)).toMatch(/locked/));
   test('voided adjustments are excluded from totals', () => {
     expect(adjustmentTotalsByPeriod([
       { payment_period: '202610', amount: -25 },
       { payment_period: '202610', amount: 10 },
       { payment_period: '202610', amount: 99, status: 'void' },
     ])).toEqual({ '202610': -15 });
-  });
-});
-
-describe('payment methods', () => {
-  test('Sent to commissions is first; Check and ACH remain optional', () => {
-    expect(PAYMENT_METHODS[0]).toEqual({ key: 'sent_to_commissions', label: 'Sent to commissions' });
-    expect(isMethod('sent_to_commissions')).toBe(true);
-    expect(isMethod('check')).toBe(true);
-    expect(isMethod('ach')).toBe(true);
-    expect(PAYMENT_METHODS.some((m) => m.key === 'check' && m.label === 'Check')).toBe(true);
-    expect(PAYMENT_METHODS.some((m) => m.key === 'ach' && m.label === 'ACH')).toBe(true);
   });
 });

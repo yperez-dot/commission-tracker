@@ -1,6 +1,5 @@
 const {
   buildIntegrityStatement,
-  buildIntegrityWorkbook,
   payeeKeyForAgent,
 } = require('../integrityStatement');
 const { compareStatementTotals } = require('../payeeStatementCompare');
@@ -66,18 +65,6 @@ describe('integrity statements', () => {
     const r = row({ id: 9 });
     const s = buildIntegrityStatement([r, { ...r }], 'christian-munoz', { period: '202609' });
     expect(s.lineCount).toBe(1);
-  });
-
-  test('Integrity workbook does not use the agent-facing internal note lines', async () => {
-    const s = buildIntegrityStatement([row({})], 'christian-munoz', { period: '202609' });
-    const ws = (await buildIntegrityWorkbook(s)).getWorksheet('Compensation Statement');
-    const texts = [];
-    ws.eachRow((r) => r.eachCell((c) => { if (c.value != null) texts.push(String(c.value)); }));
-    expect(texts.some((t) => /Same agent pay schedule as BSI/.test(t))).toBe(false);
-    expect(texts.some((t) => /Agency Override and BSI licensing/.test(t))).toBe(false);
-    expect(texts.some((t) => /not part of .+ statement/.test(t))).toBe(false);
-    expect(texts).toContain('Total Payable');
-    expect(texts).toContain('TOTAL');
   });
 });
 

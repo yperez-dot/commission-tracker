@@ -14,16 +14,7 @@ function mockApi() {
     if (path.startsWith('/records')) return { records: [], total: 0 };
     if (path.startsWith('/override-statements/types')) return { types: [{ id: 'thei_bsi', label: 'THEI. BSI Statement' }, { id: 'bsi_override', label: 'BSI Medicare Overrides' }] };
     if (path.startsWith('/override-statements/periods')) return { periods: [{ period: '202609' }, { period: '202608' }] };
-    if (path.startsWith('/override-statements/preview')) {
-      return {
-        periodLabel: '09.2026',
-        statementCount: 1,
-        grandTotal: 12.5,
-        statements: [{ payee: 'House Payee', lineCount: 1, total: 12.5, lines: [] }],
-      };
-    }
-    if (path.startsWith('/payroll-close/meta')) return { isStaff: true, canUnlock: true, paymentMethods: [], adjustmentCategories: [], payers: [] };
-    if (path.startsWith('/payroll-close/period')) return { locks: [], adjustments: [] };
+    if (path.startsWith('/override-statements/preview')) return { periodLabel: '09.2026', statementCount: 0, grandTotal: 0, statements: [] };
     if (path.startsWith('/payee-statements/compare')) return { liveTotal: 0, issuedTotal: null };
     if (path.startsWith('/payee-statements')) return [];
     if (path.startsWith('/payroll/payout-history')) return { history: [] };
@@ -75,8 +66,6 @@ test('Statements page: one month picker, agent statements first, house statement
   expect(text).toContain('Save BSI copy');
   expect(text).toContain('Lina compensation Excel');
   expect(text).toContain('Export all types');
-  expect(text).toContain('Total Payable');
-  expect(text).toContain('Sent to commissions');
   // type picker shows the house statement names; no help paragraphs on the page
   expect(text).toContain('THEI. BSI Statement');
   expect(text).toContain('BSI Medicare Overrides');

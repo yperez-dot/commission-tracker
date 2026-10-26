@@ -9,8 +9,6 @@ const {
   sheetNameFor,
   noteFor,
   LINE_HEADERS,
-  LINE_HEADER_ROW,
-  FIRST_LINE_ROW,
 } = require('../overrideExcelStatement');
 
 const rows = [
@@ -79,8 +77,8 @@ describe('overrideExcelStatement', () => {
       'THEI_Override_Statement_202601.xlsx'
     );
     const ws = wb.getWorksheet('Override Statement');
-    expect(ws.getRow(LINE_HEADER_ROW).getCell(5).value).toBe('Effective');
-    expect(ws.getRow(FIRST_LINE_ROW).getCell(5).value).toBe('01-01-2026');
+    expect(ws.getRow(9).getCell(5).value).toBe('Effective');
+    expect(ws.getRow(10).getCell(5).value).toBe('01-01-2026');
   });
 
   it('names NHP vs BSI remittance THEI workbooks separately', () => {
@@ -115,7 +113,7 @@ describe('overrideExcelStatement', () => {
     expect(filenameForOverrideExcel(marcoBundle, marcoStmt.payee)).toBe(
       'Marco_Override_Statement_202607.xlsx'
     );
-    expect(marcoWb.getWorksheet('Override Statement').getRow(FIRST_LINE_ROW).getCell(5).value).toBe(
+    expect(marcoWb.getWorksheet('Override Statement').getRow(10).getCell(5).value).toBe(
       '07-01-2026'
     );
 
@@ -130,7 +128,7 @@ describe('overrideExcelStatement', () => {
     expect(filenameForOverrideExcel(intBundle, intStmt.payee)).toBe(
       'Christian_Munoz_Override_Statement_202601.xlsx'
     );
-    expect(intWb.getWorksheet('Override Statement').getRow(FIRST_LINE_ROW).getCell(5).value).toBe(
+    expect(intWb.getWorksheet('Override Statement').getRow(10).getCell(5).value).toBe(
       '01-15-2026'
     );
   });
@@ -151,7 +149,7 @@ describe('overrideExcelStatement', () => {
       const ws = wb.worksheets[0];
       const headers = [];
       for (let c = 1; c <= 12; c += 1) {
-        const v = ws.getRow(LINE_HEADER_ROW).getCell(c).value;
+        const v = ws.getRow(9).getCell(c).value;
         if (v != null && v !== '') headers.push(v);
       }
       expect(headers).toEqual(LINE_HEADERS);
@@ -164,7 +162,7 @@ describe('overrideExcelStatement', () => {
       expect(all.some((v) => /standard_|alba_rate_peel|marco_10/.test(v))).toBe(false);
       // payable column = line amounts; totals in the same column, math unchanged
       const amounts = [];
-      for (let r = FIRST_LINE_ROW; r < FIRST_LINE_ROW + stmt.lines.length; r += 1) {
+      for (let r = 10; r < 10 + stmt.lines.length; r += 1) {
         amounts.push(ws.getRow(r).getCell(8).value);
         expect(ws.getRow(r).getCell(8).numFmt).toBe('$#,##0.00;($#,##0.00)');
       }
@@ -180,7 +178,7 @@ describe('overrideExcelStatement', () => {
     const bundle = buildOverrideStatements(neg, STATEMENT_TYPES.BSI_OVERRIDE, { period: '202601' });
     const stmt = bundle.statements[0];
     const wb = await buildOverrideExcelWorkbook(bundle, stmt, { reportDate: '08/14/2026' });
-    const cell = wb.worksheets[0].getRow(FIRST_LINE_ROW).getCell(8);
+    const cell = wb.worksheets[0].getRow(10).getCell(8);
     expect(cell.value).toBeLessThan(0);
     expect(cell.font.color.argb).toBe('FFB91C1C');
   });
@@ -210,25 +208,5 @@ describe('overrideExcelStatement', () => {
     expect(titleFor(STATEMENT_TYPES.MARCO)).toBe('Marco (Swan) Override Statement');
     expect(titleFor(STATEMENT_TYPES.INTEGRITY)).toBe('Integrity Partners Producer Statement');
     expect(sheetNameFor(STATEMENT_TYPES.MARCO)).toBe('Override Statement');
-  });
-
-  it('header and line-table totals match the statement payable (and override pot)', async () => {
-    const data = rows.map((r) => ({ ...r, source: 'BSI' }));
-    const bundle = buildOverrideStatements(data, STATEMENT_TYPES.THEI_BSI, { period: '202601' });
-    const stmt = bundle.statements[0];
-    const wb = await buildOverrideExcelWorkbook(bundle, stmt, { reportDate: '08/14/2026' });
-    const ws = wb.worksheets[0];
-    expect(ws.getCell('A7').value).toBe('Period');
-    expect(ws.getCell('A8').value).toBe('Total Payable');
-    expect(ws.getCell('B8').value).toBeCloseTo(stmt.total, 2);
-    expect(ws.getCell('B8').numFmt).toBe('$#,##0.00;($#,##0.00)');
-    expect(ws.getCell('A9').value).toBe('Total Override');
-    const pot = stmt.lines.reduce((s, l) => s + (Number(l.override_pot) || 0), 0);
-    expect(ws.getCell('B9').value).toBeCloseTo(pot, 2);
-    const totalRow = FIRST_LINE_ROW + stmt.lines.length;
-    expect(ws.getRow(totalRow).getCell(1).value).toBe('TOTAL');
-    expect(ws.getRow(totalRow).getCell(8).value).toBeCloseTo(stmt.total, 2);
-    expect(ws.getRow(totalRow).getCell(8).font.bold).toBe(true);
-    expect(ws.getRow(totalRow).getCell(7).value).toBeCloseTo(pot, 2);
   });
 });

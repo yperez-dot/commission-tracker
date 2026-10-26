@@ -114,7 +114,7 @@ async function createLock(pool, req, ak, opts) {
     const built = await payee.buildFor(pool, key, period, ak);
     carry = built.carry;
     const issued = await payee.issueStatement(pool, req, key, period,
-      `Frozen when ${opts.source === 'close' ? 'month closed' : 'sent to commissions'}`, built);
+      `Frozen when ${opts.source === 'close' ? 'month closed' : 'marked paid'}`, built);
     if (issued) { statementId = issued.id; statementTotal = Number(issued.total); }
   } else {
     const adjs = await store.loadAdjustments(pool, ak, agent, period);
@@ -139,7 +139,7 @@ async function createLock(pool, req, ak, opts) {
   const lock = ins.rows[0];
   await logChange(pool, req, {
     agencyKey: ak, type: 'payroll.locked', entityType: 'payroll_lock', entityId: lock.id, period, payee: agent,
-    summary: `Locked ${agent} ${period} (${opts.source === 'close' ? 'month closed' : 'sent to commissions'}): payable ${money(snap.payable)}`,
+    summary: `Locked ${agent} ${period} (${opts.source === 'close' ? 'month closed' : 'marked paid'}): payable ${money(snap.payable)}`,
     details: { snapshot: snap, statementId },
   });
   return lock;
@@ -270,7 +270,7 @@ router.post('/adjustments/:id(\\d+)/void', requireAuth, requirePayrollAdmin, wra
   const a = cur.rows[0];
   if (a.status !== 'active') return res.status(400).json({ error: 'already void' });
   if (await store.isFrozen(pool, ak, a.agent_name, a.payment_period)) {
-    return res.status(409).json({ error: 'That month is locked — unlock it first (its sent figures are frozen).' });
+    return res.status(409).json({ error: 'That month is locked — unlock it first (its paid figures are frozen).' });
   }
   const r = await pool.query(
     `UPDATE payroll_adjustments SET status='void', voided_by=$2, voided_at=NOW(), void_reason=$3 WHERE id=$1 RETURNING *`,
@@ -298,16 +298,16 @@ router.post('/pay', requireAuth, requirePayrollStaff, wrap(async (req, res) => {
   const period = String(b.period || '');
   const agent = String(b.agent || '').trim();
   if (!isPeriod(period) || !agent) return res.status(400).json({ error: 'period (YYYYMM) and agent are required' });
-  const method = String(b.method || 'sent_to_commissions').toLowerCase();
-  if (!isMethod(method)) return res.status(400).json({ error: 'method must be sent_to_commissions, check, ach, zelle or other' });
-  if (method === 'other' && !String(b.notes || '').trim()) return res.status(400).json({ error: 'say how it was sent in notes for Other' });
+  const method = String(b.method || '').toLowerCase();
+  if (!isMethod(method)) return res.status(400).json({ error: 'method must be check, ach, zelle or other' });
+  if (method === 'other' && !String(b.notes || '').trim()) return res.status(400).json({ error: 'say how it was paid in notes for Other' });
   const payDate = String(b.payDate || new Date().toISOString().slice(0, 10)).slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(payDate)) return res.status(400).json({ error: 'payDate must be YYYY-MM-DD' });
   const existing = await store.activeLock(pool, ak, agent, period);
   const paidBefore = await pool.query(
     `SELECT is_paid FROM payroll_payout_status WHERE agency_key=$1 AND payment_period=$2 AND agent_name=$3`, [ak, period, agent]);
   if (existing && (existing.source !== 'close' || (paidBefore.rows[0] && paidBefore.rows[0].is_paid))) {
-    return res.status(409).json({ error: `${agent} ${period} is already sent to commissions and locked` });
+    return res.status(409).json({ error: `${agent} ${period} is already paid and locked` });
   }
   // Month already closed (frozen) but not yet paid: pay against the frozen snapshot.
   const lock = existing || await createLock(pool, req, ak, {
@@ -340,7 +340,7 @@ router.post('/pay', requireAuth, requirePayrollStaff, wrap(async (req, res) => {
   );
   await logChange(pool, req, {
     agencyKey: ak, type: 'payroll.payment_recorded', entityType: 'payroll_payment', entityId: pay.rows[0].id, period, payee: agent,
-    summary: `Sent ${agent} ${money(amount)} for ${period} by ${method}${b.reference ? ' #' + b.reference : ''} on ${payDate}` +
+    summary: `Paid ${agent} ${money(amount)} for ${period} by ${method}${b.reference ? ' #' + b.reference : ''} on ${payDate}` +
       (Math.abs(amount - Number(lock.payable)) >= 0.01 ? ` (payable was ${money(lock.payable)})` : ''),
     details: { amount, payable: Number(lock.payable), method, reference: b.reference || null, payDate, lockId: lock.id },
   });
@@ -594,7 +594,7 @@ router.post('/reopen', requireAuth, requirePayrollAdmin, wrap(async (req, res) =
     [ak, period, who(req), `Month reopened: ${reason}`]);
   await logChange(pool, req, {
     agencyKey: ak, type: 'payroll.month_reopened', entityType: 'payroll_month_close', entityId: close.id, period,
-    summary: `Reopened ${period}: ${reason} (unlocked ${un.rowCount} not-sent payee(s); sent months stay locked)`,
+    summary: `Reopened ${period}: ${reason} (unlocked ${un.rowCount} unpaid payee(s); paid months stay locked)`,
     details: { reason, unlocked: un.rows.map((r) => r.agent_name) },
   });
   res.json({ success: true, unlocked: un.rows.map((r) => r.agent_name) });

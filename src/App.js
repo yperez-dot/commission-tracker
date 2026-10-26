@@ -69,6 +69,7 @@ export function buildNavItems({ isBSI, isAdmin }) {
       id: 'payroll',
       label: 'Payroll',
       children: [
+        { id: 'payroll-payouts', label: 'Agent Payouts' },
         { id: 'payroll-overrides', label: 'Statements' },
         { id: 'payroll-loa', label: 'LOA' },
         { id: 'payroll-history', label: 'Payment History' },
@@ -248,8 +249,8 @@ export default function App() {
     reconciliation: <Reconciliation key={agencyView} user={effectiveUser} />,
     'direct-recon': <Reconciliation key={agencyView} user={effectiveUser} />,
     'pass-through-chargebacks': <PassThroughChargebacks key={agencyView} user={effectiveUser} />,
-    payroll: <Payroll key={agencyView} user={effectiveUser} initialTab="overrides" onNavigate={navigate} />,
-    'payroll-payouts': <Payroll key={`${agencyView}-payouts`} user={effectiveUser} initialTab="overrides" onNavigate={navigate} />,
+    payroll: <Payroll key={agencyView} user={effectiveUser} initialTab="payroll" onNavigate={navigate} />,
+    'payroll-payouts': <Payroll key={`${agencyView}-payouts`} user={effectiveUser} initialTab="payroll" onNavigate={navigate} />,
     'payroll-overrides': <Payroll key={`${agencyView}-overrides-${pageParams.period || ''}`} user={effectiveUser} initialTab="overrides" initialPeriod={pageParams.period} onNavigate={navigate} />,
     'payroll-loa': <Payroll key={`${agencyView}-loa`} user={effectiveUser} initialTab="loa" onNavigate={navigate} />,
     'payroll-history': <Payroll key={`${agencyView}-history`} user={effectiveUser} initialTab="history" onNavigate={navigate} />,

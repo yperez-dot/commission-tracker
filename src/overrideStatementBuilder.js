@@ -290,18 +290,13 @@ function buildOverrideStatements(rows, statementType, opts = {}) {
     });
   }
 
-  let statements = [...byPayee.values()]
+  const statements = [...byPayee.values()]
     .map((s) => ({
       ...s,
       total: Math.round(s.total * 100) / 100,
       lineCount: s.lines.length,
     }))
     .sort((a, b) => b.total - a.total);
-
-  if (opts.payeeGroups && opts.payeeGroups.length) {
-    const { mergePayeeBuckets } = require('./statementPayeeGroups');
-    statements = mergePayeeBuckets(statements, opts.payeeGroups, statementType);
-  }
 
   return {
     type: statementType,

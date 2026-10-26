@@ -37,7 +37,6 @@ var LABEL_PAYABLE = 'Amount payable to agent';
 var LABEL_BALANCE_DUE = 'Balance due from agent';
 
 var PAYMENT_METHODS = [
-  { key: 'sent_to_commissions', label: 'Sent to commissions' },
   { key: 'check', label: 'Check' },
   { key: 'ach', label: 'ACH' },
   { key: 'zelle', label: 'Zelle' },
@@ -92,7 +91,7 @@ function validateAdjustment(input, locked) {
     return 'a prior-period correction needs the period it corrects';
   }
   if (a.category === 'agent_repayment' && !(amt > 0)) return 'a repayment from the agent is a positive amount';
-  if (locked) return 'this month is locked for that payee (sent or closed) — post it in an open month';
+  if (locked) return 'this month is locked for that payee (paid or closed) — post it in an open month';
   return null;
 }
 
