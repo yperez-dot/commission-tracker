@@ -62,7 +62,6 @@ router.get('/preview', requireAuth, async (req, res) => {
       gross: statement.gross,
       chargebacks: statement.chargebacks,
       balance: statement.balance,
-      note: statement.note,
       lines: statement.lines,
     });
   } catch (err) {

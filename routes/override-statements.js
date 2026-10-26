@@ -20,6 +20,17 @@ const {
 const { backfillDevotedCommissionGuards } = require('../src/theCarrierStatementClassify');
 const { backfillBsiOverrideMissingShares } = require('../src/bsiOverrideShareBackfill');
 const { isUnsplitBsiLine } = require('../src/bsiBookAttribution');
+const { loadPayeeGroups } = require('./statementPayeeGroupStore');
+
+async function houseBuildOpts(pool, type, period) {
+  let payeeGroups = [];
+  try {
+    payeeGroups = await loadPayeeGroups(pool, type);
+  } catch (e) {
+    console.warn('[override-statements] payee groups', e.message);
+  }
+  return { period, payeeGroups };
+}
 
 /** Override Statements tab — Lina/agent production is Agent Payouts only. */
 const OVERRIDE_UI_TYPES = [
@@ -365,7 +376,7 @@ router.get('/preview', requireAuth, async (req, res) => {
       }
     }
     const rows = await fetchOverrideRows(pool, period, type);
-    const bundle = buildOverrideStatements(rows, type, { period });
+    const bundle = buildOverrideStatements(rows, type, await houseBuildOpts(pool, type, period));
 
     let sourceUploads = [];
     if (type === STATEMENT_TYPES.THEI_NHP || type === STATEMENT_TYPES.THEI_BSI || type === STATEMENT_TYPES.BSI_OVERRIDE) {
@@ -427,6 +438,7 @@ router.get('/preview', requireAuth, async (req, res) => {
       unsplitBsiWarning,
       statements: bundle.statements.map((s) => ({
         payee: s.payee,
+        payeeGroupKey: s.payeeGroupKey || null,
         lineCount: s.lineCount,
         total: s.total,
         lines: (s.lines || []).map((l) => ({
@@ -469,7 +481,7 @@ router.get('/export-xlsx', requireAuth, requireAdmin, async (req, res) => {
       try { await backfillBsiOverrideMissingShares(pool, period); } catch (e) { /* best-effort */ }
     }
     const rows = await fetchOverrideRows(pool, period, type);
-    const bundle = buildOverrideStatements(rows, type, { period });
+    const bundle = buildOverrideStatements(rows, type, await houseBuildOpts(pool, type, period));
     const stmt = pickPayeeStatement(bundle, payee);
     if (!stmt) {
       return res.status(404).json({
@@ -506,7 +518,7 @@ router.get('/export', requireAuth, requireAdmin, async (req, res) => {
     // THEI/BSI Excel lives at /export-xlsx (Bearer auth). This route stays CSV.
     const pool = getPool();
     const rows = await fetchOverrideRows(pool, period, type);
-    const bundle = buildOverrideStatements(rows, type, { period });
+    const bundle = buildOverrideStatements(rows, type, await houseBuildOpts(pool, type, period));
 
     let csv;
     let filename;
@@ -549,7 +561,7 @@ router.get('/export-all', requireAuth, requireAdmin, async (req, res) => {
       try { await backfillBsiOverrideMissingShares(pool, period); } catch (e) { /* best-effort */ }
     }
     const rows = await fetchOverrideRows(pool, period, type);
-    const bundle = buildOverrideStatements(rows, type, { period });
+    const bundle = buildOverrideStatements(rows, type, await houseBuildOpts(pool, type, period));
 
     const files = [];
     for (const s of bundle.statements) {
@@ -596,7 +608,7 @@ router.get('/export-all-types', requireAuth, requireAdmin, async (req, res) => {
     const typeSummaries = [];
 
     for (const type of OVERRIDE_UI_TYPES) {
-      const bundle = buildOverrideStatements(rows, type, { period });
+      const bundle = buildOverrideStatements(rows, type, await houseBuildOpts(pool, type, period));
       typeSummaries.push({
         type: bundle.type,
         periodLabel: bundle.periodLabel,

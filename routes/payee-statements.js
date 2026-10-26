@@ -237,7 +237,7 @@ router.post('/issue', requireAuth, requireAdmin, async (req, res) => {
     const pool = getPool();
     const ak = agencyKey(req);
     if (await store.activeLock(pool, ak, store.STATEMENT_PAYEE_NAMES[payee], String(period))) {
-      return res.status(409).json({ error: 'That month is locked (paid or closed). Unlock it first, or post a prior-period correction in an open month.' });
+      return res.status(409).json({ error: 'That month is locked (sent or closed). Unlock it first, or post a prior-period correction in an open month.' });
     }
     const row = await issueStatement(pool, req, payee, String(period), notes);
     if (!row) return res.status(400).json({ error: 'No lines for that payee/period — nothing to issue' });
