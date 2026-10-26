@@ -308,7 +308,7 @@ export default function AgentPayoutUploads({ user, onNavigate }) {
 
       <UploadPageShell
         title="Agent Payout Uploads"
-        subtitle="Statements for agents you pay (Tailored → Jill Taylor, other ACA producers). THEI house / remittance stays under Commission Statements. After upload, pay them on Payroll → Agent Payouts."
+        subtitle="Statements for agents you pay (Tailored → Jill Taylor, other ACA producers). THEI house / remittance stays under Commission Statements. After upload, review amounts on Payroll → Statements."
       >
         <UploadDropZone
           dragOver={dragOver}
@@ -333,7 +333,7 @@ export default function AgentPayoutUploads({ user, onNavigate }) {
               <div style={{ marginTop: 4 }}>Carriers: {(uploadResult.carriers || []).join(', ')}</div>
             )}
             <div style={{ marginTop: 8, fontWeight: 500 }}>
-              Review amounts under Payroll → Agent Payouts.
+              Review amounts under Payroll → Statements.
             </div>
           </UploadAlert>
         )}
