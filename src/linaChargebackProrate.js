@@ -99,14 +99,17 @@ function isLinaChargeback(r) {
 
 /** Add a positive Lina line to the originals map (key → { gross, producer, thei, bsi }). */
 function addLinaOriginal(map, r) {
-  if (!isLinaOriginal(r) || isHouseOnlySplit(r)) return;
+  // Unsplit rows have no stored Lina pay — do not invent producer = commission
+  // (that made a UHC chargeback take back 100% from Lina). House-only peels
+  // and leftover Lina < 0 peels are not "what she was paid" either.
+  if (!isLinaOriginal(r) || isHouseOnlySplit(r) || isUnsplitShares(r)) return;
   const key = linaPolicyKey(r);
   if (!key) return;
   const s = sharesOf(r);
-  const producer = isUnsplitShares(r) ? num(r.commission) : s.producer;
+  if (s.producer < -0.005) return;
   const o = map.get(key) || { gross: 0, producer: 0, thei: 0, bsi: 0 };
   o.gross = round2(o.gross + num(r.commission));
-  o.producer = round2(o.producer + producer);
+  o.producer = round2(o.producer + s.producer);
   o.thei = round2(o.thei + s.thei);
   o.bsi = round2(o.bsi + s.bsi);
   map.set(key, o);
@@ -118,9 +121,12 @@ function addLinaOriginal(map, r) {
  */
 function linaProportionalChargeback(commission, orig) {
   const cb = num(commission);
-  if (!(cb < 0) || !orig || !(orig.gross > 0)) return null;
-  const linaFrac = Math.max(0, Math.min(1, num(orig.producer) / orig.gross));
-  const producerPayable = round2(cb * linaFrac);
+  const paid = Math.max(0, num(orig && orig.producer));
+  if (!(cb < 0) || !orig || !(orig.gross > 0) || !(paid > 0.005)) return null;
+  const linaFrac = Math.max(0, Math.min(1, paid / orig.gross));
+  let producerPayable = round2(cb * linaFrac);
+  // Never take back more than Lina was actually paid on this policy.
+  if (producerPayable < -paid) producerPayable = round2(-paid);
   const rest = round2(cb - producerPayable);
   const houseTotal = num(orig.thei) + num(orig.bsi);
   const theiFrac = Math.abs(houseTotal) > 0.005 ? Math.max(0, Math.min(1, num(orig.thei) / houseTotal)) : 0.5;

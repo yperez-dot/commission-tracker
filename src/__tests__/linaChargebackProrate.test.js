@@ -49,7 +49,7 @@ describe('linaProportionalChargeback', () => {
     expect(linaPolicyKey({ carrier: 'UnitedHealthcare', policy_number: ' Z-1 ' })).toBe('uhc|z-1');
   });
 
-  it('counts unsplit house-named UHC book lines as full Lina originals; skips house-only and orphans', () => {
+  it('skips unsplit, house-only, leftover-negative, and orphan rows as Lina originals', () => {
     const m = new Map();
     addLinaOriginal(m, {
       agent: 'Broker Society Insurance',
@@ -77,10 +77,20 @@ describe('linaProportionalChargeback', () => {
       producerPayable: -15.5,
       theiShare: 52.5,
       bsiShare: 52.5,
+    });
+    addLinaOriginal(m, {
+      agent: ALBA_DB_AGENT,
+      carrier: 'UnitedHealthcare',
+      policyNumber: 'Z-HOUSE',
+      classification: 'New Business',
+      commission: 89.5,
+      producerPayable: 19.5,
+      theiShare: 35,
+      bsiShare: 35,
       upload_id: 99,
       upload_missing: true,
     });
-    expect(m.get('uhc|z-house')).toEqual({ gross: 211, producer: 211, thei: 0, bsi: 0 });
+    expect(m.has('uhc|z-house')).toBe(false);
     expect(isLinaOriginal({
       agent: 'Broker Society Insurance',
       carrier: 'UnitedHealthcare',
@@ -90,7 +100,17 @@ describe('linaProportionalChargeback', () => {
     expect(isOrphanCommissionRow({ upload_id: 99, upload_missing: true })).toBe(true);
   });
 
-  it('unsplit June installment plus migrated May yields a full Lina take-back on -844', () => {
+  it('never takes back more than Lina was paid; house gets the rest 50/50', () => {
+    // Stored Lina pay on the policy is 65.17; chargeback is larger than that share.
+    const s = linaProportionalChargeback(-77.67, { gross: 65.17, producer: 65.17, thei: 0, bsi: 0 });
+    expect(s.producerPayable).toBe(-65.17);
+    expect(s.theiShare).toBe(-6.25);
+    expect(s.bsiShare).toBe(-6.25);
+    expect(s.producerPayable + s.theiShare + s.bsiShare).toBeCloseTo(-77.67, 2);
+    expect(linaProportionalChargeback(-77.67, { gross: 77.67, producer: 0, thei: 0, bsi: 0 })).toBeNull();
+  });
+
+  it('migrated split-sale parts still take back Lina 694 of -844', () => {
     const m = new Map();
     addLinaOriginal(m, {
       agent: ALBA_DB_AGENT, carrier: 'UnitedHealthcare', policyNumber: 'SYN-844',
@@ -100,7 +120,7 @@ describe('linaProportionalChargeback', () => {
     addLinaOriginal(m, {
       agent: ALBA_DB_AGENT, carrier: 'UnitedHealthcare', policyNumber: 'SYN-844',
       classification: 'New Business', commission: 549.41,
-      producerPayable: 0, theiShare: 0, bsiShare: 0,
+      producerPayable: 549.41, theiShare: 0, bsiShare: 0,
     });
     expect(m.get('uhc|syn-844')).toEqual({ gross: 844, producer: 694, thei: 75, bsi: 75 });
     expect(linaProportionalChargeback(-844, m.get('uhc|syn-844')))
@@ -180,6 +200,18 @@ describe('backfill: lina_cb_prorate', () => {
     expect(updates[0].after).toMatchObject({ producerPayable: -60, theiShare: -10, bsiShare: -10, subAgentOverride: 0 });
     expect(updates[0].mga).toMatch(/^Lina chargeback taken back in proportion/);
     expect(summary).toMatchObject({ linaDelta: 4, theiDelta: -2, bsiDelta: -2 });
+  });
+
+  it('rewrites a 100% Lina chargeback so her take-back stops at stored pay; house 50/50', () => {
+    const rows = [row({ id: 9, policy: 'B-ROJAS', amount: -77.67, producer: -77.67, thei: 0, bsi: 0 })];
+    const linaOriginals = orig({ policy: 'B-ROJAS', gross: 65.17, producer: 65.17, thei: 0, bsi: 0 });
+    const { updates } = planBsiHouseSplitBackfill(rows, { linaOriginals });
+    expect(updates).toHaveLength(1);
+    expect(updates[0]).toMatchObject({
+      id: 9,
+      kind: 'lina_cb_prorate',
+      after: { producerPayable: -65.17, theiShare: -6.25, bsiShare: -6.25 },
+    });
   });
 
   it('leaves rows already proportional, rows with no original, HRA and positive lines', () => {

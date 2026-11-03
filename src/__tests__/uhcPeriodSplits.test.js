@@ -122,6 +122,23 @@ describe('2. Lina BSI-written UHC chargebacks follow prior payments, not the rat
     expect(none[0].mga || '').toMatch(/no original payment found/);
     expect(none[0].producerPayable + none[0].theiShare + none[0].bsiShare).toBeCloseTo(-844, 2);
   });
+
+  it('Rojas-type chargeback never takes more than Lina was paid; house gets the rest 50/50', () => {
+    const records = [{
+      ...uhcBase,
+      agent: ALBA_DB_AGENT,
+      classification: 'Chargeback',
+      policyNumber: 'SYN-ROJAS-CB',
+      commission: -77.67,
+      memberState: 'CA',
+      raw: { 'Commission Action': 'New Chargeback', 'Comp Type': 'R', 'Member State': 'CA', 'Writing Agent NPN': BSI_WRITING_NPN },
+    }];
+    applyBsiBookAgentProduction(records, {
+      linaOriginalSales: new Map([['uhc|syn-rojas-cb', { gross: 65.17, producer: 65.17, thei: 0, bsi: 0 }]]),
+    });
+    expect(records[0]).toMatchObject({ producerPayable: -65.17, theiShare: -6.25, bsiShare: -6.25 });
+    expect(records[0].producerPayable + records[0].theiShare + records[0].bsiShare).toBeCloseTo(-77.67, 2);
+  });
 });
 
 describe('3. Rojas-type: positive BSI-written UHC new sale never gives Lina a negative share', () => {
