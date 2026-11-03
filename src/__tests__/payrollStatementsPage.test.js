@@ -60,6 +60,7 @@ test('Statements page: one month picker, agent statements first, house statement
   expect(container.querySelector('.page-title').textContent).toBe('Statements');
   const month = container.querySelector('select[aria-label="Statements month"]');
   expect(month.value).toBe('202609');
+  expect([...month.options].find((o) => o.value === '202609').textContent).toBe('09.2026');
   // the house panel has no period dropdown of its own
   expect([...container.querySelectorAll('.form-label')].map((l) => l.textContent)).not.toContain('Period');
 
@@ -71,12 +72,11 @@ test('Statements page: one month picker, agent statements first, house statement
 
   const text = container.textContent;
   for (const label of ['Lina Hernandez', 'Christian Munoz', 'Horacio Mendieta']) expect(text).toContain(label);
-  expect(text).toContain('Issue statement');
-  expect(text).toContain('Save BSI copy');
-  expect(text).toContain('Lina compensation Excel');
   expect(text).toContain('Export all types');
   expect(text).toContain('Total Payable');
   expect(text).toContain('Sent to commissions');
+  expect(text).not.toContain('Lina compensation Excel');
+  expect(text).not.toContain('Current statement');
   // type picker shows the house statement names; no help paragraphs on the page
   expect(text).toContain('THEI. BSI Statement');
   expect(text).toContain('BSI Medicare Overrides');
@@ -87,18 +87,47 @@ test('Statements page: one month picker, agent statements first, house statement
   expect(apiFetch.mock.calls.some(([u]) => u.startsWith('/override-statements/preview') && u.includes('period=202609'))).toBe(true);
   expect(apiFetch.mock.calls.some(([u]) => u === '/payee-statements?period=202609')).toBe(true);
 
-  // current (possibly negative) agent statement + Lina Excel downloads
-  const btn = (label) => [...container.querySelectorAll('button')].filter((b) => b.textContent === label);
-  await act(async () => { Simulate.click(btn('Current statement')[2]); });
+  // one statement download per payee (Lina uses the same carry workbook as Chris / Horacio)
+  const linaRow = container.querySelector('[data-testid="agent-statement-row-lina"]');
+  const chrisRow = container.querySelector('[data-testid="agent-statement-row-christian-munoz"]');
+  const horacioRow = container.querySelector('[data-testid="agent-statement-row-horacio-mendieta"]');
+  const rowBtns = (el) => [...el.querySelectorAll('button')].map((b) => b.textContent);
+  expect(rowBtns(linaRow)).toEqual(['Statement', 'Sent to commissions']);
+  expect(rowBtns(chrisRow)).toEqual(['Statement', 'Sent to commissions']);
+  expect(rowBtns(horacioRow)).toEqual(['Statement', 'Sent to commissions']);
+
+  const more = container.querySelector('[data-testid="agent-statement-more"]');
+  expect(more).toBeTruthy();
+  expect(more.querySelector('summary').textContent).toBe('More');
+  expect(more.textContent).toContain('Issue statement');
+  expect(more.textContent).toContain('Save BSI copy');
+
+  await act(async () => { Simulate.click([...horacioRow.querySelectorAll('button')].find((b) => b.textContent === 'Statement')); });
   expect(apiDownload.mock.calls.at(-1)[0]).toBe('/payee-statements/preview-download?payee=horacio-mendieta&period=202609');
-  await act(async () => { Simulate.click(btn('Lina compensation Excel')[0]); });
-  expect(apiDownload.mock.calls.at(-1)[0]).toBe('/lina-statements/export?period=202609');
+  await act(async () => { Simulate.click([...linaRow.querySelectorAll('button')].find((b) => b.textContent === 'Statement')); });
+  expect(apiDownload.mock.calls.at(-1)[0]).toBe('/payee-statements/preview-download?payee=lina&period=202609');
+  expect(apiDownload.mock.calls.some(([u]) => String(u).includes('/lina-statements/export'))).toBe(false);
 
   // changing the month moves both sections
   await act(async () => { month.value = '202608'; Simulate.change(month); });
   await flush();
   expect(apiFetch.mock.calls.some(([u]) => u === '/payee-statements?period=202608')).toBe(true);
   expect(apiFetch.mock.calls.some(([u]) => u.startsWith('/override-statements/preview') && u.includes('period=202608'))).toBe(true);
+});
+
+test('Sent to commissions opens the date-sent modal', async () => {
+  await act(async () => root.render(<Payroll user={admin} initialTab="overrides" onNavigate={() => {}} />));
+  await flush();
+  const linaRow = container.querySelector('[data-testid="agent-statement-row-lina"]');
+  await act(async () => {
+    Simulate.click([...linaRow.querySelectorAll('button')].find((b) => b.textContent === 'Sent to commissions'));
+  });
+  const modal = container.querySelector('[data-testid="sent-to-commissions-modal"]');
+  expect(modal).toBeTruthy();
+  expect(modal.textContent).toContain('Date sent');
+  expect(modal.textContent).toContain('Lina Hernandez');
+  expect(modal.querySelector('input[aria-label="Amount"]')).toBeNull();
+  expect(modal.textContent).not.toMatch(/Check #|ACH/);
 });
 
 test('Statements page opens on the month passed in from Agent Payouts', async () => {
