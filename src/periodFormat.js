@@ -6,6 +6,10 @@
  * Internal values (YYYYMM in the DB, API params, file names) are unchanged — this is
  * display only. NHP pay cycles (YYYYMMDD) show as "MM.YYYY · cycle DD" so two cycles in the
  * same month stay distinguishable.
+ *
+ * NOTE: no array destructuring / spread in this file. The CRA frontend imports it
+ * and Babel would inject an ESM helper that hides module.exports (same constraint
+ * as src/bsiStatementTitle.js).
  */
 
 function pad2(n) {
@@ -114,10 +118,12 @@ function periodFromFilename(filename) {
     july: '07', august: '08', september: '09', october: '10', november: '11', december: '12',
   };
   const fnLower = f.toLowerCase();
-  for (const [month, num] of Object.entries(monthMap)) {
-    if (fnLower.includes(month)) {
+  const monthNames = Object.keys(monthMap);
+  for (let i = 0; i < monthNames.length; i += 1) {
+    const month = monthNames[i];
+    if (fnLower.indexOf(month) !== -1) {
       const ym = f.match(/(20\d{2})/);
-      if (ym) return `${ym[1]}${num}`;
+      if (ym) return `${ym[1]}${monthMap[month]}`;
     }
   }
   if ((m = f.match(/(?:^|[^\d])(0?[1-9]|1[0-2])[._\- ](20\d{2})(?!\d)/))) {
