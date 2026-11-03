@@ -227,9 +227,6 @@ function writeBottomLine(ws, startRow, statement, amountCol) {
       ws.getCell(col + r).font = { color: RED };
       r += 1;
     }
-    ws.getCell('A' + r).value = 'Unless repaid, this balance is deducted from your next payable month.';
-    ws.getCell('A' + r).font = { italic: true, size: 10, color: { argb: 'FF64748B' } };
-    r += 1;
   }
   return r;
 }
