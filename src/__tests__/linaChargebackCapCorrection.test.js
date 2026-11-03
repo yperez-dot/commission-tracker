@@ -7,6 +7,10 @@ const { addLinaOriginal } = require('../linaChargebackProrate');
 const {
   buildCapOriginals,
   planLinaChargebackCapCorrection,
+  reconstructShortInstallmentPay,
+  applyLinaChargebackCapCorrection,
+  logSkipped,
+  normalizePolicy,
 } = require('../linaChargebackCapCorrection');
 
 const alba = (o) => ({
@@ -28,6 +32,12 @@ const alba = (o) => ({
   bsi_share: o.bsi,
   mga: o.mga || 'Lina chargeback taken back in proportion to the original payment(s) on this policy (100.0% Lina)',
   source: 'BSI',
+  effectiveDate: o.effectiveDate,
+  effective_date: o.effectiveDate,
+  memberState: o.memberState,
+  member_state: o.memberState,
+  raw: o.raw,
+  raw_data: o.raw,
 });
 
 describe('buildCapOriginals', () => {
@@ -113,6 +123,219 @@ describe('planLinaChargebackCapCorrection', () => {
       originals
     );
     expect(updates).toHaveLength(0);
+  });
+});
+
+describe('short first-year installment reconstruction', () => {
+  const ctNewR = {
+    carrier: 'UnitedHealthcare',
+    classification: 'Chargeback',
+    commission: -77.67,
+    policyNumber: 'SYN-CT-NB',
+    period: '202610',
+    producerPayable: -77.67,
+    theiShare: 0,
+    bsiShare: 0,
+    effectiveDate: '08/01/2026',
+    memberState: 'CT',
+    raw: {
+      'Commission Action': 'New Chargeback',
+      'Comp Type': 'R',
+      'Member State': 'CT',
+      'Original Effective Date': '08/01/2026',
+      'Statement Date': '10/22/2026',
+    },
+  };
+
+  it('line minus one month of Initial $150 is 65.17', () => {
+    const rebuilt = reconstructShortInstallmentPay(ctNewR);
+    expect(rebuilt).toMatchObject({ gross: 77.67, producer: 65.17 });
+  });
+
+  it('ignores a same-size unsplit original when the chargeback abs key matches', () => {
+    const originals = buildCapOriginals([{
+      agent: 'Broker Society Insurance',
+      carrier: 'UnitedHealthcare',
+      policyNumber: 'SYN-CT-NB',
+      classification: 'New Business',
+      commission: 77.67,
+    }], new Map([[normalizePolicy('SYN-CT-NB'), 77.67]]));
+    expect(originals.has('uhc|syn-ct-nb')).toBe(false);
+  });
+
+  it('rewrites 100% Lina even when the unsplit original equals the chargeback', () => {
+    // #112 production path: unsplit line counted as paid = |CB|, planner skipped as same.
+    const originals = buildCapOriginals([{
+      agent: 'Broker Society Insurance',
+      carrier: 'UnitedHealthcare',
+      policyNumber: 'SYN-CT-NB',
+      classification: 'New Business',
+      commission: 77.67,
+    }]);
+    expect(originals.get('uhc|syn-ct-nb')).toEqual({
+      gross: 77.67, producer: 77.67, thei: 0, bsi: 0,
+    });
+    const { updates, skipped } = planLinaChargebackCapCorrection(
+      [alba({
+        id: 21,
+        policy: 'SYN-CT-NB',
+        amount: -77.67,
+        producer: -77.67,
+        thei: 0,
+        bsi: 0,
+        effectiveDate: ctNewR.effectiveDate,
+        memberState: ctNewR.memberState,
+        raw: ctNewR.raw,
+      })],
+      originals
+    );
+    expect(updates).toHaveLength(1);
+    expect(updates[0].after).toEqual({ producer: -65.17, thei: -6.25, bsi: -6.25 });
+    expect(JSON.stringify({ updates, skipped })).not.toMatch(/ROJAS|Edwin/i);
+  });
+});
+
+describe('skip reasons (no client names)', () => {
+  it('leaves a Humana-style prorate as within_cap_house', () => {
+    const originals = buildCapOriginals([{
+      agent: ALBA_DB_AGENT, carrier: 'Humana', policyNumber: 'H-1',
+      classification: 'New Business', commission: 438,
+      producerPayable: 294.32, theiShare: 71.84, bsiShare: 71.84,
+    }]);
+    const { updates, skipped } = planLinaChargebackCapCorrection(
+      [alba({
+        id: 13, policy: 'H-1', carrier: 'Humana', amount: -438,
+        producer: -294.32, thei: -71.84, bsi: -71.84,
+      })],
+      originals
+    );
+    expect(updates).toHaveLength(0);
+    expect(skipped).toEqual([expect.objectContaining({
+      reason: 'within_cap_house',
+      policyLast4: 'H-1',
+      paid: 294.32,
+      stored: -294.32,
+    })]);
+  });
+
+  it('prints skip lines without client names', () => {
+    const logs = [];
+    const spy = jest.spyOn(console, 'log').mockImplementation((m) => logs.push(String(m)));
+    logSkipped([{
+      carrier: 'UnitedHealt',
+      policyLast4: 'T-NB',
+      commission: -77.67,
+      stored: -77.67,
+      paid: 0,
+      reason: 'reconstruct_failed',
+    }]);
+    spy.mockRestore();
+    expect(logs).toEqual([
+      '[lina-cb-cap] skip carrier=UnitedHealt policy=…T-NB comm=-77.67 stored=-77.67 paid=0.00 reason=reconstruct_failed',
+    ]);
+    expect(logs.join('\n')).not.toMatch(/ROJAS|Edwin|Hernandez|Alba/i);
+  });
+
+  it('skips HRA as not_lina_cb', () => {
+    const { updates, skipped } = planLinaChargebackCapCorrection(
+      [alba({ id: 9, policy: 'SYN-HRA', cls: 'HRA/Bonus', amount: -10, producer: -10, thei: 0, bsi: 0 })],
+      new Map()
+    );
+    expect(updates).toHaveLength(0);
+    expect(skipped[0].reason).toBe('not_lina_cb');
+  });
+});
+
+describe('applyLinaChargebackCapCorrection', () => {
+  it('plans the short-installment rewrite and leaves Humana stored shares', async () => {
+    const logs = [];
+    const spy = jest.spyOn(console, 'log').mockImplementation((m) => logs.push(String(m)));
+    const pool = {
+      query: jest.fn(async (sql) => {
+        if (sql.includes('commission, 0) < -0.005')) {
+          return { rows: [
+            {
+              id: 21,
+              agent_name: ALBA_DB_AGENT,
+              carrier: 'UnitedHealthcare',
+              classification: 'Chargeback',
+              commission: -77.67,
+              producer_payable: -77.67,
+              thei_share: 0,
+              bsi_share: 0,
+              policy_number: 'SYN-CT-NB',
+              payment_period: '202610',
+              mga: 'Lina chargeback taken back in proportion to the original payment(s) on this policy (100.0% Lina)',
+              source: 'BSI',
+              effective_date: '08/01/2026',
+              raw_data: {
+                'Commission Action': 'New Chargeback',
+                'Comp Type': 'R',
+                'Member State': 'CT',
+                'Original Effective Date': '08/01/2026',
+                'Statement Date': '10/22/2026',
+              },
+            },
+            {
+              id: 13,
+              agent_name: ALBA_DB_AGENT,
+              carrier: 'Humana',
+              classification: 'Chargeback',
+              commission: -438,
+              producer_payable: -294.32,
+              thei_share: -71.84,
+              bsi_share: -71.84,
+              policy_number: 'H-1',
+              payment_period: '202610',
+              mga: '',
+              source: 'BSI',
+              effective_date: null,
+              raw_data: {},
+            },
+          ] };
+        }
+        if (sql.includes('commission, 0) > 0.005')) {
+          return { rows: [
+            {
+              agent_name: 'Broker Society Insurance',
+              carrier: 'UnitedHealthcare',
+              policy_number: 'SYN-CT-NB',
+              classification: 'New Business',
+              commission: 77.67,
+              producer_payable: 0,
+              thei_share: 0,
+              bsi_share: 0,
+              effective_date: '08/01/2026',
+              raw_data: { 'Commission Action': 'New', 'Comp Type': 'R', 'Member State': 'CT' },
+            },
+            {
+              agent_name: ALBA_DB_AGENT,
+              carrier: 'Humana',
+              policy_number: 'H-1',
+              classification: 'New Business',
+              commission: 438,
+              producer_payable: 294.32,
+              thei_share: 71.84,
+              bsi_share: 71.84,
+              effective_date: null,
+              raw_data: {},
+            },
+          ] };
+        }
+        if (sql.includes('UPDATE commission_records')) return { rowCount: 1 };
+        return { rows: [] };
+      }),
+    };
+    const result = await applyLinaChargebackCapCorrection(pool, { period: '202610' });
+    spy.mockRestore();
+    expect(result).toMatchObject({ found: 2, planned: 1, applied: 1 });
+    expect(result.updates[0].after).toEqual({ producer: -65.17, thei: -6.25, bsi: -6.25 });
+    expect(result.updates[0].id).toBe(21);
+    expect(result.skipped.map((s) => s.reason)).toEqual(['within_cap_house']);
+    expect(logs.join('\n')).toMatch(/reason=within_cap_house/);
+    expect(logs.join('\n')).not.toMatch(/ROJAS|Edwin/i);
+    const updateCall = pool.query.mock.calls.find((c) => String(c[0]).includes('UPDATE'));
+    expect(updateCall[1].slice(0, 4)).toEqual([-65.17, -6.25, -6.25, expect.stringMatching(/capped at actual prior pay/)]);
   });
 });
 

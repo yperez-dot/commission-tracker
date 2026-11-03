@@ -60,7 +60,7 @@ async function main() {
   // Recompute stored 10.2026 Lina chargebacks under the paid cap.
   try {
     const cap = await applyLinaChargebackCapCorrection(pool, { period: '202610' });
-    console.log(`[lina-cb-cap] period=${cap.period} found=${cap.found} planned=${cap.planned} applied=${cap.applied}`);
+    console.log(`[lina-cb-cap] period=${cap.period} found=${cap.found} planned=${cap.planned} applied=${cap.applied} skipped=${(cap.skipped || []).length}`);
   } catch (err) {
     console.warn('[lina-cb-cap] skipped:', err.message);
   }
