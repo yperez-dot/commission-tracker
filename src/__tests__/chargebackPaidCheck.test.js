@@ -45,6 +45,19 @@ describe('chargeback vs paid — upload', () => {
     expect(summarizeFlags(flags).message).toMatch(/1 chargeback\(s\) with no payment found/);
   });
 
+  it('does not count orphan rows left after a deleted upload', () => {
+    const records = [{ ...base, policyNumber: 'P-ORPH', classification: 'Chargeback', commission: -844 }];
+    const livePaid = stored({ policy: 'P-ORPH', amount: 919 });
+    const orphanCb = {
+      ...stored({ policy: 'P-ORPH', amount: -844, period: '202610' }),
+      upload_id: 88,
+      upload_missing: true,
+    };
+    expect(checkUploadChargebacks(records, [livePaid, orphanCb])).toHaveLength(0);
+    expect(checkUploadChargebacks(records, [livePaid, stored({ policy: 'P-ORPH', amount: -844 })])[0].flag)
+      .toMatchObject({ status: 'exceeds_paid', paid: 919, chargedBack: 1688 });
+  });
+
   it('a sale in the same file counts as paid', () => {
     const records = [
       { ...base, policyNumber: 'P-4', classification: 'Agency Override', commission: 120 },

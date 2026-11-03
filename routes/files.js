@@ -1477,6 +1477,7 @@ async function checkBsiUploadChargebacks(pool, records) {
      FROM commission_records cr
      LEFT JOIN uploads u ON u.id = cr.upload_id
      WHERE (UPPER(COALESCE(cr.source, '')) IN ('BSI', 'BSI_PAYEE') OR u.category = 'bsi_statement')
+       AND (cr.upload_id IS NULL OR u.id IS NOT NULL)
        AND COALESCE(cr.commission, 0) <> 0
        AND (LOWER(TRIM(COALESCE(cr.policy_number, ''))) = ANY($1::text[])
             OR ($2::text[] <> '{}' AND ${clientNameKeySql('cr', 'client_full_name')} = ANY($2::text[])))`,
@@ -4751,6 +4752,10 @@ router.delete('/uploads/:id', requireAuth, requireAdmin, async (req, res) => {
          FROM uploads u WHERE u.id = $1`,
       [req.params.id]
     ).catch(() => ({ rows: [] }));
+    // Delete commission rows first. Production may lack ON DELETE CASCADE on
+    // commission_records.upload_id, so a lone DELETE FROM uploads leaves orphans
+    // that double-count chargebacks and poison Lina originals.
+    await pool.query('DELETE FROM commission_records WHERE upload_id = $1', [req.params.id]);
     await pool.query('DELETE FROM uploads WHERE id = $1', [req.params.id]);
     if (before.rows.length) {
       const b = before.rows[0];

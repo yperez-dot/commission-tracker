@@ -39,11 +39,56 @@ function isExcludedClass(classification) {
   return c.includes('hra') || c.includes('bonus') || c.includes('fee') || c.includes('held') || c.includes('override');
 }
 
+/** House writing-agent label on BSI UHC book lines (never remapped on early 2026 uploads). */
+function isHouseNamedAgent(name) {
+  const n = String(name || '').trim().toLowerCase();
+  if (!n) return true;
+  return n.includes('broker society') || n === 'bsi' || n === 'bsi agent'
+    || n === 'broker society insurance / level up insurance';
+}
+
+function sharesOf(r) {
+  return {
+    producer: num(r.producerPayable != null ? r.producerPayable : r.producer_payable),
+    thei: num(r.theiShare != null ? r.theiShare : r.thei_share),
+    bsi: num(r.bsiShare != null ? r.bsiShare : r.bsi_share),
+  };
+}
+
+/** Producer and house shares all ~0 — the peel was never stored. */
+function isUnsplitShares(r) {
+  const s = sharesOf(r);
+  return Math.abs(s.producer) < 0.005 && Math.abs(s.thei) < 0.005 && Math.abs(s.bsi) < 0.005;
+}
+
+/** House took the whole line (producer ~0, THEI+BSI ≈ commission). Not a Lina original. */
+function isHouseOnlySplit(r) {
+  if (isUnsplitShares(r)) return false;
+  const s = sharesOf(r);
+  const commission = num(r.commission);
+  return Math.abs(s.producer) < 0.005
+    && Math.abs(Math.abs(s.thei + s.bsi) - Math.abs(commission)) < 0.02;
+}
+
+/** A stored row whose upload was deleted (LEFT JOIN left u.id null). */
+function isOrphanCommissionRow(r) {
+  const uploadId = r.upload_id != null ? r.upload_id : r.uploadId;
+  if (uploadId == null || uploadId === '') return false;
+  if (r.upload_missing === true || r.live_upload === false) return true;
+  if (r.upload_exists === false || r.upload_exists === 0) return true;
+  return false;
+}
+
+const LIVE_UPLOAD_SQL = '(cr.upload_id IS NULL OR u.id IS NOT NULL)';
+
 /** Lina line that counts as an original payment (positive, not HRA etc.). */
 function isLinaOriginal(r) {
-  const agent = r.agent != null ? r.agent : r.agent_name;
+  if (isOrphanCommissionRow(r)) return false;
   const amount = num(r.commission);
-  return isAlbaHernandez(agent) && amount > 0.005 && !isExcludedClass(r.classification);
+  if (!(amount > 0.005) || isExcludedClass(r.classification)) return false;
+  const agent = r.agent != null ? r.agent : r.agent_name;
+  if (isAlbaHernandez(agent)) return true;
+  return isHouseNamedAgent(agent) && carrierKey(r.carrier) === 'uhc';
 }
 
 /** Lina line to re-split in proportion (negative, not HRA etc.). */
@@ -54,14 +99,16 @@ function isLinaChargeback(r) {
 
 /** Add a positive Lina line to the originals map (key → { gross, producer, thei, bsi }). */
 function addLinaOriginal(map, r) {
-  if (!isLinaOriginal(r)) return;
+  if (!isLinaOriginal(r) || isHouseOnlySplit(r)) return;
   const key = linaPolicyKey(r);
   if (!key) return;
+  const s = sharesOf(r);
+  const producer = isUnsplitShares(r) ? num(r.commission) : s.producer;
   const o = map.get(key) || { gross: 0, producer: 0, thei: 0, bsi: 0 };
   o.gross = round2(o.gross + num(r.commission));
-  o.producer = round2(o.producer + num(r.producerPayable != null ? r.producerPayable : r.producer_payable));
-  o.thei = round2(o.thei + num(r.theiShare != null ? r.theiShare : r.thei_share));
-  o.bsi = round2(o.bsi + num(r.bsiShare != null ? r.bsiShare : r.bsi_share));
+  o.producer = round2(o.producer + producer);
+  o.thei = round2(o.thei + s.thei);
+  o.bsi = round2(o.bsi + s.bsi);
   map.set(key, o);
 }
 
@@ -98,8 +145,16 @@ async function loadLinaOriginalSales(pool, policyNumbers) {
      FROM commission_records cr
      LEFT JOIN uploads u ON u.id = cr.upload_id
      WHERE (UPPER(COALESCE(cr.source, '')) IN ('BSI', 'BSI_PAYEE') OR u.category = 'bsi_statement')
+       AND ${LIVE_UPLOAD_SQL}
        AND COALESCE(cr.commission, 0) > 0
-       AND cr.agent_name ILIKE '%hernandez%'
+       AND (
+         cr.agent_name ILIKE '%hernandez%'
+         OR (
+           (cr.agent_name ILIKE '%broker society%'
+            OR LOWER(TRIM(COALESCE(cr.agent_name, ''))) IN ('', 'bsi', 'bsi agent'))
+           AND (LOWER(cr.carrier) LIKE '%united%' OR LOWER(TRIM(cr.carrier)) = 'uhc')
+         )
+       )
        AND LOWER(TRIM(COALESCE(cr.policy_number, ''))) = ANY($1::text[])`,
     [list]
   );
@@ -111,6 +166,11 @@ module.exports = {
   linaPolicyKey,
   isLinaOriginal,
   isLinaChargeback,
+  isHouseNamedAgent,
+  isUnsplitShares,
+  isHouseOnlySplit,
+  isOrphanCommissionRow,
+  LIVE_UPLOAD_SQL,
   addLinaOriginal,
   linaProportionalChargeback,
   proportionalNote,

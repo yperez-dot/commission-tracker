@@ -12,6 +12,9 @@
  */
 
 const { applyUhcSplitSaleCorrection, TARGET_POLICY } = require('../src/uhcSplitSalePolicyCorrection');
+const { cleanupOrphanCommissionRecords } = require('../src/orphanCommissionCleanup');
+const { runBsiHouseSplitBackfill } = require('../src/bsiHouseSplitBackfill');
+const { applyLinaRemainingOverrideCorrection } = require('../src/linaRemainingOverrideCorrection');
 
 async function main() {
   if (process.env.RUN_UHC_SPLIT_SALE_CORRECTION === '0') {
@@ -23,8 +26,34 @@ async function main() {
     return;
   }
   const { getPool } = require('../db/database');
-  const result = await applyUhcSplitSaleCorrection(getPool());
+  const pool = getPool();
+
+  const orphans = await cleanupOrphanCommissionRecords(pool);
+  console.log(`[orphan-records] deleted=${orphans.deleted}`);
+
+  const result = await applyUhcSplitSaleCorrection(pool);
   console.log(`[uhc-split-sale] policy ${TARGET_POLICY}: found=${result.found} planned=${result.planned} applied=${result.applied}`);
+
+  try {
+    const peel = await applyLinaRemainingOverrideCorrection(pool, { period: '202610' });
+    console.log(`[lina-remaining-override] period=${peel.period} found=${peel.found} planned=${peel.planned} applied=${peel.applied}`);
+  } catch (err) {
+    console.warn('[lina-remaining-override] skipped:', err.message);
+  }
+
+  // Re-split stored 10.2026 Lina chargebacks now that originals (and orphans) are clean.
+  try {
+    const prorate = await runBsiHouseSplitBackfill(pool, {
+      period: '202610',
+      apply: true,
+      kinds: ['lina_cb_prorate'],
+    });
+    const planned = (prorate.updates && prorate.updates.length) || 0;
+    const applied = prorate.applied != null ? prorate.applied : planned;
+    console.log(`[lina-cb-prorate] period=202610 planned=${planned} applied=${applied}`);
+  } catch (err) {
+    console.warn('[lina-cb-prorate] skipped:', err.message);
+  }
 }
 
 if (require.main === module) {
