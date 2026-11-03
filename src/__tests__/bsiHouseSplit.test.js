@@ -163,7 +163,8 @@ describe('Integrity and Lina rows are unaffected by the house split', () => {
     // UHC chargeback with no original found: the $82.50 fixed-rate fallback, flagged
     expect(records[5].producerPayable).toBe(-82.5);
     expect(records[5].mga).toMatch(/original sale not found/);
-    expect(records[6]).toMatchObject({ producerPayable: -41.25, theiShare: -20.62, bsiShare: -20.62 });
+    expect(records[6]).toMatchObject({ producerPayable: -41.25, theiShare: -20.63, bsiShare: -20.62 });
+    expect(records[6].producerPayable + records[6].theiShare + records[6].bsiShare).toBeCloseTo(-82.5, 2);
     for (const r of records) {
       expect(r.subAgentOverride || 0).toBe(0);
       expect(isOtherBsiAgent(r.agent)).toBe(false);
@@ -221,7 +222,7 @@ describe('House Statements pick up the stored house split', () => {
     row({ id: 4, agent: MARCO, policy: 'S-3', cls: 'Chargeback', amount: -100, thei: -45, bsi: -45, sub: -10 }),
     // older row without the upload's split marker: never listed
     row({ id: 5, agent: OTHER, policy: 'S-5', cls: 'Renewal', amount: 10, thei: 5, bsi: 5, applies: false }),
-    // Integrity rows are not house lines
+    // Integrity UHC/Humana renewals are house 50/50 (not paid to the producer)
     row({ id: 6, agent: INTEGRITY[0], policy: 'S-6', cls: 'Renewal', amount: 10, thei: 5, bsi: 5 }),
   ];
 
@@ -229,9 +230,9 @@ describe('House Statements pick up the stored house split', () => {
     for (const [type, field] of [[STATEMENT_TYPES.THEI_BSI, 'thei_share'], [STATEMENT_TYPES.BSI_OVERRIDE, 'bsi_share']]) {
       const b = buildOverrideStatements(rows, type, { period: '202609' });
       const lines = b.statements.flatMap((s) => s.lines);
-      expect(lines.map((l) => l.id).sort()).toEqual([1, 2, 3, 4]);
+      expect(lines.map((l) => l.id).sort()).toEqual([1, 2, 3, 4, 6]);
       for (const l of lines) expect(l.amount).toBe(l[field]);
-      expect(b.grandTotal).toBeCloseTo(50 - 30 + 45 - 45, 2);
+      expect(b.grandTotal).toBeCloseTo(50 - 30 + 45 - 45 + 5, 2);
     }
   });
 

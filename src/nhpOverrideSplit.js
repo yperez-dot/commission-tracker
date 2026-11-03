@@ -9,7 +9,7 @@
 
 const { isIntegrityAgent, isMarcoAgent } = require('./payeeSchedules');
 const { agentNameMatches } = require('./agentNameMatch');
-const { splitFullOverridePot, round2, num } = require('./overrideSplitMath');
+const { splitFullOverridePot, splitEvenHouse, round2, num } = require('./overrideSplitMath');
 
 /**
  * Fixed Integrity new-sale cuts per carrier (NHP honor pots), by plan year where known.
@@ -193,7 +193,7 @@ function splitNhpMedicareOverride(opts) {
     if (isBsiEligible) {
       const house = producerPayable > pot / 2
         ? fixedCutHouseShares(pot, producerPayable, true)
-        : { theiShare: round2(remaining * 0.5), bsiShare: round2(remaining * 0.5) };
+        : splitEvenHouse(remaining);
       return {
         grossCommission: pot,
         theiShare: house.theiShare,

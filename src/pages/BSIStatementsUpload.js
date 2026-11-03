@@ -388,6 +388,11 @@ export default function BSIStatementsUpload({ user, onNavigate }) {
                 {uploadResult.carrierWarning}
               </div>
             )}
+            {uploadResult.missingPeriodWarning && (
+              <div style={{ marginTop: 4, fontWeight: 600, color: '#b91c1c' }}>
+                ⚠ {formatPeriodsInText(uploadResult.missingPeriodWarning.message)}
+              </div>
+            )}
             {uploadResult.unsplitWarning && (
               <div style={{ marginTop: 4, fontWeight: 600, color: '#b45309' }}>
                 ⚠ {formatPeriodsInText(uploadResult.unsplitWarning.message)}

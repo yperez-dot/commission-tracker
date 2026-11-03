@@ -1410,6 +1410,7 @@ const {
   resolveNhpPaymentPeriod,
 } = require('../src/nhpPeriod');
 const { parseNhpWorkbook } = require('../src/nhpStatementParse');
+const { periodFromFilename, resolveBsiRowPeriod } = require('../src/periodFormat');
 
 function parseNHPRows(wb, uploadPeriod, filename = '', integrityOriginalSales = null) {
   return parseNhpWorkbook(wb, uploadPeriod, filename, {
@@ -5112,30 +5113,10 @@ function parseHumanaDevotedBSIRows(wb, filename) {
 
 function parseBSICarrierStatementRows(wb, filename) {
   const records = [];
+  const missingPeriod = [];
 
-  // Extract period from YYYY-MM-DD in filename (e.g. UHC_BSI_STATEMENT_2026-01-01.xlsx → 202601)
-  let statementPeriod = null;
-  const dateMatch = filename.match(/(20\d{2})-(0[1-9]|1[0-2])-\d{2}/);
-  if (dateMatch) {
-    statementPeriod = dateMatch[1] + dateMatch[2];
-  }
-  // Also try month-name extraction as fallback
-  if (!statementPeriod) {
-    const monthMap = { january:'01',february:'02',march:'03',april:'04',may:'05',june:'06',
-      july:'07',august:'08',september:'09',october:'10',november:'11',december:'12' };
-    const fnLower = filename.toLowerCase();
-    for (const [month, num] of Object.entries(monthMap)) {
-      if (fnLower.includes(month)) {
-        const ym = filename.match(/(20\d{2})/);
-        if (ym) { statementPeriod = ym[1] + num; break; }
-      }
-    }
-  }
-  // Numeric month fallback: "BSI UHC 09.2026.xlsx" / "BSI_UHC_09-2026.xlsx" → 202609
-  if (!statementPeriod) {
-    const mm = filename.match(/(?:^|[^\d])(0[1-9]|1[0-2])[._\- ](20\d{2})(?!\d)/);
-    if (mm) statementPeriod = mm[2] + mm[1];
-  }
+  // Filename is a fallback only. Payment Period, then Statement Date, then filename.
+  const statementPeriod = periodFromFilename(filename);
   console.log(`[BSI-CARRIER] Period: ${statementPeriod || 'unknown'} from "${filename}"`);
 
   // Use "Commission Transactions" sheet; fall back to first sheet
@@ -5160,7 +5141,7 @@ function parseBSICarrierStatementRows(wb, filename) {
       const statementPayee = String(row['Agent Name'] || row['AgentName'] || '').trim();
       if (statementPayee && !isCountedBsiPayee(statementPayee)) continue;
       const nonMember = classifyBsiNonMemberRow(row, {
-        period: statementPeriod || String(row['Payment Period'] || '').trim(),
+        period: resolveBsiRowPeriod(row, statementPeriod),
       });
       if (nonMember && nonMember.classification === 'BSI Fee') {
         // BSI licensing/appointment fees are NOT imported (not overrides, not Lina, not THEI).
@@ -5170,6 +5151,9 @@ function parseBSICarrierStatementRows(wb, filename) {
         if (statementPayee) nonMember.statementPayee = statementPayee;
         const stmtDate = String(row['Statement Date'] || '').trim();
         if (stmtDate) nonMember.statementDate = stmtDate;
+        if (!nonMember.period) {
+          missingPeriod.push({ client: nonMember.client, policy: nonMember.policyNumber, action: row['Commission Action'] });
+        }
         records.push(nonMember);
       }
       continue;
@@ -5189,7 +5173,7 @@ function parseBSICarrierStatementRows(wb, filename) {
 
     const policyNumber = String(row['Policy Number'] || '').trim();
     const effectiveDate = formatDate(row['Original Effective Date']);
-    const period = statementPeriod || String(row['Payment Period'] || '').trim(); // filename period is authoritative
+    const period = resolveBsiRowPeriod(row, statementPeriod);
     const rawPlanType = String(row['Plan Type'] || '').trim();
     const commAction = String(row['Commission Action'] || '').trim().toLowerCase();
 
@@ -5208,6 +5192,9 @@ function parseBSICarrierStatementRows(wb, filename) {
     const memberStateRaw = String(row['Member State'] || row['State'] || '').trim().toUpperCase().split(/[-/\s]/)[0];
     const memberState = /^[A-Z]{2}$/.test(memberStateRaw) ? memberStateRaw : null;
     const statementDate = String(row['Statement Date'] || '').trim();
+    if (!period) {
+      missingPeriod.push({ client, policy: policyNumber, action: row['Commission Action'] });
+    }
 
     records.push({
       agent: agentName,
@@ -5246,12 +5233,15 @@ function parseBSICarrierStatementRows(wb, filename) {
       const commission = typeof commissionRaw === 'number' ? commissionRaw
         : parseFloat(String(commissionRaw || '').replace(/[$,]/g, '')) || 0;
 
-      const period = statementPeriod || String(row['Payment Period'] || '').trim(); // filename period is authoritative
+      const period = resolveBsiRowPeriod(row, statementPeriod);
       const agentName = isAgencyName(writingAgentRaw)
         ? 'The Health Experts Insurance'
         : (normalizeAgentName(writingAgentRaw) || writingAgentRaw || 'BSI Agent');
       const holdReason = String(row['Hold Reason'] || '').trim();
       const statementDate = String(row['Statement Date'] || '').trim();
+      if (!period) {
+        missingPeriod.push({ client, policy: String(row['Policy Number'] || '').trim(), action: row['Commission Action'] });
+      }
 
       records.push({
         agent: agentName,
@@ -5295,6 +5285,10 @@ function parseBSICarrierStatementRows(wb, filename) {
     console.warn('[BSI-CARRIER] Summary reconciliation skipped:', e.message);
   }
 
+  records.missingPeriod = missingPeriod;
+  if (missingPeriod.length) {
+    console.warn(`[BSI-CARRIER] ${missingPeriod.length} row(s) have no payment period after Statement Date + filename fallback`);
+  }
   console.log(`[BSI-CARRIER] Total: ${records.length} records`);
   return records;
 }
@@ -5395,6 +5389,7 @@ router.post('/upload-bsi-statement', requireAuth, requireAdmin, upload.single('f
       skippedPayee: records.skippedPayee || [],
       hraConflicts: records.hraConflicts || [],
     };
+    const missingPeriodRows = records.missingPeriod || [];
 
     // Alba/Lina only: remap house/NPN/name agent-production → Alba, then peel
     // carrier×state override rates into producer_payable (Lina pay) + THEI/BSI shares.
@@ -5408,7 +5403,7 @@ router.post('/upload-bsi-statement', requireAuth, requireAdmin, upload.single('f
       const { loadLinaOriginalSales } = require('../src/linaChargebackProrate');
       linaOriginalSales = await loadLinaOriginalSales(
         pool,
-        records.filter((r) => (parseFloat(r.commission) || 0) < 0).map((r) => r.policyNumber)
+        records.map((r) => r.policyNumber)
       );
     } catch (e) {
       console.warn('[BSI-UPLOAD] Could not load Lina original payments:', e.message);
@@ -5607,6 +5602,12 @@ router.post('/upload-bsi-statement', requireAuth, requireAdmin, upload.single('f
         skippedPayeeTotal: Math.round(payeeFilterInfo.skippedPayee.reduce((s, x) => s + (Number(x.amount) || 0), 0) * 100) / 100,
         hraConflicts: payeeFilterInfo.hraConflicts,
       },
+      missingPeriodWarning: missingPeriodRows.length
+        ? {
+          count: missingPeriodRows.length,
+          message: `${missingPeriodRows.length} row(s) have no payment period after Statement Date and file-name fallback — they will not land on a monthly statement`,
+        }
+        : null,
     });
 
   } catch (err) {
@@ -5614,4 +5615,7 @@ router.post('/upload-bsi-statement', requireAuth, requireAdmin, upload.single('f
     res.status(500).json({ error: err.message });
   }
 });
+
+// Recon / tests: same UHC→BSI parser the upload route uses.
+module.exports.parseBSICarrierStatementRows = parseBSICarrierStatementRows;
 

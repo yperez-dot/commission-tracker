@@ -379,8 +379,23 @@ describe('resolveYearType()', () => {
       expect(resolveYearType({ compType: 'A' })).toBe('Initial');
     });
 
-    it('compType "R" overrides commissionAction "New" (Comp Type is authoritative)', () => {
-      expect(resolveYearType({ compType: 'R', commissionAction: 'New' })).toBe('Renewal');
+    it('compType "R" + New on a first-year / undated policy is Initial (UHC split new sale)', () => {
+      expect(resolveYearType({ compType: 'R', commissionAction: 'New' })).toBe('Initial');
+      expect(resolveYearType({
+        compType: 'R', commissionAction: 'New',
+        effectiveDate: '08/01/2026', statementDate: '05/21/2026',
+      })).toBe('Initial');
+    });
+
+    it('compType "R" + New on a policy already past its first year stays Renewal', () => {
+      expect(resolveYearType({
+        compType: 'R', commissionAction: 'New',
+        effectiveDate: '01/01/2025', statementDate: '10/01/2026',
+      })).toBe('Renewal');
+    });
+
+    it('compType "R" + New Chargeback stays Renewal (rate-table fallback)', () => {
+      expect(resolveYearType({ compType: 'R', commissionAction: 'New Chargeback' })).toBe('Renewal');
     });
 
     it('empty-string compType falls through to Priority 2', () => {

@@ -18,6 +18,7 @@
  */
 
 const { isCountedBsiPayee } = require('./bsiCountedPayees');
+const { periodFromFilename: periodFromFilenameShared } = require('./periodFormat');
 
 function round2(n) {
   return Math.round((Number(n) || 0) * 100) / 100;
@@ -53,16 +54,13 @@ function periodFromDate(mdY) {
   return m ? `${m[2]}${m[1]}` : '';
 }
 
-/** Statement month from the filename: 09.2026 / 09-2026 / 2026-09 / 202609. */
+/** Statement month from the filename: 09.2026 / 09-2026 / 10.26 / 2026-09 / 202609. */
 function periodFromFilename(filename) {
+  const shared = periodFromFilenameShared(filename);
+  if (shared) return shared;
   const f = String(filename || '');
-  let m = f.match(/(?:^|[^\d])(0[1-9]|1[0-2])[._\- ](20\d{2})(?!\d)/);
-  if (m) return `${m[2]}${m[1]}`;
-  m = f.match(/(20\d{2})[-_.](0[1-9]|1[0-2])(?!\d)/);
-  if (m) return `${m[1]}${m[2]}`;
-  m = f.match(/(20\d{2})(0[1-9]|1[0-2])(?!\d)/);
-  if (m) return `${m[1]}${m[2]}`;
-  return '';
+  const m = f.match(/(20\d{2})(0[1-9]|1[0-2])(?!\d)/);
+  return m ? `${m[1]}${m[2]}` : '';
 }
 
 function classifyAetnaSalesEvent(salesEvent, amount) {

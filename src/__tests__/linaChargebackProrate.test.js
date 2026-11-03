@@ -23,7 +23,7 @@ describe('linaProportionalChargeback', () => {
       .toMatchObject({ producerPayable: -40, theiShare: -5, bsiShare: -5 });
   });
 
-  it('shares always add up to the chargeback (rounding goes to BSI)', () => {
+  it('shares always add up to the chargeback (remainder cent to THEI)', () => {
     const s = linaProportionalChargeback(-33.33, { gross: 300, producer: 230, thei: 35, bsi: 35 });
     expect(s.producerPayable + s.theiShare + s.bsiShare).toBeCloseTo(-33.33, 2);
   });
@@ -90,6 +90,7 @@ describe('BSI upload: Lina chargebacks in proportion (all BSI carriers)', () => 
     applyBsiBookAgentProduction(other, { linaOriginalSales: new Map([['aetna|l-4', { gross: 100, producer: 10, thei: 45, bsi: 45 }]]) });
     for (const k of ['producerPayable', 'theiShare', 'bsiShare']) expect(other[0][k]).toBe(plain[0][k]);
     expect(plain[0].mga || '').not.toMatch(/in proportion/);
+    expect(plain[0].mga || '').toMatch(/no original payment found/);
   });
 
   it('HRA lines are never re-split; the caller\'s map is not changed', () => {

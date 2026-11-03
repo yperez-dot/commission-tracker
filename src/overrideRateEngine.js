@@ -224,8 +224,9 @@ function resolveAetnaStateGroup(state, planId) {
  * 1. compType (UHC BSI + UHC main-route THEI statements)
  *    raw_data key: 'Comp Type'
  *    'R' = Renewal rate tier. Anything else = Initial.
- *    Authoritative: Commission Action says 'New' but Comp Type = 'R' → still Renewal.
- *    Skip if empty string (e.g. PDP rows where Comp Type is blank).
+ *    Exception: Commission Action is New (not a chargeback) on a not-yet-effective
+ *    or first-year policy — UHC split-pays a new sale as Comp Type R then I.
+ *    Those parts are Initial, not Renewal. Skip if empty string (PDP blank Comp Type).
  *
  * 2. firstYearRenewal (Humana AML portal, Devoted AML portal)
  *    raw_data key: 'First Year/Renewal'
@@ -246,12 +247,51 @@ function resolveAetnaStateGroup(state, planId) {
  *   salesEvent      {string}  from raw_data 'Sales Event'     (Aetna, UHC direct)
  *   commissionAction{string}  from raw_data 'Commission Action' (UHC fallback)
  */
+function parseYearMonthLite(v) {
+  if (v == null || v === '') return null;
+  if (v instanceof Date && !isNaN(v)) return { y: v.getUTCFullYear(), m: v.getUTCMonth() + 1 };
+  if (typeof v === 'number' && v > 20000 && v < 80000) {
+    const d = new Date(Math.round((v - 25569) * 86400 * 1000));
+    return { y: d.getUTCFullYear(), m: d.getUTCMonth() + 1 };
+  }
+  const t = String(v).trim();
+  let m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m) return { y: parseInt(m[3], 10), m: parseInt(m[1], 10) };
+  m = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return { y: parseInt(m[1], 10), m: parseInt(m[2], 10) };
+  m = t.match(/^(\d{4})(\d{2})$/);
+  if (m) return { y: parseInt(m[1], 10), m: parseInt(m[2], 10) };
+  return null;
+}
+
+function isNewNotChargebackAction(action) {
+  const a = String(action || '').trim().toLowerCase();
+  if (!a || a.includes('chargeback')) return false;
+  return a === 'new' || a.startsWith('new ');
+}
+
+/**
+ * UHC pays a first-year New sale in parts (Comp Type R, then I). Comp Type R is
+ * not a renewal when Commission Action is New and the policy is not yet effective
+ * or still in its first 12 months. Missing dates on a New row count as first-year.
+ */
+function isUhcNewFirstYearOrNotYetEffective(row = {}) {
+  if (!isNewNotChargebackAction(row.commissionAction)) return false;
+  const eff = parseYearMonthLite(row.effectiveDate);
+  const stmt = parseYearMonthLite(row.statementDate) || parseYearMonthLite(row.period);
+  if (!eff || !stmt) return true;
+  const months = (stmt.y - eff.y) * 12 + (stmt.m - eff.m);
+  return months < 12;
+}
+
 function resolveYearType(row) {
-  // 1. UHC Comp Type — authoritative rate-tier signal
-  //    'R' = Renewal rate tier regardless of what Commission Action says.
+  // 1. UHC Comp Type — rate-tier signal, except first-year New split parts.
   //    Guard: skip if empty string (PDP rows have blank Comp Type).
   if (row.compType && row.compType.trim()) {
-    return row.compType.trim() === 'R' ? 'Renewal' : 'Initial';
+    if (row.compType.trim() === 'R') {
+      return isUhcNewFirstYearOrNotYetEffective(row) ? 'Initial' : 'Renewal';
+    }
+    return 'Initial';
   }
 
   // 2. Humana / Devoted AML portal — 'First Year/Renewal' field
@@ -354,7 +394,7 @@ function calculateAlbaOverrideSplit(row) {
   }
 
   const theiShare = Math.round(totalOverride * 0.5 * 100) / 100;
-  const bsiShare  = Math.round(totalOverride * 0.5 * 100) / 100;
+  const bsiShare  = Math.round((totalOverride - theiShare) * 100) / 100;
   const albaComp  = Math.round((commission - totalOverride) * 100) / 100;
 
   return {
@@ -434,6 +474,7 @@ module.exports = {
   STATE_GROUPS,
   AETNA_FL_PLAN_CROSSWALK,
   resolveYearType,
+  isUhcNewFirstYearOrNotYetEffective,
   resolveAetnaStateGroup,
   // Observe-only reconciliation helpers (re-exported for unit tests)
   excelSerialToDate,

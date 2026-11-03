@@ -7,7 +7,9 @@
  * carrier→BSI feeds (Writing Agent often = Broker Society Insurance).
  *
  * Flow:
- *  1. Remap house / Alba-NPN / Alba-named agent-production lines → Alba Hernandez
+ *  1. Remap house-named / Alba-NPN / Alba-named agent-production lines → Alba Hernandez
+ *     (AML Override rows carry BSI's agency NPN even for named writers — NPN alone
+ *     does not remap Integrity / other / THEI writers onto Lina)
  *  2. Peel using overrideRateEngine (carrier × state rate table):
  *       producer_payable = albaComp   → Lina agent statement / payroll
  *       thei_share / bsi_share        → Override Statements for THEI & BSI (50/50)
@@ -46,6 +48,7 @@ const {
   splitIntegrityRenewal,
   splitIntegrityNewBusiness,
   splitHouseOnly,
+  splitEvenHouse,
 } = require('./overrideSplitMath');
 const {
   INTEGRITY_BSI_UHC_FIXED,
@@ -58,6 +61,9 @@ const ALBA_DB_AGENT = 'Alba Hernandez';
 
 /** Alba / Lina NPN on BSI feeds. */
 const ALBA_NPN = '21209073';
+/** BSI agency writing-agent NPN. UHC house-named lines use this; AML Override
+ *  rows also print it for named individuals — do not treat NPN alone as Lina. */
+const BSI_WRITING_NPN = '21231852';
 
 function isBsiHouseAgent(name) {
   const n = normName(name);
@@ -171,6 +177,9 @@ function buildAlbaRateInput(record, commissionAbs) {
       raw['First Year/Renewal'] != null ? String(raw['First Year/Renewal']).trim() : '',
     salesEvent: raw['Sales Event'] != null ? String(raw['Sales Event']).trim() : '',
     commissionAction,
+    effectiveDate: record.effectiveDate || raw['Original Effective Date'] || '',
+    statementDate: record.statementDate || raw['Statement Date'] || '',
+    period: record.period || record.payment_period || '',
   };
 }
 
@@ -247,11 +256,12 @@ function aetnaRenewalProration(record, commission, split) {
  * Peel Alba house production with the carrier×state override rate table.
  * Chargebacks use the absolute rate then re-apply the commission sign.
  */
-function peelAlbaProduction(record, commission) {
+function peelAlbaProduction(record, commission, opts = {}) {
   const sign = commission < 0 ? -1 : 1;
   const abs = Math.abs(commission);
   const input = buildAlbaRateInput(record, abs);
   const split = calculateAlbaOverrideSplit(input);
+  const prior = opts.prior || null;
 
   if (split.needsReview) {
     return {
@@ -307,6 +317,33 @@ function peelAlbaProduction(record, commission) {
     producerPayable = round2(commission - o);
   }
 
+  // UHC split new-sale parts share one Initial override. Remaining house override
+  // after prior payments on the policy is taken, never more than the line, so Lina
+  // cannot go negative on a positive line (Rojas-type).
+  let splitSaleNote = null;
+  if (
+    sign > 0 &&
+    split.totalOverride > 0 &&
+    !renewalProration &&
+    salesEventUpper !== 'CMS TRUEUP'
+  ) {
+    const already = split.yearType === 'Initial' && prior
+      ? round2((Number(prior.thei) || 0) + (Number(prior.bsi) || 0))
+      : 0;
+    const remaining = Math.max(0, round2((split.totalOverride || 0) - already));
+    const thisOverride = Math.min(abs, remaining);
+    const thei = round2(thisOverride / 2);
+    totalOverride = thisOverride;
+    theiShare = thei;
+    bsiShare = round2(thisOverride - thei);
+    producerPayable = round2(commission - thisOverride);
+    if (already > 0.005) {
+      splitSaleNote = `Same new sale as a prior payment — remaining house override $${thisOverride.toFixed(2)} (of $${Number(split.totalOverride).toFixed(2)})`;
+    } else if (thisOverride + 0.005 < (split.totalOverride || 0)) {
+      splitSaleNote = `House override capped at the line ($${thisOverride.toFixed(2)} of $${Number(split.totalOverride).toFixed(2)}) — Lina cannot go negative`;
+    }
+  }
+
   // Chargebacks: only the unearned share of the (annual) override comes back, so
   // prorate it; Lina keeps the rest of the chargeback. Skipped when the engine did
   // not peel an override (shorted/underpaid rows) or there is no Term Date.
@@ -343,6 +380,7 @@ function peelAlbaProduction(record, commission) {
     carrier: split.carrier || input.carrier,
     chargebackProration,
     renewalProration,
+    splitSaleNote,
   };
 }
 
@@ -542,12 +580,12 @@ function reverseHouseSplit(r, commission, marcoOriginals) {
     }
   }
   const rest = round2(abs - marcoBack);
-  const thei = round2(rest / 2);
+  const house = splitEvenHouse(rest);
   applySplit(r, {
     grossCommission: commission,
     producerPayable: 0,
-    theiShare: -thei,
-    bsiShare: -round2(rest - thei),
+    theiShare: -house.theiShare,
+    bsiShare: -house.bsiShare,
   });
   r.subAgentOverride = marcoBack ? -marcoBack : 0;
   r.splitApplies = true;
@@ -581,6 +619,7 @@ function applyBsiBookAgentProduction(records, opts = {}) {
     for (const [k, v] of opts.linaOriginalSales) linaOriginalSales.set(k, { ...v });
   }
   const deferredLinaChargebacks = [];
+  const albaPositivePeels = [];
   let linaProrated = 0;
 
   let remapped = 0;
@@ -675,6 +714,12 @@ function applyBsiBookAgentProduction(records, opts = {}) {
 
     const npn = extractWritingNpn(r);
     const isAlbaNpn = npn === ALBA_NPN;
+    // AML Override rows print Writing Agent NPN = BSI 21231852 even when Writing
+    // Agent Name is a named individual (Integrity / other / THEI). Remap to Lina
+    // only when the writing-agent *name* is the house label or blank — empty
+    // names already count as house via isBsiHouseAgent. Do not treat the agency
+    // NPN as Lina's book on a named writer (Horacio Simpson Humana -27.50 must
+    // stay Integrity 50/25/25, not peel onto Lina).
     const house = isBsiHouseAgent(r.agent);
     const albaNamed = isAlbaHernandez(r.agent);
 
@@ -735,7 +780,16 @@ function applyBsiBookAgentProduction(records, opts = {}) {
       deferredLinaChargebacks.push({ r, mga: r.mga, anomaly: r.anomaly });
     }
 
-    const peel = peelAlbaProduction(r, commission);
+    if (commission > 0) {
+      albaPositivePeels.push(r);
+      continue;
+    }
+
+    applyAlbaPeel(r, commission, null);
+  }
+
+  function applyAlbaPeel(r, commission, prior) {
+    const peel = peelAlbaProduction(r, commission, { prior });
     r.producerPayable = peel.producerPayable;
     r.theiShare = peel.theiShare;
     r.bsiShare = peel.bsiShare;
@@ -757,6 +811,7 @@ function applyBsiBookAgentProduction(records, opts = {}) {
         .filter(Boolean)
         .join(' | ');
     }
+    if (peel.splitSaleNote) addNote(r, peel.splitSaleNote);
 
     if (!peel.ok) {
       review += 1;
@@ -772,13 +827,31 @@ function applyBsiBookAgentProduction(records, opts = {}) {
     }
   }
 
+  function statementSortKey(r) {
+    const raw = r.raw || {};
+    const d = String(r.statementDate || raw['Statement Date'] || '').trim();
+    const m = d.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+    if (m) return `${m[3]}${m[1].padStart(2, '0')}${m[2].padStart(2, '0')}`;
+    return String(r.period || r.payment_period || '');
+  }
+
+  albaPositivePeels.sort((a, b) => statementSortKey(a).localeCompare(statementSortKey(b)));
+  for (const r of albaPositivePeels) {
+    const commission = parseFloat(r.commission) || 0;
+    applyAlbaPeel(r, commission, linaOriginalSales.get(linaPolicyKey(r)) || null);
+    addLinaOriginal(linaOriginalSales, r);
+  }
+
   // Lina chargebacks in proportion to the original payment(s) on the policy (earlier uploads
-  // and this file). No original found → the rate-peel result above stays.
+  // and this file). No original found → the rate-peel result above stays, flagged.
   for (const r of records) addLinaOriginal(linaOriginalSales, r);
   for (const { r, mga, anomaly } of deferredLinaChargebacks) {
     const orig = linaOriginalSales.get(linaPolicyKey(r));
     const split = linaProportionalChargeback(parseFloat(r.commission) || 0, orig);
-    if (!split) continue;
+    if (!split) {
+      addNote(r, 'no original payment found');
+      continue;
+    }
     r.producerPayable = split.producerPayable;
     r.theiShare = split.theiShare;
     r.bsiShare = split.bsiShare;
@@ -829,6 +902,7 @@ function applyBsiBookAgentProduction(records, opts = {}) {
 module.exports = {
   ALBA_DB_AGENT,
   ALBA_NPN,
+  BSI_WRITING_NPN,
   isBsiHouseAgent,
   applyBsiBookAgentProduction,
   isUnsplitBsiLine,

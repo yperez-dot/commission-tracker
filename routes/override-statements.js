@@ -150,7 +150,7 @@ async function backfillAcaOscarToNhpSource(pool) {
 // 25% THEI, 25% BSI — so they belong on the Integrity, THEI and BSI statements too.
 // Wide SQL pre-filter (middle initials, "Last, First"); isIntegrityAgent narrows it in JS.
 const INTEGRITY_CHARGEBACK_SQL = `(
-         LOWER(TRIM(cr.classification)) IN ('chargeback', 'new business')
+         LOWER(TRIM(cr.classification)) IN ('chargeback', 'new business', 'renewal')
          AND (cr.agent_name ILIKE '%christian%munoz%'
            OR cr.agent_name ILIKE '%munoz%christian%'
            OR cr.agent_name ILIKE '%horacio%mendieta%'

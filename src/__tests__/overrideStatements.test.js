@@ -39,6 +39,7 @@ describe('overrideStatementBuilder', () => {
       bsi_share: 150,
       producer_payable: 0,
       sub_agent_override: 0,
+      source: 'BSI',
     },
     {
       id: 2,
@@ -54,6 +55,7 @@ describe('overrideStatementBuilder', () => {
       bsi_share: 45,
       producer_payable: 0,
       sub_agent_override: 10,
+      source: 'BSI',
     },
     {
       id: 3,
@@ -69,6 +71,7 @@ describe('overrideStatementBuilder', () => {
       bsi_share: 50,
       producer_payable: 100,
       sub_agent_override: 0,
+      source: 'BSI',
     },
     {
       id: 4,
@@ -135,7 +138,12 @@ describe('overrideStatementBuilder', () => {
     expect(bundle.statements[0].lineCount).toBe(2);
     expect(bundle.grandTotal).toBe(60.63);
     expect(bundle.statements[0].lines.every((l) => l.amount !== 0)).toBe(true);
-    expect(classifyOverrideLine(humana, STATEMENT_TYPES.BSI_OVERRIDE)?.amount).toBe(40.63);
+    // 81.25 odd-cent: THEI keeps the extra half-cent so THEI+BSI = 81.25, not 81.26
+    expect(classifyOverrideLine(humana, STATEMENT_TYPES.BSI_OVERRIDE)?.amount).toBe(40.62);
+    expect(
+      classifyOverrideLine(humana, STATEMENT_TYPES.THEI_BSI).amount
+      + classifyOverrideLine(humana, STATEMENT_TYPES.BSI_OVERRIDE).amount
+    ).toBeCloseTo(81.25, 2);
   });
 
   it('THEI BSI remittance does not double-split rows that already have thei_share', () => {
@@ -300,6 +308,7 @@ describe('overrideStatementBuilder', () => {
       bsi_share: 75,
       producer_payable: 173.5,
       sub_agent_override: 0,
+      source: 'BSI',
     };
     const thei = classifyOverrideLine(albaPeeled, STATEMENT_TYPES.THEI_OVERRIDE);
     expect(thei).not.toBeNull();
@@ -560,9 +569,22 @@ describe('Integrity renewals are not paid to the producer', () => {
     const renewal = {
       id: 911, agent_name: 'Christian Munoz', classification: 'Renewal', payment_period: '202609',
       commission: 6, producer_payable: 0, thei_share: 3, bsi_share: 3, policy_number: 'TEST-RN-1',
+      source: 'BSI',
     };
     expect(classifyOverrideLine(renewal, STATEMENT_TYPES.INTEGRITY)).toBeNull();
     expect(selectIntegrityRows([renewal], 'christian-munoz', '202609')).toHaveLength(0);
+  });
+
+  it('a split Integrity UHC renewal lands on THEI and BSI house statements (50/50)', () => {
+    const renewal = {
+      id: 912, agent_name: 'Horacio Mendieta', classification: 'Renewal', payment_period: '202610',
+      carrier: 'UnitedHealthcare', commission: 6.26, producer_payable: 0, thei_share: 3.13, bsi_share: 3.13,
+      policy_number: 'SYN-INT-RN', source: 'BSI', client_full_name: 'SAMPLE, MEMBER',
+    };
+    expect(classifyOverrideLine(renewal, STATEMENT_TYPES.THEI_BSI).amount).toBe(3.13);
+    expect(classifyOverrideLine(renewal, STATEMENT_TYPES.BSI_OVERRIDE).amount).toBe(3.13);
+    expect(classifyOverrideLine(renewal, STATEMENT_TYPES.THEI_BSI).schedule).toBe('integrity_renewal_house_50_50');
+    expect(classifyOverrideLine(renewal, STATEMENT_TYPES.INTEGRITY)).toBeNull();
   });
 });
 
