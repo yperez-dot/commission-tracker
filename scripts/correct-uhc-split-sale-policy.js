@@ -15,6 +15,7 @@ const { applyUhcSplitSaleCorrection, TARGET_POLICY } = require('../src/uhcSplitS
 const { cleanupOrphanCommissionRecords } = require('../src/orphanCommissionCleanup');
 const { runBsiHouseSplitBackfill } = require('../src/bsiHouseSplitBackfill');
 const { applyLinaRemainingOverrideCorrection } = require('../src/linaRemainingOverrideCorrection');
+const { applyLinaChargebackCapCorrection } = require('../src/linaChargebackCapCorrection');
 
 async function main() {
   if (process.env.RUN_UHC_SPLIT_SALE_CORRECTION === '0') {
@@ -53,6 +54,15 @@ async function main() {
     console.log(`[lina-cb-prorate] period=202610 planned=${planned} applied=${applied}`);
   } catch (err) {
     console.warn('[lina-cb-prorate] skipped:', err.message);
+  }
+
+  // #111 cap is a no-op when lina_cb_prorate finds no original (unsplit skipped).
+  // Recompute stored 10.2026 Lina chargebacks under the paid cap.
+  try {
+    const cap = await applyLinaChargebackCapCorrection(pool, { period: '202610' });
+    console.log(`[lina-cb-cap] period=${cap.period} found=${cap.found} planned=${cap.planned} applied=${cap.applied}`);
+  } catch (err) {
+    console.warn('[lina-cb-cap] skipped:', err.message);
   }
 }
 
