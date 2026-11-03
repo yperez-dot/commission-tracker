@@ -11,6 +11,7 @@
 
 const { normalizeAgentName } = require('../routes/normalize');
 const { periodFromFilename } = require('./aetnaBsiPayeeCsv');
+const { periodFromStatementDate } = require('./periodFormat');
 const {
   isCountedBsiPayee,
   isHraBonusRow,
@@ -31,14 +32,7 @@ function parseCurrency(val) {
 }
 
 function parsePeriod(val) {
-  if (typeof val === 'number' && val > 40000) {
-    const d = new Date(Date.UTC(1899, 11, 30));
-    d.setUTCDate(d.getUTCDate() + Math.floor(val));
-    return `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
-  }
-  const m = String(val || '').match(/^(\d{1,2})\/(\d{1,2})\/(20\d{2})$/);
-  if (m) return m[3] + m[1].padStart(2, '0');
-  return '';
+  return periodFromStatementDate(val) || '';
 }
 
 function formatDate(value) {

@@ -171,6 +171,8 @@ describe('statement month from MM.YYYY file names', () => {
     expect(periodFromFilename('BSI Devoted 09-2026.xlsx')).toBe('202609');
     expect(periodFromFilename('devoted_2026-09.xlsx')).toBe('202609');
     expect(periodFromFilename('AETNA_BSI_STATEMENT_202609.csv')).toBe('202609');
+    expect(periodFromFilename('BSI.UHC.10.26.xlsx')).toBe('202610');
+    expect(periodFromFilename('BSI.Aetna.10.26.csv')).toBe('202610');
     expect(periodFromFilename('statement.xlsx')).toBe('');
   });
 });

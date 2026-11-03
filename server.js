@@ -92,6 +92,13 @@ const server = app.listen(PORT, () => {
   console.log(`\n🚀 Health Experts Commission Tracker API`);
   console.log(`   Running on port ${PORT}`);
   console.log(`   Environment: ${process.env.NODE_ENV || 'development'}\n`);
+  if (process.env.NODE_ENV !== 'test' && process.env.DATABASE_URL && process.env.RUN_UHC_SPLIT_SALE_CORRECTION !== '0') {
+    setImmediate(() => {
+      require('./scripts/correct-uhc-split-sale-policy').main().catch((err) => {
+        console.warn('[uhc-split-sale] startup correction skipped:', err.message);
+      });
+    });
+  }
 });
 
 // Set timeout to 5 minutes for large file uploads (Aetna 2.8MB takes ~30 seconds)

@@ -68,6 +68,13 @@ function formatPeriodLabel(p, fallback) {
  * What a person typed as a month → YYYYMM (or null).
  * Accepts MM.YYYY, MM/YYYY, MM-YYYY, M.YYYY, YYYYMM, YYYY-MM.
  */
+function twoDigitYear(yy) {
+  const n = Number(yy);
+  if (!Number.isInteger(n) || n < 0 || n > 99) return null;
+  const y = 2000 + n;
+  return validYear(y) ? y : null;
+}
+
 function parsePeriodInput(s) {
   const t = String(s == null ? '' : s).trim();
   if (!t) return null;
@@ -78,10 +85,83 @@ function parsePeriodInput(s) {
   if ((m = t.match(/^(\d{1,2})\s*[./-]\s*(\d{4})$/))) {
     return validYear(+m[2]) && validMonth(+m[1]) ? `${m[2]}${pad2(+m[1])}` : null;
   }
+  if ((m = t.match(/^(\d{1,2})\s*[./-]\s*(\d{2})$/))) {
+    const y = twoDigitYear(+m[2]);
+    return y && validMonth(+m[1]) ? `${y}${pad2(+m[1])}` : null;
+  }
   if ((m = t.match(/^(\d{4})-(\d{1,2})$/))) {
     return validYear(+m[1]) && validMonth(+m[2]) ? `${m[1]}${pad2(+m[2])}` : null;
   }
   return null;
+}
+
+/**
+ * Filename → YYYYMM. Accepts YYYY-MM-DD, month names, MM.YYYY / MM-YYYY / MM.YY / MM-YY.
+ * `BSI.UHC.10.26.xlsx` → 202610.
+ */
+function periodFromFilename(filename) {
+  const f = String(filename == null ? '' : filename);
+  if (!f) return null;
+  let m;
+  if ((m = f.match(/(20\d{2})-(0[1-9]|1[0-2])-\d{2}/))) {
+    return `${m[1]}${m[2]}`;
+  }
+  if ((m = f.match(/(20\d{2})[-_.](0[1-9]|1[0-2])(?!\d)/))) {
+    return `${m[1]}${m[2]}`;
+  }
+  const monthMap = {
+    january: '01', february: '02', march: '03', april: '04', may: '05', june: '06',
+    july: '07', august: '08', september: '09', october: '10', november: '11', december: '12',
+  };
+  const fnLower = f.toLowerCase();
+  for (const [month, num] of Object.entries(monthMap)) {
+    if (fnLower.includes(month)) {
+      const ym = f.match(/(20\d{2})/);
+      if (ym) return `${ym[1]}${num}`;
+    }
+  }
+  if ((m = f.match(/(?:^|[^\d])(0?[1-9]|1[0-2])[._\- ](20\d{2})(?!\d)/))) {
+    return `${m[2]}${pad2(+m[1])}`;
+  }
+  if ((m = f.match(/(?:^|[^\d])(0?[1-9]|1[0-2])[._\- ](\d{2})(?!\d)/))) {
+    const y = twoDigitYear(+m[2]);
+    if (y) return `${y}${pad2(+m[1])}`;
+  }
+  return null;
+}
+
+/** Statement Date (MM/DD/YYYY, YYYY-MM-DD, Excel serial) → YYYYMM. */
+function periodFromStatementDate(value) {
+  if (value == null || value === '') return null;
+  if (value instanceof Date && !isNaN(value)) {
+    const y = value.getUTCFullYear();
+    const mo = value.getUTCMonth() + 1;
+    return validYear(y) && validMonth(mo) ? `${y}${pad2(mo)}` : null;
+  }
+  if (typeof value === 'number' && value > 20000 && value < 80000) {
+    const d = new Date(Math.round((value - 25569) * 86400 * 1000));
+    const y = d.getUTCFullYear();
+    const mo = d.getUTCMonth() + 1;
+    return validYear(y) && validMonth(mo) ? `${y}${pad2(mo)}` : null;
+  }
+  const t = String(value).trim();
+  let m = t.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m && validYear(+m[3]) && validMonth(+m[1])) return `${m[3]}${pad2(+m[1])}`;
+  m = t.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m && validYear(+m[1]) && validMonth(+m[2])) return `${m[1]}${m[2]}`;
+  return parsePeriodInput(t);
+}
+
+/**
+ * UHC/BSI row period: Payment Period, else Statement Date month, else filename.
+ */
+function resolveBsiRowPeriod(row, filenamePeriod) {
+  const pay = parsePeriodInput(row && (row['Payment Period'] != null ? row['Payment Period'] : row.paymentPeriod));
+  if (pay) return pay;
+  const fromStmt = periodFromStatementDate(row && (row['Statement Date'] || row.statementDate));
+  if (fromStmt) return fromStmt;
+  const fromFn = parsePeriodInput(filenamePeriod) || (filenamePeriod && /^\d{6}$/.test(String(filenamePeriod)) ? String(filenamePeriod) : null);
+  return fromFn || '';
 }
 
 /** For period inputs: a typed MM.YYYY becomes YYYYMM; anything else passes through trimmed. */
@@ -98,4 +178,13 @@ function formatPeriodsInText(text) {
   return s.replace(/(^|[^0-9#$.,_\w])(20\d{2})(0[1-9]|1[0-2])(?![0-9.,_\w])/g, (all, pre, y, m) => `${pre}${m}.${y}`);
 }
 
-module.exports = { periodToMmYyyy, formatPeriodLabel, parsePeriodInput, normalizePeriodInput, formatPeriodsInText };
+module.exports = {
+  periodToMmYyyy,
+  formatPeriodLabel,
+  parsePeriodInput,
+  normalizePeriodInput,
+  formatPeriodsInText,
+  periodFromFilename,
+  periodFromStatementDate,
+  resolveBsiRowPeriod,
+};

@@ -27,6 +27,25 @@ function round2(n) {
   return Math.round(n * 100) / 100;
 }
 
+/** 50/50 house split that always sums to `gross`. Extra half-cent goes to THEI (both signs). */
+function splitEvenHouse(gross) {
+  const g = round2(num(gross));
+  const sign = g < 0 ? -1 : 1;
+  const abs = Math.abs(g);
+  const theiAbs = round2(abs / 2);
+  const bsiAbs = round2(abs - theiAbs);
+  return { theiShare: round2(sign * theiAbs), bsiShare: round2(sign * bsiAbs) };
+}
+
+/** Integrity 50/25/25 that always sums to `gross`. Remainder cent goes to THEI. */
+function splitIntegrityThreeWay(gross) {
+  const g = round2(num(gross));
+  const producerPayable = round2(g * 0.5);
+  const bsiShare = round2(g * 0.25);
+  const theiShare = round2(g - producerPayable - bsiShare);
+  return { producerPayable, theiShare, bsiShare };
+}
+
 /**
  * Split a full override pot (BSI-book convention).
  * @param {number} pot
@@ -38,14 +57,12 @@ function splitFullOverridePot(pot, opts = {}) {
   const period = opts.paymentPeriod || '';
 
   if (isIntegrityAgent(agentName)) {
-    const producerPayable = round2(gross * 0.5);
-    const theiShare = round2(gross * 0.25);
-    const bsiShare = round2(gross * 0.25);
+    const three = splitIntegrityThreeWay(gross);
     return {
       grossCommission: gross,
-      theiShare,
-      bsiShare,
-      producerPayable,
+      theiShare: three.theiShare,
+      bsiShare: three.bsiShare,
+      producerPayable: three.producerPayable,
       subAgentOverride: 0,
       splitApplies: false,
       schedule: 'integrity_50_25_25',
@@ -57,21 +74,23 @@ function splitFullOverridePot(pot, opts = {}) {
     if (!already && Math.abs(gross) >= 10) {
       const sign = gross < 0 ? -1 : 1;
       const sub = 10 * sign;
-      const remaining = gross - sub;
+      const remaining = round2(gross - sub);
+      const house = splitEvenHouse(remaining);
       return {
         grossCommission: gross,
-        theiShare: round2(remaining / 2),
-        bsiShare: round2(remaining / 2),
+        theiShare: house.theiShare,
+        bsiShare: house.bsiShare,
         producerPayable: 0,
         subAgentOverride: sub,
         splitApplies: true,
         schedule: 'marco_10_then_50_50',
       };
     }
+    const house = splitEvenHouse(gross);
     return {
       grossCommission: gross,
-      theiShare: round2(gross / 2),
-      bsiShare: round2(gross / 2),
+      theiShare: house.theiShare,
+      bsiShare: house.bsiShare,
       producerPayable: 0,
       subAgentOverride: 0,
       splitApplies: true,
@@ -79,10 +98,11 @@ function splitFullOverridePot(pot, opts = {}) {
     };
   }
 
+  const house = splitEvenHouse(gross);
   return {
     grossCommission: gross,
-    theiShare: round2(gross / 2),
-    bsiShare: round2(gross / 2),
+    theiShare: house.theiShare,
+    bsiShare: house.bsiShare,
     producerPayable: 0,
     subAgentOverride: 0,
     splitApplies: true,
@@ -98,11 +118,12 @@ function splitFullOverridePot(pot, opts = {}) {
 function splitIntegrityChargeback(amount, agentName, classification) {
   if (!isIntegrityChargeback(agentName, classification)) return null;
   const gross = num(amount);
+  const three = splitIntegrityThreeWay(gross);
   return {
     grossCommission: gross,
-    theiShare: round2(gross * 0.25),
-    bsiShare: round2(gross * 0.25),
-    producerPayable: round2(gross * 0.5),
+    theiShare: three.theiShare,
+    bsiShare: three.bsiShare,
+    producerPayable: three.producerPayable,
     subAgentOverride: 0,
     splitApplies: false,
     schedule: 'integrity_chargeback_50_25_25',
@@ -119,14 +140,14 @@ function splitIntegrityRenewal(amount, agentName, classification) {
   return splitHouseOnly(amount);
 }
 
-/** Producer 0, whole line split THEI 50% / BSI 50% (odd cent to BSI). */
+/** Producer 0, whole line split THEI 50% / BSI 50% (odd cent to THEI). */
 function splitHouseOnly(amount) {
   const gross = num(amount);
-  const theiShare = round2(gross / 2);
+  const house = splitEvenHouse(gross);
   return {
     grossCommission: gross,
-    theiShare,
-    bsiShare: round2(gross - theiShare),
+    theiShare: house.theiShare,
+    bsiShare: house.bsiShare,
     producerPayable: 0,
     subAgentOverride: 0,
     splitApplies: true,
@@ -243,6 +264,8 @@ function computeBsiOverrideShareUpdates(rows, deductedPolicies) {
 module.exports = {
   num,
   round2,
+  splitEvenHouse,
+  splitIntegrityThreeWay,
   splitFullOverridePot,
   splitIntegrityChargeback,
   splitIntegrityRenewal,

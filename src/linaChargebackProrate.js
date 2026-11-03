@@ -77,8 +77,8 @@ function linaProportionalChargeback(commission, orig) {
   const rest = round2(cb - producerPayable);
   const houseTotal = num(orig.thei) + num(orig.bsi);
   const theiFrac = Math.abs(houseTotal) > 0.005 ? Math.max(0, Math.min(1, num(orig.thei) / houseTotal)) : 0.5;
-  const theiShare = round2(rest * theiFrac);
-  const bsiShare = round2(rest - theiShare);
+  const bsiShare = round2(rest * (1 - theiFrac));
+  const theiShare = round2(rest - bsiShare);
   return { producerPayable, theiShare, bsiShare, linaFrac, theiFrac };
 }
 

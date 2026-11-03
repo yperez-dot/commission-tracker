@@ -21,6 +21,7 @@ const {
   isBsiHouseSplitLine,
   isIntegrityChargeback,
   isIntegrityNewBusiness,
+  isIntegrityRenewal,
   isMarcoAgent,
   isAlbaHernandez,
   isAlbaAgentCommission,
@@ -102,7 +103,8 @@ function isAlbaPeeledOverrideShare(row) {
 /** Integrity chargeback or new sale (not classified as an override) — on statements once split. */
 function isIntegrityExtraLine(row) {
   return isIntegrityChargeback(row.agent_name, row.classification) ||
-    isIntegrityNewBusiness(row.agent_name, row.classification);
+    isIntegrityNewBusiness(row.agent_name, row.classification) ||
+    isIntegrityRenewal(row.agent_name, row.classification);
 }
 
 /** Non-override rows that still belong on the house statements (Integrity extras, BSI other-agent house lines). */
@@ -130,14 +132,16 @@ function classifyTheiShareLine(row) {
     amountField: 'thei_share',
     amount,
     pot,
-    shareLabel: sharePct(amount, pot) || (isIntegrityAgent(row.agent_name) ? '25%' : '50%'),
-    schedule: albaPeeled
-      ? 'alba_rate_peel_thei_50'
-      : isIntegrityAgent(row.agent_name)
-        ? 'integrity_thei_25'
-        : isMarcoAgent(row.agent_name, row.payment_period)
-          ? 'marco_residual_thei'
-          : 'standard_thei_50',
+        shareLabel: sharePct(amount, pot) || (isIntegrityRenewal(row.agent_name, row.classification) ? '50%' : isIntegrityAgent(row.agent_name) ? '25%' : '50%'),
+        schedule: albaPeeled
+          ? 'alba_rate_peel_thei_50'
+          : isIntegrityRenewal(row.agent_name, row.classification)
+            ? 'integrity_renewal_house_50_50'
+            : isIntegrityAgent(row.agent_name)
+            ? 'integrity_thei_25'
+            : isMarcoAgent(row.agent_name, row.payment_period)
+              ? 'marco_residual_thei'
+              : 'standard_thei_50',
   };
 }
 
@@ -166,6 +170,7 @@ function classifyOverrideLine(row, statementType) {
     case STATEMENT_TYPES.BSI_OVERRIDE: {
       // ACA / Oscar are NHP-book only — never BSI Overrides.
       if (isAcaNhpHouseRow(row)) return null;
+      if (!isBsiRemitSource(row.source, row)) return null;
       if (!clsOverride && !albaPeeled) return null;
       if (integrityCb && num(row.bsi_share) === 0) return null;
       let amount = num(row.bsi_share);
@@ -180,10 +185,12 @@ function classifyOverrideLine(row, statementType) {
         amountField: 'bsi_share',
         amount,
         pot,
-        shareLabel: sharePct(amount, pot) || (isIntegrityAgent(row.agent_name) ? '25%' : '50%'),
+        shareLabel: sharePct(amount, pot) || (isIntegrityRenewal(row.agent_name, row.classification) ? '50%' : isIntegrityAgent(row.agent_name) ? '25%' : '50%'),
         schedule: albaPeeled
           ? 'alba_rate_peel_bsi_50'
-          : isIntegrityAgent(row.agent_name)
+          : isIntegrityRenewal(row.agent_name, row.classification)
+            ? 'integrity_renewal_house_50_50'
+            : isIntegrityAgent(row.agent_name)
             ? 'integrity_bsi_25'
             : isMarcoAgent(row.agent_name, row.payment_period)
               ? 'marco_residual_bsi'

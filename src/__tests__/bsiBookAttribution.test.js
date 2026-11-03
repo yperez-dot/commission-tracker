@@ -38,18 +38,45 @@ describe('bsiBookAttribution', () => {
     );
   });
 
-  it('uses Comp Type R for Renewal rate even when Action is New', () => {
-    // UHC National Renewal = $75 → albaComp = 211 − 75 = 136
+  it('treats first-year New + Comp Type R as Initial (UHC split new sale), not Renewal', () => {
     const records = [
       {
         agent: 'Broker Society Insurance',
         classification: 'New Business',
         commission: 211,
         carrier: 'UnitedHealthcare',
+        effectiveDate: '08/01/2026',
+        statementDate: '05/21/2026',
         raw: {
           'Comp Type': 'R',
           'Commission Action': 'New',
           'Member State': 'FL',
+          'Original Effective Date': '08/01/2026',
+          'Statement Date': '05/21/2026',
+        },
+      },
+    ];
+    applyBsiBookAgentProduction(records);
+    expect(records[0].producerPayable).toBe(61);
+    expect(records[0].theiShare).toBe(75);
+    expect(records[0].bsiShare).toBe(75);
+  });
+
+  it('keeps Comp Type R as Renewal when Action is New on a policy past its first year', () => {
+    const records = [
+      {
+        agent: 'Broker Society Insurance',
+        classification: 'New Business',
+        commission: 211,
+        carrier: 'UnitedHealthcare',
+        effectiveDate: '01/01/2025',
+        statementDate: '10/01/2026',
+        raw: {
+          'Comp Type': 'R',
+          'Commission Action': 'New',
+          'Member State': 'FL',
+          'Original Effective Date': '01/01/2025',
+          'Statement Date': '10/01/2026',
         },
       },
     ];
