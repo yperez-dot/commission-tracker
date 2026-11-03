@@ -400,6 +400,104 @@ describe('7. Shares always sum to the line; remainder cent to THEI; Marrero CB c
   });
 });
 
+describe('AML agency NPN does not steal named writers onto Lina', () => {
+  it('Humana Integrity Override CB with BSI writing NPN stays on Horacio 50/25/25', () => {
+    const { records } = parseAmlPortalRows([
+      {
+        'Statement Date': '10/16/2026',
+        'Agent Name': 'Broker Society Insurance',
+        'Policy #': 'SYN-SIMPSON',
+        'Effective Date': '01/01/2026',
+        'Original EffectiveDate': '01/01/2026',
+        'Insured Name': 'SAMPLE, SIMPSON',
+        Carrier: 'HUMANA',
+        State: 'FL',
+        Product: 'Medicare Advantage',
+        'Commission ($)': '-$27.50',
+        Status: 'Paid',
+        'Commission Type': 'Override',
+        'Writing Agent': 'Horacio Mendieta',
+        'Writing Agent Code': 'EX9999',
+        'Writing Agent NPN': BSI_WRITING_NPN,
+      },
+    ]);
+    expect(records).toHaveLength(1);
+    applyBsiBookAgentProduction(records);
+    const r = records[0];
+    expect(r.agent).toBe('Horacio Mendieta');
+    expect(r.agent).not.toBe(ALBA_DB_AGENT);
+    expect(r.producerPayable).toBe(-13.75);
+    expect(r.theiShare + r.bsiShare).toBeCloseTo(-13.75, 2);
+    expect(r.producerPayable + r.theiShare + r.bsiShare).toBeCloseTo(-27.5, 2);
+
+    const stmtRows = [{
+      id: 1,
+      agent_name: r.agent,
+      client_full_name: r.client,
+      policy_number: r.policyNumber,
+      carrier: r.carrier,
+      payment_period: '202610',
+      classification: r.classification,
+      commission: r.commission,
+      producer_payable: r.producerPayable,
+      thei_share: r.theiShare,
+      bsi_share: r.bsiShare,
+      source: 'BSI',
+      payee: 'BSI',
+    }];
+    const hor = buildIntegrityStatement(stmtRows, 'horacio-mendieta', { period: '202610' });
+    expect(hor.balance).toBeCloseTo(-13.75, 2);
+    expect(hor.lineCount).toBe(1);
+    const lina = buildLinaCompensationStatement(stmtRows, { period: '202610' });
+    expect(lina.lineCount).toBe(0);
+  });
+
+  it('other named writer with BSI writing NPN stays house 50/50, not remapped to Lina', () => {
+    const records = [{
+      agent: 'Sample Writer Alpha',
+      classification: 'Chargeback',
+      commission: -30,
+      carrier: 'Devoted Health',
+      client: 'SAMPLE, MEMBER',
+      policyNumber: 'SYN-JENDY',
+      period: '202610',
+      payee: 'BSI',
+      source: 'BSI',
+      raw: {
+        'Commission Type': 'Override',
+        'Writing Agent': 'Sample Writer Alpha',
+        'Writing Agent NPN': BSI_WRITING_NPN,
+        'Agent Name': 'Broker Society Insurance',
+      },
+    }];
+    applyBsiBookAgentProduction(records);
+    expect(records[0].agent).toBe('Sample Writer Alpha');
+    expect(records[0].producerPayable).toBe(0);
+    expect(records[0].theiShare + records[0].bsiShare).toBeCloseTo(-30, 2);
+  });
+
+  it('blank / house writing-agent name with BSI NPN still remaps to Lina', () => {
+    const records = [{
+      ...uhcBase,
+      agent: 'Broker Society Insurance',
+      classification: 'Chargeback',
+      policyNumber: 'SYN-HOUSE-NPN',
+      commission: -105.5,
+      memberState: 'FL',
+      raw: {
+        'Commission Action': 'New Chargeback',
+        'Comp Type': 'R',
+        'Member State': 'FL',
+        'Writing Agent NPN': BSI_WRITING_NPN,
+      },
+    }];
+    applyBsiBookAgentProduction(records);
+    expect(records[0].agent).toBe(ALBA_DB_AGENT);
+    expect(records[0].producerPayable + records[0].theiShare + records[0].bsiShare)
+      .toBeCloseTo(-105.5, 2);
+  });
+});
+
 describe('statement builders still read Lina / Integrity from the stored shares', () => {
   it('Lina compensation uses producer_payable (HRA 100% still Lina)', () => {
     const rows = [

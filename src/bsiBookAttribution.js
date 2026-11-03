@@ -7,7 +7,9 @@
  * carrier→BSI feeds (Writing Agent often = Broker Society Insurance).
  *
  * Flow:
- *  1. Remap house / Alba-NPN / Alba-named agent-production lines → Alba Hernandez
+ *  1. Remap house-named / Alba-NPN / Alba-named agent-production lines → Alba Hernandez
+ *     (AML Override rows carry BSI's agency NPN even for named writers — NPN alone
+ *     does not remap Integrity / other / THEI writers onto Lina)
  *  2. Peel using overrideRateEngine (carrier × state rate table):
  *       producer_payable = albaComp   → Lina agent statement / payroll
  *       thei_share / bsi_share        → Override Statements for THEI & BSI (50/50)
@@ -59,7 +61,8 @@ const ALBA_DB_AGENT = 'Alba Hernandez';
 
 /** Alba / Lina NPN on BSI feeds. */
 const ALBA_NPN = '21209073';
-/** BSI writing-agent NPN (Lina's BSI-written UHC book). */
+/** BSI agency writing-agent NPN. UHC house-named lines use this; AML Override
+ *  rows also print it for named individuals — do not treat NPN alone as Lina. */
 const BSI_WRITING_NPN = '21231852';
 
 function isBsiHouseAgent(name) {
@@ -711,7 +714,13 @@ function applyBsiBookAgentProduction(records, opts = {}) {
 
     const npn = extractWritingNpn(r);
     const isAlbaNpn = npn === ALBA_NPN;
-    const house = isBsiHouseAgent(r.agent) || npn === BSI_WRITING_NPN;
+    // AML Override rows print Writing Agent NPN = BSI 21231852 even when Writing
+    // Agent Name is a named individual (Integrity / other / THEI). Remap to Lina
+    // only when the writing-agent *name* is the house label or blank — empty
+    // names already count as house via isBsiHouseAgent. Do not treat the agency
+    // NPN as Lina's book on a named writer (Horacio Simpson Humana -27.50 must
+    // stay Integrity 50/25/25, not peel onto Lina).
+    const house = isBsiHouseAgent(r.agent);
     const albaNamed = isAlbaHernandez(r.agent);
 
     if (!(house || isAlbaNpn || albaNamed)) {
