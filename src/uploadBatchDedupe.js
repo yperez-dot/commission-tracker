@@ -6,6 +6,27 @@
  * Key includes commission so pay/chargeback pairs with different amounts are kept.
  */
 
+function rawObject(r) {
+  const raw = r && (r.raw || r.raw_data);
+  if (!raw) return {};
+  if (typeof raw === 'string') {
+    try {
+      const o = JSON.parse(raw);
+      return o && typeof o === 'object' ? o : {};
+    } catch (e) {
+      return {};
+    }
+  }
+  return typeof raw === 'object' ? raw : {};
+}
+
+function statementDateOf(r) {
+  if (!r) return '';
+  if (r.statementDate) return String(r.statementDate).trim();
+  const raw = rawObject(r);
+  return String(raw['Statement Date'] || raw.StatementDate || '').trim();
+}
+
 function batchDedupeKey(r) {
   const client = String(r.client || r.client_full_name || '').trim().toLowerCase();
   const carrier = String(r.carrier || '').trim().toLowerCase();
@@ -14,7 +35,11 @@ function batchDedupeKey(r) {
   const classification = String(r.classification || r.type || '').trim().toLowerCase();
   const commission = String(r.commission ?? '');
   const policy = String(r.policyNumber || r.policy_number || '').trim().toLowerCase();
-  return `${client}|${carrier}|${effectiveDate}|${period}|${classification}|${commission}|${policy}`;
+  // Held UHC rows can repeat the same member/policy/$0 on a later statement date
+  // with a different hold reason — those are real rows, not copies.
+  const mga = String(r.mga || '').trim().toLowerCase();
+  const statementDate = statementDateOf(r).toLowerCase();
+  return `${client}|${carrier}|${effectiveDate}|${period}|${classification}|${commission}|${policy}|${mga}|${statementDate}`;
 }
 
 /**
@@ -108,4 +133,5 @@ module.exports = {
   batchDedupeKey,
   findInternalDuplicates,
   collapseInternalDuplicates,
+  statementDateOf,
 };

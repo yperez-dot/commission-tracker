@@ -44,4 +44,44 @@ describe('uploadBatchDedupe', () => {
     const rows = [base, { ...base, policyNumber: 'P2' }];
     expect(collapseInternalDuplicates(rows).removedCount).toBe(0);
   });
+
+  test('Held rows for the same member/policy/$0 on a later statement date are kept', () => {
+    const heldA = {
+      client: 'Sample Household One',
+      carrier: 'UnitedHealthcare',
+      effectiveDate: '01/01/2027',
+      period: '202610',
+      classification: 'Held',
+      commission: 0,
+      policyNumber: '900222001',
+      agent: 'Sample Writer',
+      mga: 'Upline not licensed as of App Sign Date, Upline not appointed as of App Sign Date',
+      statementDate: '10/18/2026',
+    };
+    const heldB = {
+      ...heldA,
+      mga: 'Upline not appointed as of App Sign Date',
+      statementDate: '10/22/2026',
+    };
+    const collapsed = collapseInternalDuplicates([heldA, heldB]);
+    expect(collapsed.removedCount).toBe(0);
+    expect(collapsed.records).toHaveLength(2);
+  });
+
+  test('true exact Held copies still collapse', () => {
+    const held = {
+      client: 'Sample Household One',
+      carrier: 'UnitedHealthcare',
+      effectiveDate: '01/01/2027',
+      period: '202610',
+      classification: 'Held',
+      commission: 0,
+      policyNumber: '900222001',
+      mga: 'Upline not appointed as of App Sign Date',
+      statementDate: '10/22/2026',
+    };
+    const collapsed = collapseInternalDuplicates([held, { ...held }]);
+    expect(collapsed.removedCount).toBe(1);
+    expect(collapsed.records).toHaveLength(1);
+  });
 });

@@ -3,8 +3,10 @@
 /**
  * BSI carrier→BSI statements (UHC) carry rows with a blank Member Name:
  *
- *   - "HA payment for agent ID … for member NAME MBI … policy number …"
- *       HRA (health risk assessment) payment on one of Lina's members → paid to Lina.
+ *   - "HA payment|chargeback for agent ID … for member NAME MBI … policy number …"
+ *       HRA (health risk assessment) on one of Lina's members → paid to Lina
+ *       (payment or chargeback). Member / policy are parsed from the text when
+ *       the Member Name and Policy Number cells are blank. MBI may be empty.
  *   - "<ST> Appointment Initial|Renewal Fee Collection for Required Entity: …"
  *       BSI's own licensing / appointment fees → never counted: not Lina, not THEI,
  *       not in any THEI/BSI override split.
@@ -21,10 +23,42 @@ const HRA_CLASSIFICATION = 'HRA/Bonus';
 const BSI_FEE_CLASSIFICATION = 'BSI Fee';
 
 const HA_RE =
-  /^\s*HA payment for agent ID\s+(\d+)\s+for member\s+(.+?)\s+MBI\s+\S+\s+policy number\s+(\S+)/i;
+  /^\s*HA\s+(payment|chargeback|reversal)\s+for\s+agent\s+ID\s+(\d+)\s+for\s+member\s+(.+?)\s+MBI(?:\s+(?!policy\s+number)(\S+))?\s+policy\s+number\s+(\S+)/i;
+const HA_RE_NO_MBI =
+  /^\s*HA\s+(payment|chargeback|reversal)\s+for\s+agent\s+ID\s+(\d+)\s+for\s+member\s+(.+?)\s+policy\s+number\s+(\S+)/i;
 const FEE_RE = /Appointment\s+(Initial|Renewal)\s+Fee Collection/i;
 const FEE_DETAIL_RE =
   /^\s*([A-Z]{2})\s+Appointment\s+(Initial|Renewal)\s+Fee Collection.*?for Required Entity:\s*(.+?)\s*$/i;
+
+/**
+ * Parse UHC "HA payment/chargeback for agent ID … for member … policy number …"
+ * text. Member Name / Policy Number cells are often blank on these rows.
+ */
+function parseHaDescription(description) {
+  const text = String(description || '').trim();
+  if (!text) return null;
+  const withMbi = text.match(HA_RE);
+  if (withMbi) {
+    return {
+      kind: withMbi[1].toLowerCase(),
+      agentId: withMbi[2],
+      member: withMbi[3].replace(/\s+/g, ' ').trim(),
+      mbi: withMbi[4] || '',
+      policy: withMbi[5],
+    };
+  }
+  const noMbi = text.match(HA_RE_NO_MBI);
+  if (noMbi) {
+    return {
+      kind: noMbi[1].toLowerCase(),
+      agentId: noMbi[2],
+      member: noMbi[3].replace(/\s+MBI\s*$/i, '').replace(/\s+/g, ' ').trim(),
+      mbi: '',
+      policy: noMbi[4],
+    };
+  }
+  return null;
+}
 
 function toNumber(v) {
   if (typeof v === 'number') return v;
@@ -47,29 +81,30 @@ function classifyBsiNonMemberRow(row, opts = {}) {
   const period = String(opts.period || row['Payment Period'] || '').trim();
   const carrier = opts.carrier || 'UnitedHealthcare';
 
-  const ha = description.match(HA_RE);
+  const ha = parseHaDescription(description);
   if (ha) {
-    const member = ha[2].replace(/\s+/g, ' ').trim();
+    const isChargeback = ha.kind !== 'payment' || commission < -0.005;
     return {
       agent: ALBA_DB_AGENT,
       carrier,
       planType: '',
-      client: member,
+      client: ha.member,
       effectiveDate: '',
       premium: 0,
       commission,
       classification: HRA_CLASSIFICATION,
       period,
-      policyNumber: ha[3],
+      policyNumber: ha.policy,
       payee: 'BSI',
       source: 'BSI',
       // HRA is paid straight through to Lina: no FMV-cap peel, no THEI/BSI share.
+      // Chargebacks use the same HA path (not UHC rate-peel, not Override pass-through).
       grossCommission: commission,
       producerPayable: commission,
       theiShare: 0,
       bsiShare: 0,
       splitApplies: false,
-      mga: 'HRA payment — paid to Lina',
+      mga: isChargeback ? 'HRA chargeback — paid to Lina' : 'HRA payment — paid to Lina',
       raw: row,
     };
   }
@@ -146,6 +181,7 @@ module.exports = {
   BSI_HOUSE_AGENT,
   HRA_CLASSIFICATION,
   BSI_FEE_CLASSIFICATION,
+  parseHaDescription,
   classifyBsiNonMemberRow,
   sumSummaryActivity,
   reconcileToSummary,

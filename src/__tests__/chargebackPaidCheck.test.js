@@ -70,6 +70,18 @@ describe('chargeback vs paid — upload', () => {
       .toBe('no_payment');
   });
 
+  it('does not count a writing-agent Commission chargeback toward exceeds-paid', () => {
+    const records = [
+      { ...base, policyNumber: 'P-PAYEE', classification: 'Chargeback', commission: -130,
+        raw: { 'Agent Name': 'Broker Society Insurance', 'Commission Type': 'Override' } },
+      { ...base, policyNumber: 'P-PAYEE', classification: 'Chargeback', commission: -115.66,
+        raw: { 'Agent Name': 'Sample Writer Alpha', 'Commission Type': 'Commission' } },
+    ];
+    const prior = [stored({ policy: 'P-PAYEE', amount: 130 })];
+    prior[0].raw_data = { 'Agent Name': 'Broker Society Insurance' };
+    expect(checkUploadChargebacks(records, prior)).toHaveLength(0);
+  });
+
   it('HRA / bonus / fee / held lines are not payments and are never flagged', () => {
     const records = [
       { ...base, policyNumber: 'P-7', classification: 'Chargeback', commission: -50 },

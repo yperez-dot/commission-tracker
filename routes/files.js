@@ -37,6 +37,8 @@ const {
   resolveNhpUploadOriginalName,
 } = require('../src/nhpUploadName');
 const { classifyTHECarrierTransaction, classifyHumanaDevotedBSITransaction } = require('../src/theCarrierStatementClassify');
+const { isCountedBsiPayee, isHraBonusRow } = require('../src/bsiCountedPayees');
+const { parseAmlPortalRows, isAmlPortalExport } = require('../src/bsiAmlPortalCsv');
 const { buildBsiStatementTitle, cleanManualTitle, normalizeAutoTitle, convertTitleDates } = require('../src/bsiStatementTitle');
 const {
   applyBsiTitlePlan,
@@ -1470,7 +1472,7 @@ async function checkBsiUploadChargebacks(pool, records) {
   if (!policies.length && !names.length) return [];
   const stored = await pool.query(
     `SELECT cr.carrier, cr.policy_number, cr.client_full_name, cr.effective_date,
-            cr.classification, cr.commission
+            cr.classification, cr.commission, cr.payee, cr.raw_data
      FROM commission_records cr
      LEFT JOIN uploads u ON u.id = cr.upload_id
      WHERE (UPPER(COALESCE(cr.source, '')) IN ('BSI', 'BSI_PAYEE') OR u.category = 'bsi_statement')
@@ -4981,114 +4983,29 @@ router.post('/fix-aetna-classifications', requireAuth, requireAdmin, async (req,
 function isAMLPortalExportFile(filename, wb) {
   const f = (filename || '').toLowerCase().replace(/[\s-]+/g, '_');
   if (f.includes('contracts_commissiondetails')) return true;
-  // Fallback: header signature check (filename may vary)
   try {
     const ws = wb && wb.Sheets[wb.SheetNames[0]];
     if (!ws) return false;
     const firstRow = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' })[0] || [];
     const headers = firstRow.map(h => String(h || '').trim());
-    return headers.includes('Writing Agent') &&
-           headers.includes('Policy #') &&
-           headers.includes('Commission Type');
+    return isAmlPortalExport(filename, headers);
   } catch (e) { return false; }
 }
 
 function parseAMLPortalRows(wb, filename) {
-  const records = [];
   const ws = wb.Sheets[wb.SheetNames[0]];
-  // raw:true preserves numeric types — Commission ($) arrives as float, Statement Date as Excel serial
   const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
-
-  // Currency: handles '$648.96', '-$50.00', '($289.17)', '$0.00'
-  // Under raw:true, double-quoted CSV currency values arrive as numbers already parsed by XLSX
-  function parseCurrency(val) {
-    const s = String(val || '').trim();
-    const negative = (s.startsWith('(') && s.endsWith(')')) || s.startsWith('-');
-    const num = parseFloat(s.replace(/[$,()/]/g, '').replace(/^-/, '')) || 0;
-    return negative ? -num : num;
+  const parsed = parseAmlPortalRows(rows, { filename });
+  if (parsed.skippedPayee.length) {
+    console.log(`[AML-PORTAL] Skipped ${parsed.skippedPayee.length} non-counted payee row(s)`);
   }
-
-  // Period from Excel serial OR 'MM/DD/YYYY' string -> 'YYYYMM'
-  // Statement Date arrives as Excel serial under raw:true (1899-12-30 epoch, same as HealthSun/Solis)
-  function parsePeriod(val) {
-    if (typeof val === 'number' && val > 40000) {
-      const d = new Date(Date.UTC(1899, 11, 30));
-      d.setUTCDate(d.getUTCDate() + Math.floor(val));
-      return `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
-    }
-    // Fallback: string 'MM/DD/YYYY' — 4-digit year required, 2-digit falls through to Unknown
-    const m = String(val || '').match(/^(\d{2})\/\d{2}\/(20\d{2})$/);
-    if (m) return m[2] + m[1];
-    return 'Unknown';
+  if (parsed.hraConflicts.length) {
+    console.warn(`[AML-PORTAL] ${parsed.hraConflicts.length} HRA/bonus row(s) paid to a writing agent — not imported, not assigned to Lina`);
   }
-
-  for (const row of rows) {
-    const writingAgentRaw   = String(row['Writing Agent'] || '').trim();
-    const insuredName       = String(row['Insured Name'] || '').trim();
-    const policyNumber      = String(row['Policy #'] || '').trim();
-    const carrierRaw        = String(row['Carrier'] || '').trim();
-    const statementDate     = row['Statement Date'] ?? ''; // preserve number type for Excel serial conversion in parsePeriod
-    const originalEffDate   = row['Original EffectiveDate'] || row['Effective Date'] || '';
-    const commissionType    = String(row['Commission Type'] || '').trim();
-    const productRaw        = String(row['Product'] || '').trim();
-    const stateRaw          = String(row['State'] || '').trim();
-    const commission        = parseCurrency(row['Commission ($)']);
-    // Status field: ignored per spec — include every row regardless
-
-    if (!isValidClientName(insuredName)) continue;
-    if (!policyNumber) continue;
-
-    // Classification: 'Agency Override' for positive, 'Chargeback' for negative
-    // Commission Type confirmed 100% 'Override' in sample; log if different
-    let classification;
-    if (commission < 0) {
-      classification = 'Chargeback';
-    } else {
-      classification = 'Agency Override';
-      if (commissionType && commissionType.toUpperCase() !== 'OVERRIDE') {
-        console.warn(`[AML-PORTAL] Unexpected Commission Type '${commissionType}' for policy ${policyNumber} — classifying as Agency Override`);
-      }
-    }
-
-    // Writing Agent is the individual; normalize same as other parsers
-    const agent = isAgencyName(writingAgentRaw)
-      ? 'The Health Experts Insurance'
-      : (normalizeAgentName(writingAgentRaw) || writingAgentRaw || 'BSI Agent');
-
-    // Carrier
-    const carrierLower = carrierRaw.toLowerCase();
-    let carrier;
-    if (carrierLower.includes('humana'))        carrier = 'Humana';
-    else if (carrierLower.includes('devoted'))  carrier = 'Devoted Health';
-    else                                         carrier = carrierRaw;
-
-    const period        = parsePeriod(statementDate);
-    const effectiveDate = formatDate(originalEffDate);
-    const planType      = derivePlanType(carrier, productRaw, policyNumber, '');
-
-    // source NOT set here — determinePayee() returns 'BSI' for this filename,
-    // so the upload-time map() assigns source='BSI' and runs split branches correctly
-    records.push({
-      agent,
-      carrier,
-      planType,
-      client: insuredName,
-      effectiveDate,
-      premium: 0,
-      commission,
-      classification,
-      period,
-      policyNumber,
-      payee: 'BSI',
-      memberState: stateRaw,
-      statementMonth: carrierRaw,
-      raw: row,
-    });
-  }
-
-  const total = records.reduce((s, r) => s + (r.commission || 0), 0);
-  console.log(`[AML-PORTAL] ${filename} | ${records.length} records | total $${total.toFixed(2)}`);
-  return records;
+  console.log(`[AML-PORTAL] ${filename} | ${parsed.records.length} records | total $${parsed.importedTotal.toFixed(2)}`);
+  parsed.records.skippedPayee = parsed.skippedPayee;
+  parsed.records.hraConflicts = parsed.hraConflicts;
+  return parsed.records;
 }
 
 function isHumanaDevotedBSIFile(filename) {
@@ -5129,6 +5046,14 @@ function parseHumanaDevotedBSIRows(wb, filename) {
   for (const row of rows) {
     const client = String(row['Insured Name'] || '').trim();
     if (!client || !isValidClientName(client)) continue;
+
+    const statementPayee = String(row['Agent Name'] || '').trim();
+    if (statementPayee && !isCountedBsiPayee(statementPayee)) {
+      if (isHraBonusRow(row)) {
+        console.warn('[HUMANA-DEVOTED-BSI] HRA/bonus paid to a writing agent — skipped, not assigned to Lina');
+      }
+      continue;
+    }
 
     const writingAgentRaw = String(row['Writing Agent'] || '').trim();
     const carrierRaw      = String(row['Carrier'] || '').trim();
@@ -5173,7 +5098,9 @@ function parseHumanaDevotedBSIRows(wb, filename) {
       period: statementPeriod,
       policyNumber,
       payee: 'BSI',
-      mga: statusRaw === 'Open' ? 'Held — Open status' : '',
+      statementPayee,
+      mga: statusRaw === 'Open' ? 'Held — Open status'
+        : /hold/i.test(statusRaw) ? 'Held — Hold Commission status' : '',
       raw: row
     });
   }
@@ -5227,9 +5154,11 @@ function parseBSICarrierStatementRows(wb, filename) {
     const writingAgentRaw = String(row['Writing Agent Name'] || '').trim();
     const client = String(row['Member Name'] || '').trim();
 
-    // Blank Member Name: HA (HRA) payments → Lina; appointment/licensing fees → BSI Fee
-    // (never counted in splits or agent statements). Previously these were silently dropped.
+    // Blank Member Name: HA (HRA) payment/chargeback → Lina (member/policy parsed
+    // from Commission Action); appointment/licensing fees → BSI Fee.
     if (!client) {
+      const statementPayee = String(row['Agent Name'] || row['AgentName'] || '').trim();
+      if (statementPayee && !isCountedBsiPayee(statementPayee)) continue;
       const nonMember = classifyBsiNonMemberRow(row, {
         period: statementPeriod || String(row['Payment Period'] || '').trim(),
       });
@@ -5238,12 +5167,20 @@ function parseBSICarrierStatementRows(wb, filename) {
         // Their total is kept only so the upload still ties to the carrier summary.
         excludedFeesTotal += nonMember.commission;
       } else if (nonMember) {
+        if (statementPayee) nonMember.statementPayee = statementPayee;
+        const stmtDate = String(row['Statement Date'] || '').trim();
+        if (stmtDate) nonMember.statementDate = stmtDate;
         records.push(nonMember);
       }
       continue;
     }
     if (!isValidClientName(client)) continue;
     if (SKIP_KEYWORDS.some(kw => client.toLowerCase().includes(kw))) continue;
+
+    // Payee is Agent Name (BSI), not Writing Agent Name. Empty payee still counts
+    // (this layout is already a BSI-payee feed).
+    const statementPayee = String(row['Agent Name'] || row['AgentName'] || '').trim();
+    if (statementPayee && !isCountedBsiPayee(statementPayee)) continue;
 
     const commissionRaw = row['Commission'];
     const commission = typeof commissionRaw === 'number'
@@ -5270,6 +5207,7 @@ function parseBSICarrierStatementRows(wb, filename) {
 
     const memberStateRaw = String(row['Member State'] || row['State'] || '').trim().toUpperCase().split(/[-/\s]/)[0];
     const memberState = /^[A-Z]{2}$/.test(memberStateRaw) ? memberStateRaw : null;
+    const statementDate = String(row['Statement Date'] || '').trim();
 
     records.push({
       agent: agentName,
@@ -5283,7 +5221,9 @@ function parseBSICarrierStatementRows(wb, filename) {
       period,
       policyNumber,
       payee: 'BSI',
+      statementPayee,
       memberState,
+      statementDate,
       raw: row
     });
   }
@@ -5299,6 +5239,8 @@ function parseBSICarrierStatementRows(wb, filename) {
       const writingAgentRaw = String(row['Writing Agent Name'] || '').trim();
       const client = String(row['Member Name'] || '').trim();
       if (!client || !isValidClientName(client)) continue;
+      const heldPayee = String(row['Agent Name'] || row['AgentName'] || '').trim();
+      if (heldPayee && !isCountedBsiPayee(heldPayee)) continue;
 
       const commissionRaw = row['Commission'];
       const commission = typeof commissionRaw === 'number' ? commissionRaw
@@ -5309,6 +5251,7 @@ function parseBSICarrierStatementRows(wb, filename) {
         ? 'The Health Experts Insurance'
         : (normalizeAgentName(writingAgentRaw) || writingAgentRaw || 'BSI Agent');
       const holdReason = String(row['Hold Reason'] || '').trim();
+      const statementDate = String(row['Statement Date'] || '').trim();
 
       records.push({
         agent: agentName,
@@ -5322,6 +5265,8 @@ function parseBSICarrierStatementRows(wb, filename) {
         period,
         policyNumber: String(row['Policy Number'] || '').trim(),
         payee: 'BSI',
+        statementPayee: heldPayee,
+        statementDate,
         mga: holdReason || 'Held — reason not specified',
         raw: row
       });
@@ -5445,6 +5390,11 @@ router.post('/upload-bsi-statement', requireAuth, requireAdmin, upload.single('f
       try { fs.unlinkSync(req.file.path); } catch (e) {}
       return res.status(400).json({ error: 'No records found in BSI statement. Please verify the file format.' });
     }
+
+    const payeeFilterInfo = {
+      skippedPayee: records.skippedPayee || [],
+      hraConflicts: records.hraConflicts || [],
+    };
 
     // Alba/Lina only: remap house/NPN/name agent-production → Alba, then peel
     // carrier×state override rates into producer_payable (Lina pay) + THEI/BSI shares.
@@ -5652,6 +5602,11 @@ router.post('/upload-bsi-statement', requireAuth, requireAdmin, upload.single('f
       unsplitWarning,
       chargebackWarning,
       chargebackFlags,
+      payeeFilter: {
+        skippedPayeeCount: payeeFilterInfo.skippedPayee.length,
+        skippedPayeeTotal: Math.round(payeeFilterInfo.skippedPayee.reduce((s, x) => s + (Number(x.amount) || 0), 0) * 100) / 100,
+        hraConflicts: payeeFilterInfo.hraConflicts,
+      },
     });
 
   } catch (err) {

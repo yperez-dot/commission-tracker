@@ -38,6 +38,7 @@ const {
   linaProportionalChargeback,
   proportionalNote,
 } = require('./linaChargebackProrate');
+const { isAlbaPolicyOverrideChargeback } = require('./bsiCountedPayees');
 const {
   rowNeedsBsiOverrideShareFill,
   splitFullOverridePot,
@@ -473,6 +474,8 @@ function isUnsplitBsiLine(r) {
   if (Math.abs(amount) < 0.005) return false;
   const cls = r.classification;
   if (isHraOrFee(cls)) return false;
+  // Full pass-through to Lina: no THEI/BSI share is expected.
+  if (r.albaPolicyChargeback || /alba's policy/i.test(String(r.mga || ''))) return false;
   const agent = r.agent != null ? r.agent : r.agent_name;
   const row = {
     producerPayable: r.producerPayable != null ? r.producerPayable : r.producer_payable,
@@ -613,6 +616,24 @@ function applyBsiBookAgentProduction(records, opts = {}) {
   for (const r of records) {
     const classification = r.classification || '';
     const commission = parseFloat(r.commission) || 0;
+
+    // BSI Override chargebacks on Alba-written policies: pass the full line to
+    // Lina (not rate-peeled). Does not apply to UHC Commission Action chargebacks.
+    if (r.albaPolicyChargeback || isAlbaPolicyOverrideChargeback(r)) {
+      r.agent = ALBA_DB_AGENT;
+      r.classification = 'Chargeback';
+      r.producerPayable = commission;
+      r.theiShare = 0;
+      r.bsiShare = 0;
+      r.grossCommission = commission;
+      r.splitApplies = false;
+      r.payee = r.payee || 'BSI';
+      r.source = r.source || 'BSI';
+      if (!/alba's policy/i.test(String(r.mga || ''))) {
+        addNote(r, `Alba's policy — chargeback passed to Lina (${r.client || 'client'})`);
+      }
+      continue;
+    }
 
     if (isAgencyOverride(classification) || isHeldClassification(classification)) {
       if (r.producerPayable == null) r.producerPayable = 0;

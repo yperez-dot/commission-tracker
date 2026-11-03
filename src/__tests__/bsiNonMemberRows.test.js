@@ -2,6 +2,7 @@
 
 const {
   classifyBsiNonMemberRow,
+  parseHaDescription,
   sumSummaryActivity,
   reconcileToSummary,
 } = require('../bsiNonMemberRows');
@@ -10,9 +11,20 @@ const { buildLinaCompensationStatement } = require('../linaCompensationStatement
 
 const HA_ROW = {
   'Commission Action':
-    'HA payment for agent ID 6661553 for member SALVADOR TREVINO MBI *****1GH03 policy number 951906631',
+    'HA payment for agent ID 1111111 for member SAMPLE CLIENT ALPHA MBI *****1AA01 policy number 900111001',
   'Payment Period': 202609,
   Commission: 50,
+};
+const HA_CHARGEBACK_BLANK_MBI = {
+  'Commission Action':
+    'HA chargeback for agent ID 1111111 for member SAMPLE CLIENT ALPHA MBI  policy number 900111001',
+  'Payment Period': 202610,
+  'Statement Date': '10/18/2026',
+  'Agent Name': 'BROKER SOCIETY INSURANCE',
+  'Writing Agent Name': 'BROKER SOCIETY INSURANCE',
+  'Member Name': '',
+  'Policy Number': '',
+  Commission: -50,
 };
 const FEE_ROW = {
   'Commission Action':
@@ -26,8 +38,8 @@ describe('bsiNonMemberRows', () => {
     const r = classifyBsiNonMemberRow(HA_ROW, { period: '202609' });
     expect(r.classification).toBe('HRA/Bonus');
     expect(r.agent).toBe(ALBA_DB_AGENT);
-    expect(r.client).toBe('SALVADOR TREVINO');
-    expect(r.policyNumber).toBe('951906631');
+    expect(r.client).toBe('SAMPLE CLIENT ALPHA');
+    expect(r.policyNumber).toBe('900111001');
     expect(r.commission).toBe(50);
     expect(r.producerPayable).toBe(50);
     expect(r.theiShare).toBe(0);
@@ -88,11 +100,49 @@ describe('bsiNonMemberRows', () => {
     expect(withFees.excludedFees).toBe(-480);
   });
 
+  it('HA chargeback with blank Member/Policy/MBI parses the text and pays Lina 100%', () => {
+    const parsed = parseHaDescription(HA_CHARGEBACK_BLANK_MBI['Commission Action']);
+    expect(parsed).toEqual({
+      kind: 'chargeback',
+      agentId: '1111111',
+      member: 'SAMPLE CLIENT ALPHA',
+      mbi: '',
+      policy: '900111001',
+    });
+    const r = classifyBsiNonMemberRow(HA_CHARGEBACK_BLANK_MBI, { period: '202610' });
+    expect(r).not.toBeNull();
+    expect(r.classification).toBe('HRA/Bonus');
+    expect(r.agent).toBe(ALBA_DB_AGENT);
+    expect(r.client).toBe('SAMPLE CLIENT ALPHA');
+    expect(r.policyNumber).toBe('900111001');
+    expect(r.commission).toBe(-50);
+    expect(r.producerPayable).toBe(-50);
+    expect(r.theiShare).toBe(0);
+    expect(r.bsiShare).toBe(0);
+    expect(r.splitApplies).toBe(false);
+    expect(r.mga).toMatch(/chargeback/i);
+    applyBsiBookAgentProduction([r]);
+    expect(r.producerPayable).toBe(-50);
+    expect(r.theiShare).toBe(0);
+    const st = buildLinaCompensationStatement(
+      [{ id: 9, agent_name: ALBA_DB_AGENT, classification: 'HRA/Bonus', producer_payable: -50, payment_period: '202610', carrier: 'UnitedHealthcare' }],
+      { period: '202610' }
+    );
+    expect(st.lineCount).toBe(1);
+    expect(st.balance).toBe(-50);
+  });
+
+  it('HA chargeback is HRA special-case (not a UHC rate-peel / Override pass-through)', () => {
+    const { isAlbaPolicyOverrideChargeback } = require('../bsiCountedPayees');
+    const r = classifyBsiNonMemberRow(HA_CHARGEBACK_BLANK_MBI, { period: '202610' });
+    expect(isAlbaPolicyOverrideChargeback(r)).toBe(false);
+  });
+
   describe('business rule: every HRA row on a BSI statement is paid 100% to Lina', () => {
     const variants = [
-      // different writing-agent ID and a member with no prior statement history
-      'HA payment for agent ID 1234567 for member MARIA ROJAS MBI *****9XY12 policy number 900000001',
-      'HA payment for agent ID 6661553 for member SALVADOR TREVINO MBI *****1GH03 policy number 951906631',
+      'HA payment for agent ID 1234567 for member SAMPLE CLIENT BETA MBI *****9XY12 policy number 900000001',
+      'HA payment for agent ID 1111111 for member SAMPLE CLIENT ALPHA MBI *****1AA01 policy number 900111001',
+      'HA chargeback for agent ID 1111111 for member SAMPLE CLIENT ALPHA MBI  policy number 900111001',
     ];
     it.each(variants)('routes "%s" to Lina by rule, not by member/agent match', (desc) => {
       for (const amt of [50, -50]) {
@@ -135,6 +185,44 @@ describe('bsiNonMemberRows', () => {
         expect(classifyOverrideLine({ agent_name: 'Broker Society Insurance', classification: 'BSI Fee', producer_payable: 0, commission: -100, thei_share: 0, bsi_share: 0, source: 'BSI' }, t)).toBeNull();
       }
     });
+  });
+
+  it('UHC description-only HA chargeback plus later Held rows still tie to the summary', () => {
+    const { collapseInternalDuplicates } = require('../uploadBatchDedupe');
+    const ha = classifyBsiNonMemberRow(HA_CHARGEBACK_BLANK_MBI, { period: '202610' });
+    const paid = {
+      client: 'Sample Household One',
+      carrier: 'UnitedHealthcare',
+      effectiveDate: '01/01/2027',
+      period: '202610',
+      classification: 'New Business',
+      commission: 75,
+      policyNumber: '900222001',
+      statementDate: '10/18/2026',
+    };
+    const heldA = {
+      client: 'Sample Household One',
+      carrier: 'UnitedHealthcare',
+      effectiveDate: '01/01/2027',
+      period: '202610',
+      classification: 'Held',
+      commission: 0,
+      policyNumber: '900222001',
+      mga: 'Upline not licensed as of App Sign Date, Upline not appointed as of App Sign Date',
+      statementDate: '10/18/2026',
+    };
+    const heldB = {
+      ...heldA,
+      mga: 'Upline not appointed as of App Sign Date',
+      statementDate: '10/22/2026',
+    };
+    const other = { client: 'Sample Other', carrier: 'UnitedHealthcare', effectiveDate: '01/01/2026', period: '202610', classification: 'Renewal', commission: 1592.72, policyNumber: '900333001', statementDate: '10/01/2026' };
+    const collapsed = collapseInternalDuplicates([ha, paid, heldA, heldB, other]);
+    expect(collapsed.removedCount).toBe(0);
+    expect(collapsed.records).toHaveLength(5);
+    const rec = reconcileToSummary(collapsed.records, 1617.72);
+    expect(rec.ok).toBe(true);
+    expect(rec.importedTotal).toBe(1617.72);
   });
 
   it('fee/HRA detection does not match ordinary commission wording', () => {

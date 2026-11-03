@@ -1027,7 +1027,7 @@ router.get('/chargeback-paid-check', requireAuth, async (req, res) => {
     const period = /^\d{6}$/.test(String(req.query.period || '')) ? String(req.query.period) : null;
     const r = await pool.query(`
       SELECT cr.id, cr.agent_name, cr.carrier, cr.policy_number, cr.client_full_name, cr.effective_date,
-             cr.classification, cr.commission, cr.payment_period, cr.upload_id
+             cr.classification, cr.commission, cr.payment_period, cr.upload_id, cr.payee, cr.raw_data
       FROM commission_records cr
       LEFT JOIN uploads u ON u.id = cr.upload_id
       WHERE (UPPER(COALESCE(cr.source, '')) IN ('BSI', 'BSI_PAYEE') OR u.category = 'bsi_statement')

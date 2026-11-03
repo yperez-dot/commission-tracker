@@ -14,6 +14,7 @@
  */
 
 const { clientNameKey } = require('./clientNameKey');
+const { isCountedBsiStatementRow } = require('./bsiCountedPayees');
 
 const round2 = (n) => Math.round(Number(n) * 100) / 100;
 const num = (v) => (v == null || v === '' ? 0 : Number(v) || 0);
@@ -86,6 +87,7 @@ function addTo(map, key, amt) {
 function buildTotals(rows) {
   const t = { paidP: new Map(), paidN: new Map(), cbP: new Map(), cbN: new Map() };
   for (const row of rows || []) {
+    if (!isCountedBsiStatementRow(row)) continue;
     const f = fields(row);
     if (isExcludedLine(f.classification) || Math.abs(f.amount) < 0.005) continue;
     const { policyKey, nameKey } = matchKeys(row);
@@ -104,6 +106,7 @@ function buildTotals(rows) {
 function checkOne(row, totals) {
   const f = fields(row);
   if (!(f.amount < -0.005) || isExcludedLine(f.classification)) return null;
+  if (!isCountedBsiStatementRow(row)) return null;
   const { policyKey, nameKey } = matchKeys(row);
   let paid = 0;
   let chargedBack = 0;
@@ -189,6 +192,7 @@ function lookupKeys(records) {
   const policies = new Set();
   const names = new Set();
   for (const r of records || []) {
+    if (!isCountedBsiStatementRow(r)) continue;
     const f = fields(r);
     if (!(f.amount < 0)) continue;
     const p = String(f.policy || '').trim().toLowerCase();

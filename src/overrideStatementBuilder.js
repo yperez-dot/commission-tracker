@@ -33,6 +33,7 @@ const {
   ALBA_DISPLAY_NAME,
 } = require('./payeeSchedules');
 const { formatEffectiveDate } = require('./effectiveDateFormat');
+const { isCountedBsiStatementRow } = require('./bsiCountedPayees');
 const { HOUSE_STATEMENT_NAMES, houseStatementLabel } = require('./houseStatementNames');
 const { formatNhpCyclePeriodLabel } = require('./nhpPeriod');
 const { resolveBsiBookShare } = require('./overrideSplitMath');
@@ -141,6 +142,8 @@ function classifyTheiShareLine(row) {
 }
 
 function classifyOverrideLine(row, statementType) {
+  if (!isCountedBsiStatementRow(row)) return null;
+
   // Integrity chargebacks reverse an override: list them on the THEI / BSI / Integrity
   // statements (only when the 50/25/25 split was stored on the row). BSI other-agent
   // house lines (stored 50/50, Marco $10) are listed the same way.

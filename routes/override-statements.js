@@ -56,7 +56,7 @@ const SELECT_COLS = `
   cr.id, cr.agent_name, cr.client_full_name, cr.policy_number, cr.carrier, cr.effective_date,
   cr.payment_period, cr.classification, cr.commission, cr.gross_commission, cr.thei_share, cr.bsi_share,
   cr.producer_payable, cr.sub_agent_override, cr.payee, cr.source, cr.lob, cr.plan_type, cr.split_applies,
-  u.original_name AS upload_original_name
+  cr.raw_data, u.original_name AS upload_original_name
 `;
 
 async function backfillNhpSourceFromUploads(pool) {
