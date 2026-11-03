@@ -229,7 +229,8 @@ describe('Alba override chargebacks → Lina', () => {
     );
     expect(stmt.chargebacks).toBe(-173.5);
     expect(stmt.lines).toHaveLength(1);
-    expect(stmt.lines[0].classification).toBe("Chargeback — Alba's policy");
+    expect(stmt.lines[0].classification).toBe('Chargeback');
+    expect(stmt.lines[0].classification).not.toMatch(/Alba's policy/);
     expect(stmt.lines[0].clientName).toBe('SAMPLE MEMBER ALBA');
   });
 
