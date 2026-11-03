@@ -167,9 +167,9 @@ const STATEMENT_PAYEE_OPTIONS = [
   { key: 'horacio-mendieta', label: 'Horacio Mendieta' },
 ];
 
-/** Issued statements (OliComm) + BSI-received copies for the selected period, with comparison. */
+/** Live agent statement download + sent-to-commissions. Snapshots / BSI copies live under More. */
 function StoredStatements({
-  period, isAdmin, onDownloadCurrent, onDownloadLinaExcel, downloadBusy, downloadError,
+  period, isAdmin, onDownloadCurrent, downloadBusy, downloadError,
   paidStatus, paidDates, locks, meta, onMarkSent, onUnlock,
 }) {
   const [stored, setStored] = useState([]);
@@ -239,19 +239,12 @@ function StoredStatements({
         const lock = locks && locks[o.label];
         const badge = sent ? sentToCommissionsBadge(period, paidDates && paidDates[o.label], periodToMmYyyy) : '';
         return (
-          <div key={o.key} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderTop: '0.5px solid var(--border)', flexWrap: 'wrap' }}>
+          <div key={o.key} data-testid={`agent-statement-row-${o.key}`} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 0', borderTop: '0.5px solid var(--border)', flexWrap: 'wrap' }}>
             <div style={{ width: 140, fontWeight: 500, fontSize: 13 }}>{o.label}</div>
-            <div style={{ fontSize: 12, flex: 1, minWidth: 220 }}>
+            <div style={{ fontSize: 12, flex: 1, minWidth: 180 }}>
               {c ? (
                 <>
                   Total Payable {fmt(c.liveTotal)}
-                  {c.issuedTotal != null && <> · issued v{issued ? issued.version : '?'} {fmt(c.issuedTotal)}</>}
-                  {c.issuedStale && <span style={{ color: '#B45309', fontWeight: 600 }}> · ⚠ data changed since issued ({fmt(c.staleBy)})</span>}
-                  {c.receivedTotal != null && (
-                    <span style={{ color: c.matchesBsi ? 'var(--green)' : 'var(--red)', fontWeight: 600 }}>
-                      {' '}· BSI {fmt(c.receivedTotal)} {c.matchesBsi ? '✓ matches' : `✗ off by ${fmt(c.varianceVsBsi)}`}
-                    </span>
-                  )}
                   {badge && <span style={{ color: 'var(--green)', fontWeight: 600 }}> · {badge}</span>}
                   {lock && !badge && <span style={{ marginLeft: 8, fontWeight: 600 }}>· 🔒 Locked</span>}
                 </>
@@ -260,29 +253,7 @@ function StoredStatements({
             {onDownloadCurrent && (
               <button className="btn" style={{ fontSize: 11, padding: '4px 10px' }} disabled={!!downloadBusy}
                 onClick={() => onDownloadCurrent(o.key)}>
-                Current statement
-              </button>
-            )}
-            {o.key === 'lina' && onDownloadLinaExcel && (
-              <button className="btn" style={{ fontSize: 11, padding: '4px 10px' }} disabled={!!downloadBusy}
-                onClick={() => onDownloadLinaExcel()}>
-                Lina compensation Excel
-              </button>
-            )}
-            {issued && (
-              <>
-                <button className="btn" style={{ fontSize: 11, padding: '4px 10px' }}
-                  onClick={() => apiDownload(`/payee-statements/${issued.id}/download`, issued.file_name || 'statement.xlsx')}>
-                  Download issued
-                </button>
-                {isAdmin && (
-                  <button className="btn btn-danger" style={{ fontSize: 11, padding: '4px 10px' }} onClick={() => voidOne(issued.id)}>Void</button>
-                )}
-              </>
-            )}
-            {isAdmin && (
-              <button className="btn btn-primary" style={{ fontSize: 11, padding: '4px 12px' }} disabled={busy === o.key} onClick={() => issue(o.key)}>
-                {busy === o.key ? 'Issuing…' : issued ? 'Re-issue' : 'Issue statement'}
+                Statement
               </button>
             )}
             {sent ? (
@@ -303,28 +274,63 @@ function StoredStatements({
           </div>
         );
       })}
-      {isAdmin && (
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 12, paddingTop: 12, borderTop: '0.5px solid var(--border)', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 12, fontWeight: 500 }}>Log BSI&apos;s copy:</span>
-          <select value={recv.payee} onChange={(e) => setRecv({ ...recv, payee: e.target.value })}>
-            {STATEMENT_PAYEE_OPTIONS.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
-          </select>
-          <input type="number" step="0.01" placeholder="BSI balance" value={recv.total} onChange={(e) => setRecv({ ...recv, total: e.target.value })} style={{ width: 120 }} />
-          <input type="file" onChange={(e) => setRecv({ ...recv, file: e.target.files[0] || null })} />
-          <button className="btn" disabled={busy === 'recv'} onClick={logReceived}>{busy === 'recv' ? 'Saving…' : 'Save BSI copy'}</button>
-        </div>
-      )}
-      {stored.filter((s) => s.source === 'bsi_received' && s.status !== 'void').length > 0 && (
-        <div style={{ marginTop: 10, fontSize: 11, color: 'var(--text-muted)' }}>
-          BSI copies:{' '}
-          {stored.filter((s) => s.source === 'bsi_received' && s.status !== 'void').map((s) => (
-            <button key={s.id} className="btn" style={{ fontSize: 11, padding: '2px 8px', marginRight: 6 }}
-              onClick={() => apiDownload(`/payee-statements/${s.id}/download`, s.file_name || 'bsi-statement')}>
-              {s.payee_name.split(' ')[0]} {fmt(s.total)}
-            </button>
-          ))}
-        </div>
-      )}
+      <details data-testid="agent-statement-more" style={{ marginTop: 8, paddingTop: 8, borderTop: '0.5px solid var(--border)' }}>
+        <summary style={{ fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>More</summary>
+        {STATEMENT_PAYEE_OPTIONS.map((o) => {
+          const c = compare[o.key];
+          const issued = stored.find((s) => s.payee_key === o.key && s.source === 'olicomm' && s.status === 'issued');
+          return (
+            <div key={`more-${o.key}`} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', flexWrap: 'wrap' }}>
+              <div style={{ width: 140, fontSize: 12 }}>{o.label}</div>
+              <div style={{ fontSize: 11, flex: 1, minWidth: 160, color: 'var(--text-muted)' }}>
+                {c && c.issuedTotal != null && <>issued v{issued ? issued.version : '?'} {fmt(c.issuedTotal)}</>}
+                {c && c.issuedStale && <span style={{ color: '#B45309', fontWeight: 600 }}> · ⚠ {fmt(c.staleBy)}</span>}
+                {c && c.receivedTotal != null && (
+                  <span style={{ color: c.matchesBsi ? 'var(--green)' : 'var(--red)', fontWeight: 600 }}>
+                    {' '}· BSI {fmt(c.receivedTotal)} {c.matchesBsi ? '✓' : `✗ ${fmt(c.varianceVsBsi)}`}
+                  </span>
+                )}
+              </div>
+              {issued && (
+                <button className="btn" style={{ fontSize: 11, padding: '4px 10px' }}
+                  onClick={() => apiDownload(`/payee-statements/${issued.id}/download`, issued.file_name || 'statement.xlsx')}>
+                  Download issued
+                </button>
+              )}
+              {issued && isAdmin && (
+                <button className="btn btn-danger" style={{ fontSize: 11, padding: '4px 10px' }} onClick={() => voidOne(issued.id)}>Void</button>
+              )}
+              {isAdmin && (
+                <button className="btn" style={{ fontSize: 11, padding: '4px 10px' }} disabled={busy === o.key} onClick={() => issue(o.key)}>
+                  {busy === o.key ? 'Issuing…' : issued ? 'Re-issue' : 'Issue statement'}
+                </button>
+              )}
+            </div>
+          );
+        })}
+        {isAdmin && (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 12, fontWeight: 500 }}>Log BSI&apos;s copy:</span>
+            <select value={recv.payee} onChange={(e) => setRecv({ ...recv, payee: e.target.value })}>
+              {STATEMENT_PAYEE_OPTIONS.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}
+            </select>
+            <input type="number" step="0.01" placeholder="BSI balance" value={recv.total} onChange={(e) => setRecv({ ...recv, total: e.target.value })} style={{ width: 120 }} />
+            <input type="file" onChange={(e) => setRecv({ ...recv, file: e.target.files[0] || null })} />
+            <button className="btn" disabled={busy === 'recv'} onClick={logReceived}>{busy === 'recv' ? 'Saving…' : 'Save BSI copy'}</button>
+          </div>
+        )}
+        {stored.filter((s) => s.source === 'bsi_received' && s.status !== 'void').length > 0 && (
+          <div style={{ marginTop: 10, fontSize: 11, color: 'var(--text-muted)' }}>
+            BSI copies:{' '}
+            {stored.filter((s) => s.source === 'bsi_received' && s.status !== 'void').map((s) => (
+              <button key={s.id} className="btn" style={{ fontSize: 11, padding: '2px 8px', marginRight: 6 }}
+                onClick={() => apiDownload(`/payee-statements/${s.id}/download`, s.file_name || 'bsi-statement')}>
+                {s.payee_name.split(' ')[0]} {fmt(s.total)}
+              </button>
+            ))}
+          </div>
+        )}
+      </details>
     </div>
   );
 }
@@ -1032,22 +1038,6 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate, init
     }
   }
 
-  async function downloadLinaExcel(period) {
-    if (!period) return;
-    setLinaBusy(true);
-    setLinaError('');
-    try {
-      await apiDownload(
-        `/lina-statements/export?period=${encodeURIComponent(period)}`,
-        `Lina_Hernandez_Compensation_Statement_${period}.xlsx`
-      );
-    } catch (e) {
-      setLinaError(e.message || 'Failed to download Lina statement');
-    } finally {
-      setLinaBusy(false);
-    }
-  }
-
   useEffect(() => {
     apiFetch('/records/filters')
       .then((d) => {
@@ -1475,7 +1465,6 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate, init
                   downloadBusy={linaBusy}
                   downloadError={linaError}
                   onDownloadCurrent={(payee) => downloadPayeeStatement(payee, selectedPeriod)}
-                  onDownloadLinaExcel={() => downloadLinaExcel(selectedPeriod)}
                   paidStatus={paidStatus}
                   paidDates={paidDates}
                   locks={((periodState && periodState.locks) || []).reduce((m, l) => { m[l.agent_name] = l; return m; }, {})}
