@@ -84,7 +84,7 @@ const COLS = `id, agency_key, payee_key, payee_name, payment_period, source, sta
   total, line_count, file_name, file_type, notes, issued_date, created_by, created_at`;
 
 const ROW_COLS = `id, agent_name, client_full_name, policy_number, carrier, effective_date,
-  payment_period, classification, producer_payable, commission, source`;
+  payment_period, classification, producer_payable, commission, source, mga`;
 
 async function fetchRows(pool, payeeKey, period) {
   const params = [period];

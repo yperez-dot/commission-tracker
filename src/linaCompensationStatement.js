@@ -23,6 +23,7 @@ const {
   isAlbaAgentCommission,
   isAlbaHra,
 } = require('./payeeSchedules');
+const { isCountedBsiStatementRow } = require('./bsiCountedPayees');
 
 const ISSUING_AGENCY = 'The Health Experts Insurance';
 const WRITING_AGENCY = 'THE HEALTH EXPERTS INSURANCE';
@@ -67,6 +68,7 @@ function normalizeCarrier(carrier) {
 function selectLinaAgentRows(rows, period) {
   return (rows || []).filter((r) => {
     if (!isAlbaHernandez(r.agent_name)) return false;
+    if (!isCountedBsiStatementRow(r)) return false;
     if (!isAlbaAgentCommission(r.classification) && !isAlbaHra(r.classification)) return false;
     const amt = num(r.producer_payable);
     if (amt === 0) return false;
@@ -95,6 +97,10 @@ function buildLinaCompensationStatement(rows, opts = {}) {
 
   const lines = selected.map((r) => {
     const amount = round2(num(r.producer_payable));
+    const albaPolicy = /alba's policy/i.test(String(r.mga || r.statementNote || ''));
+    const classification = albaPolicy && amount < 0
+      ? "Chargeback — Alba's policy"
+      : (r.classification || '');
     return {
       id: r.id,
       agency: WRITING_AGENCY,
@@ -103,7 +109,7 @@ function buildLinaCompensationStatement(rows, opts = {}) {
       clientName: r.client_full_name || '',
       effectiveDate: r.effective_date || '',
       commission: amount,
-      classification: r.classification || '',
+      classification,
       paymentPeriod: r.payment_period || '',
     };
   });

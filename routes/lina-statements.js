@@ -12,7 +12,7 @@ const {
 
 const SELECT_COLS = `
   id, agent_name, client_full_name, policy_number, carrier, effective_date,
-  payment_period, classification, producer_payable, commission, source
+  payment_period, classification, producer_payable, commission, source, mga
 `;
 
 async function fetchLinaRows(pool, period) {

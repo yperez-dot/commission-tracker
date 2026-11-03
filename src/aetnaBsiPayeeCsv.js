@@ -17,6 +17,8 @@
  *   CMS Trueup reversal / Involuntarily Rapid Disenroll / any negative → Chargeback
  */
 
+const { isCountedBsiPayee } = require('./bsiCountedPayees');
+
 function round2(n) {
   return Math.round((Number(n) || 0) * 100) / 100;
 }
@@ -135,6 +137,9 @@ function parseAetnaBsiPayeeRows(rawRows, opts = {}) {
     const isPdp = product.includes('pdp') || /^s\d/i.test(planId);
     const planType = `${isPdp ? 'Aetna PDP' : 'Aetna MAPD'}${planId ? ` ${planId}` : ''}`;
 
+    const statementPayee = String(row['Payee Name'] || row['Agent Name'] || '').trim();
+    if (statementPayee && !isCountedBsiPayee(statementPayee)) continue;
+
     const writingAgent = String(row['Writing Agent Name'] || '').trim();
     const agent = writingAgent
       ? writingAgent.replace(/^([^,]+),\s*(.+)$/, '$2 $1').replace(/\s+/g, ' ').trim()
@@ -160,6 +165,7 @@ function parseAetnaBsiPayeeRows(rawRows, opts = {}) {
       period,
       policyNumber: String(row['Member ID'] || '').trim(),
       payee: 'BSI',
+      statementPayee: statementPayee || 'Broker Society Insurance',
       mga: isCmsTrueup(salesEvent) && classification === 'New Business'
         ? 'Aetna: CMS Trueup (new-sale override after Medicare confirmation)'
         : salesEvent && classification !== 'New Business' && classification !== 'Renewal' ? `Aetna: ${salesEvent}` : '',
