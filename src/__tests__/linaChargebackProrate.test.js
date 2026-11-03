@@ -6,6 +6,8 @@ const {
   linaProportionalChargeback,
   addLinaOriginal,
   linaPolicyKey,
+  isLinaOriginal,
+  isOrphanCommissionRow,
 } = require('../linaChargebackProrate');
 const { planBsiHouseSplitBackfill } = require('../bsiHouseSplitBackfill');
 
@@ -45,6 +47,64 @@ describe('linaProportionalChargeback', () => {
     expect(m.get('uhc|z-1')).toEqual({ gross: 120, producer: 88, thei: 16, bsi: 16 });
     expect(m.get('aetna|z-1').gross).toBe(100);
     expect(linaPolicyKey({ carrier: 'UnitedHealthcare', policy_number: ' Z-1 ' })).toBe('uhc|z-1');
+  });
+
+  it('counts unsplit house-named UHC book lines as full Lina originals; skips house-only and orphans', () => {
+    const m = new Map();
+    addLinaOriginal(m, {
+      agent: 'Broker Society Insurance',
+      carrier: 'UnitedHealthcare',
+      policyNumber: 'Z-HOUSE',
+      classification: 'New Business',
+      commission: 211,
+    });
+    addLinaOriginal(m, {
+      agent: 'Broker Society Insurance',
+      carrier: 'UnitedHealthcare',
+      policyNumber: 'Z-HOUSE',
+      classification: 'New Business',
+      commission: 150,
+      producerPayable: 0,
+      theiShare: 75,
+      bsiShare: 75,
+    });
+    addLinaOriginal(m, {
+      agent: ALBA_DB_AGENT,
+      carrier: 'UnitedHealthcare',
+      policyNumber: 'Z-HOUSE',
+      classification: 'New Business',
+      commission: 89.5,
+      producerPayable: -15.5,
+      theiShare: 52.5,
+      bsiShare: 52.5,
+      upload_id: 99,
+      upload_missing: true,
+    });
+    expect(m.get('uhc|z-house')).toEqual({ gross: 211, producer: 211, thei: 0, bsi: 0 });
+    expect(isLinaOriginal({
+      agent: 'Broker Society Insurance',
+      carrier: 'UnitedHealthcare',
+      classification: 'New Business',
+      commission: 211,
+    })).toBe(true);
+    expect(isOrphanCommissionRow({ upload_id: 99, upload_missing: true })).toBe(true);
+  });
+
+  it('unsplit June installment plus migrated May yields a full Lina take-back on -844', () => {
+    const m = new Map();
+    addLinaOriginal(m, {
+      agent: ALBA_DB_AGENT, carrier: 'UnitedHealthcare', policyNumber: 'SYN-844',
+      classification: 'New Business', commission: 294.59,
+      producerPayable: 144.59, theiShare: 75, bsiShare: 75,
+    });
+    addLinaOriginal(m, {
+      agent: ALBA_DB_AGENT, carrier: 'UnitedHealthcare', policyNumber: 'SYN-844',
+      classification: 'New Business', commission: 549.41,
+      producerPayable: 0, theiShare: 0, bsiShare: 0,
+    });
+    expect(m.get('uhc|syn-844')).toEqual({ gross: 844, producer: 694, thei: 75, bsi: 75 });
+    expect(linaProportionalChargeback(-844, m.get('uhc|syn-844')))
+      .toMatchObject({ producerPayable: -694, theiShare: -75, bsiShare: -75 });
   });
 });
 

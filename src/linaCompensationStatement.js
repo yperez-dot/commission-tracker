@@ -14,7 +14,7 @@ const { periodToMmYyyy } = require('./periodFormat');
  */
 
 const ExcelJS = require('exceljs');
-const { writeAdjustmentsSection, writeBottomLine, statementNet } = require('./payrollStatementExtras');
+const { writeAdjustmentsSection, writeBottomLine, writeCarryDetailSection, statementNet } = require('./payrollStatementExtras');
 const { MONEY_FMT, writeMoneyCell, writeLabeledMoney } = require('./statementExcelTotals');
 const { bottomLine } = require('./payrollLock');
 const {
@@ -97,10 +97,8 @@ function buildLinaCompensationStatement(rows, opts = {}) {
 
   const lines = selected.map((r) => {
     const amount = round2(num(r.producer_payable));
-    const albaPolicy = /alba's policy/i.test(String(r.mga || r.statementNote || ''));
-    const classification = albaPolicy && amount < 0
-      ? "Chargeback — Alba's policy"
-      : (r.classification || '');
+    // Agent-facing Type is the stored class only — "Alba's policy" stays on internal mga.
+    const classification = r.classification || '';
     return {
       id: r.id,
       agency: WRITING_AGENCY,
@@ -241,6 +239,8 @@ async function buildLinaCompensationWorkbook(statement) {
   if (statement.adjustments && statement.adjustments.length) {
     rowIdx = writeAdjustmentsSection(ws, rowIdx + 2, statement, 'F') - 1;
   }
+
+  rowIdx = writeCarryDetailSection(ws, rowIdx + 2, statement, { amountCol: 7 }) - 1;
 
   // Bottom line, always: "Amount payable to agent" or "Balance due from agent".
   rowIdx = writeBottomLine(ws, rowIdx + 2, statement, 'F') - 1;

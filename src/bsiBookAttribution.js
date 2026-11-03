@@ -327,7 +327,10 @@ function peelAlbaProduction(record, commission, opts = {}) {
     !renewalProration &&
     salesEventUpper !== 'CMS TRUEUP'
   ) {
-    const already = split.yearType === 'Initial' && prior
+    // A leftover peel with Lina < 0 (first-upload Rojas-type before the cap) is not
+    // house override already taken — ignore it so this line is not under-peeled.
+    const priorProducer = prior ? (Number(prior.producer) || 0) : 0;
+    const already = split.yearType === 'Initial' && prior && priorProducer >= -0.005
       ? round2((Number(prior.thei) || 0) + (Number(prior.bsi) || 0))
       : 0;
     const remaining = Math.max(0, round2((split.totalOverride || 0) - already));

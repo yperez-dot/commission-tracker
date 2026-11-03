@@ -30,7 +30,7 @@ const {
 const { compareStatementTotals } = require('../src/payeeStatementCompare');
 const { totalsByPeriodFromLines, DEFAULT_CARRY_START } = require('../src/payeeCarryForward');
 const { computeCarryWithLocks } = require('../src/payrollLock');
-const { attachAdjustments, statementNet } = require('../src/payrollStatementExtras');
+const { attachAdjustments, attachCarryDetail, statementNet } = require('../src/payrollStatementExtras');
 const { bottomLine } = require('../src/payrollLock');
 const store = require('./payrollCloseStore');
 const { logChange } = require('./change-log');
@@ -139,10 +139,19 @@ async function buildFor(pool, payeeKey, period, ak = 'thei') {
   const adjustments = monthly
     ? await store.loadAdjustments(pool, ak, store.STATEMENT_PAYEE_NAMES[payeeKey], period)
     : [];
+  const historyRows = (carry && carry.carryIn < -0.005)
+    ? await fetchRows(pool, payeeKey, 'all')
+    : [];
+  const historyLines = historyRows.length
+    ? (payeeKey === 'lina'
+      ? buildLinaCompensationStatement(historyRows, { period: 'all' }).lines
+      : buildIntegrityStatement(historyRows, payeeKey, { period: 'all' }).lines)
+    : [];
   if (payeeKey === 'lina') {
     const statement = buildLinaCompensationStatement(rows, { period });
     attachAdjustments(statement, adjustments);
     statement.carry = carry;
+    attachCarryDetail(statement, historyLines, period, carry);
     statement.bottomLine = bottomLine(statementNet(statement));
     const wb = await buildLinaCompensationWorkbook(statement);
     return {
@@ -154,6 +163,7 @@ async function buildFor(pool, payeeKey, period, ak = 'thei') {
   const statement = buildIntegrityStatement(rows, payeeKey, { period });
   attachAdjustments(statement, adjustments);
   statement.carry = carry;
+  attachCarryDetail(statement, historyLines, period, carry);
   statement.bottomLine = bottomLine(statementNet(statement));
   const wb = await buildIntegrityWorkbook(statement);
   return {

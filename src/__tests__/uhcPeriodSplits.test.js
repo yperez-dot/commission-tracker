@@ -35,6 +35,7 @@ const {
 const { buildLinaCompensationStatement } = require('../linaCompensationStatement');
 const { buildIntegrityStatement } = require('../integrityStatement');
 const { parseAmlPortalRows, parsePeriod } = require('../bsiAmlPortalCsv');
+const { planLinaRemainingOverrideCorrection } = require('../linaRemainingOverrideCorrection');
 
 const uhcBase = {
   carrier: 'UnitedHealthcare',
@@ -170,6 +171,58 @@ describe('3. Rojas-type: positive BSI-written UHC new sale never gives Lina a ne
     expect(peel.producerPayable).toBeGreaterThanOrEqual(0);
     expect(peel.totalOverride).toBeCloseTo(89.5, 2);
   });
+
+  it('ignores a leftover prior peel with Lina < 0 so a new CA Initial is not under-peeled', () => {
+    const leftover = new Map([['uhc|syn-rojas', {
+      gross: 89.5, producer: -15.5, thei: 52.5, bsi: 52.5,
+    }]]);
+    const records = [{
+      ...uhcBase,
+      agent: 'Broker Society Insurance',
+      classification: 'New Business',
+      policyNumber: 'SYN-ROJAS',
+      commission: 89.5,
+      memberState: 'CA',
+      effectiveDate: '11/01/2026',
+      statementDate: '10/06/2026',
+      raw: {
+        'Commission Action': 'New',
+        'Comp Type': 'R',
+        'Member State': 'CA',
+        'Original Effective Date': '11/01/2026',
+        'Statement Date': '10/06/2026',
+        'Writing Agent NPN': BSI_WRITING_NPN,
+      },
+    }];
+    applyBsiBookAgentProduction(records, { linaOriginalSales: leftover });
+    expect(records[0].producerPayable).toBe(0);
+    expect(records[0].theiShare + records[0].bsiShare).toBeCloseTo(89.5, 2);
+  });
+
+  it('re-peels a stored leftover +19.50 CA Initial back to Lina 0', () => {
+    const { updates } = planLinaRemainingOverrideCorrection([{
+      id: 21,
+      agent_name: ALBA_DB_AGENT,
+      carrier: 'UnitedHealthcare',
+      classification: 'New Business',
+      policy_number: 'SYN-ROJAS',
+      payment_period: '202610',
+      commission: 89.5,
+      producer_payable: 19.5,
+      thei_share: 35,
+      bsi_share: 35,
+      effective_date: '11/01/2026',
+      raw_data: {
+        'Commission Action': 'New',
+        'Comp Type': 'R',
+        'Member State': 'CA',
+        'Original Effective Date': '11/01/2026',
+        'Statement Date': '10/06/2026',
+      },
+    }], new Map());
+    expect(updates).toHaveLength(1);
+    expect(updates[0].after).toEqual({ producer: 0, thei: 44.75, bsi: 44.75 });
+  });
 });
 
 describe('4. UHC split New + Comp Type R is one first-year sale, not a renewal', () => {
@@ -277,6 +330,33 @@ describe('4. UHC split New + Comp Type R is one first-year sale, not a renewal',
 
     expect(TARGET_POLICY).toMatch(/^\d+$/);
     expect(PARTS).toHaveLength(2);
+  });
+
+  it('rewrites the June installment even when its stored split is not the exact historical from', () => {
+    const rows = [
+      {
+        id: 11,
+        policyNumber: 'SYN-SPLIT-FIX',
+        payment_period: '202605',
+        commission: 294.59,
+        producer_payable: 144.59,
+        thei_share: 75,
+        bsi_share: 75,
+      },
+      {
+        id: 12,
+        policyNumber: 'SYN-SPLIT-FIX',
+        payment_period: '202606',
+        commission: 549.41,
+        producer_payable: 0,
+        thei_share: 0,
+        bsi_share: 0,
+      },
+    ];
+    const planned = planUhcSplitSaleCorrection(rows, { policyNumber: 'SYN-SPLIT-FIX' });
+    expect(planned.updates).toHaveLength(1);
+    expect(planned.updates[0].id).toBe(12);
+    expect(planned.updates[0].after).toEqual({ producer: 549.41, thei: 0, bsi: 0 });
   });
 });
 

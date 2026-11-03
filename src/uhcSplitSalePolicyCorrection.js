@@ -56,13 +56,19 @@ function planUhcSplitSaleCorrection(rows, opts = {}) {
       if (String(row.payment_period || row.period || '') !== spec.period) continue;
       if (!close(row.commission, spec.commission)) continue;
       if (matchSplit(row, spec.to)) continue;
-      if (!matchSplit(row, spec.from)) continue;
+      // Apply `to` whenever this policy+period+commission row is not already there.
+      // Requiring the exact historical `from` split skipped the June installment in
+      // production (found=2 planned=1) when that row was unsplit or house-split.
       updates.push({
         id: row.id,
         policy,
         period: spec.period,
         commission: spec.commission,
-        before: spec.from,
+        before: {
+          producer: numField(row, 'producerPayable', 'producer_payable'),
+          thei: numField(row, 'theiShare', 'thei_share'),
+          bsi: numField(row, 'bsiShare', 'bsi_share'),
+        },
         after: spec.to,
         kind: 'uhc_split_sale_part',
         mga: spec.note,

@@ -15,6 +15,7 @@
 
 const { clientNameKey } = require('./clientNameKey');
 const { isCountedBsiStatementRow } = require('./bsiCountedPayees');
+const { isOrphanCommissionRow } = require('./linaChargebackProrate');
 
 const round2 = (n) => Math.round(Number(n) * 100) / 100;
 const num = (v) => (v == null || v === '' ? 0 : Number(v) || 0);
@@ -87,6 +88,7 @@ function addTo(map, key, amt) {
 function buildTotals(rows) {
   const t = { paidP: new Map(), paidN: new Map(), cbP: new Map(), cbN: new Map() };
   for (const row of rows || []) {
+    if (isOrphanCommissionRow(row)) continue;
     if (!isCountedBsiStatementRow(row)) continue;
     const f = fields(row);
     if (isExcludedLine(f.classification) || Math.abs(f.amount) < 0.005) continue;

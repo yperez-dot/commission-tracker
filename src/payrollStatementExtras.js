@@ -95,6 +95,101 @@ function writeAdjustmentsSection(ws, startRow, statement, amountCol) {
  * Net for the statement's bottom line: carry-forward net when known (monthly statements),
  * else the balance after adjustments.
  */
+/**
+ * Prior-month negative lines that still make up carryIn. Oldest first; the last
+ * line is trimmed so the subtotal always equals the carried amount.
+ */
+function buildCarryDetailLines(lines, period, carryIn, startPeriod) {
+  var target = round2(carryIn);
+  if (!(target < -0.005) || !/^\d{6}$/.test(String(period || ''))) return [];
+  var start = String(startPeriod || '202609');
+  var prior = (lines || []).filter(function (l) {
+    var p = String(l.paymentPeriod || l.payment_period || '');
+    var amt = Number(l.commission != null ? l.commission : l.amount) || 0;
+    return /^\d{6}$/.test(p) && p >= start && p < String(period) && amt < -0.005;
+  }).sort(function (a, b) {
+    var pa = String(a.paymentPeriod || a.payment_period || '');
+    var pb = String(b.paymentPeriod || b.payment_period || '');
+    if (pa !== pb) return pa < pb ? -1 : 1;
+    return (Number(a.id) || 0) - (Number(b.id) || 0);
+  });
+  var need = round2(-target);
+  var out = [];
+  prior.forEach(function (l) {
+    if (need < 0.005) return;
+    var amt = Number(l.commission != null ? l.commission : l.amount) || 0;
+    var take = Math.min(need, -amt);
+    var p = String(l.paymentPeriod || l.payment_period || '');
+    out.push({
+      id: l.id,
+      agent: l.agent || l.agency || '',
+      company: l.company || l.carrier || '',
+      policyNumber: l.policyNumber || l.policy_number || '',
+      clientName: l.clientName || l.client_full_name || '',
+      effectiveDate: l.effectiveDate || l.effective_date || '',
+      period: periodToMmYyyy(p) || p,
+      paymentPeriod: p,
+      amount: round2(-take),
+    });
+    need = round2(need - take);
+  });
+  return out;
+}
+
+function attachCarryDetail(statement, allLines, period, carry) {
+  if (!statement) return statement;
+  var carryIn = carry && carry.carryIn != null ? carry.carryIn : (statement.carry && statement.carry.carryIn);
+  var start = (carry && carry.startPeriod) || (statement.carry && statement.carry.startPeriod);
+  statement.carryDetail = buildCarryDetailLines(allLines || statement.lines, period || statement.period, carryIn, start);
+  return statement;
+}
+
+/**
+ * "Carried balance detail" table. Returns the next free row (same as writeBottomLine).
+ */
+function writeCarryDetailSection(ws, startRow, statement, opts) {
+  var lines = (statement && statement.carryDetail) || [];
+  if (!lines.length) return startRow;
+  var amountCol = (opts && opts.amountCol) || 7;
+  var r = startRow;
+  var head = {
+    font: { bold: true, size: 11, color: { argb: 'FF334155' } },
+    fill: { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF1F5F9' } },
+    border: { bottom: { style: 'thin', color: { argb: 'FFCBD5E1' } } },
+  };
+  ws.getCell('A' + r).value = 'Carried balance detail';
+  ws.getCell('A' + r).font = { bold: true, size: 12 };
+  r += 1;
+  ['Agent', 'Company', 'Policy #', 'Client Name', 'Effective Date', 'Period', 'Amount'].forEach(function (h, i) {
+    var cell = ws.getRow(r).getCell(i + 1);
+    cell.value = h;
+    cell.style = head;
+  });
+  r += 1;
+  var total = 0;
+  lines.forEach(function (l) {
+    var row = ws.getRow(r);
+    row.getCell(1).value = l.agent;
+    row.getCell(2).value = l.company;
+    row.getCell(3).value = l.policyNumber;
+    row.getCell(4).value = l.clientName;
+    row.getCell(5).value = l.effectiveDate;
+    row.getCell(6).value = l.period;
+    row.getCell(amountCol).value = l.amount;
+    row.getCell(amountCol).numFmt = MONEY;
+    if (l.amount < 0) row.getCell(amountCol).font = { color: RED };
+    total = round2(total + l.amount);
+    r += 1;
+  });
+  ws.getCell('A' + r).value = 'TOTAL';
+  ws.getCell('A' + r).font = { bold: true };
+  var totalCell = ws.getRow(r).getCell(amountCol);
+  totalCell.value = total;
+  totalCell.numFmt = MONEY;
+  totalCell.font = total < 0 ? { bold: true, color: RED } : { bold: true };
+  return r + 1;
+}
+
 function statementNet(statement) {
   if (statement.carry && statement.carry.net != null) return round2(statement.carry.net);
   if (statement.balanceAfterAdjustments != null) return round2(statement.balanceAfterAdjustments);
@@ -141,7 +236,10 @@ function writeBottomLine(ws, startRow, statement, amountCol) {
 
 module.exports = {
   attachAdjustments: attachAdjustments,
+  attachCarryDetail: attachCarryDetail,
+  buildCarryDetailLines: buildCarryDetailLines,
   writeAdjustmentsSection: writeAdjustmentsSection,
+  writeCarryDetailSection: writeCarryDetailSection,
   writeBottomLine: writeBottomLine,
   statementNet: statementNet,
   categoryLabel: categoryLabel,
