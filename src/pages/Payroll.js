@@ -14,6 +14,7 @@ import {
   usePayrollMeta, PayModal, SentToCommissionsModal, ReasonModal, AdjustmentsPanel, PaymentRecords, MonthClosePanel, ChangeLogPanel,
 } from '../components/PayrollClose';
 import { sentToCommissionsBadge, houseLockName, lockPeriod } from '../statementPayeeGroups';
+import { holdPayeeKeyForType, normalizePayeeKey } from '../paymentHold';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -554,6 +555,7 @@ function PayoutRow({ p, isPaid, paidDate, paidAmount, carry, lock, adjTotal, amo
 
 function OverridePayeeRow({ s, onExport, exportLabel = 'Statement', sentBadge, lock, meta, onMarkSent, onUnlock }) {
   const [expanded, setExpanded] = useState(false);
+  const held = s.hold && s.hold.heldLineCount ? s.hold : null;
   return (
     <div style={{ borderBottom: '0.5px solid var(--border)' }}>
       <div style={{ padding: '12px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
@@ -561,6 +563,11 @@ function OverridePayeeRow({ s, onExport, exportLabel = 'Statement', sentBadge, l
           <div style={{ fontWeight: 500, fontSize: 13 }}>{s.payee}</div>
           <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
             {s.lineCount} line{s.lineCount !== 1 ? 's' : ''}
+            {held && (
+              <span data-testid="house-held-badge" style={{ marginLeft: 8, fontWeight: 700, color: '#92400E' }}>
+                Held {fmt(held.heldTotal)}
+              </span>
+            )}
             {sentBadge && <span style={{ color: 'var(--green)', fontWeight: 600 }}> · {sentBadge}</span>}
             {lock && !sentBadge && <span style={{ fontWeight: 600 }}> · 🔒 Locked</span>}
           </div>
@@ -569,6 +576,9 @@ function OverridePayeeRow({ s, onExport, exportLabel = 'Statement', sentBadge, l
           <div style={{ textAlign: 'right' }}>
             <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-muted)' }}>Total Payable</div>
             <span style={{ fontWeight: 600, color: s.total < 0 ? 'var(--red)' : 'var(--green)' }}>{fmt(s.total)}</span>
+            {held && (
+              <div style={{ fontSize: 10, color: '#92400E', fontWeight: 600 }}>Held {fmt(held.heldTotal)}</div>
+            )}
           </div>
           <button className="btn" onClick={() => setExpanded((e) => !e)} style={{ fontSize: 11, padding: '4px 10px' }}>
             {expanded ? 'Hide' : 'Details'}
@@ -642,10 +652,142 @@ function OverridePayeeRow({ s, onExport, exportLabel = 'Statement', sentBadge, l
                   fontSize: 12,
                 }}>{fmt(s.total)}</td>
               </tr>
+              {held && (
+                <tr>
+                  <td colSpan={6} style={{ padding: '7px 8px', fontStyle: 'italic', fontSize: 11, color: '#92400E' }}>
+                    held (not included above)
+                  </td>
+                  <td style={{ padding: '7px 8px', textAlign: 'right', fontStyle: 'italic', fontSize: 11, color: '#92400E' }}>
+                    {fmt(held.heldTotal)}
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
       )}
+    </div>
+  );
+}
+
+function holdLabel(key) {
+  if (key === 'thei') return 'THEI';
+  if (key === 'bsi') return 'BSI';
+  return String(key || '').toUpperCase();
+}
+
+function HouseHoldBanner() {
+  const [holds, setHolds] = useState([]);
+  useEffect(() => {
+    apiFetch('/payment-holds?active=1')
+      .then((d) => setHolds(d.holds || []))
+      .catch(() => setHolds([]));
+  }, []);
+  const active = (holds || []).filter((h) => h && !h.releasedAt);
+  if (!active.length) return null;
+  return (
+    <div
+      data-testid="payroll-hold-banner"
+      className="card"
+      style={{ marginBottom: 14, fontSize: 12, background: '#FEF3C7', borderColor: '#F6D38B' }}
+    >
+      {active.map((h) => (
+        <div key={h.id || h.payeeKey} style={{ fontWeight: 600, color: '#92400E' }}>
+          {holdLabel(normalizePayeeKey(h.payeeKey))} hold
+          {h.effectiveOnOrAfter ? ` from ${h.effectiveOnOrAfter}` : ''}
+          {' — held amounts show on Statements'}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function PaymentHoldControls({ payeeKey, hold, onChanged, canEdit }) {
+  const [effective, setEffective] = useState((hold && hold.effectiveOnOrAfter) || '2027-01-01');
+  const [note, setNote] = useState((hold && hold.note) || '');
+  const [busy, setBusy] = useState('');
+  const [err, setErr] = useState('');
+  useEffect(() => {
+    setEffective((hold && hold.effectiveOnOrAfter) || '2027-01-01');
+    setNote((hold && hold.note) || '');
+  }, [hold && hold.id, hold && hold.effectiveOnOrAfter, hold && hold.note]);
+
+  async function setHold() {
+    setBusy('set');
+    setErr('');
+    try {
+      await apiFetch('/payment-holds', {
+        method: 'POST',
+        body: JSON.stringify({ payeeKey, effectiveOnOrAfter: effective, note }),
+      });
+      if (onChanged) await onChanged();
+    } catch (e) {
+      setErr(e.message || 'Failed to set hold');
+    } finally {
+      setBusy('');
+    }
+  }
+
+  async function release() {
+    if (!hold || !hold.id) return;
+    setBusy('release');
+    setErr('');
+    try {
+      await apiFetch(`/payment-holds/${hold.id}/release`, { method: 'POST' });
+      if (onChanged) await onChanged();
+    } catch (e) {
+      setErr(e.message || 'Failed to release hold');
+    } finally {
+      setBusy('');
+    }
+  }
+
+  if (!payeeKey) return null;
+  return (
+    <div data-testid={`payment-hold-controls-${payeeKey}`} style={{ marginTop: 12, paddingTop: 10, borderTop: '0.5px solid var(--border)' }}>
+      <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
+        {holdLabel(payeeKey)} payment hold
+        {hold && (
+          <span style={{ marginLeft: 8, color: '#92400E' }}>
+            Active from {hold.effectiveOnOrAfter}
+          </span>
+        )}
+      </div>
+      {canEdit ? (
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+          <input
+            type="date"
+            aria-label={`${holdLabel(payeeKey)} hold effective on or after`}
+            value={effective}
+            onChange={(e) => setEffective(e.target.value)}
+            disabled={!!hold}
+            style={{ fontSize: 12, padding: '4px 8px' }}
+          />
+          <input
+            type="text"
+            aria-label={`${holdLabel(payeeKey)} hold note`}
+            placeholder="Note (optional)"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            disabled={!!hold}
+            style={{ fontSize: 12, padding: '4px 8px', minWidth: 220, flex: 1 }}
+          />
+          {hold ? (
+            <button className="btn" style={{ fontSize: 11, padding: '4px 10px' }} disabled={busy === 'release'} onClick={release}>
+              {busy === 'release' ? 'Releasing…' : 'Release hold'}
+            </button>
+          ) : (
+            <button className="btn" style={{ fontSize: 11, padding: '4px 10px' }} disabled={busy === 'set' || !effective} onClick={setHold}>
+              {busy === 'set' ? 'Saving…' : 'Set hold'}
+            </button>
+          )}
+        </div>
+      ) : (
+        <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+          {hold ? `Policies effective ${hold.effectiveOnOrAfter} or later are held.` : 'No active hold.'}
+        </div>
+      )}
+      {err && <div style={{ marginTop: 6, color: 'var(--red)', fontSize: 12 }}>{err}</div>}
     </div>
   );
 }
@@ -660,16 +802,28 @@ function HouseOverridesPanel({ month, paidStatus, paidDates, locks, meta, onMark
   const [ovError, setOvError] = useState('');
   const [autoLoaded, setAutoLoaded] = useState(false);
   const [showSourceUploads, setShowSourceUploads] = useState(false);
+  const [holds, setHolds] = useState([]);
+
+  async function refreshHolds() {
+    try {
+      const data = await apiFetch('/payment-holds?active=1');
+      setHolds(data.holds || []);
+    } catch (e) {
+      console.warn('[payment-holds]', e.message);
+    }
+  }
 
   useEffect(() => {
     Promise.all([
       apiFetch('/override-statements/types'),
       apiFetch('/override-statements/periods'),
+      apiFetch('/payment-holds?active=1').catch(() => ({ holds: [] })),
     ])
-      .then(([typesData, periodsData]) => {
+      .then(([typesData, periodsData, holdsData]) => {
         setOvTypes(typesData.types || []);
         const periods = periodsData.periods || [];
         setOvPeriods(periods);
+        setHolds((holdsData && holdsData.holds) || []);
         // On the Statements page the page-level month drives the period.
         if (!month && periods[0]?.period) setOvPeriod(periods[0].period);
       })
@@ -857,6 +1011,18 @@ function HouseOverridesPanel({ month, paidStatus, paidDates, locks, meta, onMark
         </div>
         {ovError && (
           <div style={{ marginTop: 10, color: 'var(--red)', fontSize: 12 }}>{ovError}</div>
+        )}
+        {holdPayeeKeyForType(ovType) && (
+          <PaymentHoldControls
+            payeeKey={holdPayeeKeyForType(ovType)}
+            hold={holds.find((h) => normalizePayeeKey(h.payeeKey) === holdPayeeKeyForType(ovType)) || null}
+            canEdit={!!(meta && meta.isStaff)}
+            onChanged={async () => {
+              await refreshHolds();
+              setAutoLoaded(false);
+              await loadPreview();
+            }}
+          />
         )}
       </div>
 
@@ -1514,6 +1680,7 @@ export default function Payroll({ user, initialTab = 'payroll', onNavigate, init
 
         {tab === 'payroll' && (
           <div>
+            <HouseHoldBanner />
             <div className="card" style={{ marginBottom: 14 }}>
               <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12, lineHeight: 1.45 }}>
                 Agent production only — ACA producer pay (100% pass-through) and{' '}
