@@ -176,12 +176,33 @@ async function buildOverrideExcelWorkbook(bundle, payeeStatement, opts = {}) {
   ws.getCell(`A${rowIdx}`).font = { bold: true, size: 12 };
   writeMoneyCell(ws.getCell(`H${rowIdx}`), balance, { bold: true, size: 12 });
 
+  const hold = payeeStatement.hold;
+  if (hold && hold.heldLineCount) {
+    rowIdx += 2;
+    ws.mergeCells(`A${rowIdx}:H${rowIdx}`);
+    const noteCell = ws.getCell(`A${rowIdx}`);
+    noteCell.value = hold.note;
+    noteCell.alignment = { wrapText: true, vertical: 'top' };
+    noteCell.font = { size: 10, color: { argb: 'FF713F12' } };
+    noteCell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFEF3C7' } };
+    ws.getRow(rowIdx).height = 42;
+
+    rowIdx += 1;
+    ws.getCell(`A${rowIdx}`).value = 'held (not included above)';
+    ws.getCell(`A${rowIdx}`).font = { italic: true, size: 11, color: { argb: 'FF64748B' } };
+    writeMoneyCell(ws.getCell(`H${rowIdx}`), hold.heldTotal);
+    ws.getCell(`H${rowIdx}`).font = Object.assign({}, ws.getCell(`H${rowIdx}`).font || {}, {
+      italic: true,
+      color: { argb: 'FF64748B' },
+    });
+  }
+
   const sum = wb.addWorksheet('Summary');
   sum.columns = [
     { key: 'k', width: 28 },
     { key: 'v', width: 40 },
   ];
-  [
+  const summaryRows = [
     ['Statement', titleFor(bundle.type)],
     ['Payee', payeeStatement.payee],
     ['Report Date', reportDate],
@@ -192,11 +213,16 @@ async function buildOverrideExcelWorkbook(bundle, payeeStatement, opts = {}) {
     ['Gross', gross],
     ['Chargebacks / negatives', chargebacks],
     ['Balance due payee', balance],
-  ].forEach((pair, i) => {
+  ];
+  if (hold && hold.heldLineCount) {
+    summaryRows.push(['Held', hold.heldTotal]);
+    summaryRows.push(['Hold note', hold.note]);
+  }
+  summaryRows.forEach((pair, i) => {
     sum.getCell(`A${i + 1}`).value = pair[0];
     sum.getCell(`A${i + 1}`).font = { bold: true };
     sum.getCell(`B${i + 1}`).value = pair[1];
-    if (i >= 4 && i !== 6) sum.getCell(`B${i + 1}`).numFmt = MONEY_FMT;
+    if (i >= 4 && i !== 6 && pair[0] !== 'Hold note') sum.getCell(`B${i + 1}`).numFmt = MONEY_FMT;
   });
 
   return wb;

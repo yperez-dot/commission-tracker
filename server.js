@@ -63,6 +63,7 @@ app.use('/api/agency-production', require('./routes/agencyproduction'));
 app.use('/api/ghl', require('./routes/ghl'));
 app.use('/api/loa-statements', require('./routes/loa-statements'));
 app.use('/api/override-statements', require('./routes/override-statements'));
+app.use('/api/payment-holds', require('./routes/payment-holds'));
 app.use('/api/lina-statements', require('./routes/lina-statements'));
 app.use('/api/payee-statements', require('./routes/payee-statements'));
 app.use('/api/payroll-close', require('./routes/payroll-close'));
