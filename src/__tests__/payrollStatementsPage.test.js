@@ -19,9 +19,24 @@ function mockApi() {
         periodLabel: '09.2026',
         statementCount: 1,
         grandTotal: 12.5,
-        statements: [{ payee: 'House Payee', lineCount: 1, total: 12.5, lines: [] }],
+        statements: [{
+          payee: 'House Payee',
+          lineCount: 1,
+          total: 12.5,
+          heldTotal: 4,
+          hold: {
+            payeeKey: 'thei',
+            effectiveOnOrAfter: '2027-01-01',
+            heldTotal: 4,
+            heldLineCount: 2,
+            heldPolicyCount: 2,
+            note: 'Hold: 2027-effective overrides (2 line items across 2 policies, $4.00) are being held and will be paid in 12.2026 or 01.2027. They are not included in this statement.',
+          },
+          lines: [],
+        }],
       };
     }
+    if (path.startsWith('/payment-holds')) return { holds: [{ id: 1, payeeKey: 'thei', effectiveOnOrAfter: '2027-01-01', note: '' }] };
     if (path.startsWith('/payroll-close/meta')) return { isStaff: true, canUnlock: true, paymentMethods: [], adjustmentCategories: [], payers: [] };
     if (path.startsWith('/payroll-close/period')) return { locks: [], adjustments: [] };
     if (path.startsWith('/payee-statements/compare')) return { liveTotal: 0, issuedTotal: null };
@@ -80,6 +95,11 @@ test('Statements page: one month picker, agent statements first, house statement
   // type picker shows the house statement names; no help paragraphs on the page
   expect(text).toContain('THEI. BSI Statement');
   expect(text).toContain('BSI Medicare Overrides');
+  expect(text).toContain('Held $4.00');
+  expect(container.querySelector('[data-testid="house-held-badge"]')).toBeTruthy();
+  expect(container.querySelector('[data-testid="payment-hold-controls-thei"]')).toBeTruthy();
+  expect(text).toContain('THEI payment hold');
+  expect(text).toContain('Release hold');
   expect(container.querySelector('.page-sub')).toBeNull();
   expect(text).not.toMatch(/separate reports|payment cycles|freeze what you paid|Current statement.{0,5}downloads/);
 

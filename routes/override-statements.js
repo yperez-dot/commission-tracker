@@ -21,15 +21,22 @@ const { backfillDevotedCommissionGuards } = require('../src/theCarrierStatementC
 const { backfillBsiOverrideMissingShares } = require('../src/bsiOverrideShareBackfill');
 const { isUnsplitBsiLine } = require('../src/bsiBookAttribution');
 const { loadPayeeGroups } = require('./statementPayeeGroupStore');
+const { loadActiveHolds } = require('./paymentHoldStore');
 
 async function houseBuildOpts(pool, type, period) {
   let payeeGroups = [];
+  let holds = [];
   try {
     payeeGroups = await loadPayeeGroups(pool, type);
   } catch (e) {
     console.warn('[override-statements] payee groups', e.message);
   }
-  return { period, payeeGroups };
+  try {
+    holds = await loadActiveHolds(pool);
+  } catch (e) {
+    console.warn('[override-statements] payment holds', e.message);
+  }
+  return { period, payeeGroups, holds };
 }
 
 /** Override Statements tab — Lina/agent production is Agent Payouts only. */
@@ -441,6 +448,8 @@ router.get('/preview', requireAuth, async (req, res) => {
         payeeGroupKey: s.payeeGroupKey || null,
         lineCount: s.lineCount,
         total: s.total,
+        heldTotal: s.heldTotal || 0,
+        hold: s.hold || null,
         lines: (s.lines || []).map((l) => ({
           policy_number: l.policy_number,
           client_full_name: l.client_full_name,
