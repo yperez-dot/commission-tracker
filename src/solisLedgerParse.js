@@ -123,7 +123,11 @@ function parseSolisRows(wb, filename) {
     // Solis/Doctors payment type mapping
     // Use enrollment vs commission date comparison to determine New Business vs Renewal
     // Explicit Payment Type wins over the enrollment-month heuristic (src/solisClassify.js).
-    const classification = solisClassification(paymentType, commission, isNewBusiness);
+    // Prior-month negative carry → Carryover (not Chargeback) — see solisCarryover.js.
+    const classification = solisClassification(paymentType, commission, isNewBusiness, {
+      isPriorMonthNegative,
+      paymentTypeRaw,
+    });
 
     let period = '';
     if (commissionEffDate) {

@@ -19,7 +19,7 @@ function fmtK(n) {
   return '$' + num.toFixed(0);
 }
 
-const CLASSIFICATION_TYPES = ['New Business','Renewal','Agent Commission','Agency Override','Chargeback','HRA/Bonus','UHC advance recoup (UAD)'];
+const CLASSIFICATION_TYPES = ['New Business','Renewal','Agent Commission','Agency Override','Chargeback','Carryover from previous month','HRA/Bonus','UHC advance recoup (UAD)'];
 
 const C = {
   accent: '#C9A96E',

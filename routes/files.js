@@ -35,6 +35,7 @@ const {
   isDuplicateCheckable,
 } = require('../src/filesUploadLivePath');
 const { alreadyUploadedPayload } = require('../src/uploadAlreadyImported');
+const { validateUploadRename } = require('../src/uploadRename');
 const { parseSolisRows, isDoctorsFile, isSolisFile } = require('../src/solisLedgerParse');
 const {
   duplicateMatchKey,
@@ -4147,11 +4148,17 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
       );
     }
 
-    // Duplicate detection against database (policy + client + date + amount + UAD,
-    // and for UHC: policy + statement date + amount across party/payee).
+    // Duplicate detection against database (policy + client + effective date +
+    // amount + payment period + UAD; and for UHC also policy + statement date +
+    // amount across party/payee). Same amount in a different period is NOT a duplicate.
     await ensureUadActivityColumn(pool);
     const skipDuplicates = req.body.skipDuplicates === 'true';
+    const confirmImport = req.body.confirmImport === 'true';
     const ignoreDuplicates = req.body.ignoreDuplicates === 'true';
+    // First pass from the Uploads UI: parse + duplicate-check and return a preview
+    // without inserting. Import button re-posts with confirmImport / skipDuplicates.
+    // Scripts may pass confirmImport=true to import in one shot.
+    const previewOnly = !skipDuplicates && !confirmImport && !ignoreDuplicates;
 
     if (filenameTakenUploadId != null) {
       const duplicates = await findDuplicates(pool, records);
@@ -4175,6 +4182,36 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
           matchCount: duplicates.length,
           totalCount: records.length,
         }));
+      }
+      if (previewOnly) {
+        const commissionSumPreview = records.reduce((s, r) => s + (r.commission || 0), 0);
+        const uadSumPreview = records.reduce((s, r) => s + (r.uadActivity || 0), 0);
+        const carriersPreview = [...new Set(records.map(r => r.carrier).filter(Boolean))];
+        try { fs.unlinkSync(req.file.path); } catch(e) {}
+        return res.status(200).json({
+          needsConfirm: true,
+          duplicateWarning: duplicates.length > 0,
+          sourceType: 'statement',
+          duplicateCount: duplicates.length,
+          totalCount: records.length,
+          duplicates: duplicates.slice(0, 23),
+          previewRecords: records.slice(0, 500).map((r) => ({
+            agent: r.agent,
+            carrier: r.carrier,
+            client: r.client,
+            effectiveDate: r.effectiveDate,
+            commission: r.commission,
+            uadActivity: r.uadActivity || 0,
+            classification: r.classification,
+            period: r.period,
+            policyNumber: r.policyNumber,
+          })),
+          filename: storedOriginalName,
+          commissionSum: commissionSumPreview,
+          uadSum: uadSumPreview,
+          carriers: carriersPreview,
+          internalDuplicatesRemoved: internalDuplicatesRemoved || 0,
+        });
       }
       if (duplicates.length > 0 && !skipDuplicates) {
         try { fs.unlinkSync(req.file.path); } catch(e) {}
@@ -4471,6 +4508,55 @@ router.post('/bsi-statement-titles/apply', requireAuth, requireAdmin, async (req
  * Non-empty title → stored as a manual title. Empty title → reset to the
  * standardized auto title.
  */
+
+/**
+ * PATCH /api/files/uploads/:id/name — admin (same auth as delete).
+ * Body { name }. Renames only uploads.original_name (the Uploads list label).
+ * Does not touch commission_records, amounts, or periods. Blocked when another
+ * upload already uses that exact original_name (keeps the "already uploaded by
+ * name" duplicate check accurate).
+ */
+router.patch('/uploads/:id/name', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const pool = getPool();
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: 'Invalid upload id' });
+    const raw = req.body && (req.body.name != null ? req.body.name : req.body.original_name);
+    const up = await pool.query(
+      `SELECT id, original_name, carrier, category FROM uploads WHERE id = $1`,
+      [id]
+    );
+    if (!up.rows.length) return res.status(404).json({ error: 'Upload not found' });
+    const u = up.rows[0];
+    const clash = await pool.query(
+      `SELECT id, original_name FROM uploads WHERE original_name = $1 AND id <> $2 LIMIT 1`,
+      [String(raw == null ? '' : raw).trim(), id]
+    );
+    const validated = validateUploadRename(raw, {
+      currentName: u.original_name,
+      existingNames: clash.rows.map((r) => r.original_name),
+    });
+    if (!validated.ok) {
+      const status = validated.conflict ? 409 : 400;
+      return res.status(status).json({
+        error: validated.error,
+        existingUploadId: clash.rows[0] ? clash.rows[0].id : undefined,
+      });
+    }
+    const name = validated.name;
+    if (validated.unchanged) {
+      return res.json({ success: true, id, original_name: name, unchanged: true });
+    }
+    await pool.query(`UPDATE uploads SET original_name = $1 WHERE id = $2`, [name, id]);
+    await logChange(pool, req, {
+      type: 'upload.renamed', entityType: 'upload', entityId: id,
+      summary: `Renamed upload file "${u.original_name}" → "${name}"`,
+      details: { from: u.original_name, to: name, carrier: u.carrier, category: u.category },
+    });
+    res.json({ success: true, id, original_name: name, previous_name: u.original_name });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 router.patch('/uploads/:id/title', requireAuth, requireAdmin, async (req, res) => {
   try {
     const pool = getPool();

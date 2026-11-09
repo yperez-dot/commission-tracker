@@ -33,6 +33,7 @@ export default function Upload({ user, onNavigate }) {
   const [error, setError] = useState('');
   const [dragOver, setDragOver] = useState(false);
   const [deletingId, setDeletingId] = useState(null);
+  const [renamingId, setRenamingId] = useState(null);
   const [viewUpload, setViewUpload] = useState(null);
   const [selectedUploads, setSelectedUploads] = useState(new Set());
   const [bulkDeleting, setBulkDeleting] = useState(false);
@@ -73,7 +74,7 @@ export default function Upload({ user, onNavigate }) {
     handleFile(file);
   }
 
-  async function handleFile(file, skipDuplicates = false, selectedDupes = []) {
+  async function handleFile(file, skipDuplicates = false, selectedDupes = [], confirmImport = false) {
     if (!file) return;
     setUploading(true);
     setError('');
@@ -87,16 +88,25 @@ export default function Upload({ user, onNavigate }) {
           fd.append('selectedDuplicates', JSON.stringify(selectedDupes));
         }
       }
+      if (confirmImport) {
+        fd.append('confirmImport', 'true');
+      }
       const result = await apiUpload('/files/upload', fd);
-      
-      // Handle 409 duplicate warning
-      if (result.status === 409 && result.duplicateWarning) {
+
+      // Preview / duplicate check — nothing imported yet; user must press Import.
+      if (result.needsConfirm || (result.status === 409 && result.duplicateWarning)) {
         setDuplicateModal({
           file,
-          sourceType: result.sourceType || 'other',
-          duplicateCount: result.duplicateCount,
+          sourceType: result.sourceType || 'statement',
+          duplicateCount: result.duplicateCount || 0,
           totalCount: result.totalCount,
-          duplicates: result.duplicates || []
+          duplicates: result.duplicates || [],
+          previewRecords: result.previewRecords || [],
+          commissionSum: result.commissionSum,
+          uadSum: result.uadSum,
+          carriers: result.carriers || [],
+          filename: result.filename || file.name,
+          needsConfirm: !!result.needsConfirm,
         });
         setSelectedDuplicates(new Set());
         setUploading(false);
@@ -130,6 +140,34 @@ export default function Upload({ user, onNavigate }) {
       setUploads(prev => prev.filter(u => u.id !== id));
     } catch (e) { console.error(e); }
     finally { setDeletingId(null); }
+  }
+
+  async function renameUpload(u) {
+    if (!u?.id) return;
+    const current = u.original_name || '';
+    const next = window.prompt('Rename this upload (records and amounts stay the same):', current);
+    if (next == null) return;
+    const name = String(next).trim();
+    if (!name || name === current) return;
+    setRenamingId(u.id);
+    setError('');
+    try {
+      const result = await apiFetch(`/files/uploads/${u.id}/name`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      setUploads((prev) => prev.map((row) => (
+        row.id === u.id ? { ...row, original_name: result.original_name || name } : row
+      )));
+      if (viewUpload?.id === u.id) {
+        setViewUpload((prev) => (prev ? { ...prev, original_name: result.original_name || name } : prev));
+      }
+    } catch (e) {
+      setError(e.message || 'Rename failed');
+    } finally {
+      setRenamingId(null);
+    }
   }
 
   async function exportUpload(u) {
@@ -371,11 +409,21 @@ export default function Upload({ user, onNavigate }) {
                 borderBottom: '1px solid var(--border)',
                 background: duplicateModal.sourceType === 'statement' ? '#E3F2FD' : '#FFF9E6'
               }}>
-                {duplicateModal.sourceType === 'statement' ? (
+                {duplicateModal.needsConfirm && !(duplicateModal.duplicateCount > 0) ? (
+                  <>
+                    <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 4, color: 'var(--blue)' }}>Preview before import</div>
+                    <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5 }}>
+                      {duplicateModal.filename || 'File'} · {duplicateModal.totalCount} records · {fmt(duplicateModal.commissionSum)}
+                      {Number(duplicateModal.uadSum) ? ` · ${fmt(duplicateModal.uadSum)} UAD` : ''}
+                      {(duplicateModal.carriers || []).length ? ` · ${(duplicateModal.carriers || []).join(', ')}` : ''}
+                      . Nothing is saved until you press Import.
+                    </div>
+                  </>
+                ) : duplicateModal.sourceType === 'statement' ? (
                   <>
                     <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 4, color: 'var(--blue)' }}>ℹ️ These records already exist in OliComm</div>
                     <div style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5 }}>
-                      {duplicateModal.duplicateCount} of {duplicateModal.totalCount} records match existing entries by policy + client + date + amount. This may be a reconciliation copy — you can import anyway or cancel.
+                      {duplicateModal.duplicateCount} of {duplicateModal.totalCount} records match existing entries by policy + client + effective date + amount + payment period. Same amount in a different period is not a duplicate — you can import anyway or cancel.
                     </div>
                   </>
                 ) : (
@@ -388,14 +436,25 @@ export default function Upload({ user, onNavigate }) {
 
               {/* Summary Bar */}
               <div style={{ padding: '12px 20px', background: 'var(--bg-muted)', borderBottom: '1px solid var(--border)', fontSize: 13 }}>
-                <strong>Importing {duplicateModal.totalCount - duplicateModal.duplicateCount + selectedDuplicates.size} records</strong>
-                {' · '}
-                <span style={{ color: 'var(--text-muted)' }}>Skipping {duplicateModal.duplicateCount - selectedDuplicates.size} duplicates</span>
+                <strong>Importing {duplicateModal.totalCount - (duplicateModal.duplicateCount || 0) + selectedDuplicates.size} records</strong>
+                {(duplicateModal.duplicateCount || 0) > 0 && (
+                  <>
+                    {' · '}
+                    <span style={{ color: 'var(--text-muted)' }}>Skipping {(duplicateModal.duplicateCount || 0) - selectedDuplicates.size} duplicates</span>
+                  </>
+                )}
+                {duplicateModal.commissionSum != null && (
+                  <>
+                    {' · '}
+                    <span style={{ color: '#1D9E75' }}>{fmt(duplicateModal.commissionSum)}</span>
+                  </>
+                )}
               </div>
 
-              {/* Duplicates List */}
+              {/* Duplicates List (only when matches exist) */}
               <div style={{ flex: 1, overflowY: 'auto', maxHeight: '400px', padding: '8px 0' }}>
-                {/* Select All Header */}
+                {(duplicateModal.duplicateCount || 0) > 0 && (
+                <>
                 <div style={{ padding: '8px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10, background: 'var(--bg-muted)' }}>
                   <input
                     type="checkbox"
@@ -460,6 +519,32 @@ export default function Upload({ user, onNavigate }) {
                     </div>
                   );
                 })}
+                </>
+                )}
+                {(!(duplicateModal.duplicateCount > 0) && Array.isArray(duplicateModal.previewRecords) && duplicateModal.previewRecords.length > 0) && (
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
+                    <thead>
+                      <tr style={{ textAlign: 'left', color: 'var(--text-muted)', background: 'var(--bg-muted)' }}>
+                        <th style={{ padding: '6px 12px' }}>#</th>
+                        <th style={{ padding: '6px 12px' }}>Client</th>
+                        <th style={{ padding: '6px 12px' }}>Type</th>
+                        <th style={{ padding: '6px 12px' }}>Period</th>
+                        <th style={{ padding: '6px 12px', textAlign: 'right' }}>Commission</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {duplicateModal.previewRecords.map((r, i) => (
+                        <tr key={i} style={{ borderTop: '0.5px solid var(--border)' }}>
+                          <td style={{ padding: '6px 12px', color: 'var(--text-muted)' }}>{i + 1}</td>
+                          <td style={{ padding: '6px 12px' }}>{r.client}</td>
+                          <td style={{ padding: '6px 12px' }}>{r.classification || '—'}</td>
+                          <td style={{ padding: '6px 12px' }}>{r.period ? (periodToMmYyyy(r.period) || r.period) : '—'}</td>
+                          <td style={{ padding: '6px 12px', textAlign: 'right' }}>{fmt(r.commission)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
               </div>
 
               {/* Modal Footer */}
@@ -480,7 +565,10 @@ export default function Upload({ user, onNavigate }) {
                       const d = duplicateModal.duplicates[idx];
                       return { client: d.client, carrier: d.carrier, date: d.date };
                     });
-                    handleFile(duplicateModal.file, true, selectedDupes);
+                    const hasDups = (duplicateModal.duplicateCount || 0) > 0;
+                    // Confirm import: skipDuplicates when there were dups to honor checkbox
+                    // selections; otherwise confirmImport alone commits the preview.
+                    handleFile(duplicateModal.file, hasDups, selectedDupes, !hasDups);
                     setDuplicateModal(null);
                     setSelectedDuplicates(new Set());
                     setExpandedDuplicate(null);
@@ -573,6 +661,12 @@ export default function Upload({ user, onNavigate }) {
               >
                 {exportingId === u.id ? '...' : 'Export'}
               </button>
+              {user.role === 'admin' && (
+                <button onClick={() => renameUpload(u)} disabled={renamingId === u.id}
+                  style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 10px', fontSize: 11, cursor: 'pointer', color: 'var(--text)' }}>
+                  {renamingId === u.id ? '...' : 'Rename'}
+                </button>
+              )}
               {user.role === 'admin' && (
                 <button onClick={() => deleteUpload(u.id)} disabled={deletingId === u.id}
                   style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 10px', fontSize: 11, cursor: 'pointer', color: '#E24B4A' }}>

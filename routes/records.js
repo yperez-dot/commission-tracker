@@ -1,4 +1,5 @@
 const { periodToMmYyyy } = require('../src/periodFormat');
+const { isCarryoverClassSql } = require('../src/solisCarryover');
 const express = require('express');
 const router = express.Router();
 const { getPool } = require('../db/database');
@@ -42,6 +43,12 @@ const AGENCY_ACA_AGENT_EXCLUDE = `NOT (lob = 'ACA' AND COALESCE(producer_payable
 function isFeeClassSql(alias) {
   const col = alias ? `${alias}.classification` : 'classification';
   return `(COALESCE(${col},'') ILIKE '%appointment fee%' OR LOWER(COALESCE(${col},'')) = 'bsi fee')`;
+}
+
+/** True chargebacks only — Doctors/Solis prior-month carryovers are not chargebacks. */
+function isChargebackMoneySql(alias) {
+  const col = alias ? `${alias}.commission` : 'commission';
+  return `(${col} < 0 AND NOT ${isFeeClassSql(alias)} AND NOT ${isCarryoverClassSql(alias)})`;
 }
 
 // Smart Matching v2 helpers — deterministic keys only, no fuzzy/Levenshtein.
@@ -574,7 +581,7 @@ router.get('/summary', requireAuth, async (req, res) => {
       pool.query(`SELECT COUNT(DISTINCT carrier) as count FROM commission_records ${wc}`, params),
       pool.query(`SELECT agent_name, SUM(CASE WHEN ${isFeeClassSql()} THEN 0 ELSE commission END) as total, COUNT(*) as count FROM commission_records ${wc} GROUP BY agent_name ORDER BY total DESC`, params),
       pool.query(`SELECT carrier, SUM(CASE WHEN ${isFeeClassSql()} THEN 0 ELSE commission END) as total, COUNT(*) as count FROM commission_records ${wc} GROUP BY carrier ORDER BY total DESC`, params),
-      pool.query(`SELECT payment_period as period, SUM(CASE WHEN ${isFeeClassSql()} THEN 0 ELSE commission END) as total, COUNT(*) as count, ABS(SUM(CASE WHEN commission < 0 AND NOT ${isFeeClassSql()} THEN commission ELSE 0 END)) as chargebacks FROM commission_records ${wc} GROUP BY payment_period ORDER BY payment_period ASC`, params),
+      pool.query(`SELECT payment_period as period, SUM(CASE WHEN ${isFeeClassSql()} THEN 0 ELSE commission END) as total, COUNT(*) as count, ABS(SUM(CASE WHEN ${isChargebackMoneySql()} THEN commission ELSE 0 END)) as chargebacks FROM commission_records ${wc} GROUP BY payment_period ORDER BY payment_period ASC`, params),
       pool.query(`SELECT lob,
         SUM(commission) as total,
         SUM(COALESCE(producer_payable,0)) as agent_payable,
@@ -632,8 +639,8 @@ router.get('/kpi', requireAuth, async (req, res) => {
       SELECT agent_name,
         COUNT(*) as total_count,
         COALESCE(SUM(CASE WHEN ${isFeeClassSql()} THEN 0 ELSE commission END), 0) as total_commission,
-        COALESCE(SUM(CASE WHEN commission < 0 AND NOT ${isFeeClassSql()} THEN ABS(commission) ELSE 0 END), 0) as chargeback_amount,
-        COUNT(CASE WHEN commission < 0 AND NOT ${isFeeClassSql()} THEN 1 END) as chargeback_count,
+        COALESCE(SUM(CASE WHEN ${isChargebackMoneySql()} THEN ABS(commission) ELSE 0 END), 0) as chargeback_amount,
+        COUNT(CASE WHEN ${isChargebackMoneySql()} THEN 1 END) as chargeback_count,
         COALESCE(SUM(CASE WHEN classification ILIKE '%advance%' AND classification NOT ILIKE '%uad%' THEN commission ELSE 0 END), 0) as advance_amount,
         COUNT(CASE WHEN classification ILIKE '%advance%' AND classification NOT ILIKE '%uad%' THEN 1 END) as advance_count,
         COUNT(CASE WHEN classification IN ('New Business','Renewal') THEN 1 END) as new_apps
