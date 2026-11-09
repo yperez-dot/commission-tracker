@@ -12,6 +12,7 @@ describe('accordion logic', () => {
     expect(sectionForPage(nav, 'direct-recon')).toBe('reconciliation');
     expect(sectionForPage(nav, 'dashboard')).toBeNull();
     expect(sectionForPage(nav, 'users')).toBeNull();
+    expect(sectionForPage(nav, 'settings')).toBeNull();
     expect(sectionForPage(nav, 'nope')).toBeNull();
   });
 
@@ -28,7 +29,7 @@ describe('accordion logic', () => {
 
   test('BSI view hides reconciliation section', () => {
     const bsi = buildNavItems({ isBSI: true, isAdmin: false });
-    expect(bsi.map((i) => i.id)).toEqual(['dashboard', 'uploads', 'alldata', 'bob', 'payroll']);
+    expect(bsi.map((i) => i.id)).toEqual(['dashboard', 'uploads', 'alldata', 'bob', 'payroll', 'settings']);
   });
 });
 

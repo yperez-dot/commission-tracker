@@ -66,6 +66,17 @@ export default function AdminUsers({ user }) {
     } catch(e) { alert('Error: ' + e.message); }
   }
 
+  async function reset2fa(id, name) {
+    if (!window.confirm(`Reset 2FA for ${name}? They can sign in with password only until they re-enroll.`)) return;
+    try {
+      await apiFetch(`/auth/users/${id}/2fa/reset`, { method: 'POST', body: '{}' });
+      setStatus(`✓ 2FA reset for ${name}`);
+      loadUsers();
+    } catch (e) {
+      setStatus('Error: ' + e.message);
+    }
+  }
+
   if (user.role !== 'admin') {
     return (
       <div className="page-body">
@@ -177,6 +188,7 @@ export default function AdminUsers({ user }) {
                     <th>Email</th>
                     <th>Agency</th>
                     <th>Role</th>
+                    <th>2FA</th>
                     <th>Created</th>
                     <th></th>
                   </tr>
@@ -195,15 +207,24 @@ export default function AdminUsers({ user }) {
                           borderRadius:4, padding:'2px 8px', fontSize:11, fontWeight:500
                         }}>{u.role}</span>
                       </td>
+                      <td style={{fontSize:11,color:u.totp_enabled?'var(--accent-dark)':'var(--text-muted)'}}>
+                        {u.totp_enabled ? 'On' : 'Off'}
+                      </td>
                       <td style={{fontSize:11,color:'var(--text-muted)'}}>
                         {formatDateTime(u.created_at)}
                       </td>
                       <td>
-                        <div style={{display:'flex',gap:6}}>
+                        <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
                           <button onClick={()=>resetPassword(u.id)}
                             style={{background:'none',border:'0.5px solid var(--border)',borderRadius:6,padding:'3px 10px',fontSize:11,cursor:'pointer',color:'var(--text)'}}>
                             Reset pw
                           </button>
+                          {u.totp_enabled && (
+                            <button onClick={()=>reset2fa(u.id, u.name)}
+                              style={{background:'none',border:'0.5px solid var(--border)',borderRadius:6,padding:'3px 10px',fontSize:11,cursor:'pointer',color:'var(--text)'}}>
+                              Reset 2FA
+                            </button>
+                          )}
                           {u.id !== user.id && (
                             <button onClick={()=>setConfirmDelete(u)} className="btn btn-danger" style={{fontSize:11,padding:'3px 10px'}}>
                               Delete

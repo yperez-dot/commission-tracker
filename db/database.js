@@ -249,6 +249,12 @@ async function initSchema() {
       ALTER TABLE agency_production ADD COLUMN IF NOT EXISTS manual_override_by VARCHAR(100);
       ALTER TABLE agency_production ADD COLUMN IF NOT EXISTS manual_override_at TIMESTAMP;
       CREATE INDEX IF NOT EXISTS idx_agency_production_manual_override ON agency_production(manual_override_status) WHERE manual_override_status IS NOT NULL;
+
+      -- Migration 2026-11: Opt-in TOTP 2FA (additive; defaults keep existing users unlocked)
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_secret TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_enabled BOOLEAN NOT NULL DEFAULT FALSE;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_backup_codes TEXT;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS totp_verified_at TIMESTAMPTZ;
     `);
 
     await seedDefaultAdmin(client);

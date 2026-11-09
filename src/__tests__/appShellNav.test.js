@@ -31,6 +31,7 @@ jest.mock('../pages/Reconciliation', () => mockStub('reconciliation'));
 jest.mock('../pages/BookOfBusiness', () => mockStub('bob'));
 jest.mock('../pages/Payroll', () => mockStub('payroll'));
 jest.mock('../pages/AdminUsers', () => mockStub('users'));
+jest.mock('../pages/SecuritySettings', () => mockStub('settings'));
 jest.mock('../pages/MedicareProUpload', () => mockStub('medicarepro'));
 jest.mock('../pages/AgencyProductionUpload', () => mockStub('apu'));
 jest.mock('../pages/AgencyProductionRecon', () => mockStub('apr'));
