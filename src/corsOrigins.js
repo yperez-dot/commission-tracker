@@ -2,10 +2,11 @@
 
 const DEFAULT_CORS_ORIGINS = [
   'https://olicomm.healthexps.com',
+  'https://www.olicomm.healthexps.com',
   'https://melodic-cendol-e1dc49.netlify.app',
   'http://localhost:3000',
   'https://tools.healthexps.com',
-  'https://olicomm.healthxps.com',
+  'https://olicomm.healthxps.com', // typo host kept for bookmarks
 ];
 
 const CORS_METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'];
