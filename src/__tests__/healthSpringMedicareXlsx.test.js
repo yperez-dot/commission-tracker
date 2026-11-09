@@ -16,8 +16,21 @@ const FILES = {
   '202610': path.join(FIX, 'THEI.HEALTHSPRING.MEDICARE.10.2026.xlsx'),
 };
 
+const HOUSE = 'The Health Experts Insurance';
+
 function load(file) {
   return XLSX.readFile(file);
+}
+
+function agentTotals(rows) {
+  const by = {};
+  for (const r of rows) {
+    by[r.agent] = by[r.agent] || { n: 0, t: 0 };
+    by[r.agent].n += 1;
+    by[r.agent].t += r.commission;
+  }
+  for (const k of Object.keys(by)) by[k].t = Math.round(by[k].t * 100) / 100;
+  return by;
 }
 
 describe('HealthSpring Medicare Advantage/PDP xlsx', () => {
@@ -39,7 +52,7 @@ describe('HealthSpring Medicare Advantage/PDP xlsx', () => {
     ['202608', 'THEI.HEALTHSPRING.MEDICARE.08.2026.xlsx'],
     ['202609', 'THEI.HEALTHSPRING.MEDICARE.09.2026.xlsx'],
     ['202610', 'THEI.HEALTHSPRING.MEDICARE.10.2026.xlsx'],
-  ])('%s: 9 records / $136.48 / all Renewal', (period, name) => {
+  ])('%s: 9 records / $136.48 / all Renewal; Service Fee→THEI, Broker→writer', (period, name) => {
     const wb = load(FILES[period]);
     const rows = parseHealthSpringMedicareRows(wb, name);
     expect(rows).toHaveLength(9);
@@ -48,8 +61,21 @@ describe('HealthSpring Medicare Advantage/PDP xlsx', () => {
     expect(rows.every((r) => r.period === period)).toBe(true);
     expect(rows.every((r) => r.classification === 'Renewal')).toBe(true);
     expect(rows.every((r) => r.carrier === 'HealthSpring')).toBe(true);
-    expect(rows.filter((r) => r.commission === 28.92)).toHaveLength(4);
-    expect(rows.filter((r) => r.commission === 4.16)).toHaveLength(5);
+
+    const service = rows.filter((r) => String(r.raw['Payment Description']).trim() === 'Service Fee');
+    const broker = rows.filter((r) => String(r.raw['Payment Description']).trim() === 'Broker Level');
+    expect(service).toHaveLength(5);
+    expect(broker).toHaveLength(4);
+    expect(service.every((r) => r.agent === HOUSE)).toBe(true);
+    expect(service.every((r) => r.commission === 4.16)).toBe(true);
+    expect(broker.every((r) => r.agent === 'Yahoska Perez')).toBe(true);
+    expect(broker.every((r) => r.commission === 28.92)).toBe(true);
+
+    const by = agentTotals(rows);
+    expect(by[HOUSE].n).toBe(5);
+    expect(by[HOUSE].t).toBeCloseTo(20.8, 2);
+    expect(by['Yahoska Perez'].n).toBe(4);
+    expect(by['Yahoska Perez'].t).toBeCloseTo(115.68, 2);
   });
 
   test('08.2026 Summary Balance -70.80 warns; no invented balance row', () => {
@@ -70,5 +96,13 @@ describe('HealthSpring Medicare Advantage/PDP xlsx', () => {
       expect(rows.reconciliation.balance === 0 || rows.reconciliation.balance == null).toBe(true);
       expect(rows.reconciliation.warning).toBeUndefined();
     }
+  });
+});
+
+describe('package-lock sync (Railway/Cloudflare npm ci)', () => {
+  test('lockfile includes nested yaml@2.x for npm 9 ci (Railway uses npm-9)', () => {
+    const lock = require('fs').readFileSync(path.join(__dirname, '..', '..', 'package-lock.json'), 'utf8');
+    expect(lock).toMatch(/node_modules\/tailwindcss\/node_modules\/yaml/);
+    expect(lock).toMatch(/"version":\s*"2\.9\.\d+"/);
   });
 });

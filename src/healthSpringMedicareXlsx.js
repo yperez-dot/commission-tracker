@@ -4,6 +4,9 @@
  * HealthSpring Medicare Advantage / PDP agency workbook
  * (sheets: Summary, Detail, Legacy; title often typo'd "HealthSping").
  *
+ * Service Fee lines → agent The Health Experts Insurance (house).
+ * Broker Level lines → Writing Broker Name.
+ *
  * Distinct from:
  * - HealthSpring Supplemental Benefits PDFs
  * - AgentView CNHIC Med Supp PDFs
@@ -167,15 +170,22 @@ function parseHealthSpringMedicareRows(wb, filename) {
           ? String(Math.round(memberId))
           : String(memberId || mbi || '').trim();
 
+      const classification = classifyHealthSpringRow(paymentType, paymentDesc, paymentAmount);
+      // Service Fee dollars are agency/house (earner THEI). Broker Level stays with the writer.
+      const isServiceFee = String(paymentDesc || '').trim().toLowerCase() === 'service fee';
+      const agent = isServiceFee
+        ? 'The Health Experts Insurance'
+        : (normalizeAgentName(writingBrokerName) || 'The Health Experts Insurance');
+
       records.push({
-        agent: normalizeAgentName(writingBrokerName) || 'The Health Experts Insurance',
+        agent,
         carrier: 'HealthSpring',
         planType,
         client: memberName,
         effectiveDate: formatDate(effectiveDateRaw),
         premium: 0,
         commission: paymentAmount,
-        classification: classifyHealthSpringRow(paymentType, paymentDesc, paymentAmount),
+        classification,
         period,
         policyNumber: policyNumber || mbi,
         payee: 'HealthSpring',
