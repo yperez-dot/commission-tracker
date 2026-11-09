@@ -65,6 +65,10 @@ const {
 const { classifyTHECarrierTransaction, classifyHumanaDevotedBSITransaction } = require('../src/theCarrierStatementClassify');
 const { isCountedBsiPayee, isHraBonusRow } = require('../src/bsiCountedPayees');
 const { parseAmlPortalRows, isAmlPortalExport } = require('../src/bsiAmlPortalCsv');
+const {
+  isAmeriLifeAgencyWorkbook,
+  parseAmeriLifeAgencyWorkbook,
+} = require('../src/amerilifeAgencyCsv');
 const { buildBsiStatementTitle, cleanManualTitle, normalizeAutoTitle, convertTitleDates } = require('../src/bsiStatementTitle');
 const {
   applyBsiTitlePlan,
@@ -3886,6 +3890,16 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
         console.log('[UPLOAD] NHP payment-cycle period breakdown:', periods);
       } else if (isYourFMOFile(req.file.originalname)) {
         records = parseYourFMORows(wb, req.file.originalname);
+      } else if (isAmeriLifeAgencyWorkbook(wb, req.file.originalname)) {
+        // AmeriLife Contracts/CommissionDetails CSV (THEI payee) — before Humana
+        // broker-portal XML (.xls GrpName/WaName). Filename often contains "humana"
+        // and previously fell into parseHumanaRows → "No records found in file".
+        console.log('[ROUTING] Matched AmeriLife agency CSV parser for:', req.file.originalname);
+        records = parseAmeriLifeAgencyWorkbook(wb, req.file.originalname);
+        if (!records.length) {
+          try { fs.unlinkSync(req.file.path); } catch(e) {}
+          return res.status(400).json({ error: 'No records found in AmeriLife commission CSV. Verify Writing Agent / Commission ($) columns.' });
+        }
       } else if (isHumanaFile(req.file.originalname)) {
         const rawBuffer = fs.readFileSync(req.file.path);
         records = parseHumanaRows(wb, req.file.originalname, rawBuffer);

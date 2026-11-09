@@ -1,0 +1,45 @@
+<xml version>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+ <Worksheet ss:Name="Sheet1"><Table>
+  <Row>
+    <Cell><Data ss:Type="String">AorSan</Data></Cell>
+    <Cell><Data ss:Type="String">CommRunDt</Data></Cell>
+    <Cell><Data ss:Type="String">WaName</Data></Cell>
+    <Cell><Data ss:Type="String">GrpName</Data></Cell>
+    <Cell><Data ss:Type="String">GrpNbr</Data></Cell>
+    <Cell><Data ss:Type="String">MonthPaid</Data></Cell>
+    <Cell><Data ss:Type="String">FrstYrRnwl</Data></Cell>
+    <Cell><Data ss:Type="String">PaidAmount</Data></Cell>
+    <Cell><Data ss:Type="String">EffDate</Data></Cell>
+    <Cell><Data ss:Type="String">BlkBusCd</Data></Cell>
+    <Cell><Data ss:Type="String">Product</Data></Cell>
+  </Row>
+  <Row>
+    <Cell><Data ss:Type="String">1</Data></Cell>
+    <Cell><Data ss:Type="String">2026-08-05T00:00:00.000</Data></Cell>
+    <Cell><Data ss:Type="String">PEREZ YAHOSKA G</Data></Cell>
+    <Cell><Data ss:Type="String">SYNTHETIC CLIENT A</Data></Cell>
+    <Cell><Data ss:Type="String">000111</Data></Cell>
+    <Cell><Data ss:Type="String">AUG</Data></Cell>
+    <Cell><Data ss:Type="String">R</Data></Cell>
+    <Cell><Data ss:Type="Number">28.91</Data></Cell>
+    <Cell><Data ss:Type="String">2025-01-01T00:00:00.000</Data></Cell>
+    <Cell><Data ss:Type="String">MA</Data></Cell>
+    <Cell><Data ss:Type="String">HMO</Data></Cell>
+  </Row>
+  <Row>
+    <Cell><Data ss:Type="String">1</Data></Cell>
+    <Cell><Data ss:Type="String">2026-08-05T00:00:00.000</Data></Cell>
+    <Cell><Data ss:Type="String">PEREZ YAHOSKA G</Data></Cell>
+    <Cell><Data ss:Type="String">SYNTHETIC REYES</Data></Cell>
+    <Cell><Data ss:Type="String">000222</Data></Cell>
+    <Cell><Data ss:Type="String">JAN</Data></Cell>
+    <Cell><Data ss:Type="String">F</Data></Cell>
+    <Cell><Data ss:Type="Number">-144.58</Data></Cell>
+    <Cell><Data ss:Type="String">2026-01-01T00:00:00.000</Data></Cell>
+    <Cell><Data ss:Type="String">MA</Data></Cell>
+    <Cell><Data ss:Type="String">HMO</Data></Cell>
+  </Row>
+ </Table></Worksheet>
+</Workbook>
