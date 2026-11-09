@@ -5,6 +5,7 @@ const XLSX = require('xlsx');
 const {
   parseUHCRows,
   parseUHCDirectRows,
+  parseUhcUploadWorkbook,
   isUHCWorkbook,
   uadTotals,
 } = require('../uhcCommissionParse');
@@ -35,10 +36,32 @@ describe('UHC UAD + personal statement parse', () => {
   test('filenames: THEI and P_UHC are UHC workbooks, not the 706381-only detector', () => {
     expect(isUHCFilename('UHC_THEI_09.2026.xlsx')).toBe(true);
     expect(isUHCFilename('P_UHC_09.2026.xlsx')).toBe(true);
+    expect(isUHCFilename('YP_UHC_STATTEMENT_09.2026.xlsx')).toBe(true);
+    expect(isUHCFilename('UHC_THEI_STATEMENT_09.2026.xlsx')).toBe(true);
+    expect(isUHCFilename('UHC_BSI_09.2026.xlsx')).toBe(false);
     expect(isUHCDirectFilename('P_UHC_09.2026.xlsx')).toBe(false);
     expect(isUHCDirectFilename('commission_statement_706381_2026-09-13.xlsx')).toBe(true);
     expect(isUHCWorkbook(loadWb(THEI_FILE))).toBe(true);
     expect(isUHCWorkbook(loadWb(PERSONAL_FILE))).toBe(true);
+  });
+
+  test('live POST /files/upload path: YP_UHC_STATTEMENT keeps 85 personal rows', () => {
+    const records = parseUhcUploadWorkbook(loadWb(PERSONAL_FILE), 'YP_UHC_STATTEMENT_09.2026.xlsx');
+    expect(records).not.toBeNull();
+    const totals = uadTotals(records);
+    expect(totals.rowCount).toBe(85);
+    expect(totals.commission).toBeCloseTo(2167.47, 2);
+  });
+
+  test('live POST /files/upload path: UHC_THEI_STATEMENT keeps $0 UAD recoup rows', () => {
+    const records = parseUhcUploadWorkbook(loadWb(THEI_FILE), 'UHC_THEI_STATEMENT_09.2026.xlsx');
+    expect(records).not.toBeNull();
+    const totals = uadTotals(records);
+    expect(totals.rowCount).toBe(217);
+    expect(totals.commission).toBeCloseTo(2449.57, 2);
+    expect(totals.uadActivity).toBeCloseTo(-250.73, 2);
+    expect(totals.uadRows).toBe(7);
+    expect(records.filter((r) => r.commission === 0 && r.uadActivity !== 0).length).toBe(7);
   });
 
   test('THEI sample: 217 rows, commission 2449.57, UAD -250.73 on 7 recoup lines', () => {

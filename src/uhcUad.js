@@ -175,7 +175,8 @@ function crossFileDuplicateKey(record) {
   var commission = moneyKey(record.commission != null ? record.commission : record.amount);
   var uad = moneyKey(uadAmount(record));
   var stmt = statementDateOf(record);
-  return policy + '|' + client + '|' + date + '|' + commission + '|' + period + '|' + uad + '|' + stmt;
+  var paid = paidToDateOf(record);
+  return policy + '|' + client + '|' + date + '|' + commission + '|' + period + '|' + uad + '|' + stmt + '|' + paid;
 }
 
 function pad2(n) {
@@ -227,6 +228,15 @@ function statementDateOf(record) {
   return normalizeStatementDate(raw['Statement Date'] || raw.StatementDate || '');
 }
 
+function paidToDateOf(record) {
+  if (!record) return '';
+  if (record.paidToDate) return normalizeStatementDate(record.paidToDate);
+  if (record.paid_to_date) return normalizeStatementDate(record.paid_to_date);
+  var raw = rawObject(record);
+  if (!raw) return '';
+  return normalizeStatementDate(raw['Paid To Date'] || raw.PaidToDate || raw.paidToDate || '');
+}
+
 /**
  * Same UHC payment line across party/payee files (THEI agency vs personal 706381).
  * Policy + statement date + commission amount; agent/payee/party are ignored.
@@ -253,7 +263,8 @@ function recordFromDbRow(row) {
     period: row.payment_period || row.period,
     uadActivity: row.uad_activity != null ? row.uad_activity : row.uadActivity,
     carrier: row.carrier,
-    statementDate: row.statement_date || row.statementDate,
+    statementDate: row.statement_date || row.statementDate || (raw && (raw['Statement Date'] || raw.StatementDate)) || '',
+    paidToDate: row.paid_to_date || row.paidToDate || (raw && (raw['Paid To Date'] || raw.PaidToDate || raw.paidToDate)) || '',
     raw: raw || row.raw_data || row.raw,
   };
 }
@@ -297,13 +308,18 @@ function isUHCDirectFilename(filename) {
 
 function isUHCFilename(filename) {
   var f = String(filename || '').toLowerCase().replace(/\s+/g, '_');
+  if (f.indexOf('uhc_bsi') !== -1 || f.indexOf('bsi_uhc') !== -1) return false;
+  // Personal / initials prefixes: P_UHC, YP_UHC (and the STATTEMENT typo).
   if (f.indexOf('p_uhc') !== -1 || f.indexOf('p-uhc') !== -1) return true;
+  if (f.indexOf('yp_uhc') !== -1 || f.indexOf('yp-uhc') !== -1) return true;
   if (isUHCDirectFilename(f)) return false;
   if (f.indexOf('commission_statement_2737247') !== -1) return true;
-  if (f.indexOf('uhc_statement') !== -1) return true;
-  if (f.indexOf('uhc') !== -1 && f.indexOf('statement') !== -1) return true;
-  if (f.indexOf('uhc') !== -1 && f.indexOf('thei') !== -1) return true;
-  return false;
+  if (f.indexOf('uhc') === -1) return false;
+  if (f.indexOf('thei') !== -1) return true;
+  // "statement" plus common portal typos (STATTEMENT / STATTMENT).
+  if (f.indexOf('statement') !== -1) return true;
+  if (f.indexOf('stattemen') !== -1 || f.indexOf('stattement') !== -1 || f.indexOf('stattment') !== -1) return true;
+  return true;
 }
 
 module.exports = {
@@ -321,6 +337,7 @@ module.exports = {
   crossFileDuplicateKey: crossFileDuplicateKey,
   normalizeStatementDate: normalizeStatementDate,
   statementDateOf: statementDateOf,
+  paidToDateOf: paidToDateOf,
   uhcTransactionKey: uhcTransactionKey,
   recordFromDbRow: recordFromDbRow,
   findIncomingDuplicates: findIncomingDuplicates,

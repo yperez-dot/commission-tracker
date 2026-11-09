@@ -47,6 +47,9 @@ describe('periodFormat — MM.YYYY everywhere', () => {
 
   test('Statement Date and Payment Period resolve a UHC row period', () => {
     expect(periodFromStatementDate('10/06/2026')).toBe('202610');
+    expect(periodFromStatementDate('October 09, 2026')).toBe('202610');
+    expect(periodFromStatementDate('Sep 12, 2026')).toBe('202609');
+    expect(periodFromStatementDate('Aug 15, 2026')).toBe('202608');
     expect(periodFromStatementDate(new Date(Date.UTC(2026, 9, 16)))).toBe('202610');
     expect(resolveBsiRowPeriod({ 'Payment Period': 202610, 'Statement Date': '09/01/2026' }, null)).toBe('202610');
     expect(resolveBsiRowPeriod({ 'Payment Period': '', 'Statement Date': '10/06/2026' }, null)).toBe('202610');

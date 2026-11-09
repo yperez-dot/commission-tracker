@@ -118,19 +118,41 @@ function transactionSheetRows(wb, raw) {
   return XLSX.utils.sheet_to_json(ws, { defval: '', raw: raw !== false });
 }
 
+function compactHeader(s) {
+  return String(s || '').toLowerCase().replace(/[\s_]+/g, '');
+}
+
 function isUHCWorkbook(wb) {
   if (!wb || !Array.isArray(wb.SheetNames)) return false;
-  const sheetName = wb.SheetNames.find((s) => String(s).toLowerCase().includes('commission trans'));
+  const names = wb.SheetNames.map((s) => String(s).toLowerCase());
+  const hasTrans = names.some((s) => s.includes('commission trans'));
+  const hasSummary = names.some((s) => s.includes('commission summary'));
+  const hasHeld = names.some((s) => s.includes('held trans'));
+  // Portal UHC statements always ship these three tabs.
+  if (hasTrans && hasSummary) return true;
+  if (hasTrans && hasHeld) return true;
+  const sheetName = wb.SheetNames.find((s) => String(s).toLowerCase().includes('commission trans'))
+    || (hasTrans ? wb.SheetNames[0] : null);
   if (!sheetName) return false;
   const rows = XLSX.utils.sheet_to_json(wb.Sheets[sheetName], { defval: '', raw: true });
   if (!rows.length) return false;
-  const keys = Object.keys(rows[0]).map((k) => String(k).toLowerCase());
-  const hasUad = keys.includes('uad activity');
-  const hasUhcCols = keys.includes('writing agent name')
-    && keys.includes('member name')
-    && keys.includes('policy number')
-    && keys.includes('commission');
+  const keys = Object.keys(rows[0]).map(compactHeader);
+  const has = (name) => keys.indexOf(compactHeader(name)) !== -1;
+  const hasUad = has('UAD Activity') || has('UADActivity');
+  const hasUhcCols = has('Writing Agent Name') && has('Member Name') && has('Policy Number') && has('Commission');
   return hasUad || hasUhcCols;
+}
+
+/**
+ * Same detection the live POST /files/upload Excel chain uses for UHC.
+ * Filename-only (YP_UHC_STATTEMENT…) or workbook tabs both select parseUHCRows,
+ * which keeps $0-commission UAD recoup lines.
+ */
+function parseUhcUploadWorkbook(wb, filename) {
+  if (isUHCWorkbook(wb) || isUHCFilename(filename)) {
+    return parseUHCRows(wb, filename);
+  }
+  return null;
 }
 
 function classifyUhcAction(commAction, commission) {
@@ -329,6 +351,7 @@ function uadTotals(records) {
 module.exports = {
   parseUHCRows,
   parseUHCDirectRows,
+  parseUhcUploadWorkbook,
   isUHCFile: isUHCFilename,
   isUHCDirectFile: isUHCDirectFilename,
   isUHCWorkbook,

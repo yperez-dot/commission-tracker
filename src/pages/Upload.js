@@ -314,6 +314,11 @@ export default function Upload({ user, onNavigate }) {
                 {uploadResult.internalDuplicatesRemoved === 1 ? '' : 's'} within this file
               </div>
             )}
+            {uploadResult.grandTotalWarning && (
+              <div style={{ marginTop: 8, color: '#b45309', fontWeight: 500 }}>
+                {uploadResult.grandTotalWarning}
+              </div>
+            )}
             {uploadResult.resolvedRenewalsCount > 0 && (
               <div style={{ marginTop: 8, fontWeight: 500 }}>
                 {uploadResult.resolvedRenewalsCount} previously chased/pending renewal

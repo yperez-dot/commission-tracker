@@ -40,7 +40,8 @@ function batchDedupeKey(r) {
   // with a different hold reason — those are real rows, not copies.
   const mga = String(r.mga || '').trim().toLowerCase();
   const statementDate = statementDateOf(r).toLowerCase();
-  return `${client}|${carrier}|${effectiveDate}|${period}|${classification}|${commission}|${uad}|${policy}|${mga}|${statementDate}`;
+  const paidToDate = String(r.paidToDate || r.paid_to_date || rawObject(r)['Paid To Date'] || '').trim().toLowerCase();
+  return `${client}|${carrier}|${effectiveDate}|${period}|${classification}|${commission}|${uad}|${policy}|${mga}|${statementDate}|${paidToDate}`;
 }
 
 /**

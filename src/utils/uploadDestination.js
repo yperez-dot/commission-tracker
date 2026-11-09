@@ -162,11 +162,41 @@ export function detectUploadDestination(filename) {
     };
   }
 
+  if (
+    (f.includes('healthspring') || f.includes('health_spring')) &&
+    (f.endsWith('.pdf') || f.includes('supplemental'))
+  ) {
+    return {
+      id: 'commission_statement',
+      label: 'Commission Statements',
+      reason: 'Looks like a HealthSpring Supplemental Benefits statement',
+      confidence: 'high',
+    };
+  }
+
+  if (
+    f.includes('thei_aetna') ||
+    f.includes('thei-aetna') ||
+    /^aet\d.*\.xls$/.test(f) ||
+    (f.includes('aetna') && f.endsWith('.xls') && !f.includes('bsi') && !f.includes('production'))
+  ) {
+    return {
+      id: 'commission_statement',
+      label: 'Commission Statements',
+      reason: 'Looks like an Aetna DIRECT agency statement (not BSI)',
+      confidence: 'high',
+    };
+  }
+
   // Direct carrier commission statements (UHC/Humana/Aetna/etc. to THEI)
   if (
     f.includes('commission_statement_2737247') ||
     f.includes('commission_statement_706381') ||
     f.includes('uhc_statement') ||
+    f.includes('yp_uhc') ||
+    f.includes('p_uhc') ||
+    f.includes('uhc_thei') ||
+    (f.includes('uhc') && (f.includes('statement') || f.includes('stattemen'))) ||
     f.includes('producerstatementreport') ||
     f.includes('commissiondata') ||
     f.includes('yahoska_perez_med_comm') ||
