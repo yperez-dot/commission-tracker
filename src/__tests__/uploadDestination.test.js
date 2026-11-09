@@ -59,6 +59,13 @@ describe('uploadDestination', () => {
     expect(detectUploadDestination('CNHIC_AgentView_Aug2026.pdf').id).toBe('commission_statement');
   });
 
+  test('routes HealthSpring supplemental PDFs and Aetna DIRECT agency files to Commission Statements', () => {
+    expect(detectUploadDestination('HealthSpring_Supplemental_Oct2026.pdf').id).toBe('commission_statement');
+    expect(detectUploadDestination('THEI_AETNA_09.2026.xlsx').id).toBe('commission_statement');
+    expect(detectUploadDestination('AET1.xls').id).toBe('commission_statement');
+    expect(detectUploadDestination('YP_UHC_STATTEMENT_09.2026.xlsx').id).toBe('commission_statement');
+  });
+
   test('destinationMatchesTab only matches exact tab', () => {
     expect(destinationMatchesTab('bsi_statement', 'commission_statement')).toBe(false);
     expect(destinationMatchesTab('bsi_statement', 'bsi_statement')).toBe(true);

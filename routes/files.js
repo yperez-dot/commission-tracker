@@ -26,11 +26,9 @@ const { detectPlanChanges } = require('./planChanges');
 const { resolveChasedRenewals } = require('../src/renewalsAutoResolve');
 const { collapseInternalDuplicates } = require('../src/uploadBatchDedupe');
 const {
-  parseUHCRows,
   parseUHCDirectRows,
-  isUHCFile,
+  parseUhcUploadWorkbook,
   isUHCDirectFile,
-  isUHCWorkbook,
 } = require('../src/uhcCommissionParse');
 const {
   crossFileDuplicateKey,
@@ -48,6 +46,15 @@ const {
   parseAgentViewCommissionReportPDF,
   tryParseAgentViewUpload,
 } = require('../src/agentViewCommissionReport');
+const {
+  tryParseHealthSpringSupplementalUpload,
+} = require('../src/healthSpringSupplementalPdf');
+const {
+  isAetnaDirectAgencyFilename,
+  isAetnaDirectAgencyWorkbook,
+  parseAetnaDirectAgencyStatement,
+  applyAetnaAgencyAgents,
+} = require('../src/aetnaDirectAgencyStatement');
 const {
   resolveNhpUploadOriginalName,
 } = require('../src/nhpUploadName');
@@ -3719,7 +3726,9 @@ async function ensureUadActivityColumn(pool) {
 //   Statement Date or use a different amount, so they are not pulled in.
 async function findDuplicates(pool, records) {
   if (!records.length) return [];
-  const filtered = records.filter(r => r.client && r.effectiveDate && r.policyNumber);
+  // Policy is required. Effective date may be blank on Aetna DIRECT agency .xls
+  // (the Date column is empty); statement date still distinguishes months.
+  const filtered = records.filter(r => r.policyNumber && (r.client || r.statementDate));
   if (!filtered.length) return [];
 
   const policies = [...new Set(filtered.map((r) => r.policyNumber).filter(Boolean))];
@@ -3830,6 +3839,28 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
       }
     }
 
+    if (!records) {
+      const hsSuppRows = await tryParseHealthSpringSupplementalUpload(
+        req.file.path,
+        req.file.originalname,
+        pdfParse
+      );
+      if (hsSuppRows) {
+        console.log('[UPLOAD] Using HealthSpring Supplemental Benefits PDF parser');
+        if (!pdfParse) {
+          try { fs.unlinkSync(req.file.path); } catch(e) {}
+          return res.status(500).json({ error: 'PDF parsing not available on server.' });
+        }
+        records = hsSuppRows;
+        if (!records.length) {
+          try { fs.unlinkSync(req.file.path); } catch(e) {}
+          return res.status(400).json({
+            error: 'No commission activity rows found in HealthSpring Supplemental Benefits PDF.',
+          });
+        }
+      }
+    }
+
     if (records) {
       // already parsed (AgentView)
     } else if (isMOOExcel(req.file.originalname)) {
@@ -3925,11 +3956,11 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
       } else if (isYourFMOXLSX(req.file.originalname)) {
         console.log('[UPLOAD] Using YourFMO XLSX parser');
         records = parseYourFMOXLSXRows(wb);
-      } else if (isUHCWorkbook(wb) || isUHCFile(req.file.originalname)) {
-        // THEI agency, personal P_UHC / 706381, and any UHC Commission Transactions workbook.
-        // Full sheet (not MedSup-only) so Yahoska's personal statement keeps MAPD/DSNP rows.
+      } else if (parseUhcUploadWorkbook(wb, req.file.originalname)) {
+        // THEI agency, personal P_UHC / YP_UHC_STATTEMENT, and any UHC Commission Transactions workbook.
+        // Full sheet (not MedSup-only) so personal statements keep MAPD/DSNP and $0 UAD rows.
         console.log('[UPLOAD] Using UHC Commission Transactions parser');
-        records = parseUHCRows(wb, req.file.originalname);
+        records = parseUhcUploadWorkbook(wb, req.file.originalname);
       } else if (isUHCDirectFile(req.file.originalname)) {
         console.log('[UPLOAD] Using UHC Direct Commission parser (706381 - MedSup + Part D only)');
         records = parseUHCDirectRows(wb, req.file.originalname);
@@ -3987,6 +4018,9 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
       } else if (isAetnaBSICSVFilename(req.file.originalname)) {
         console.log('[ROUTING] Matched Aetna BSI CSV parser for:', req.file.originalname);
         records = parseAetnaBSICSV(wb, req.file.originalname);
+      } else if (isAetnaDirectAgencyWorkbook(wb) || isAetnaDirectAgencyFilename(req.file.originalname)) {
+        console.log('[ROUTING] Matched Aetna DIRECT agency statement parser for:', req.file.originalname);
+        records = parseAetnaDirectAgencyStatement(wb, req.file.originalname);
       } else if (isAetnaDirectCSVFilename(req.file.originalname) || isAetnaDirectCSV(wb)) {
         console.log('[ROUTING] Matched Aetna Direct CSV parser for:', req.file.originalname);
         records = parseAetnaDirectCSV(wb, req.file.originalname);
@@ -4014,7 +4048,13 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
       }
     }
 
+    const statementReconciliation = records && records.reconciliation ? records.reconciliation : null;
     records = records.map(r => ({ ...r, payee: r.payee || defaultPayee }));
+    if (statementReconciliation) records.reconciliation = statementReconciliation;
+
+    if (records.length && records[0] && records[0].source === 'aetna_direct_agency') {
+      await applyAetnaAgencyAgents(pool, records);
+    }
 
     {
       const fnLc = String(req.file.originalname || '').toLowerCase();
@@ -4372,6 +4412,15 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
       internalDuplicatesRemoved: internalDuplicatesRemoved || 0,
       nhpRenamed: storedOriginalName !== req.file.originalname,
     };
+    if (statementReconciliation) {
+      response.reconciliation = statementReconciliation;
+      if (statementReconciliation.checked && statementReconciliation.ok === false) {
+        response.grandTotalWarning =
+          `Parsed $${Number(statementReconciliation.parsedTotal).toFixed(2)} does not match ` +
+          `${statementReconciliation.source || 'statement total'} ` +
+          `$${Number(statementReconciliation.expectedTotal).toFixed(2)}.`;
+      }
+    }
     
     await logChange(pool, req, {
       type: 'upload.created', entityType: 'upload', entityId: uploadId,
