@@ -1,6 +1,7 @@
 import { periodToMmYyyy } from '../periodFormat';
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiFetch, apiUpload } from '../api';
+import { uploadNotImportedMessage } from '../utils/uploadNotImported';
 import { formatDate, formatDateTime } from '../utils/dateFormat';
 import UploadRouteConfirm from '../components/UploadRouteConfirm';
 import {
@@ -102,6 +103,15 @@ export default function Upload({ user, onNavigate }) {
         return;
       }
       
+      // Any other 409 (already uploaded / every line already imported) is not a success.
+      const notImported = uploadNotImportedMessage(result);
+      if (notImported) {
+        setError(notImported);
+        setDuplicateModal(null);
+        setUploading(false);
+        return;
+      }
+
       setUploadResult(result);
       loadUploads();
       setDuplicateModal(null);

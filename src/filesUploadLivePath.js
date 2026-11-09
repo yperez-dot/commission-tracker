@@ -19,6 +19,8 @@ const {
   recordFromDbRow,
   uhcTransactionKey,
   crossFileDuplicateKey,
+  duplicateMatchKey,
+  policylessDuplicateKey,
   uadAmount,
   UHC_FEE_CLASSIFICATION,
   UAD_CLASSIFICATION,
@@ -56,6 +58,7 @@ function toCommissionDbRow(r) {
     payment_period: r.period,
     uad_activity: r.uadActivity != null ? r.uadActivity : 0,
     carrier: r.carrier,
+    agent_name: r.agent,
     raw_data: r.raw,
   };
 }
@@ -64,9 +67,19 @@ function toCommissionDbRow(r) {
  * Same filter + recordFromDbRow + findIncomingDuplicates as routes/files.js
  * findDuplicates, without Postgres.
  */
+/**
+ * Rows that take part in the DB duplicate check: anything with a policy number,
+ * plus policy-less money lines (Doctors/Solis prior-month negative carry).
+ */
+function isDuplicateCheckable(r) {
+  if (!r) return false;
+  if (r.policyNumber) return !!(r.client || r.statementDate);
+  return !!policylessDuplicateKey(r);
+}
+
 function findDuplicatesLikePostFilesUpload(existingParsedRecords, incomingParsedRecords) {
   const incoming = incomingParsedRecords || [];
-  const filtered = incoming.filter((r) => r.policyNumber && (r.client || r.statementDate));
+  const filtered = incoming.filter(isDuplicateCheckable);
   const existing = (existingParsedRecords || []).map(toCommissionDbRow).map(recordFromDbRow);
   const dups = findIncomingDuplicates(existing, filtered);
   const dupSet = new Set(dups);
@@ -87,7 +100,7 @@ function findDuplicatesLikePostFilesUpload(existingParsedRecords, incomingParsed
       type: r.classification,
       period: r.period,
       statementDate: r.statementDate || null,
-      matchKey: crossFileDuplicateKey(r),
+      matchKey: duplicateMatchKey(r),
       txnKey: uhcTransactionKey(r),
     })),
     newRecords,
@@ -126,6 +139,7 @@ function runPostFilesUpload(filePath, originalName, existingParsedRecords) {
 }
 
 module.exports = {
+  isDuplicateCheckable,
   parsePostFilesUploadExcel,
   collapseLikePostFilesUpload,
   toCommissionDbRow,

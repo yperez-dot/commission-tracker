@@ -32,9 +32,12 @@ const {
 const {
   parsePostFilesUploadExcel,
   findDuplicatesLikePostFilesUpload,
+  isDuplicateCheckable,
 } = require('../src/filesUploadLivePath');
+const { alreadyUploadedPayload } = require('../src/uploadAlreadyImported');
+const { parseSolisRows, isDoctorsFile, isSolisFile } = require('../src/solisLedgerParse');
 const {
-  crossFileDuplicateKey,
+  duplicateMatchKey,
   uhcTransactionKey,
   isExcludedFeeClassification,
 } = require('../src/uhcUad');
@@ -329,17 +332,6 @@ function parseMOOExcelRows(wb, filename) {
     console.error('parseMOOExcelRows error:', err.message);
   }
   return records;
-}
-
-function isDoctorsFile(filename) {
-  const f = filename.toLowerCase().replace(/['\s()]/g, '_');
-  return f.includes('doctor') || f.startsWith('drs') || f.startsWith('dr_s') || f.includes('dr_s_katy') || f.includes('dr_s_');
-}
-
-function isSolisFile(filename) {
-  const f = filename.toLowerCase().replace(/['\s()]/g, '_');
-  if (isDoctorsFile(filename)) return false;
-  return f.includes('commissions_ledger') || f.includes('solis');
 }
 
 function isHealthSpringFile(filename) {
@@ -2187,137 +2179,6 @@ function parseAetnaDirectCSV(wb, filename) {
   return records;
 }
 
-function parseSolisRows(wb, filename) {
-  const records = [];
-  const ws = wb.Sheets[wb.SheetNames[0]];
-  const range = XLSX.utils.decode_range(ws['!ref']);
-
-  let headerRow = -1;
-  for (let r = range.s.r; r <= Math.min(range.s.r + 10, range.e.r); r++) {
-    for (let c = range.s.c; c <= range.e.c; c++) {
-      const cell = ws[XLSX.utils.encode_cell({ r, c })];
-      const cellValue = String(cell?.v || '').toLowerCase().replace(/\s+/g, '');
-      // Match both "Member Name" and "MemberName" formats
-      if (cell && cellValue.includes('membername')) {
-        headerRow = r;
-        break;
-      }
-    }
-    if (headerRow >= 0) break;
-  }
-  if (headerRow < 0) return records;
-
-  const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true, range: headerRow });
-
-  for (const row of rows) {
-    // Handle both Solis (with spaces) and Doctors (no spaces) column formats
-    let client = String(row['Member Name'] || row['MemberName'] || '').trim();
-    const agent = normalizeAgentName(String(row['Agent Name'] || row['AgentName'] || '').trim());
-    const commission = parseFloat(row['Payment Amt'] || row['PaymentAmt']) || 0;
-    const commissionEffDate = row['Commission Eff. Date'] || row['CommissionEffectiveDate'];
-    const memberEnrollDate = row['Member Enrollment Date'] || row['MemberEnrollmentDate'];
-    
-    // Both Doctors and Solis use Member Enrollment Date for EFFECTIVE column
-    const isDoctor = isDoctorsFile(filename);
-    const effectiveDate = formatDate(memberEnrollDate);
-    // Normalize payment type: lowercase and collapse multiple spaces
-    const paymentType = String(row['Payment Type'] || row['PaymentType'] || '').toLowerCase().replace(/\s+/g, ' ').trim();
-    const policyNumber = String(row['Plan Member ID'] || row['PlanMemberID'] || '').trim();
-
-    // Doctors/Solis often include a prior-month negative with blank MemberName.
-    // Keep non-zero amounts even when client is blank; do not import zero blank junk.
-    const paymentTypeRaw = String(row['Payment Type'] || row['PaymentType'] || '').trim();
-    const isPriorMonthNegative = /negative|previous\s*month|prior\s*month|carry\s*over|carryover/i.test(paymentTypeRaw)
-      || (commission < 0 && !client);
-    if (commission === 0) continue;
-    if (!isValidClientName(client)) {
-      if (!isPriorMonthNegative) continue;
-      client = paymentTypeRaw
-        ? paymentTypeRaw.replace(/\s+/g, ' ').trim().slice(0, 120)
-        : 'PRIOR MONTH NEGATIVE CHARGE';
-      // isValidClientName rejects names containing "balance"/"total"/etc — strip those words
-      client = client.replace(/\b(balance|total|summary|subtotal|deduction)\b/ig, 'CHARGE').trim()
-        || 'PRIOR MONTH NEGATIVE CHARGE';
-    }
-
-    // Determine if New Business vs Renewal by comparing enrollment date to commission date
-    let isNewBusiness = false;
-    if (memberEnrollDate && commissionEffDate) {
-      // Helper to convert any date format to Date object
-      const parseAnyDate = (val) => {
-        if (typeof val === 'number') {
-          // Excel serial number
-          return new Date(Date.UTC(1899, 11, 30) + val * 86400000);
-        }
-        const str = String(val);
-        if (str.length === 8 && /^\d{8}$/.test(str)) {
-          // YYYYMMDD format (Doctors)
-          const y = parseInt(str.substring(0, 4));
-          const m = parseInt(str.substring(4, 6));
-          const d = parseInt(str.substring(6, 8));
-          return new Date(Date.UTC(y, m - 1, d));
-        }
-        // Standard date string
-        return new Date(val);
-      };
-      
-      const enrollDate = parseAnyDate(memberEnrollDate);
-      const commDate = parseAnyDate(commissionEffDate);
-      
-      if (!isNaN(enrollDate.getTime()) && !isNaN(commDate.getTime())) {
-        const enrollYM = enrollDate.getUTCFullYear() * 100 + (enrollDate.getUTCMonth() + 1);
-        const commYM = commDate.getUTCFullYear() * 100 + (commDate.getUTCMonth() + 1);
-        isNewBusiness = (enrollYM === commYM);
-      }
-    }
-
-    // Solis/Doctors payment type mapping
-    // Use enrollment vs commission date comparison to determine New Business vs Renewal
-    const classification = commission < 0 ? 'Chargeback'
-      : paymentType.includes('chargeback') ? 'Chargeback'
-      : isNewBusiness ? 'New Business'
-      : paymentType.includes('agent retention') ? 'Renewal'
-      : paymentType.includes('agent renewal compensation') ? 'Renewal'
-      : paymentType.includes('initial') ? 'New Business'
-      : paymentType.includes('renewal') ? 'Renewal'
-      : paymentType.includes('new') ? 'New Business'
-      : 'Renewal';
-
-    let period = '';
-    if (commissionEffDate) {
-      let d;
-      // Handle Excel serial date numbers (e.g., 46143 = days since 1900)
-      if (typeof commissionEffDate === 'number') {
-        // Convert Excel serial to JS Date (Excel epoch is Dec 30, 1899)
-        d = new Date(Date.UTC(1899, 11, 30) + commissionEffDate * 86400000);
-      } else {
-        d = new Date(commissionEffDate);
-      }
-      if (!isNaN(d.getTime())) {
-        period = String(d.getUTCFullYear()) + String(d.getUTCMonth() + 1).padStart(2, '0');
-      }
-    }
-
-    const carrierName = isDoctor ? 'Doctors' : 'Solis';
-    const planTypeName = isDoctor ? 'Doctors Med Adv' : 'Solis Med Adv';
-    records.push({
-      agent: agent || 'The Health Experts Insurance',
-      carrier: carrierName,
-      planType: planTypeName,
-      client,
-      effectiveDate,
-      premium: 0,
-      commission,
-      classification,
-      period,
-      policyNumber,
-      payee: isDoctor ? 'Doctors' : 'Solis',
-      raw: row
-    });
-  }
-  return records;
-}
-
 function normalizeClassification(raw, commission) {
   if (commission < 0) return 'Chargeback';
   const c = String(raw || '').trim().toUpperCase();
@@ -3726,24 +3587,44 @@ async function ensureUadActivityColumn(pool) {
 //   Statement Date or use a different amount, so they are not pulled in.
 async function findDuplicates(pool, records) {
   if (!records.length) return [];
-  // Policy is required. Effective date may be blank on Aetna DIRECT agency .xls
-  // (the Date column is empty); statement date still distinguishes months.
-  const filtered = records.filter(r => r.policyNumber && (r.client || r.statementDate));
+  // Policy is required for the identity check. Effective date may be blank on Aetna
+  // DIRECT agency .xls (the Date column is empty); statement date still distinguishes
+  // months. Policy-less money lines (Doctors/Solis prior-month negative carry) are
+  // checked too — they used to be re-imported on every re-upload.
+  const filtered = records.filter(isDuplicateCheckable);
   if (!filtered.length) return [];
 
   const policies = [...new Set(filtered.map((r) => r.policyNumber).filter(Boolean))];
-  if (!policies.length) return [];
+  const policylessClients = [...new Set(
+    filtered.filter((r) => !r.policyNumber).map((r) => String(r.client || '').trim().toLowerCase()).filter(Boolean)
+  )];
 
-  const result = await pool.query(
-    `SELECT policy_number, client_full_name, effective_date, commission, payment_period,
-            COALESCE(uad_activity, 0) AS uad_activity, raw_data, carrier
-     FROM commission_records
-     WHERE policy_number = ANY($1)`,
-    [policies]
-  );
+  const rows = [];
+  if (policies.length) {
+    const result = await pool.query(
+      `SELECT policy_number, client_full_name, effective_date, commission, payment_period,
+              COALESCE(uad_activity, 0) AS uad_activity, raw_data, carrier, agent_name
+       FROM commission_records
+       WHERE policy_number = ANY($1)`,
+      [policies]
+    );
+    rows.push(...result.rows);
+  }
+  if (policylessClients.length) {
+    const result = await pool.query(
+      `SELECT policy_number, client_full_name, effective_date, commission, payment_period,
+              COALESCE(uad_activity, 0) AS uad_activity, raw_data, carrier, agent_name
+       FROM commission_records
+       WHERE COALESCE(TRIM(policy_number), '') = ''
+         AND LOWER(TRIM(client_full_name)) = ANY($1)`,
+      [policylessClients]
+    );
+    rows.push(...result.rows);
+  }
+  if (!rows.length) return [];
 
   const found = findDuplicatesLikePostFilesUpload(
-    result.rows.map((row) => ({
+    rows.map((row) => ({
       policyNumber: row.policy_number,
       client: row.client_full_name,
       effectiveDate: row.effective_date,
@@ -3751,6 +3632,7 @@ async function findDuplicates(pool, records) {
       period: row.payment_period,
       uadActivity: row.uad_activity,
       carrier: row.carrier,
+      agent: row.agent_name,
       raw: row.raw_data,
     })),
     records
@@ -3778,14 +3660,18 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
     const pool = getPool();
     let storedOriginalName = req.file.originalname;
     const existing = await pool.query('SELECT id FROM uploads WHERE original_name = $1', [storedOriginalName]);
+    // Same filename already in Uploads (non-NHP): still parse so the reply can say how
+    // many lines already match, but never import. The old bare 409 had no
+    // duplicateWarning, so Upload.js rendered it as "Upload successful — undefined".
+    let filenameTakenUploadId = null;
     if (existing.rows.length > 0) {
       const renamed = resolveNhpUploadOriginalName(storedOriginalName, true);
       if (!renamed) {
-        try { fs.unlinkSync(req.file.path); } catch (e) {}
-        return res.status(409).json({ error: `"${storedOriginalName}" has already been uploaded. Delete it first.` });
+        filenameTakenUploadId = existing.rows[0].id;
+      } else {
+        console.log(`[UPLOAD] NHP duplicate filename — storing as ${renamed}`);
+        storedOriginalName = renamed;
       }
-      console.log(`[UPLOAD] NHP duplicate filename — storing as ${renamed}`);
-      storedOriginalName = renamed;
     }
 
     const determinePayee = (filename) => {
@@ -4267,8 +4153,29 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
     const skipDuplicates = req.body.skipDuplicates === 'true';
     const ignoreDuplicates = req.body.ignoreDuplicates === 'true';
 
+    if (filenameTakenUploadId != null) {
+      const duplicates = await findDuplicates(pool, records);
+      try { fs.unlinkSync(req.file.path); } catch(e) {}
+      return res.status(409).json(alreadyUploadedPayload({
+        filename: storedOriginalName,
+        existingUploadId: filenameTakenUploadId,
+        matchCount: duplicates.length,
+        totalCount: records.length,
+        filenameTaken: true,
+      }));
+    }
+
     if (!ignoreDuplicates) {
       const duplicates = await findDuplicates(pool, records);
+      if (duplicates.length > 0 && duplicates.length === records.length) {
+        // Every line already exists — nothing to import, don't offer an "Import 0" modal.
+        try { fs.unlinkSync(req.file.path); } catch(e) {}
+        return res.status(409).json(alreadyUploadedPayload({
+          filename: storedOriginalName,
+          matchCount: duplicates.length,
+          totalCount: records.length,
+        }));
+      }
       if (duplicates.length > 0 && !skipDuplicates) {
         try { fs.unlinkSync(req.file.path); } catch(e) {}
         return res.status(409).json({
@@ -4289,15 +4196,25 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
 
         const dupIdentity = new Set(duplicates.map((d) => d.matchKey).filter(Boolean));
         const dupTxn = new Set(duplicates.map((d) => d.txnKey).filter(Boolean));
+        const beforeSkip = records.length;
 
         records = records.filter(r => {
-          const identity = crossFileDuplicateKey(r);
+          const identity = duplicateMatchKey(r);
           const txn = uhcTransactionKey(r);
           const isDup = (identity && dupIdentity.has(identity)) || (txn && dupTxn.has(txn));
           if (!isDup) return true;
           const coarse = `${r.client?.toLowerCase()}|${r.carrier?.toLowerCase()}|${r.effectiveDate}`;
           return selectedKeys.has(coarse);
         });
+        if (!records.length) {
+          // Never create an empty upload row when every line was skipped.
+          try { fs.unlinkSync(req.file.path); } catch(e) {}
+          return res.status(409).json(alreadyUploadedPayload({
+            filename: storedOriginalName,
+            matchCount: duplicates.length,
+            totalCount: beforeSkip,
+          }));
+        }
       }
     }
 
