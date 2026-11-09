@@ -27,15 +27,15 @@ const { resolveChasedRenewals } = require('../src/renewalsAutoResolve');
 const { collapseInternalDuplicates } = require('../src/uploadBatchDedupe');
 const {
   parseUHCDirectRows,
-  parseUhcUploadWorkbook,
   isUHCDirectFile,
 } = require('../src/uhcCommissionParse');
 const {
+  parsePostFilesUploadExcel,
+  findDuplicatesLikePostFilesUpload,
+} = require('../src/filesUploadLivePath');
+const {
   crossFileDuplicateKey,
   uhcTransactionKey,
-  findIncomingDuplicates,
-  recordFromDbRow,
-  uadAmount,
   isExcludedFeeClassification,
 } = require('../src/uhcUad');
 const { resolvePassThroughLiableAgent } = require('../src/writerPassThroughAgents');
@@ -3742,23 +3742,20 @@ async function findDuplicates(pool, records) {
     [policies]
   );
 
-  const existing = result.rows.map(recordFromDbRow);
-  const dups = findIncomingDuplicates(existing, filtered);
-  const dupSet = new Set(dups);
-  return filtered.filter((r) => dupSet.has(r)).map((r) => ({
-    client: r.client,
-    carrier: r.carrier,
-    date: r.effectiveDate,
-    amount: r.commission,
-    uadActivity: uadAmount(r),
-    agent: r.agent,
-    policy: r.policyNumber,
-    type: r.classification,
-    period: r.period,
-    statementDate: r.statementDate || null,
-    matchKey: crossFileDuplicateKey(r),
-    txnKey: uhcTransactionKey(r),
-  }));
+  const found = findDuplicatesLikePostFilesUpload(
+    result.rows.map((row) => ({
+      policyNumber: row.policy_number,
+      client: row.client_full_name,
+      effectiveDate: row.effective_date,
+      commission: row.commission,
+      period: row.payment_period,
+      uadActivity: row.uad_activity,
+      carrier: row.carrier,
+      raw: row.raw_data,
+    })),
+    records
+  );
+  return found.duplicates;
 }
 
 // ─── Upload route ─────────────────────────────────────────────────────────────
@@ -3956,11 +3953,17 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
       } else if (isYourFMOXLSX(req.file.originalname)) {
         console.log('[UPLOAD] Using YourFMO XLSX parser');
         records = parseYourFMOXLSXRows(wb);
-      } else if (parseUhcUploadWorkbook(wb, req.file.originalname)) {
-        // THEI agency, personal P_UHC / YP_UHC_STATTEMENT, and any UHC Commission Transactions workbook.
-        // Full sheet (not MedSup-only) so personal statements keep MAPD/DSNP and $0 UAD rows.
-        console.log('[UPLOAD] Using UHC Commission Transactions parser');
-        records = parseUhcUploadWorkbook(wb, req.file.originalname);
+      } else {
+        const uhcLive = parsePostFilesUploadExcel(req.file.path, req.file.originalname, wb);
+        if (uhcLive.records) {
+          // THEI agency, personal P_UHC / YP_UHC_STATTEMENT, and any UHC Commission Transactions workbook.
+          // Full sheet (not MedSup-only) so personal statements keep MAPD/DSNP and $0 UAD rows.
+          console.log('[UPLOAD] Using UHC Commission Transactions parser');
+          records = uhcLive.records;
+        }
+      }
+      if (records) {
+        // Remittance, YourFMO, or UHC live path already selected
       } else if (isUHCDirectFile(req.file.originalname)) {
         console.log('[UPLOAD] Using UHC Direct Commission parser (706381 - MedSup + Part D only)');
         records = parseUHCDirectRows(wb, req.file.originalname);
