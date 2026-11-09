@@ -9,6 +9,7 @@ import Reconciliation from './pages/Reconciliation';
 import BookOfBusiness from './pages/BookOfBusiness';
 import Payroll from './pages/Payroll';
 import AdminUsers from './pages/AdminUsers';
+import SecuritySettings from './pages/SecuritySettings';
 import MedicareProUpload from './pages/MedicareProUpload';
 import AgencyProductionUpload from './pages/AgencyProductionUpload';
 import AgencyProductionRecon from './pages/AgencyProductionRecon';
@@ -36,7 +37,7 @@ const PAGE_IDS = new Set([
   'dashboard', 'upload', 'medicarepro-upload', 'agency-production-upload', 'bsi-statements-upload',
   'agent-payout-uploads', 'agency-production-recon', 'alldata', 'bob', 'renewals', 'reconciliation',
   'direct-recon', 'pass-through-chargebacks', 'payroll', 'payroll-payouts', 'payroll-overrides',
-  'payroll-loa', 'payroll-history', 'payroll-close', 'payroll-changelog', 'users',
+  'payroll-loa', 'payroll-history', 'payroll-close', 'payroll-changelog', 'users', 'settings',
 ]);
 
 /** Sidebar menu for the current agency view / role. */
@@ -76,6 +77,7 @@ export function buildNavItems({ isBSI, isAdmin }) {
         { id: 'payroll-changelog', label: 'Change Log' },
       ],
     },
+    { id: 'settings', label: 'Security' },
     ...(isAdmin ? [{ id: 'users', label: 'User Accounts' }] : []),
   ];
 }
@@ -255,6 +257,7 @@ export default function App() {
     'payroll-history': <Payroll key={`${agencyView}-history`} user={effectiveUser} initialTab="history" onNavigate={navigate} />,
     'payroll-close': <Payroll key={`${agencyView}-close`} user={effectiveUser} initialTab="close" onNavigate={navigate} />,
     'payroll-changelog': <Payroll key={`${agencyView}-changelog`} user={effectiveUser} initialTab="changelog" onNavigate={navigate} />,
+    settings: <SecuritySettings key={agencyView} user={effectiveUser} />,
     users: <AdminUsers key={agencyView} user={effectiveUser} />
   };
 
