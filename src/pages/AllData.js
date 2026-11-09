@@ -8,14 +8,6 @@ import EditCommissionModal from '../components/EditCommissionModal';
 import { commissionUploadExportPath, exportUploadFile } from '../utils/exportUpload';
 import { uploadCategoryLabel } from '../utils/uploadDestination';
 import { classifyClientFileStream } from '../clientFileStream';
-import { normalizeCarrier } from '../matchingNormalize';
-import {
-  isOverrideStatementRow,
-  buildOverrideMatches,
-  dedupeProductionSales,
-  getOverrideReconCategory,
-  getThreeWayOverrideStatus,
-} from '../agencyOverrideReconMatch';
 
 function fmt(n) {
   return '$' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -26,48 +18,6 @@ function formatPeriodLabel(p) {
   return formatPeriodDisplay(p, String(p));
 }
 
-// Not-paid detail text per Recon's own three-way status — same tags Agency Override
-// Recon shows in its Missing tab, just spelled out for someone who never opened Recon.
-const THREE_WAY_DETAIL = {
-  chase_bsi: 'Carrier paid BSI, no house remittance on file yet',
-  not_paid_to_bsi: 'Not on the uploaded carrier BSI statement',
-  pending: 'Carrier BSI statement not uploaded for this period yet',
-  held_licensing: 'Held — licensing/appointment issue',
-  no_pay_expected: 'No payout expected (withdrawn/cancelled/denied)',
-  request_audit: 'Carrier BSI shows $0 — needs audit',
-};
-
-/**
- * One production sale's current payment status, using the exact same fields Agency
- * Override Recon computes (getOverrideReconCategory / getThreeWayOverrideStatus) —
- * never re-derived here. `rows` is every buildOverrideMatches row for that one
- * production id (its full paid/chargeback history plus, if still open, one current
- * row); a production with no open ("isHistory: false") row has already netted
- * positive, i.e. Recon would show it as Paid.
- */
-function summarizeProductionStatus(rows) {
-  const current = rows.find((r) => !r.isHistory);
-  const hadPaidHistory = rows.some((r) => r.isHistory && r.lifecycle === 'paid');
-  const hadChargebackHistory = rows.some((r) => r.isHistory && r.lifecycle === 'chargeback');
-  if (!current) {
-    return hadChargebackHistory && hadPaidHistory
-      ? { label: 'Partial', detail: 'Paid then partially charged back — net still positive', tone: 'amber' }
-      : { label: 'Paid', detail: null, tone: 'green' };
-  }
-  const category = getOverrideReconCategory(current);
-  if (category === 'paid') return { label: 'Paid', detail: null, tone: 'green' };
-  if (category === 'cancelled') {
-    return {
-      label: current.lifecycle === 'chargeback' ? 'Chargeback' : 'Cancelled',
-      detail: null,
-      tone: 'red',
-    };
-  }
-  const threeWay = getThreeWayOverrideStatus(current);
-  return { label: 'Not paid', detail: THREE_WAY_DETAIL[threeWay] || null, tone: 'amber' };
-}
-
-/** Clickable dollar amount → source upload report (manual audit). */
 function AmountLink({ value, record, onOpenSource, style = {} }) {
   const hasAmount = value != null && value !== '';
   const display = hasAmount ? fmt(value) : '—';
@@ -100,9 +50,10 @@ function AmountLink({ value, record, onOpenSource, style = {} }) {
   );
 }
 
-function MultiSelect({ label, options, selected, onChange }) {
+function MultiSelect({ label, options, selected, onChange, formatOption }) {
   const [open, setOpen] = useState(false);
   const allSelected = selected.length === 0;
+  const labelFor = (opt) => (formatOption ? formatOption(opt) : opt);
 
   function toggle(val) {
     if (selected.includes(val)) onChange(selected.filter(v => v !== val));
@@ -111,7 +62,9 @@ function MultiSelect({ label, options, selected, onChange }) {
 
   function clear() { onChange([]); setOpen(false); }
 
-  const displayLabel = allSelected ? `All ${label}` : `${selected.length} ${label}`;
+  const displayLabel = allSelected
+    ? `All ${label}`
+    : (selected.length === 1 ? labelFor(selected[0]) : `${selected.length} ${label}`);
 
   return (
     <div style={{ position: 'relative' }}>
@@ -152,7 +105,7 @@ function MultiSelect({ label, options, selected, onChange }) {
                   }}>
                     {isSel && <span style={{ color: 'var(--sidebar-bg)', fontSize: 9 }}>✓</span>}
                   </span>
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{opt}</span>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{labelFor(opt)}</span>
                 </button>
               );
             })}
@@ -206,16 +159,6 @@ export default function AllData({ user, initialFilters = {}, onNavigate }) {
   const [sourceReport, setSourceReport] = useState(null); // commission row with upload_* fields
   const [sourceExporting, setSourceExporting] = useState(false);
   const [uploadFilter, setUploadFilter] = useState(null); // { id, name }
-  // Unpaid agency production for the current search — Katy's path: a client marked
-  // Not paid on Agency Override Recon is invisible here because /records only holds
-  // commission-statement rows, never agency_production. This is populated by a
-  // separate, debounced, search-scoped lookup (never on empty search, never a full
-  // production dump) — see the effect below.
-  const [prodMatches, setProdMatches] = useState([]); // [{ production, ...status fields }]
-  const [prodLoading, setProdLoading] = useState(false);
-  const [prodError, setProdError] = useState(null);
-  const [prodPanelOpen, setProdPanelOpen] = useState(true);
-
   useEffect(() => {
     apiFetch('/records/filters').then(d => setFilterOptions(d)).catch(console.error);
     setSelAgents([]); setSelCarriers([]); setSelPeriods([]); setSelTypes([]); setSelPayees([]); setSelLOB([]);
@@ -315,71 +258,6 @@ export default function AllData({ user, initialFilters = {}, onNavigate }) {
     else loadRecords(0);
   }, [selAgents, selCarriers, selPeriods, selTypes, selPayees, selLOB, amountSign, search, sortCol, sortDir, hideTermed, uploadFilter, user.agency, listMode]);  // load* intentionally omitted
 
-  // Unpaid-production search (Brief D / Katy's path). Only runs when the search box
-  // has a real name in it — never on the default All Data load, and never a full
-  // production or override dump: every call below is scoped by the same `search`
-  // term (server-side ILIKE), same as the main /records search already is. Debounced
-  // so it doesn't fire per keystroke.
-  useEffect(() => {
-    const term = search.trim();
-    if (term.length < 3) {
-      setProdMatches([]);
-      setProdError(null);
-      setProdLoading(false);
-      return;
-    }
-    let cancelled = false;
-    setProdLoading(true);
-    setProdError(null);
-    const handle = setTimeout(async () => {
-      try {
-        const q = `search=${encodeURIComponent(term)}`;
-        const [prodData, overrideData, bsiData, bsiUploadsData] = await Promise.all([
-          apiFetch(`/agency-production?${q}&limit=50`),
-          apiFetch(`/records?${q}&exclude_upload_category=bsi_statement&classificationLike=override,chargeback&light=1&limit=200`),
-          apiFetch(`/records?${q}&upload_category=bsi_statement&light=1&limit=200`),
-          apiFetch('/files/uploads?category=bsi_statement'),
-        ]);
-        if (cancelled) return;
-        const production = prodData.production || [];
-        const overrides = (overrideData.records || []).filter(isOverrideStatementRow);
-        const carrierBSIRecords = bsiData.records || [];
-        const bsiUploadedKeys = new Set();
-        (bsiUploadsData || []).forEach((u) => {
-          const carriersOnUpload = (u.carrier || '').split(',').map((c) => c.trim()).filter(Boolean);
-          const period = u.payment_period || '';
-          carriersOnUpload.forEach((c) => bsiUploadedKeys.add(`${normalizeCarrier(c)}|${period}`));
-        });
-        // Same shared function Agency Override Recon itself uses (agencyOverrideReconMatch.js)
-        // — status here can't drift from what Recon shows for the same sale because it's
-        // the same code, not a re-derived copy of the payment rules.
-        const rows = buildOverrideMatches(production, overrides, carrierBSIRecords, bsiUploadedKeys);
-        const byProduction = new Map();
-        rows.forEach((r) => {
-          const id = r.production?.id;
-          if (id == null) return;
-          if (!byProduction.has(id)) byProduction.set(id, []);
-          byProduction.get(id).push(r);
-        });
-        // buildOverrideMatches dedupes rolling-90-day production internally (one row
-        // per true sale — see dedupeProductionSales), so the rows it returns are keyed
-        // by the *winning* duplicate's id, not every id in the raw fetch. Displaying
-        // over the same deduped set keeps a rolling repeat of an already-summarized
-        // sale from wrongly showing as a second, unmatched "Paid" entry.
-        const uniqueProduction = dedupeProductionSales(production);
-        const summarized = uniqueProduction.map((prod) => {
-          const prodRows = byProduction.get(prod.id) || [];
-          return { production: prod, ...summarizeProductionStatus(prodRows) };
-        });
-        setProdMatches(summarized);
-      } catch (e) {
-        if (!cancelled) setProdError(e.message || 'Production search failed');
-      } finally {
-        if (!cancelled) setProdLoading(false);
-      }
-    }, 400);
-    return () => { cancelled = true; clearTimeout(handle); };
-  }, [search, user.agency]);
 
   function handlePage(dir) {
     const next = page + dir;
@@ -986,7 +864,7 @@ export default function AllData({ user, initialFilters = {}, onNavigate }) {
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12, alignItems: 'center' }}>
           <MultiSelect label="Agents" options={filterOptions.agents || []} selected={selAgents} onChange={setSelAgents} />
           <MultiSelect label="Carriers" options={filterOptions.carriers || []} selected={selCarriers} onChange={setSelCarriers} />
-          <MultiSelect label="Periods" options={(filterOptions.periods || []).filter(p => p && p !== 'Unknown')} selected={selPeriods} onChange={setSelPeriods} />
+          <MultiSelect label="Periods" options={(filterOptions.periods || []).filter(p => p && p !== 'Unknown')} selected={selPeriods} onChange={setSelPeriods} formatOption={(p) => formatPeriodLabel(p)} />
           <MultiSelect label="Types" options={filterOptions.classifications || []} selected={selTypes} onChange={setSelTypes} />
           <MultiSelect label="LOB" options={filterOptions.lobs || []} selected={selLOB} onChange={setSelLOB} />
           <MultiSelect label="Payee" options={filterOptions.payees || []} selected={selPayees} onChange={setSelPayees} />
@@ -1104,8 +982,8 @@ export default function AllData({ user, initialFilters = {}, onNavigate }) {
 
         {hasFilters && (
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
-            {[...selAgents, ...selCarriers, ...selPeriods, ...selTypes, ...selLOB, ...selPayees].map(f => (
-              <span key={f} style={{ background: 'var(--accent)', color: 'var(--sidebar-bg)', borderRadius: 4, padding: '2px 10px', fontSize: 11, fontWeight: 500 }}>{f}</span>
+            {[...selAgents, ...selCarriers, ...selPeriods.map((p) => ({ key: `period:${p}`, label: formatPeriodLabel(p) })), ...selTypes, ...selLOB, ...selPayees].map(f => (
+              <span key={typeof f === 'object' ? f.key : f} style={{ background: 'var(--accent)', color: 'var(--sidebar-bg)', borderRadius: 4, padding: '2px 10px', fontSize: 11, fontWeight: 500 }}>{typeof f === 'object' ? f.label : f}</span>
             ))}
             {amountSign === 'uad' && (
               <span style={{ background: '#F5EAE4', color: '#7A3D1F', borderRadius: 4, padding: '2px 10px', fontSize: 11, fontWeight: 500 }}>UAD recoups</span>
@@ -1119,80 +997,6 @@ export default function AllData({ user, initialFilters = {}, onNavigate }) {
           </div>
         )}
 
-        {search.trim().length >= 3 && (prodLoading || prodError || prodMatches.length > 0) && (
-          <div className="card" style={{ marginBottom: 12, padding: '12px 14px', border: '0.5px solid var(--accent)' }}>
-            <div
-              style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}
-              onClick={() => setProdPanelOpen((o) => !o)}
-            >
-              <div style={{ fontSize: 13, fontWeight: 600 }}>
-                Agency production for "{search.trim()}"
-                {!prodLoading && (
-                  <span style={{ fontWeight: 400, color: 'var(--text-muted)', marginLeft: 8 }}>
-                    {prodMatches.length} sale{prodMatches.length === 1 ? '' : 's'} on Agency Override Recon
-                    {prodMatches.some((m) => m.label !== 'Paid') && ' — some not fully paid'}
-                  </span>
-                )}
-              </div>
-              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{prodPanelOpen ? '▲' : '▼'}</span>
-            </div>
-            {prodPanelOpen && (
-              <div style={{ marginTop: 10 }}>
-                {prodLoading ? (
-                  <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>Checking agency production…</div>
-                ) : prodError ? (
-                  <div style={{ fontSize: 12, color: 'var(--red)' }}>{prodError}</div>
-                ) : (
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12 }}>
-                    <thead>
-                      <tr style={{ textAlign: 'left', color: 'var(--text-muted)' }}>
-                        <th style={{ padding: '4px 8px' }}>Client</th>
-                        <th style={{ padding: '4px 8px' }}>Carrier</th>
-                        <th style={{ padding: '4px 8px' }}>Agent</th>
-                        <th style={{ padding: '4px 8px' }}>Eff. date</th>
-                        <th style={{ padding: '4px 8px' }}>Status</th>
-                        <th style={{ padding: '4px 8px' }} />
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {prodMatches.map((m) => {
-                        const tone = m.tone === 'green' ? 'var(--green)' : m.tone === 'red' ? 'var(--red)' : 'var(--accent-dark)';
-                        return (
-                          <tr key={m.production.id} style={{ borderTop: '0.5px solid var(--border)' }}>
-                            <td style={{ padding: '6px 8px' }}>{m.production.client_name}</td>
-                            <td style={{ padding: '6px 8px' }}>{formatCarrier(m.production.carrier)}</td>
-                            <td style={{ padding: '6px 8px' }}>{m.production.agent_name}</td>
-                            <td style={{ padding: '6px 8px' }}>{formatDate(m.production.effective_date)}</td>
-                            <td style={{ padding: '6px 8px' }}>
-                              <span style={{ color: tone, fontWeight: 600 }}>{m.label}</span>
-                              {m.detail && (
-                                <span style={{ color: 'var(--text-muted)', marginLeft: 6 }}>({m.detail})</span>
-                              )}
-                            </td>
-                            <td style={{ padding: '6px 8px', textAlign: 'right' }}>
-                              {onNavigate && (
-                                <button
-                                  type="button"
-                                  onClick={() => onNavigate('agency-production-recon', { search: m.production.client_name })}
-                                  style={{ background: 'none', border: 'none', color: 'var(--accent-dark)', fontSize: 12, cursor: 'pointer', textDecoration: 'underline', padding: 0 }}
-                                >
-                                  View in Recon
-                                </button>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                )}
-                <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8 }}>
-                  This is agency production (Hector), not commission-statement rows — it's a separate table from the list below, so a paid sale can appear in both without being a duplicate.
-                </div>
-              </div>
-            )}
-          </div>
-        )}
 
         <div className="card" style={{ padding: 0 }}>
           {loading ? (

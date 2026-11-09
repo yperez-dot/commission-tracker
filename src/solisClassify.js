@@ -8,12 +8,26 @@
  * 1/1/2026 is a renewal ($347), not new business — the heuristic alone mislabeled the
  * four $347 renewals on YP_SOLIS_STATEMENT_01.2026_10.2026.
  *
+ * "Negative Charge from Previous Month" (and blank-member prior negatives) are
+ * statement carryovers of unpaid balance, not new chargebacks — see solisCarryover.js.
+ *
  * @param {string} paymentType lower-cased, whitespace-collapsed Payment Type
  * @param {number} commission Payment Amt
  * @param {boolean} enrolledInCommissionMonth enrollment YYYYMM === commission eff YYYYMM
+ * @param {{ isPriorMonthNegative?: boolean, paymentTypeRaw?: string }} [opts]
  */
-function solisClassification(paymentType, commission, enrolledInCommissionMonth) {
+const {
+  CARRYOVER_CLASSIFICATION,
+  isPriorMonthNegativePaymentType,
+} = require('./solisCarryover');
+
+function solisClassification(paymentType, commission, enrolledInCommissionMonth, opts) {
+  const options = opts || {};
   const pt = String(paymentType || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  const raw = options.paymentTypeRaw != null ? options.paymentTypeRaw : paymentType;
+  if (options.isPriorMonthNegative || isPriorMonthNegativePaymentType(raw)) {
+    return CARRYOVER_CLASSIFICATION;
+  }
   if (commission < 0) return 'Chargeback';
   if (pt.includes('chargeback')) return 'Chargeback';
   if (pt.includes('initial')) return 'New Business';
@@ -23,4 +37,4 @@ function solisClassification(paymentType, commission, enrolledInCommissionMonth)
   return 'Renewal';
 }
 
-module.exports = { solisClassification };
+module.exports = { solisClassification, CARRYOVER_CLASSIFICATION };

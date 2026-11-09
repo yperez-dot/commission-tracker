@@ -76,6 +76,17 @@ describe('THEI UHC statements on the live POST /files/upload parser', () => {
     expect(recoups).toEqual([['CHEUNG, CHITING', -11.8], ['WILLSROMERO, PATRICIO', -48.5]]);
   });
 
+  test('October UAD recoups are NOT duplicates of September same-policy same-amount recoups', () => {
+    const sept = runPostFilesUpload(path.join(FIX, 'UHC_THEI_09.2026_sample.xlsx'), 'UHC_THEI_STATEMENT_09.2026.xlsx').records;
+    const oct = runPostFilesUpload(path.join(FIX, 'UHC_THEI_10.2026.xlsx'), 'UHC_THEI_STATEMENT_10.2026.xlsx').records;
+    const dup = findDuplicatesLikePostFilesUpload(sept, oct);
+    expect(dup.duplicateCount).toBe(0);
+    expect(dup.newRecords).toHaveLength(219);
+    const octRecoups = oct.filter((r) => r.uadActivity);
+    expect(octRecoups).toHaveLength(2);
+    expect(octRecoups.every((r) => r.period === '202610')).toBe(true);
+  });
+
   test('re-uploading 09.2026 after the old 210-row import: 210 lines match, 7 UAD lines are new', () => {
     const full = runPostFilesUpload(path.join(FIX, 'UHC_THEI_09.2026_sample.xlsx'), 'UHC_THEI_STATEMENT_09.2026.xlsx').records;
     // The pre-fix import: no UAD rows, blank period on the 3 rows without Payment Period.
@@ -94,7 +105,7 @@ describe('Doctors / Solis Commissions Ledger', () => {
   test('YP_DOCTORS_08.2026.xlsx parses 5 rows, net -$231.25', () => {
     const recs = parseLedger('YP_DOCTORS_08.2026.xlsx', 'YP_DOCTORS_08.2026.xlsx');
     expect(recs.map((r) => [r.client, r.commission, r.classification, r.period])).toEqual([
-      ['Negative Charge from Previous Month', -346.93, 'Chargeback', '202608'],
+      ['Negative Charge from Previous Month', -346.93, 'Carryover from previous month', '202608'],
       ['TEST MEMBER 01', 28.92, 'Renewal', '202608'],
       ['TEST MEMBER 02', 28.92, 'Renewal', '202608'],
       ['TEST MEMBER 03', 28.92, 'Renewal', '202608'],
@@ -181,6 +192,7 @@ describe('already-uploaded messaging', () => {
     expect(solisClassification('agent retention', 28.92, true)).toBe('Renewal');
     expect(solisClassification('agent initial compensation', 694, true)).toBe('New Business');
     expect(solisClassification('agent chargeback for disenrollment', -203.67, false)).toBe('Chargeback');
+    expect(solisClassification('negative charge from previous month', -346.93, false, { isPriorMonthNegative: true })).toBe('Carryover from previous month');
     expect(solisClassification('', 100, true)).toBe('New Business');
     expect(solisClassification('', 100, false)).toBe('Renewal');
   });
