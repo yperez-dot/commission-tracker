@@ -1,6 +1,7 @@
 import { formatPeriodLabel as formatPeriodDisplay } from '../periodFormat';
 import { UAD_CLASSIFICATION, UHC_FEE_CLASSIFICATION } from '../uhcUad';
-import React, { useState, useEffect, useCallback } from 'react';
+import { initialListModeForFilters } from '../uadAllDataFilter';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { apiFetch } from '../api';
 import { formatCarrier } from '../utils/formatCarrier';
 import { formatDate } from '../utils/dateFormat';
@@ -146,7 +147,7 @@ export default function AllData({ user, initialFilters = {}, onNavigate }) {
   const [deleteTarget, setDeleteTarget] = useState(null);
   const [deleting, setDeleting] = useState(false);
   const [hideTermed, setHideTermed] = useState(false);
-  const [listMode, setListMode] = useState('clients'); // clients | payments
+  const [listMode, setListMode] = useState(() => initialListModeForFilters(initialFilters)); // clients | payments
   const [clients, setClients] = useState([]);
   const PAGE_SIZE = 100;
   const [policyModal, setPolicyModal] = useState(null);
@@ -159,6 +160,7 @@ export default function AllData({ user, initialFilters = {}, onNavigate }) {
   const [sourceReport, setSourceReport] = useState(null); // commission row with upload_* fields
   const [sourceExporting, setSourceExporting] = useState(false);
   const [uploadFilter, setUploadFilter] = useState(null); // { id, name }
+  const fetchGenRef = useRef(0);
   useEffect(() => {
     apiFetch('/records/filters').then(d => setFilterOptions(d)).catch(console.error);
     setSelAgents([]); setSelCarriers([]); setSelPeriods([]); setSelTypes([]); setSelPayees([]); setSelLOB([]);
@@ -209,10 +211,12 @@ export default function AllData({ user, initialFilters = {}, onNavigate }) {
   }
 
   const loadRecords = useCallback(async (offset = 0) => {
+    const gen = ++fetchGenRef.current;
     setLoading(true);
     try {
       const params = buildListParams(offset);
       const data = await apiFetch(`/records?${params}`);
+      if (gen !== fetchGenRef.current) return; // stale (e.g. by-client race)
       let filteredRecords = data.records || [];
       if (hideTermed) {
         filteredRecords = filteredRecords.filter(r => !r.is_termed);
@@ -226,11 +230,12 @@ export default function AllData({ user, initialFilters = {}, onNavigate }) {
       setFilterSums(data.sums || null);
       setSelected(new Set());
     } catch (e) { console.error(e); }
-    finally { setLoading(false); }
+    finally { if (gen === fetchGenRef.current) setLoading(false); }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- buildListParams reads current filter state
   }, [selAgents, selCarriers, selPeriods, selTypes, selPayees, selLOB, amountSign, search, sortCol, sortDir, hideTermed, uploadFilter, user.agency]);
 
   const loadClients = useCallback(async (offset = 0) => {
+    const gen = ++fetchGenRef.current;
     setLoading(true);
     try {
       const params = buildListParams(offset);
@@ -242,13 +247,14 @@ export default function AllData({ user, initialFilters = {}, onNavigate }) {
         params.set('sortCol', 'client_full_name');
       }
       const data = await apiFetch(`/records/by-client?${params}`);
+      if (gen !== fetchGenRef.current) return; // stale — do not clear payment rows
       setClients(data.clients || []);
       setRecords([]);
       setTotal(data.total || 0);
       setFilterSums(data.sums || null);
       setSelected(new Set());
     } catch (e) { console.error(e); }
-    finally { setLoading(false); }
+    finally { if (gen === fetchGenRef.current) setLoading(false); }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selAgents, selCarriers, selPeriods, selTypes, selPayees, selLOB, amountSign, search, sortCol, sortDir, hideTermed, uploadFilter, user.agency]);
 
@@ -456,7 +462,7 @@ export default function AllData({ user, initialFilters = {}, onNavigate }) {
     try { const raw = typeof r.raw_data === 'string' ? JSON.parse(r.raw_data) : r.raw_data; return raw || {}; } catch(e) { return {}; }
   }
   const hasLOB = records.some(r => r.lob);
-  const hasUad = records.some(r => r.uad_activity != null && Number(r.uad_activity) !== 0);
+  const hasUad = amountSign === 'uad' || records.some(r => r.uad_activity != null && Number(r.uad_activity) !== 0);
   const hasSplitData = records.some(r => r.thei_share != null || r.bsi_share != null);
   const hasSubAgentOverride = records.some(r => r.sub_agent_override && r.sub_agent_override > 0);
   const carrierStatementRows = clientHistoryData.filter(
