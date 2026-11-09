@@ -54,6 +54,7 @@ describe('corsOrigins', () => {
   test('defaults include the custom domain, Netlify app, and localhost', () => {
     expect(DEFAULT_CORS_ORIGINS).toEqual(expect.arrayContaining([
       'https://olicomm.healthexps.com',
+      'https://www.olicomm.healthexps.com',
       'https://melodic-cendol-e1dc49.netlify.app',
       'http://localhost:3000',
       'https://tools.healthexps.com',
@@ -105,6 +106,16 @@ describe('corsOrigins', () => {
 
     const { headers } = await preflight(app, 'https://melodic-cendol-e1dc49.netlify.app');
     expect(headers['access-control-allow-origin']).toBe('https://melodic-cendol-e1dc49.netlify.app');
+  });
+
+  test('OPTIONS from www.olicomm.healthexps.com reflects that origin', async () => {
+    const app = express();
+    app.use(cors(corsOptions({})));
+    app.post('/api/auth/login', (_req, res) => res.json({ ok: true }));
+
+    const { status, headers } = await preflight(app, 'https://www.olicomm.healthexps.com');
+    expect(status).toBe(204);
+    expect(headers['access-control-allow-origin']).toBe('https://www.olicomm.healthexps.com');
   });
 
   test('OPTIONS from an unknown origin does not reflect that origin', async () => {

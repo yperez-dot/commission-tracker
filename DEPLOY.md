@@ -220,3 +220,36 @@ Future features you can add:
 - Export to Excel
 - Email alerts for missing renewals
 - Mobile app
+
+## Troubleshooting — cannot sign in on olicomm.healthexps.com
+
+As of Nov 2026 the live API already allows the custom domain, and Cloudflare Pages
+and Netlify ship the **same** JS bundle with `REACT_APP_API_URL` pointing at Railway
+(from `.env.production`). Auth uses a JWT in `localStorage` (Bearer header) — not cookies.
+
+Quick checks (no passwords):
+
+```bash
+# Preflight must echo the Origin back
+curl -si -X OPTIONS https://commission-tracker-production-e4fc.up.railway.app/api/auth/login \
+  -H "Origin: https://olicomm.healthexps.com" \
+  -H "Access-Control-Request-Method: POST" \
+  -H "Access-Control-Request-Headers: content-type,authorization,x-agency-override"
+# Expect: access-control-allow-origin: https://olicomm.healthexps.com
+```
+
+If Netlify (`https://melodic-cendol-e1dc49.netlify.app`) works but the custom domain
+does not, compare:
+
+1. **Hard refresh / clear site data** for `olicomm.healthexps.com` (stale SPA from before
+   `.env.production` was committed would call `/api/...` on Cloudflare itself and fail).
+2. **Cloudflare Bot Fight Mode** on the `healthexps.com` zone injects a challenge script
+   into the custom-domain HTML (not into `*.pages.dev` or Netlify). Disable Bot Fight /
+   Super Bot Fight for `olicomm.healthexps.com`, or add a WAF skip rule.
+3. **Railway `FRONTEND_URL`** should preferably be `https://olicomm.healthexps.com`
+   (defaults already include both hosts; this only adds extras).
+4. **`www.olicomm.healthexps.com`** currently has no public DNS — use the apex host
+   or add a www CNAME to the Pages project.
+
+Do not put secrets in this file. Never commit live `JWT_SECRET` / passwords.
+

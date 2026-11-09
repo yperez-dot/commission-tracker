@@ -20,7 +20,17 @@ export default function Login({ onLogin }) {
       setToken(data.token);
       onLogin(data.token, data.user);
     } catch (err) {
-      setError(err.message || 'Invalid email or password');
+      const msg = String(err && err.message ? err.message : '');
+      // Browser CORS/network failures surface as TypeError "Failed to fetch"
+      // (not a 401). Point Yahoska/Katy at the Netlify fallback when the
+      // custom domain cannot reach Railway.
+      if (/failed to fetch|networkerror|load failed|network request failed/i.test(msg)) {
+        setError(
+          'Cannot reach the OliComm API from this page. Try https://melodic-cendol-e1dc49.netlify.app — if that works, the custom domain is blocked (Cloudflare Bot Fight / CORS).'
+        );
+      } else {
+        setError(msg || 'Invalid email or password');
+      }
     } finally {
       setLoading(false);
     }
