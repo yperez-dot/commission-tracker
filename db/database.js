@@ -224,6 +224,9 @@ async function initSchema() {
       -- Extracted from the statement when possible; derived from carrier+plan otherwise.
       ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS lob TEXT;
 
+      -- UHC unearned-advance recoup (UAD Activity). Never folded into commission.
+      ALTER TABLE commission_records ADD COLUMN IF NOT EXISTS uad_activity NUMERIC(12,2) DEFAULT 0;
+
       -- Indexes for the new columns we'll filter/group by in reports
       CREATE INDEX IF NOT EXISTS idx_records_source ON commission_records(source);
       CREATE INDEX IF NOT EXISTS idx_records_lob ON commission_records(lob);

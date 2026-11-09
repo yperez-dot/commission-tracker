@@ -163,6 +163,7 @@ function buildRecordListFilters(req) {
   if (payee) { where.push(`cr.payee = $${idx++}`); params.push(payee); }
   if (amountSign === 'negative') where.push('cr.commission < 0');
   else if (amountSign === 'positive') where.push('cr.commission >= 0');
+  else if (amountSign === 'uad') where.push('COALESCE(cr.uad_activity, 0) <> 0');
   if (search) {
     // Plain substring match (partial, order-sensitive) OR'd with a full-name,
     // order/format-independent match on client_full_name via the same
@@ -253,6 +254,7 @@ router.get('/', requireAuth, async (req, res) => {
       `SELECT cr.id, cr.agent_name, cr.carrier,
         COALESCE(cr.plan_type, '') as plan_type,
         cr.client_full_name, cr.effective_date, cr.premium, cr.commission,
+        COALESCE(cr.uad_activity, 0) AS uad_activity,
         cr.classification, cr.payment_period, cr.policy_number, cr.created_at,
         cr.upload_id, cr.payee, cr.source, COALESCE(cr.mga, '') as mga,
         ${rawCol}, ${holdCols},
@@ -286,6 +288,7 @@ router.get('/', requireAuth, async (req, res) => {
       const sumsResult = await pool.query(
         `SELECT
            COALESCE(SUM(cr.commission), 0)::float AS commission,
+           COALESCE(SUM(cr.uad_activity), 0)::float AS uad_activity,
            COALESCE(SUM(cr.gross_commission), 0)::float AS gross_commission,
            COALESCE(SUM(cr.thei_share), 0)::float AS thei_share,
            COALESCE(SUM(cr.bsi_share), 0)::float AS bsi_share,
@@ -558,7 +561,7 @@ router.get('/summary', requireAuth, async (req, res) => {
 
     const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
 
-    const [totalComm, totalRec, agentCnt, carrierCnt, byAgent, byCarrier, byPeriod, byLOB] = await Promise.all([
+    const [totalComm, totalRec, agentCnt, carrierCnt, byAgent, byCarrier, byPeriod, byLOB, uadTot] = await Promise.all([
       pool.query(`SELECT COALESCE(SUM(commission),0) as total FROM commission_records ${wc}`, params),
       pool.query(`SELECT COUNT(*) as count FROM commission_records ${wc}`, params),
       pool.query(`SELECT COUNT(DISTINCT agent_name) as count FROM commission_records ${wc}`, params),
@@ -574,6 +577,7 @@ router.get('/summary', requireAuth, async (req, res) => {
         COUNT(*) as count,
         COUNT(*) FILTER (WHERE COALESCE(thei_share, 0) <> 0) as override_count
         FROM commission_records ${wc} GROUP BY lob ORDER BY lob`, params),
+      pool.query(`SELECT COALESCE(SUM(uad_activity),0) as total, COUNT(*) FILTER (WHERE COALESCE(uad_activity,0) <> 0) as count FROM commission_records ${wc}`, params),
     ]);
 
     res.json({
@@ -581,6 +585,8 @@ router.get('/summary', requireAuth, async (req, res) => {
       totalRecords: parseInt(totalRec.rows[0].count),
       agentCount: parseInt(agentCnt.rows[0].count),
       carrierCount: parseInt(carrierCnt.rows[0].count),
+      uadActivity: parseFloat(uadTot.rows[0].total),
+      uadRows: parseInt(uadTot.rows[0].count, 10),
       byAgent: byAgent.rows,
       byCarrier: byCarrier.rows,
       byPeriod: byPeriod.rows,
@@ -622,8 +628,8 @@ router.get('/kpi', requireAuth, async (req, res) => {
         COALESCE(SUM(commission), 0) as total_commission,
         COALESCE(SUM(CASE WHEN commission < 0 THEN ABS(commission) ELSE 0 END), 0) as chargeback_amount,
         COUNT(CASE WHEN commission < 0 THEN 1 END) as chargeback_count,
-        COALESCE(SUM(CASE WHEN classification ILIKE '%advance%' THEN commission ELSE 0 END), 0) as advance_amount,
-        COUNT(CASE WHEN classification ILIKE '%advance%' THEN 1 END) as advance_count,
+        COALESCE(SUM(CASE WHEN classification ILIKE '%advance%' AND classification NOT ILIKE '%uad%' THEN commission ELSE 0 END), 0) as advance_amount,
+        COUNT(CASE WHEN classification ILIKE '%advance%' AND classification NOT ILIKE '%uad%' THEN 1 END) as advance_count,
         COUNT(CASE WHEN classification IN ('New Business','Renewal') THEN 1 END) as new_apps
       FROM commission_records ${wc}
       GROUP BY agent_name ORDER BY total_commission DESC
@@ -928,6 +934,7 @@ router.get('/agency-summary', requireAuth, requireAdmin, async (req, res) => {
          SUM(COALESCE(thei_share, 0)) as thei_total,
          SUM(COALESCE(bsi_share, 0)) as bsi_total,
          SUM(COALESCE(producer_payable, 0)) as producer_total,
+         SUM(COALESCE(uad_activity, 0)) as uad_total,
          COUNT(*) as record_count
        FROM commission_records
        ${whereClause}
@@ -937,7 +944,7 @@ router.get('/agency-summary', requireAuth, requireAdmin, async (req, res) => {
     );
 
     const sources = {};
-    let grandGross = 0, grandThei = 0, grandBsi = 0, grandPayable = 0, grandCount = 0;
+    let grandGross = 0, grandThei = 0, grandBsi = 0, grandPayable = 0, grandUad = 0, grandCount = 0;
     for (const r of result.rows) {
       const src = r.source || 'unknown';
       sources[src] = {
@@ -945,12 +952,14 @@ router.get('/agency-summary', requireAuth, requireAdmin, async (req, res) => {
         thei_share: parseFloat(r.thei_total),
         bsi_share: parseFloat(r.bsi_total),
         producer_payable: parseFloat(r.producer_total),
+        uad_activity: parseFloat(r.uad_total),
         record_count: parseInt(r.record_count, 10),
       };
       grandGross += parseFloat(r.gross_total);
       grandThei += parseFloat(r.thei_total);
       grandBsi += parseFloat(r.bsi_total);
       grandPayable += parseFloat(r.producer_total);
+      grandUad += parseFloat(r.uad_total);
       grandCount += parseInt(r.record_count, 10);
     }
 
@@ -967,6 +976,7 @@ router.get('/agency-summary', requireAuth, requireAdmin, async (req, res) => {
         thei_share: Math.round(grandThei * 100) / 100,
         bsi_share: Math.round(grandBsi * 100) / 100,
         producer_payable: Math.round(grandPayable * 100) / 100,
+        uad_activity: Math.round(grandUad * 100) / 100,
         record_count: grandCount,
       },
     });

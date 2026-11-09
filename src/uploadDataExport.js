@@ -5,6 +5,7 @@
  */
 
 const XLSX = require('xlsx');
+const { formatPeriodLabel } = require('./periodFormat');
 
 function sanitizeFilenamePart(name) {
   return String(name || 'export')
@@ -77,11 +78,12 @@ const COMMISSION_EXPORT_COLUMNS = Object.freeze([
   { key: 'client_full_name', header: 'Client' },
   { key: 'policy_number', header: 'Policy' },
   { key: 'effective_date', header: 'Effective Date' },
-  { key: 'payment_period', header: 'Payment Period' },
-  { key: 'statement_month', header: 'Statement Month' },
+  { key: 'payment_period', header: 'Payment Period', value: (row) => formatPeriodLabel(row.payment_period) },
+  { key: 'statement_month', header: 'Statement Month', value: (row) => formatPeriodLabel(row.statement_month) },
   { key: 'classification', header: 'Classification' },
   { key: 'premium', header: 'Premium' },
   { key: 'commission', header: 'Commission' },
+  { key: 'uad_activity', header: 'UHC advance recoup (UAD)' },
   { key: 'gross_commission', header: 'Gross Commission' },
   { key: 'thei_share', header: 'THEI Share' },
   { key: 'bsi_share', header: 'BSI Share' },

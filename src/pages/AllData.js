@@ -1,4 +1,5 @@
-import { periodToMmYyyy } from '../periodFormat';
+import { formatPeriodLabel as formatPeriodDisplay } from '../periodFormat';
+import { UAD_CLASSIFICATION } from '../uhcUad';
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiFetch } from '../api';
 import { formatCarrier } from '../utils/formatCarrier';
@@ -22,9 +23,7 @@ function fmt(n) {
 
 function formatPeriodLabel(p) {
   if (!p) return '—';
-  const s = String(p).trim();
-  if (s.match(/^\d{6}$/)) return periodToMmYyyy(s) || s;
-  return s;
+  return formatPeriodDisplay(p, String(p));
 }
 
 // Not-paid detail text per Recon's own three-way status — same tags Agency Override
@@ -232,6 +231,9 @@ export default function AllData({ user, initialFilters = {}, onNavigate }) {
     setSelTypes(listFromInitial(initialFilters, 'classification', 'classifications'));
     setSelLOB(listFromInitial(initialFilters, 'lob', 'lobs'));
     setAmountSign(initialFilters.amountSign || '');
+    if (initialFilters.amountSign === 'uad' || initialFilters.classification === UAD_CLASSIFICATION) {
+      setListMode('payments');
+    }
     setPage(0);
   }, [
     initialFilters.agent, initialFilters.agents,
@@ -255,7 +257,7 @@ export default function AllData({ user, initialFilters = {}, onNavigate }) {
     if (selPayees.length === 1) params.set('payee', selPayees[0]);
     if (selLOB.length === 1) params.set('lob', selLOB[0]);
     if (selLOB.length > 1) params.set('lobs', selLOB.join(','));
-    if (amountSign === 'negative' || amountSign === 'positive') params.set('amountSign', amountSign);
+    if (amountSign === 'negative' || amountSign === 'positive' || amountSign === 'uad') params.set('amountSign', amountSign);
     if (uploadFilter?.id) params.set('upload_id', String(uploadFilter.id));
     if (search.trim()) params.set('search', search.trim());
     if (sortCol) params.set('sortCol', sortCol);
@@ -495,7 +497,7 @@ export default function AllData({ user, initialFilters = {}, onNavigate }) {
       if (selPayees.length === 1) params.set('payee', selPayees[0]);
       if (selLOB.length === 1) params.set('lob', selLOB[0]);
       if (selLOB.length > 1) params.set('lobs', selLOB.join(','));
-      if (amountSign === 'negative' || amountSign === 'positive') params.set('amountSign', amountSign);
+      if (amountSign === 'negative' || amountSign === 'positive' || amountSign === 'uad') params.set('amountSign', amountSign);
       if (uploadFilter?.id) params.set('upload_id', String(uploadFilter.id));
       if (search.trim()) params.set('search', search.trim());
       
@@ -505,12 +507,12 @@ export default function AllData({ user, initialFilters = {}, onNavigate }) {
       const allRecords = data.records || [];
       
       // Build CSV with all records
-      const headers = ['Agent', 'Carrier', 'Client', 'Policy #', 'Effective Date', 'Premium', 'Comm Value', 'Type', 'Period', 'Payee', 'MGA'];
+      const headers = ['Agent', 'Carrier', 'Client', 'Policy #', 'Effective Date', 'Premium', 'Comm Value', 'UHC advance recoup (UAD)', 'Type', 'Period', 'Payee', 'MGA'];
       const rows = allRecords.map(r => {
         const commValue = r.producer_payable != null && parseFloat(r.producer_payable) !== 0
           ? r.producer_payable
           : r.commission;
-        return [r.agent_name, formatCarrier(r.carrier), r.client_full_name, r.policy_number, formatDate(r.effective_date), r.premium, commValue, r.classification, r.payment_period, r.payee, r.mga];
+        return [r.agent_name, formatCarrier(r.carrier), r.client_full_name, r.policy_number, formatDate(r.effective_date), r.premium, commValue, r.uad_activity || 0, r.classification, formatPeriodLabel(r.payment_period), r.payee, r.mga];
       });
       const csv = [headers, ...rows].map(r => r.map(v => `"${String(v||'').replace(/"/g,'""')}"`).join(',')).join('\n');
       
@@ -532,6 +534,7 @@ export default function AllData({ user, initialFilters = {}, onNavigate }) {
     if (c === 'Agency Override') return 'badge-blue';
     if (c === 'Chargeback') return 'badge-red';
     if (c === 'HRA/Bonus') return 'badge-amber';
+    if (c === UAD_CLASSIFICATION) return 'badge-red';
     return 'badge-gray';
   }
 
@@ -574,6 +577,7 @@ export default function AllData({ user, initialFilters = {}, onNavigate }) {
     try { const raw = typeof r.raw_data === 'string' ? JSON.parse(r.raw_data) : r.raw_data; return raw || {}; } catch(e) { return {}; }
   }
   const hasLOB = records.some(r => r.lob);
+  const hasUad = records.some(r => r.uad_activity != null && Number(r.uad_activity) !== 0);
   const hasSplitData = records.some(r => r.thei_share != null || r.bsi_share != null);
   const hasSubAgentOverride = records.some(r => r.sub_agent_override && r.sub_agent_override > 0);
   const carrierStatementRows = clientHistoryData.filter(
@@ -661,6 +665,7 @@ export default function AllData({ user, initialFilters = {}, onNavigate }) {
     { col: 'effective_date',  label: 'Effective' },
     { col: 'premium',         label: 'Premium' },
     { col: 'commission',      label: 'Comm Value' },
+    ...(hasUad ? [{ col: 'uad_activity', label: 'UHC advance recoup (UAD)' }] : []),
     ...(hasCommSplit ? [{ col: 'comm_rate', label: 'Comm Rate' }] : []),
     ...(hasCommSplit ? [{ col: 'agent_comm', label: 'Agent Comm' }] : []),
     ...(hasCommSplit ? [{ col: 'agency_comm', label: 'Agency Comm' }] : []),
@@ -783,12 +788,13 @@ export default function AllData({ user, initialFilters = {}, onNavigate }) {
                 ['Plan Type', policyModal.plan_type],
                 ['LOB', policyModal.lob],
                 ['Effective Date', formatDate(policyModal.effective_date)],
-                ['Period', policyModal.payment_period],
+                ['Period', policyModal.payment_period ? formatPeriodLabel(policyModal.payment_period) : '—'],
                 ['Type', policyModal.classification],
                 ['Payee', policyModal.payee],
                 ['MGA', policyModal.mga],
                 ['Premium', policyModal.premium ? fmt(policyModal.premium) : '—'],
                 ['Comm Value', null],
+                ['UHC advance recoup (UAD)', policyModal.uad_activity != null && Number(policyModal.uad_activity) !== 0 ? fmt(policyModal.uad_activity) : null],
                 ['Gross Commission', policyModal.gross_commission != null ? fmt(policyModal.gross_commission) : null],
                 ['THEI Share', policyModal.thei_share != null ? fmt(policyModal.thei_share) : null],
                 ['BSI Share', policyModal.bsi_share != null ? fmt(policyModal.bsi_share) : null],
@@ -985,6 +991,23 @@ export default function AllData({ user, initialFilters = {}, onNavigate }) {
           <MultiSelect label="Payee" options={filterOptions.payees || []} selected={selPayees} onChange={setSelPayees} />
           <button
             type="button"
+            onClick={() => {
+              setAmountSign(s => s === 'uad' ? '' : 'uad');
+              setListMode('payments');
+              setPage(0);
+            }}
+            style={{
+              padding: '6px 10px', borderRadius: 6, border: '0.5px solid var(--border)', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap',
+              background: amountSign === 'uad' ? 'var(--accent)' : 'var(--bg)',
+              color: amountSign === 'uad' ? 'var(--sidebar-bg)' : 'var(--text)',
+              fontWeight: amountSign === 'uad' ? 500 : 400,
+            }}
+            title="Show only UHC advance recoup (UAD) rows — not merged into commission"
+          >
+            UAD recoups
+          </button>
+          <button
+            type="button"
             onClick={() => setAmountSign(s => s === 'negative' ? '' : 'negative')}
             style={{
               padding: '6px 10px', borderRadius: 6, border: '0.5px solid var(--border)', fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap',
@@ -1083,6 +1106,9 @@ export default function AllData({ user, initialFilters = {}, onNavigate }) {
             {[...selAgents, ...selCarriers, ...selPeriods, ...selTypes, ...selLOB, ...selPayees].map(f => (
               <span key={f} style={{ background: 'var(--accent)', color: 'var(--sidebar-bg)', borderRadius: 4, padding: '2px 10px', fontSize: 11, fontWeight: 500 }}>{f}</span>
             ))}
+            {amountSign === 'uad' && (
+              <span style={{ background: '#F5EAE4', color: '#7A3D1F', borderRadius: 4, padding: '2px 10px', fontSize: 11, fontWeight: 500 }}>UAD recoups</span>
+            )}
             {amountSign === 'negative' && (
               <span style={{ background: '#F5EAE4', color: '#7A3D1F', borderRadius: 4, padding: '2px 10px', fontSize: 11, fontWeight: 500 }}>Chargebacks only</span>
             )}
@@ -1370,6 +1396,18 @@ export default function AllData({ user, initialFilters = {}, onNavigate }) {
                               style={{ color: parseFloat(r.commission) < 0 ? 'var(--red)' : 'var(--green)' }}
                             />
                           </td>
+                          {hasUad && (
+                            <td>
+                              {r.uad_activity != null && Number(r.uad_activity) !== 0 ? (
+                                <AmountLink
+                                  value={r.uad_activity}
+                                  record={r}
+                                  onOpenSource={openSourceReport}
+                                  style={{ color: 'var(--red)' }}
+                                />
+                              ) : '—'}
+                            </td>
+                          )}
                           {hasCommSplit && (() => { const s = getCommSplit(r); return (
                             <>
                               <td style={{ fontSize: 12 }}>{s.commRate !== undefined ? `${s.commRate}%` : '—'}</td>
@@ -1454,6 +1492,7 @@ export default function AllData({ user, initialFilters = {}, onNavigate }) {
                         Total ({total.toLocaleString()} {total === 1 ? 'record' : 'records'})
                       </td>
                       {footerMoney(sumMoney('commission'))}
+                      {hasUad && footerMoney(sumMoney('uad_activity'), 'var(--red)')}
                       {hasCommSplit && (
                         <>
                           {footerEmpty()}
