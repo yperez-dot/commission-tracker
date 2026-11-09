@@ -54,6 +54,11 @@ const {
   tryParseHealthSpringSupplementalUpload,
 } = require('../src/healthSpringSupplementalPdf');
 const {
+  isHealthSpringMedicareFilename,
+  isHealthSpringMedicareWorkbook,
+  parseHealthSpringMedicareRows,
+} = require('../src/healthSpringMedicareXlsx');
+const {
   isAetnaDirectAgencyFilename,
   isAetnaDirectAgencyWorkbook,
   parseAetnaDirectAgencyStatement,
@@ -340,92 +345,15 @@ function parseMOOExcelRows(wb, filename) {
 }
 
 function isHealthSpringFile(filename) {
-  const f = filename.toLowerCase().replace(/[\s().]/g, '_');
-  return f.includes('healthspring') || f.includes('healthspting') || f.includes('health_spring');
+  return isHealthSpringMedicareFilename(filename);
 }
 
 function isHealthSpringWb(wb) {
-  if (!wb || !wb.Sheets || !wb.SheetNames) return false;
-  const hasSummary = wb.SheetNames.some(s => s.toLowerCase() === 'summary');
-  const hasDetail = wb.SheetNames.some(s => s.toLowerCase() === 'detail');
-  if (!hasSummary || !hasDetail) return false;
-  const summaryName = wb.SheetNames.find(s => s.toLowerCase() === 'summary');
-  const ws = wb.Sheets[summaryName];
-  const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
-  return rows.length > 0 && String(rows[0][0] || '').toLowerCase().includes('healthsping');
+  return isHealthSpringMedicareWorkbook(wb);
 }
 
 function parseHealthSpringRows(wb, filename) {
-  const records = [];
-  try {
-    const sheetsToProcess = ['Detail', 'Legacy'].filter(s => wb.SheetNames.includes(s));
-    for (const sheetName of sheetsToProcess) {
-      const ws = wb.Sheets[sheetName];
-      const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true });
-      for (const row of rows) {
-        const paymentType = String(row['Payment Type'] || '').trim();
-        const paymentDesc = String(row['Payment Description'] || '').trim();
-        const writingBrokerName = String(row['Writing Broker Name'] || '').trim();
-        const memberName = String(row['Member Name'] || '').trim();
-        const memberId = row['Member ID'];
-        const mbi = String(row['Medicare Beneficiary Identifier (MBI)'] || '').trim();
-        const payPeriod = row['Pay Period'];
-        const paymentAmount = parseFloat(row['Payment Amount']) || 0;
-        const effectiveDateRaw = row['Original Effective Date'] || row['Effective Date'];
-        const planTypeRaw = String(row['Plan Type'] || '').trim();
-        if (!memberName || paymentAmount === 0) continue;
-        // Period from Pay Period
-        let period = '';
-        if (payPeriod instanceof Date) {
-          period = `${payPeriod.getFullYear()}${String(payPeriod.getMonth()+1).padStart(2,'0')}`;
-        } else if (typeof payPeriod === 'number' && payPeriod > 40000) {
-          const d = new Date((payPeriod - 25569) * 86400 * 1000);
-          period = `${d.getUTCFullYear()}${String(d.getUTCMonth()+1).padStart(2,'0')}`;
-        }
-        // Classification
-        const ptLower = paymentType.toLowerCase();
-        const pdLower = paymentDesc.toLowerCase();
-        let classification;
-        if (paymentAmount < 0 || ptLower.includes('disenroll')) {
-          classification = 'Chargeback';
-        } else if (pdLower === 'service fee') {
-          classification = 'Agency Override';
-        } else if (ptLower.includes('initial') || ptLower.includes('new')) {
-          classification = 'New Business';
-        } else if (ptLower.includes('renewal') || ptLower === 'legacy') {
-          classification = 'Renewal';
-        } else {
-          classification = 'Agent Commission';
-        }
-        // Plan type
-        const ptRaw = planTypeRaw.toUpperCase();
-        let planType = 'HealthSpring Med Adv';
-        if (ptRaw.includes('PDP')) planType = 'HealthSpring PDP';
-        // Normalize member ID (can be numeric)
-        const policyNumber = typeof memberId === 'number'
-          ? String(Math.round(memberId))
-          : String(memberId || mbi || '').trim();
-        records.push({
-          agent: normalizeAgentName(writingBrokerName) || 'The Health Experts Insurance',
-          carrier: 'HealthSpring',
-          planType,
-          client: memberName,
-          effectiveDate: formatDate(effectiveDateRaw),
-          premium: 0,
-          commission: paymentAmount,
-          classification,
-          period,
-          policyNumber: policyNumber || mbi,
-          payee: 'HealthSpring',
-          raw: row
-        });
-      }
-    }
-    console.log(`[HEALTHSPRING] Parsed ${records.length} records, total $${records.reduce((s,r)=>s+r.commission,0).toFixed(2)}`);
-  } catch (err) {
-    console.error('[HEALTHSPRING] Parser error:', err.message);
-  }
-  return records;
+  return parseHealthSpringMedicareRows(wb, filename);
 }
 
 function isHealthSunFile(filename) {
@@ -447,25 +375,33 @@ function isDevotedFile(filename) {
 function isDevotedXLS(wb) {
   // Check for Summary + Detail sheet structure
   if (!wb || !wb.Sheets || !wb.SheetNames) return false;
-  
+
+  // HealthSpring MA/PDP agency workbooks also use Summary+Detail and mention MBI —
+  // do not steal them (they belong to parseHealthSpringMedicareRows).
+  if (isHealthSpringMedicareWorkbook(wb)) return false;
+
   const hasSummary = wb.SheetNames.some(s => s.toLowerCase() === 'summary');
   const hasDetail = wb.SheetNames.some(s => s.toLowerCase() === 'detail');
-  
+
   if (hasSummary && hasDetail) {
     // Check if Detail sheet has expected Devoted columns
     const detailSheet = wb.SheetNames.find(s => s.toLowerCase() === 'detail');
     const ws = wb.Sheets[detailSheet];
     const rows = XLSX.utils.sheet_to_json(ws, { defval: '', raw: true, header: 1 });
-    
+
     if (rows.length) {
       const headers = rows[0] || [];
       const headerStr = headers.map(h => String(h || '').toLowerCase()).join(' ');
-      // Check for Devoted-specific columns: MBI, Member, Amount
-      return headerStr.includes('mbi') || 
-             (headerStr.includes('member') && headerStr.includes('amount'));
+      // Devoted portal columns are short: Agent / Member / MBI / Amount / Period
+      // (not HealthSpring's "Writing Broker Name" / "Payment Amount" layout).
+      const hasDevotedAgent = headerStr.includes('agent') && !headerStr.includes('writing broker');
+      const hasMember = /\bmember\b/.test(headerStr) && !headerStr.includes('member name');
+      const hasAmount = /\bamount\b/.test(headerStr) && !headerStr.includes('payment amount');
+      const hasMbi = /\bmbi\b/.test(headerStr) && !headerStr.includes('medicare beneficiary');
+      return (hasMbi && hasMember) || (hasDevotedAgent && hasMember && hasAmount);
     }
   }
-  
+
   return false;
 }
 
@@ -3864,6 +3800,11 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
       } else if (parseTHECarrierStatementRows(wb, req.file.originalname) !== null) {
         console.log('[UPLOAD] Using THEI carrier statement parser');
         records = parseTHECarrierStatementRows(wb, req.file.originalname);
+      } else if (isHealthSpringFile(req.file.originalname) || isHealthSpringWb(wb)) {
+        // Content-based (Summary/Detail + HealthSpring headers/title) BEFORE Devoted —
+        // Devoted also uses Summary+Detail and previously stole MEDICARE-named HS files.
+        console.log('[ROUTING] Matched HealthSpring Medicare MA/PDP parser for:', req.file.originalname);
+        records = parseHealthSpringRows(wb, req.file.originalname);
       } else if (isDevotedFile(req.file.originalname) || isDevotedXLS(wb)) {
         console.log('[UPLOAD] Using Devoted Health parser');
         records = parseDevotedRows(wb, req.file.originalname);
@@ -3935,9 +3876,6 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
           try { fs.unlinkSync(req.file.path); } catch(e) {}
           return res.status(400).json({ error: 'No records found in AML portal export. Verify this is a Contracts/CommissionDetails CSV.' });
         }
-      } else if (isHealthSpringFile(req.file.originalname) || isHealthSpringWb(wb)) {
-        console.log('[ROUTING] Matched HealthSpring parser for:', req.file.originalname);
-        records = parseHealthSpringRows(wb, req.file.originalname);
       } else if (isAetnaFile(req.file.originalname)) {
         console.log('[ROUTING] Matched generic Aetna parser for:', req.file.originalname);
         records = parseAetnaRows(wb, req.file.originalname);
@@ -4225,6 +4163,7 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
           uadSum: uadSumPreview,
           carriers: carriersPreview,
           internalDuplicatesRemoved: internalDuplicatesRemoved || 0,
+          reconciliation: statementReconciliation || null,
         });
       }
       if (duplicates.length > 0 && !skipDuplicates) {
@@ -4386,10 +4325,13 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
     if (statementReconciliation) {
       response.reconciliation = statementReconciliation;
       if (statementReconciliation.checked && statementReconciliation.ok === false) {
-        response.grandTotalWarning =
-          `Parsed $${Number(statementReconciliation.parsedTotal).toFixed(2)} does not match ` +
+        const parsed = statementReconciliation.parsedTotal ?? statementReconciliation.importedTotal;
+        const expected = statementReconciliation.expectedTotal ?? statementReconciliation.summaryTotal;
+        response.grandTotalWarning = statementReconciliation.warning || (
+          `Parsed $${Number(parsed).toFixed(2)} does not match ` +
           `${statementReconciliation.source || 'statement total'} ` +
-          `$${Number(statementReconciliation.expectedTotal).toFixed(2)}.`;
+          `$${Number(expected).toFixed(2)}.`
+        );
       }
     }
     

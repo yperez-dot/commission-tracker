@@ -107,6 +107,7 @@ export default function Upload({ user, onNavigate }) {
           carriers: result.carriers || [],
           filename: result.filename || file.name,
           needsConfirm: !!result.needsConfirm,
+          reconciliation: result.reconciliation || null,
         });
         setSelectedDuplicates(new Set());
         setUploading(false);
@@ -418,6 +419,11 @@ export default function Upload({ user, onNavigate }) {
                       {(duplicateModal.carriers || []).length ? ` · ${(duplicateModal.carriers || []).join(', ')}` : ''}
                       . Nothing is saved until you press Import.
                     </div>
+                    {duplicateModal.reconciliation && duplicateModal.reconciliation.warning && (
+                      <div style={{ marginTop: 8, padding: '8px 10px', borderRadius: 6, background: '#FFF4E5', color: '#8A5A00', fontSize: 12, lineHeight: 1.45 }}>
+                        {duplicateModal.reconciliation.warning}
+                      </div>
+                    )}
                   </>
                 ) : duplicateModal.sourceType === 'statement' ? (
                   <>
