@@ -34,12 +34,13 @@ function batchDedupeKey(r) {
   const period = String(r.period || r.payment_period || '').trim();
   const classification = String(r.classification || r.type || '').trim().toLowerCase();
   const commission = String(r.commission ?? '');
+  const uad = String(r.uadActivity ?? r.uad_activity ?? '');
   const policy = String(r.policyNumber || r.policy_number || '').trim().toLowerCase();
   // Held UHC rows can repeat the same member/policy/$0 on a later statement date
   // with a different hold reason — those are real rows, not copies.
   const mga = String(r.mga || '').trim().toLowerCase();
   const statementDate = statementDateOf(r).toLowerCase();
-  return `${client}|${carrier}|${effectiveDate}|${period}|${classification}|${commission}|${policy}|${mga}|${statementDate}`;
+  return `${client}|${carrier}|${effectiveDate}|${period}|${classification}|${commission}|${uad}|${policy}|${mga}|${statementDate}`;
 }
 
 /**

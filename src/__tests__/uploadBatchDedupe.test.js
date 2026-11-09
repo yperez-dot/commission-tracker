@@ -22,6 +22,12 @@ describe('uploadBatchDedupe', () => {
     expect(batchDedupeKey(base)).toBe(batchDedupeKey({ ...base }));
   });
 
+  test('UAD recoup is not collapsed with a plain $0 copy', () => {
+    const zero = { ...base, commission: 0, uadActivity: 0 };
+    const uad = { ...base, commission: 0, uadActivity: -48.5 };
+    expect(collapseInternalDuplicates([zero, uad]).removedCount).toBe(0);
+  });
+
   test('different commission amounts are not duplicates', () => {
     const rows = [base, { ...base, commission: -50 }];
     expect(findInternalDuplicates(rows)).toHaveLength(0);

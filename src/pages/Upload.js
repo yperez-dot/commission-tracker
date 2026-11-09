@@ -225,26 +225,40 @@ export default function Upload({ user, onNavigate }) {
             render: (r) => <span style={{ fontWeight: 600, color: parseFloat(r.commission) < 0 ? '#E24B4A' : '#1D9E75' }}>{fmt(r.commission)}</span>,
           },
           {
+            key: 'uad_activity', header: 'UAD recoup',
+            render: (r) => {
+              const uad = r.uad_activity != null ? r.uad_activity : r.uadActivity;
+              if (uad == null || Number(uad) === 0) return <span style={{ color: 'var(--text-muted)' }}>—</span>;
+              return <span style={{ fontWeight: 600, color: '#E24B4A' }}>{fmt(uad)}</span>;
+            },
+          },
+          {
             key: 'classification', header: 'Type',
             render: (r) => (
               <span style={{
-                background: r.classification === 'New Business' ? '#E6F4D7' : r.classification === 'Renewal' ? '#E6F1FB' : r.classification === 'Chargeback' ? '#FCE8E8' : '#F3F4F6',
-                color: r.classification === 'New Business' ? '#3B6D11' : r.classification === 'Renewal' ? '#0C447C' : r.classification === 'Chargeback' ? '#A32D2D' : '#374151',
+                background: r.classification === 'New Business' ? '#E6F4D7' : r.classification === 'Renewal' ? '#E6F1FB' : r.classification === 'Chargeback' || r.classification === 'UHC advance recoup (UAD)' ? '#FCE8E8' : r.classification === 'UHC appointment fee' ? '#FAEEDA' : '#F3F4F6',
+                color: r.classification === 'New Business' ? '#3B6D11' : r.classification === 'Renewal' ? '#0C447C' : r.classification === 'Chargeback' || r.classification === 'UHC advance recoup (UAD)' ? '#A32D2D' : r.classification === 'UHC appointment fee' ? '#854F0B' : '#374151',
                 borderRadius: 4, padding: '2px 6px', fontSize: 10, fontWeight: 600,
               }}>{r.classification || '—'}</span>
             ),
           },
           { key: 'payment_period', header: 'Period', render: (r) => <span style={{ color: 'var(--text-muted)' }}>{r.payment_period ? (periodToMmYyyy(r.payment_period) || r.payment_period) : '—'}</span> },
         ]}
-        footer={(rows) => (
+        footer={(rows) => {
+          const uadTotal = rows.reduce((s, r) => s + (parseFloat(r.uad_activity != null ? r.uad_activity : r.uadActivity) || 0), 0);
+          return (
           <>
             <td colSpan={5} style={{ padding: '8px 12px', fontSize: 12 }}>Total ({rows.length} records)</td>
             <td style={{ padding: '8px 12px', fontSize: 12, color: '#1D9E75' }}>
               {fmt(rows.reduce((s, r) => s + (parseFloat(r.commission) || 0), 0))}
             </td>
+            <td style={{ padding: '8px 12px', fontSize: 12, color: uadTotal ? '#E24B4A' : 'var(--text-muted)' }}>
+              {uadTotal ? fmt(uadTotal) : '—'}
+            </td>
             <td colSpan={2}></td>
           </>
-        )}
+          );
+        }}
       />
 
       {routeConfirm && (
@@ -291,7 +305,9 @@ export default function Upload({ user, onNavigate }) {
 
         {uploadResult && (
           <UploadAlert kind="success" title={`Upload successful — ${uploadResult.filename}`}>
-            {uploadResult.rowCount} records imported · {fmt(uploadResult.commissionSum)} total · Carriers: {(uploadResult.carriers || []).join(', ')}
+            {uploadResult.rowCount} records imported · {fmt(uploadResult.commissionSum)} commission
+            {Number(uploadResult.uadSum) ? ` · ${fmt(uploadResult.uadSum)} UHC advance recoup (UAD)` : ''}
+            {' '}· Carriers: {(uploadResult.carriers || []).join(', ')}
             {uploadResult.internalDuplicatesRemoved > 0 && (
               <div style={{ marginTop: 8 }}>
                 Skipped {uploadResult.internalDuplicatesRemoved} exact duplicate line
