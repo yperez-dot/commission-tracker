@@ -38,6 +38,12 @@ function agencyFilter(req, alias) {
 /** Agency dashboard: drop NHP commission-column ACA rows (agent pass-through). Keep override column. */
 const AGENCY_ACA_AGENT_EXCLUDE = `NOT (lob = 'ACA' AND COALESCE(producer_payable, 0) <> 0 AND COALESCE(thei_share, 0) = 0)`;
 
+/** Appointment/licensing fees (UHC personal + BSI) stay out of commission totals. */
+function isFeeClassSql(alias) {
+  const col = alias ? `${alias}.classification` : 'classification';
+  return `(COALESCE(${col},'') ILIKE '%appointment fee%' OR LOWER(COALESCE(${col},'')) = 'bsi fee')`;
+}
+
 // Smart Matching v2 helpers — deterministic keys only, no fuzzy/Levenshtein.
 
 // normalizeNameKey: accent-strip + uppercase + token-sort.
@@ -287,7 +293,7 @@ router.get('/', requireAuth, async (req, res) => {
     if (!isLight) {
       const sumsResult = await pool.query(
         `SELECT
-           COALESCE(SUM(cr.commission), 0)::float AS commission,
+           COALESCE(SUM(CASE WHEN ${isFeeClassSql('cr')} THEN 0 ELSE cr.commission END), 0)::float AS commission,
            COALESCE(SUM(cr.uad_activity), 0)::float AS uad_activity,
            COALESCE(SUM(cr.gross_commission), 0)::float AS gross_commission,
            COALESCE(SUM(cr.thei_share), 0)::float AS thei_share,
@@ -343,7 +349,7 @@ router.get('/by-client', requireAuth, async (req, res) => {
            ))[1] AS client_full_name,
            MAX(cr.carrier) AS carrier,
            COUNT(*)::int AS payment_count,
-           COALESCE(SUM(cr.commission), 0)::float AS commission_total,
+           COALESCE(SUM(CASE WHEN ${isFeeClassSql('cr')} THEN 0 ELSE cr.commission END), 0)::float AS commission_total,
            COALESCE(SUM(cr.producer_payable), 0)::float AS producer_payable_total,
            MAX(cr.payment_period) AS latest_period,
            MIN(cr.payment_period) AS first_period,
@@ -386,7 +392,7 @@ router.get('/by-client', requireAuth, async (req, res) => {
          COALESCE(SUM(g.payment_count), 0)::int AS payment_count
        FROM (
          SELECT
-           COALESCE(SUM(cr.commission), 0)::float AS commission_total,
+           COALESCE(SUM(CASE WHEN ${isFeeClassSql('cr')} THEN 0 ELSE cr.commission END), 0)::float AS commission_total,
            COALESCE(SUM(cr.producer_payable), 0)::float AS producer_payable_total,
            COUNT(*)::int AS payment_count,
            BOOL_OR(${IS_TERMED_SQL}) AS is_termed
@@ -562,13 +568,13 @@ router.get('/summary', requireAuth, async (req, res) => {
     const wc = where.length ? 'WHERE ' + where.join(' AND ') : '';
 
     const [totalComm, totalRec, agentCnt, carrierCnt, byAgent, byCarrier, byPeriod, byLOB, uadTot] = await Promise.all([
-      pool.query(`SELECT COALESCE(SUM(commission),0) as total FROM commission_records ${wc}`, params),
+      pool.query(`SELECT COALESCE(SUM(CASE WHEN ${isFeeClassSql()} THEN 0 ELSE commission END),0) as total FROM commission_records ${wc}`, params),
       pool.query(`SELECT COUNT(*) as count FROM commission_records ${wc}`, params),
       pool.query(`SELECT COUNT(DISTINCT agent_name) as count FROM commission_records ${wc}`, params),
       pool.query(`SELECT COUNT(DISTINCT carrier) as count FROM commission_records ${wc}`, params),
-      pool.query(`SELECT agent_name, SUM(commission) as total, COUNT(*) as count FROM commission_records ${wc} GROUP BY agent_name ORDER BY total DESC`, params),
-      pool.query(`SELECT carrier, SUM(commission) as total, COUNT(*) as count FROM commission_records ${wc} GROUP BY carrier ORDER BY total DESC`, params),
-      pool.query(`SELECT payment_period as period, SUM(commission) as total, COUNT(*) as count, ABS(SUM(CASE WHEN commission < 0 THEN commission ELSE 0 END)) as chargebacks FROM commission_records ${wc} GROUP BY payment_period ORDER BY payment_period ASC`, params),
+      pool.query(`SELECT agent_name, SUM(CASE WHEN ${isFeeClassSql()} THEN 0 ELSE commission END) as total, COUNT(*) as count FROM commission_records ${wc} GROUP BY agent_name ORDER BY total DESC`, params),
+      pool.query(`SELECT carrier, SUM(CASE WHEN ${isFeeClassSql()} THEN 0 ELSE commission END) as total, COUNT(*) as count FROM commission_records ${wc} GROUP BY carrier ORDER BY total DESC`, params),
+      pool.query(`SELECT payment_period as period, SUM(CASE WHEN ${isFeeClassSql()} THEN 0 ELSE commission END) as total, COUNT(*) as count, ABS(SUM(CASE WHEN commission < 0 AND NOT ${isFeeClassSql()} THEN commission ELSE 0 END)) as chargebacks FROM commission_records ${wc} GROUP BY payment_period ORDER BY payment_period ASC`, params),
       pool.query(`SELECT lob,
         SUM(commission) as total,
         SUM(COALESCE(producer_payable,0)) as agent_payable,
@@ -625,9 +631,9 @@ router.get('/kpi', requireAuth, async (req, res) => {
     const rows = await pool.query(`
       SELECT agent_name,
         COUNT(*) as total_count,
-        COALESCE(SUM(commission), 0) as total_commission,
-        COALESCE(SUM(CASE WHEN commission < 0 THEN ABS(commission) ELSE 0 END), 0) as chargeback_amount,
-        COUNT(CASE WHEN commission < 0 THEN 1 END) as chargeback_count,
+        COALESCE(SUM(CASE WHEN ${isFeeClassSql()} THEN 0 ELSE commission END), 0) as total_commission,
+        COALESCE(SUM(CASE WHEN commission < 0 AND NOT ${isFeeClassSql()} THEN ABS(commission) ELSE 0 END), 0) as chargeback_amount,
+        COUNT(CASE WHEN commission < 0 AND NOT ${isFeeClassSql()} THEN 1 END) as chargeback_count,
         COALESCE(SUM(CASE WHEN classification ILIKE '%advance%' AND classification NOT ILIKE '%uad%' THEN commission ELSE 0 END), 0) as advance_amount,
         COUNT(CASE WHEN classification ILIKE '%advance%' AND classification NOT ILIKE '%uad%' THEN 1 END) as advance_count,
         COUNT(CASE WHEN classification IN ('New Business','Renewal') THEN 1 END) as new_apps

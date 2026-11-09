@@ -236,8 +236,8 @@ export default function Upload({ user, onNavigate }) {
             key: 'classification', header: 'Type',
             render: (r) => (
               <span style={{
-                background: r.classification === 'New Business' ? '#E6F4D7' : r.classification === 'Renewal' ? '#E6F1FB' : r.classification === 'Chargeback' || r.classification === 'UHC advance recoup (UAD)' ? '#FCE8E8' : '#F3F4F6',
-                color: r.classification === 'New Business' ? '#3B6D11' : r.classification === 'Renewal' ? '#0C447C' : r.classification === 'Chargeback' || r.classification === 'UHC advance recoup (UAD)' ? '#A32D2D' : '#374151',
+                background: r.classification === 'New Business' ? '#E6F4D7' : r.classification === 'Renewal' ? '#E6F1FB' : r.classification === 'Chargeback' || r.classification === 'UHC advance recoup (UAD)' ? '#FCE8E8' : r.classification === 'UHC appointment fee' ? '#FAEEDA' : '#F3F4F6',
+                color: r.classification === 'New Business' ? '#3B6D11' : r.classification === 'Renewal' ? '#0C447C' : r.classification === 'Chargeback' || r.classification === 'UHC advance recoup (UAD)' ? '#A32D2D' : r.classification === 'UHC appointment fee' ? '#854F0B' : '#374151',
                 borderRadius: 4, padding: '2px 6px', fontSize: 10, fontWeight: 600,
               }}>{r.classification || '—'}</span>
             ),

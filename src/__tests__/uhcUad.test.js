@@ -10,6 +10,7 @@ const {
 } = require('../uhcCommissionParse');
 const {
   UAD_CLASSIFICATION,
+  UHC_FEE_CLASSIFICATION,
   parseUadActivity,
   applyUhcUad,
   crossFileDuplicateKey,
@@ -17,11 +18,14 @@ const {
   findIncomingDuplicates,
   isUHCFilename,
   isUHCDirectFilename,
+  isExcludedFeeClassification,
 } = require('../uhcUad');
 const { collapseInternalDuplicates } = require('../uploadBatchDedupe');
 
 const THEI_FILE = path.join(__dirname, 'fixtures', 'UHC_THEI_09.2026_sample.xlsx');
 const PERSONAL_FILE = path.join(__dirname, 'fixtures', 'P_UHC_09.2026.xlsx');
+const K2_FILE = path.join(__dirname, 'fixtures', 'K2.xlsx');
+const K1_FILE = path.join(__dirname, 'fixtures', 'K1.xlsx');
 
 function loadWb(file) {
   return XLSX.readFile(file);
@@ -182,5 +186,75 @@ describe('UHC UAD + personal statement parse', () => {
     expect(rec.uadActivity).toBeCloseTo(-11.8, 2);
     expect(rec.classification).toBe(UAD_CLASSIFICATION);
     expect(parseUadActivity({ 'UAD Activity': '($48.50)' })).toBeCloseTo(-48.5, 2);
+  });
+
+  test('Katy K2 09.2026: 24 rows, $409.49 net, 5 appointment fees -$50, commission $459.49', () => {
+    const records = parseUHCRows(loadWb(K2_FILE), 'K2.xlsx');
+    const totals = uadTotals(records);
+    expect(isUHCWorkbook(loadWb(K2_FILE))).toBe(true);
+    expect(totals.rowCount).toBe(24);
+    expect(totals.commission).toBeCloseTo(409.49, 2);
+    expect(totals.commissionExclFees).toBeCloseTo(459.49, 2);
+    expect(totals.fees).toBeCloseTo(-50, 2);
+    expect(totals.feeRows).toBe(5);
+
+    const fees = records.filter((r) => r.classification === UHC_FEE_CLASSIFICATION);
+    expect(fees).toHaveLength(5);
+    expect(fees.every((r) => r.commission === -10)).toBe(true);
+    expect(fees.every((r) => r.agent === 'Katy Robles')).toBe(true);
+    expect(fees.every((r) => r.producerPayable === 0 && r.splitApplies === false)).toBe(true);
+    expect(new Set(fees.map((r) => r.policyNumber)).size).toBe(5);
+    expect(new Set(fees.map((r) => r.client)).size).toBe(5);
+    expect(fees.every((r) => r.client.startsWith('UHC FEE OH Renewal'))).toBe(true);
+    expect(isExcludedFeeClassification(UHC_FEE_CLASSIFICATION)).toBe(true);
+
+    const collapsed = collapseInternalDuplicates(records);
+    expect(collapsed.removedCount).toBe(0);
+    expect(findIncomingDuplicates(fees.slice(0, 1), fees.slice(1))).toHaveLength(0);
+
+    const rodriguez = records.find((r) => r.policyNumber === '930820519');
+    expect(rodriguez.client).toBe('RODRIGUEZ, MARIA E.');
+    expect(rodriguez.classification).toBe('New Business');
+    expect(rodriguez.commission).toBeCloseTo(86.75, 2);
+    expect(rodriguez.statementDate).toBe('09/17/2026');
+
+    const fleming = records.find((r) => r.policyNumber === '955826220');
+    expect(fleming.client).toBe('FLEMING, SHEBBY J.');
+    expect(fleming.classification).toBe('Chargeback');
+    expect(fleming.commission).toBeCloseTo(-86.75, 2);
+    expect(fleming.statementDate).toBe('09/26/2026');
+  });
+
+  test('Katy K1 10.2026: 19 rows $632.99, both REEVES New $86.75 lines kept', () => {
+    const records = parseUHCRows(loadWb(K1_FILE), 'K1.xlsx');
+    const totals = uadTotals(records);
+    expect(totals.rowCount).toBe(19);
+    expect(totals.commission).toBeCloseTo(632.99, 2);
+    expect(totals.feeRows).toBe(0);
+    expect(records.every((r) => r.agent === 'Katy Robles')).toBe(true);
+
+    const reeves = records.filter((r) => r.policyNumber === '923914330');
+    expect(reeves).toHaveLength(2);
+    expect(reeves.every((r) => r.client === 'REEVES, PAMELA S.')).toBe(true);
+    expect(reeves.every((r) => r.classification === 'New Business')).toBe(true);
+    expect(reeves.every((r) => r.commission === 86.75)).toBe(true);
+    const dates = reeves.map((r) => r.statementDate).sort();
+    expect(dates).toEqual(['10/06/2026', '10/08/2026']);
+    expect(crossFileDuplicateKey(reeves[0])).not.toBe(crossFileDuplicateKey(reeves[1]));
+    expect(uhcTransactionKey(reeves[0])).not.toBe(uhcTransactionKey(reeves[1]));
+
+    const collapsed = collapseInternalDuplicates(records);
+    expect(collapsed.removedCount).toBe(0);
+    expect(collapsed.records.filter((r) => r.policyNumber === '923914330')).toHaveLength(2);
+    expect(findIncomingDuplicates([reeves[0]], [reeves[1]])).toHaveLength(0);
+  });
+
+  test('Katy personal files do not overlap THEI agency 09.2026', () => {
+    const thei = parseUHCRows(loadWb(THEI_FILE), 'UHC_THEI_09.2026.xlsx');
+    const k2 = parseUHCRows(loadWb(K2_FILE), 'K2.xlsx');
+    const k1 = parseUHCRows(loadWb(K1_FILE), 'K1.xlsx');
+    expect(findIncomingDuplicates(thei, k2)).toHaveLength(0);
+    expect(findIncomingDuplicates(thei, k1)).toHaveLength(0);
+    expect(findIncomingDuplicates(k2, k1)).toHaveLength(0);
   });
 });

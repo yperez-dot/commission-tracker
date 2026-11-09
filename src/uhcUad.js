@@ -13,6 +13,10 @@
  */
 
 var UAD_CLASSIFICATION = 'UHC advance recoup (UAD)';
+var UHC_FEE_CLASSIFICATION = 'UHC appointment fee';
+var FEE_RE = /Appointment\s+(Initial|Renewal)\s+Fee Collection/i;
+var FEE_DETAIL_RE =
+  /^\s*([A-Z]{2})\s+Appointment\s+(Initial|Renewal)\s+Fee Collection.*?for Required Entity:\s*(.+?)\s*$/i;
 
 function parseUhcMoney(raw) {
   if (raw == null || raw === '') return 0;
@@ -93,6 +97,48 @@ function isUhcUadClassification(classification) {
   return String(classification || '') === UAD_CLASSIFICATION;
 }
 
+function isExcludedFeeClassification(classification) {
+  var c = String(classification || '').toLowerCase();
+  if (c === 'bsi fee') return true;
+  return c.indexOf('appointment') !== -1 && c.indexOf('fee') !== -1;
+}
+
+function isUhcAppointmentFeeText(text) {
+  return FEE_RE.test(String(text || ''));
+}
+
+/**
+ * UHC personal-statement appointment/licensing fee. Lives on Commission Action
+ * when Member Name is blank (same layout as BSI), or on Member Name.
+ * Each required-entity line gets its own client + synthetic policy so blank
+ * Policy Number cannot collapse the five -$10 OH fees into one duplicate.
+ */
+function parseUhcAppointmentFee(row) {
+  if (!row) return null;
+  var member = String(rowValue(row, ['Member Name', 'MemberName']) || '').trim();
+  var action = String(rowValue(row, ['Commission Action', 'CommissionAction']) || '').trim();
+  var text = '';
+  if (isUhcAppointmentFeeText(member)) text = member;
+  else if (isUhcAppointmentFeeText(action)) text = action;
+  if (!text) return null;
+  var d = text.match(FEE_DETAIL_RE);
+  var state = d ? String(d[1]).toUpperCase() : '';
+  var kind = d ? d[2] : 'Fee';
+  var entity = d ? String(d[3]).replace(/\s+/g, ' ').trim() : text;
+  var client = state
+    ? ('UHC FEE ' + state + ' ' + kind + ' — ' + entity)
+    : ('UHC FEE — ' + text);
+  var policy = 'UHC-FEE|' + (state || 'XX') + '|' + entity;
+  return {
+    isFee: true,
+    client: client,
+    policyNumber: policy,
+    classification: UHC_FEE_CLASSIFICATION,
+    commission: parseUhcMoney(rowValue(row, ['Commission'])),
+    mga: 'UHC appointment/licensing fee — excluded from splits and agent statements',
+  };
+}
+
 /**
  * Attach UAD to a parsed UHC record. Commission stays the Commission column.
  * UAD-only rows (Commission $0, nonzero UAD) are labeled as an advance recoup
@@ -116,8 +162,9 @@ function moneyKey(n) {
 
 /**
  * Cross-file duplicate identity: policy + client + effective date + commission
- * + payment period + UAD. A nonzero-UAD $0 row is distinct from a plain $0 row
- * (e.g. BSI $0 vs UHC advance recoup).
+ * + payment period + UAD + statement date. Statement date keeps legit same-policy
+ * New lines paid on two statement dates (REEVES 10/06 vs 10/08). A nonzero-UAD
+ * $0 row is distinct from a plain $0 row (e.g. BSI $0 vs UHC advance recoup).
  */
 function crossFileDuplicateKey(record) {
   if (!record) return '';
@@ -127,7 +174,8 @@ function crossFileDuplicateKey(record) {
   var period = String(record.period || record.payment_period || '').trim();
   var commission = moneyKey(record.commission != null ? record.commission : record.amount);
   var uad = moneyKey(uadAmount(record));
-  return policy + '|' + client + '|' + date + '|' + commission + '|' + period + '|' + uad;
+  var stmt = statementDateOf(record);
+  return policy + '|' + client + '|' + date + '|' + commission + '|' + period + '|' + uad + '|' + stmt;
 }
 
 function pad2(n) {
@@ -189,6 +237,7 @@ function uhcTransactionKey(record) {
   if (!record) return '';
   var policy = String(record.policyNumber || record.policy_number || record.policy || '').trim().toLowerCase();
   var stmt = statementDateOf(record);
+  // Blank policy (raw fee rows before labeling) must not collide.
   if (!policy || !stmt) return '';
   return policy + '|' + stmt + '|' + moneyKey(record.commission != null ? record.commission : record.amount);
 }
@@ -259,11 +308,14 @@ function isUHCFilename(filename) {
 
 module.exports = {
   UAD_CLASSIFICATION: UAD_CLASSIFICATION,
+  UHC_FEE_CLASSIFICATION: UHC_FEE_CLASSIFICATION,
   parseUhcMoney: parseUhcMoney,
   parseUadActivity: parseUadActivity,
   uadAmount: uadAmount,
   isUadOnly: isUadOnly,
   isUhcUadClassification: isUhcUadClassification,
+  isExcludedFeeClassification: isExcludedFeeClassification,
+  parseUhcAppointmentFee: parseUhcAppointmentFee,
   applyUhcUad: applyUhcUad,
   moneyKey: moneyKey,
   crossFileDuplicateKey: crossFileDuplicateKey,

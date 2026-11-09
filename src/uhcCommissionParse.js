@@ -7,11 +7,14 @@
 
 const XLSX = require('xlsx');
 const { normalizeAgentName } = require('../routes/normalize');
+const { resolveBsiRowPeriod } = require('./periodFormat');
 const {
   parseUhcMoney,
   applyUhcUad,
   isUHCFilename,
   isUHCDirectFilename,
+  parseUhcAppointmentFee,
+  isExcludedFeeClassification,
 } = require('./uhcUad');
 
 function isValidClientName(clientName) {
@@ -143,19 +146,49 @@ function classifyUhcAction(commAction, commission) {
  * THEI / agency UHC statement (Commission Transactions). Keeps every member row,
  * including Commission $0 rows that carry UAD recoup.
  */
+function writingAgentOf(row) {
+  const writingAgentRaw = String(row['Writing Agent Name'] || row['Agent Name'] || '').trim();
+  if (isAgencyName(writingAgentRaw)) return 'The Health Experts Insurance';
+  return normalizeAgentName(writingAgentRaw) || writingAgentRaw;
+}
+
 function parseUHCRows(wb, filename) {
   const records = [];
   const statementPeriod = periodFromFilename(filename);
   const rows = transactionSheetRows(wb, true);
 
   for (const row of rows) {
-    const writingAgentRaw = String(row['Writing Agent Name'] || '').trim();
+    const statementDate = formatDate(row['Statement Date']);
+    const period = String(resolveBsiRowPeriod(row, statementPeriod) || '');
+    const fee = parseUhcAppointmentFee(row);
+    if (fee) {
+      records.push({
+        agent: writingAgentOf(row),
+        carrier: 'UnitedHealthcare',
+        planType: '',
+        client: fee.client,
+        effectiveDate: statementDate,
+        premium: 0,
+        commission: fee.commission,
+        classification: fee.classification,
+        period,
+        policyNumber: fee.policyNumber,
+        statementDate,
+        mga: fee.mga,
+        splitApplies: false,
+        producerPayable: 0,
+        theiShare: 0,
+        bsiShare: 0,
+        grossCommission: 0,
+        raw: row,
+      });
+      continue;
+    }
+
     const client = String(row['Member Name'] || '').trim();
     const commission = parseUhcMoney(row['Commission']);
     const policyNumber = String(row['Policy Number'] || '').trim();
     const effectiveDate = formatDate(row['Original Effective Date']);
-    const statementDate = formatDate(row['Statement Date']);
-    let period = String(row['Payment Period'] || '').trim();
     const rawPlanType = String(row['Plan Type'] || '').trim();
     const commAction = String(row['Commission Action'] || '').trim();
 
@@ -170,15 +203,11 @@ function parseUHCRows(wb, filename) {
       continue;
     }
 
-    if (!period && statementPeriod) period = statementPeriod;
-
-    const isAgency = isAgencyName(writingAgentRaw);
-    const agentName = isAgency ? 'The Health Experts Insurance' : normalizeAgentName(writingAgentRaw);
     const planType = uhcPlanType(rawPlanType);
     const classification = classifyUhcAction(commAction, commission);
 
     const record = {
-      agent: agentName,
+      agent: writingAgentOf(row),
       carrier: 'UnitedHealthcare',
       planType,
       client,
@@ -186,7 +215,7 @@ function parseUHCRows(wb, filename) {
       premium: parseUhcMoney(row['Prem Amount']),
       commission,
       classification,
-      period: String(period),
+      period,
       policyNumber,
       statementDate,
       raw: row,
@@ -268,10 +297,20 @@ function parseUHCDirectRows(wb, filename) {
 
 function uadTotals(records) {
   let commission = 0;
+  let commissionExclFees = 0;
+  let fees = 0;
+  let feeRows = 0;
   let uadActivity = 0;
   let uadRows = 0;
   for (const r of records || []) {
-    commission += parseUhcMoney(r.commission);
+    const amt = parseUhcMoney(r.commission);
+    commission += amt;
+    if (isExcludedFeeClassification(r.classification)) {
+      fees += amt;
+      feeRows += 1;
+    } else {
+      commissionExclFees += amt;
+    }
     const uad = parseUhcMoney(r.uadActivity);
     uadActivity += uad;
     if (uad !== 0) uadRows += 1;
@@ -279,6 +318,9 @@ function uadTotals(records) {
   return {
     rowCount: (records || []).length,
     commission: Math.round(commission * 100) / 100,
+    commissionExclFees: Math.round(commissionExclFees * 100) / 100,
+    fees: Math.round(fees * 100) / 100,
+    feeRows,
     uadActivity: Math.round(uadActivity * 100) / 100,
     uadRows,
   };

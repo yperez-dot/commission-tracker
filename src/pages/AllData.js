@@ -1,5 +1,5 @@
 import { formatPeriodLabel as formatPeriodDisplay } from '../periodFormat';
-import { UAD_CLASSIFICATION } from '../uhcUad';
+import { UAD_CLASSIFICATION, UHC_FEE_CLASSIFICATION } from '../uhcUad';
 import React, { useState, useEffect, useCallback } from 'react';
 import { apiFetch } from '../api';
 import { formatCarrier } from '../utils/formatCarrier';
@@ -535,6 +535,7 @@ export default function AllData({ user, initialFilters = {}, onNavigate }) {
     if (c === 'Chargeback') return 'badge-red';
     if (c === 'HRA/Bonus') return 'badge-amber';
     if (c === UAD_CLASSIFICATION) return 'badge-red';
+    if (c === UHC_FEE_CLASSIFICATION) return 'badge-amber';
     return 'badge-gray';
   }
 

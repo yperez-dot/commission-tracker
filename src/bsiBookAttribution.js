@@ -470,7 +470,7 @@ function integrityBsiUhcChargeback(r, commission, original) {
 /** HRA (paid to Lina) and BSI fees are never house-split. */
 function isHraOrFee(classification) {
   const c = String(classification || '').toLowerCase();
-  return c.includes('hra') || c.includes('bsi fee');
+  return c.includes('hra') || c.includes('bsi fee') || (c.includes('appointment') && c.includes('fee'));
 }
 
 const zero = (v) => v == null || Math.abs(Number(v) || 0) < 0.005;

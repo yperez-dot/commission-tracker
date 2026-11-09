@@ -38,6 +38,7 @@ const {
   findIncomingDuplicates,
   recordFromDbRow,
   uadAmount,
+  isExcludedFeeClassification,
 } = require('../src/uhcUad');
 const { resolvePassThroughLiableAgent } = require('../src/writerPassThroughAgents');
 const { ensurePassThroughSchema } = require('./pass-through');
@@ -4066,6 +4067,20 @@ router.post('/upload', requireAuth, requireAdmin, upload.single('file'), async (
       } = require('../src/overrideSplitMath');
       records = records.map(r => {
         if (r.source) return r;
+        if (isExcludedFeeClassification(r.classification)) {
+          return {
+            ...r,
+            source: inferredSource,
+            policyWrittenDate: r.policyWrittenDate || r.effectiveDate || null,
+            splitApplies: false,
+            theiShare: 0,
+            bsiShare: 0,
+            producerPayable: 0,
+            grossCommission: 0,
+            subAgentOverride: 0,
+            lob: r.lob || null,
+          };
+        }
 
         const agentLc = String(r.agent || '').toLowerCase();
         const carrierLc = String(r.carrier || '').toLowerCase();
