@@ -100,9 +100,9 @@ describe('HealthSpring Medicare Advantage/PDP xlsx', () => {
 });
 
 describe('package-lock sync (Railway/Cloudflare npm ci)', () => {
-  test('lockfile includes yaml@2.x required by react-scripts/tailwind', () => {
+  test('lockfile includes nested yaml@2.x for npm 9 ci (Railway uses npm-9)', () => {
     const lock = require('fs').readFileSync(path.join(__dirname, '..', '..', 'package-lock.json'), 'utf8');
-    expect(lock).toMatch(/"yaml":\s*\{/);
-    expect(lock).toMatch(/node_modules\/yaml/);
+    expect(lock).toMatch(/node_modules\/tailwindcss\/node_modules\/yaml/);
+    expect(lock).toMatch(/"version":\s*"2\.9\.\d+"/);
   });
 });
