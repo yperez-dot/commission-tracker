@@ -263,6 +263,7 @@ function recordFromDbRow(row) {
     period: row.payment_period || row.period,
     uadActivity: row.uad_activity != null ? row.uad_activity : row.uadActivity,
     carrier: row.carrier,
+    agent: row.agent_name || row.agent,
     statementDate: row.statement_date || row.statementDate || (raw && (raw['Statement Date'] || raw.StatementDate)) || '',
     paidToDate: row.paid_to_date || row.paidToDate || (raw && (raw['Paid To Date'] || raw.PaidToDate || raw.paidToDate)) || '',
     raw: raw || row.raw_data || row.raw,
@@ -280,12 +281,18 @@ function findIncomingDuplicates(existingRows, incomingRecords) {
   var incoming = incomingRecords || [];
   var identity = {};
   var txn = {};
+  var policyless = {};
   var i;
   for (i = 0; i < existing.length; i++) {
     var er = existing[i] && (existing[i].client || existing[i].client_full_name)
       ? existing[i]
       : recordFromDbRow(existing[i]);
     if (!er) continue;
+    var pk = policylessDuplicateKey(er);
+    if (pk) {
+      policyless[pk] = true;
+      continue;
+    }
     identity[crossFileDuplicateKey(er)] = true;
     var etk = uhcTransactionKey(er);
     if (etk) txn[etk] = true;
@@ -294,11 +301,43 @@ function findIncomingDuplicates(existingRows, incomingRecords) {
   for (i = 0; i < incoming.length; i++) {
     var r = incoming[i];
     if (!r) continue;
+    var ipk = policylessDuplicateKey(r);
+    if (ipk) {
+      if (policyless[ipk]) out.push(r);
+      continue;
+    }
     var idKey = crossFileDuplicateKey(r);
     var tKey = uhcTransactionKey(r);
     if ((idKey && identity[idKey]) || (tKey && txn[tKey])) out.push(r);
   }
   return out;
+}
+
+/** Key the upload route uses to drop a reported duplicate when skipDuplicates is set. */
+function duplicateMatchKey(record) {
+  return policylessDuplicateKey(record) || crossFileDuplicateKey(record);
+}
+
+/**
+ * Lines with no policy number (Doctors/Solis "Negative Charge from Previous Month"
+ * carry, statement-level adjustments). They used to skip duplicate detection
+ * entirely, so re-uploading a statement re-imported the carry every time.
+ * Key: carrier + agent + label + period + amount (+ UAD / statement date).
+ * Returns '' for rows that have a policy number or carry no money.
+ */
+function policylessDuplicateKey(record) {
+  if (!record) return '';
+  var policy = String(record.policyNumber || record.policy_number || record.policy || '').trim();
+  if (policy) return '';
+  var client = String(record.client || record.client_full_name || '').trim().toLowerCase();
+  var commission = moneyKey(record.commission != null ? record.commission : record.amount);
+  var uad = moneyKey(uadAmount(record));
+  if (!client || (commission === moneyKey(0) && uad === moneyKey(0))) return '';
+  var carrier = String(record.carrier || '').trim().toLowerCase();
+  var agent = String(record.agent || record.agent_name || '').trim().toLowerCase();
+  var period = String(record.period || record.payment_period || '').trim();
+  var stmt = statementDateOf(record);
+  return 'nopolicy|' + carrier + '|' + agent + '|' + client + '|' + period + '|' + commission + '|' + uad + '|' + stmt;
 }
 
 function isUHCDirectFilename(filename) {
@@ -341,6 +380,8 @@ module.exports = {
   uhcTransactionKey: uhcTransactionKey,
   recordFromDbRow: recordFromDbRow,
   findIncomingDuplicates: findIncomingDuplicates,
+  policylessDuplicateKey: policylessDuplicateKey,
+  duplicateMatchKey: duplicateMatchKey,
   isUHCDirectFilename: isUHCDirectFilename,
   isUHCFilename: isUHCFilename,
 };
