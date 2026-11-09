@@ -1,6 +1,7 @@
 const { periodToMmYyyy } = require('../src/periodFormat');
 const { isCarryoverClassSql } = require('../src/solisCarryover');
 const express = require('express');
+const { uadAmountSignSql } = require('../src/uadAllDataFilter');
 const router = express.Router();
 const { getPool } = require('../db/database');
 const { requireAuth } = require('./auth');
@@ -176,7 +177,7 @@ function buildRecordListFilters(req) {
   if (payee) { where.push(`cr.payee = $${idx++}`); params.push(payee); }
   if (amountSign === 'negative') where.push('cr.commission < 0');
   else if (amountSign === 'positive') where.push('cr.commission >= 0');
-  else if (amountSign === 'uad') where.push('COALESCE(cr.uad_activity, 0) <> 0');
+  else if (amountSign === 'uad') where.push(uadAmountSignSql('cr'));
   if (search) {
     // Plain substring match (partial, order-sensitive) OR'd with a full-name,
     // order/format-independent match on client_full_name via the same
@@ -252,6 +253,7 @@ router.get('/', requireAuth, async (req, res) => {
       'bsi_share': 'cr.bsi_share',
       'producer_payable': 'cr.producer_payable',
       'sub_agent_override': 'cr.sub_agent_override',
+      'uad_activity': 'cr.uad_activity',
       'created_at': 'cr.created_at'
     };
     const orderCol = sortCol && validCols[sortCol] ? validCols[sortCol] : 'cr.created_at';

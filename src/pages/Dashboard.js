@@ -19,7 +19,7 @@ function fmtK(n) {
   return '$' + num.toFixed(0);
 }
 
-const CLASSIFICATION_TYPES = ['New Business','Renewal','Agent Commission','Agency Override','Chargeback','Carryover from previous month','HRA/Bonus','UHC advance recoup (UAD)'];
+const CLASSIFICATION_TYPES = ['New Business','Renewal','Agent Commission','Agency Override','Chargeback','Carryover from previous month','HRA/Bonus'];
 
 const C = {
   accent: '#C9A96E',
@@ -532,30 +532,6 @@ export default function Dashboard({ user, onNavigate }) {
           {user.role === 'admin' && viewMode === 'agency' && (
             <HouseSplitWidget data={agencySummary} loading={loading} bookLabel={bookLabel} />
           )}
-          {user.role === 'admin' && viewMode === 'agency' && !loading && Number(summary?.uadActivity) !== 0 && (
-            <div
-              onClick={() => drillDown({ amountSign: 'uad' })}
-              title="Open UHC advance recoup (UAD) rows — not included in commission totals"
-              style={{
-                ...card,
-                marginBottom: 16,
-                padding: '14px 18px',
-                cursor: 'pointer',
-                borderLeft: `3px solid ${C.red}`,
-              }}
-            >
-              <div style={{ fontSize: 10, color: C.textMuted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: 6 }}>
-                UHC advance recoup (UAD)
-              </div>
-              <div style={{ fontSize: 24, fontWeight: 600, color: C.red, lineHeight: 1.1, marginBottom: 4 }}>
-                {fmt(summary?.uadActivity)}
-              </div>
-              <div style={{ fontSize: 11, color: C.textMuted }}>
-                {(summary?.uadRows || 0).toLocaleString()} recoup line{(summary?.uadRows === 1) ? '' : 's'} · agency cash, not in New/Renewal or agent statements
-              </div>
-            </div>
-          )}
-
           {/* LOB Breakdown Cards */}
           {summary?.byLOB && summary.byLOB.length > 0 && (() => {
             const combined = {};
