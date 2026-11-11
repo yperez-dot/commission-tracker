@@ -1,0 +1,5 @@
+Party owes,Party,Amount,When,How to collect
+BSI,THEI,5468.55,NOW,Send Buckets A+B fight packet to BSI
+Carrier,BSI,2775.66,When carrier reverses,BSI sends Bucket C to each carrier
+BSI,THEI (share),1387.83,AFTER carrier pays BSI,~50% of Bucket C pot per member — not guaranteed today
+Carrier,BSI (pipeline),see Not_on_BSI file,LATER,Not in this workbook
