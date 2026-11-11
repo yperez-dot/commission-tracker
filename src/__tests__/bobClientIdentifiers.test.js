@@ -40,6 +40,26 @@ describe('detectBobExportColumns', () => {
     expect(cols.dobCol).toBe('DOB');
     expect(cols.clientCol).toBe('Member Name');
   });
+
+  test('recognizes carrier HIC columns as member IDs without replacing policy numbers', () => {
+    const cols = detectBobExportColumns([
+      'Member First Name', 'Member Last Name', 'Policy Number', 'Member HIC',
+    ]);
+    const mapped = mapBobExportRow({
+      'Member First Name': 'John',
+      'Member Last Name': 'Levin',
+      'Policy Number': '264W05574',
+      'Member HIC': '1AB2C34DE56',
+    }, cols);
+
+    expect(cols.memberIdCol).toBe('Member HIC');
+    expect(cols.policyCol).toBe('Policy Number');
+    expect(mapped).toMatchObject({
+      client: 'John Levin',
+      memberId: '1AB2C34DE56',
+      policyNumber: '264W05574',
+    });
+  });
 });
 
 describe('mapBobExportRow', () => {
@@ -87,6 +107,8 @@ describe('raw identifier extraction', () => {
     expect(extractMemberIdFromRaw({ UMID: 'H998877' })).toBe('H998877');
     expect(extractMemberIdFromRaw({ MEDICARE_IDENTIFIER: '1EG4TE5MK73' })).toBe('1EG4TE5MK73');
     expect(extractMemberIdFromRaw({ 'Member ID': '  ABC  ' })).toBe('ABC');
+    expect(extractMemberIdFromRaw({ memberHIC: '1AB2C34DE56' })).toBe('1AB2C34DE56');
+    expect(extractMemberIdFromRaw({ 'HIC Number': '1AB2C34DE56' })).toBe('1AB2C34DE56');
   });
 });
 
